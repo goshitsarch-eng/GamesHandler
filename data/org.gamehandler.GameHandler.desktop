@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=GameHandler
+GenericName=Game Manager
+Comment=Run Windows games on Linux with Wine and Proton, and download more runners
+Exec=gamehandler
+Icon=org.gamehandler.GameHandler
+Terminal=false
+Type=Application
+Categories=Game;Utility;
+Keywords=Wine;Proton;Windows;Games;Emulation;
+StartupNotify=true

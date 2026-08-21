@@ -1,0 +1,74 @@
+/* GameHandler — professional dark-first launcher chrome.
+   Libadwaita already themes widgets; this only refines spacing and cards. */
+
+@define-color accent_bg_color #4c8dff;
+@define-color accent_fg_color #ffffff;
+@define-color accent_color #8bb4ff;
+
+.gh-sidebar {
+  background-color: alpha(@window_bg_color, 0.92);
+}
+
+.gh-sidebar list {
+  background: transparent;
+}
+
+.gh-sidebar row {
+  border-radius: 10px;
+  margin: 2px 8px;
+  padding: 4px 2px;
+}
+
+.gh-sidebar row:selected {
+  background-color: alpha(@accent_bg_color, 0.18);
+}
+
+.game-card {
+  border-radius: 16px;
+  padding: 8px 8px 4px;
+  min-width: 196px;
+  min-height: 228px;
+  background-color: alpha(@card_bg_color, 0.9);
+}
+
+.game-card:hover {
+  background-color: alpha(@accent_bg_color, 0.10);
+}
+
+.game-card .game-art {
+  margin-top: 8px;
+  border-radius: 12px;
+}
+
+.game-cover {
+  border-radius: 12px;
+  min-height: 160px;
+}
+
+.game-card .game-title {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.game-badge {
+  font-size: 0.75em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background-color: alpha(@accent_bg_color, 0.16);
+}
+
+.library-scroller {
+  background: transparent;
+}
+
+.gh-hero {
+  padding: 8px 4px 16px;
+}
+
+.play-pill {
+  min-width: 88px;
+}
+
+.runner-progress {
+  margin: 8px 12px 0;
+}

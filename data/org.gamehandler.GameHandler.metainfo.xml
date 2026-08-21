@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.gamehandler.GameHandler</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>GameHandler</name>
+  <summary>Run Windows games on Linux with Wine and Proton</summary>
+  <description>
+    <p>
+      GameHandler is a modern game manager for Linux, focused on running Windows
+      games through Wine and Proton. It provides a GTK4 and libadwaita
+      interface for organising your library, downloading Proton and Wine
+      builds, and launching games in isolated prefixes.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Dark mode with system and light alternatives</li>
+      <li>Categorize games and filter the library</li>
+      <li>Custom covers or automatic Steam artwork lookup</li>
+      <li>Add Windows or Linux games and pick a runner per title</li>
+      <li>Download Proton-GE, Proton-CachyOS, Proton-EM, and Kron4ek Wine builds</li>
+      <li>Guide for which Proton or Wine family to use</li>
+      <li>Offer to install MangoHud, GameMode, Winetricks, and UMU when missing</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.gamehandler.GameHandler.desktop</launchable>
+  <url type="homepage">https://github.com/gosh-arch/GameHandler</url>
+  <developer id="org.gamehandler">
+    <name>GameHandler contributors</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.3.0" date="2026-08-19">
+      <description>
+        <p>
+          Categories, custom and Steam-fetched covers, a runner chooser guide,
+          and install offers for MangoHud and other launch plugins.
+        </p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-08-19">
+      <description>
+        <p>
+          Dark mode, a redesigned library, and built-in downloads for ProtonPlus-style
+          Proton and Wine families. Games can pick a runner at install time and change it later.
+        </p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-08-19">
+      <description>
+        <p>Initial release with library management and Wine/Proton launching.</p>
+      </description>
+    </release>
+  </releases>
+</component>

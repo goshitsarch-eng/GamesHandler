@@ -1,0 +1,296 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from gamehandler.models import Game
+from gamehandler.runners import (
+    ProtonManager,
+    ProtonRunner,
+    RunnerManager,
+    SYSTEM_WINE,
+    WineRunner,
+    apply_launch_options,
+    asset_matches,
+    build_linux_command,
+    create_desktop_shortcut,
+    families,
+    family_by_id,
+    find_wine_binary,
+    pick_asset,
+)
+
+
+class WineCommandTests(unittest.TestCase):
+    def test_build_command_uses_wine_binary_and_exe(self):
+        runner = WineRunner(binary="/usr/bin/wine")
+        game = Game(name="App", exe_path="/games/app.exe", arguments="-fullscreen -dx11")
+        argv, env = runner.build_command(game)
+        self.assertEqual(argv, ["/usr/bin/wine", "/games/app.exe", "-fullscreen", "-dx11"])
+        self.assertIn("WINEPREFIX", env)
+
+    def test_prefix_defaults_per_game(self):
+        runner = WineRunner(binary="/usr/bin/wine")
+        game = Game(name="App", exe_path="/games/app.exe")
+        _, env = runner.build_command(game)
+        self.assertTrue(env["WINEPREFIX"].endswith(game.id))
+
+    def test_explicit_prefix_is_respected(self):
+        runner = WineRunner(binary="/usr/bin/wine")
+        game = Game(name="App", exe_path="/x.exe", prefix_path="/custom/prefix")
+        _, env = runner.build_command(game)
+        self.assertEqual(env["WINEPREFIX"], "/custom/prefix")
+
+    def test_unavailable_runner_raises(self):
+        runner = WineRunner(binary=None)
+        with self.assertRaises(RuntimeError):
+            runner.build_command(Game(name="App", exe_path="/x.exe"))
+
+
+class RunnerManagerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.runners_dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _make_fake_proton(self, tag):
+        binpath = self.runners_dir / tag / "files" / "bin"
+        binpath.mkdir(parents=True)
+        wine = binpath / "wine"
+        wine.write_text("#!/bin/sh\n")
+        wine.chmod(0o755)
+
+    def test_discovers_installed_protons(self):
+        self._make_fake_proton("GE-Proton9-5")
+        self._make_fake_proton("GE-Proton8-32")
+        manager = RunnerManager(self.runners_dir)
+        ids = [p.id for p in manager.installed_protons()]
+        self.assertIn("GE-Proton9-5", ids)
+        self.assertIn("GE-Proton8-32", ids)
+
+    def test_choices_include_system_wine(self):
+        self._make_fake_proton("GE-Proton9-5")
+        manager = RunnerManager(self.runners_dir)
+        choices = dict(manager.choices())
+        self.assertEqual(choices[SYSTEM_WINE], "System Wine")
+        self.assertIn("GE-Proton9-5", choices)
+
+    def test_get_proton_builds_command_with_bundled_wine(self):
+        self._make_fake_proton("GE-Proton9-5")
+        manager = RunnerManager(self.runners_dir)
+        game = Game(name="App", exe_path="/g/app.exe", runner="GE-Proton9-5")
+        argv, _ = manager.get("GE-Proton9-5").build_command(game)
+        self.assertTrue(argv[0].endswith("GE-Proton9-5/files/bin/wine"))
+        self.assertEqual(argv[1], "/g/app.exe")
+
+    def test_get_missing_runner_falls_back_to_system_wine(self):
+        manager = RunnerManager(self.runners_dir)
+        runner = manager.get("GE-Proton-does-not-exist")
+        self.assertIsInstance(runner, WineRunner)
+
+
+class ProtonManagerTests(unittest.TestCase):
+    FIXTURE = [
+        {
+            "tag_name": "GE-Proton9-5",
+            "assets": [
+                {"name": "notes.txt", "browser_download_url": "u0", "size": 10},
+                {
+                    "name": "GE-Proton9-5.tar.gz",
+                    "browser_download_url": "https://example/GE-Proton9-5.tar.gz",
+                    "size": 419430400,
+                },
+            ],
+        },
+        {
+            "tag_name": "GE-Proton8-32",
+            "assets": [
+                {
+                    "name": "GE-Proton8-32.tar.gz",
+                    "browser_download_url": "https://example/GE-Proton8-32.tar.gz",
+                    "size": 400000000,
+                }
+            ],
+        },
+        {"tag_name": "no-assets", "assets": []},
+    ]
+
+    def test_parse_releases_selects_tarball_asset(self):
+        releases = ProtonManager.parse_releases(self.FIXTURE)
+        self.assertEqual([r.tag for r in releases], ["GE-Proton9-5", "GE-Proton8-32"])
+        first = releases[0]
+        self.assertEqual(first.name, "GE-Proton9-5.tar.gz")
+        self.assertEqual(first.download_url, "https://example/GE-Proton9-5.tar.gz")
+        self.assertAlmostEqual(first.size_mb, 400.0, places=1)
+
+    def test_is_installed(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        manager = ProtonManager(Path(tmp.name))
+        self.assertFalse(manager.is_installed("GE-Proton9-5"))
+        binpath = Path(tmp.name) / "GE-Proton9-5" / "files" / "bin"
+        binpath.mkdir(parents=True)
+        (binpath / "wine").write_text("#!/bin/sh\n")
+        self.assertTrue(manager.is_installed("GE-Proton9-5"))
+
+
+KRON4EK_ASSETS = [
+    {"name": "sha256sums.txt", "browser_download_url": "u0", "size": 10},
+    {
+        "name": "wine-11.15-amd64.tar.xz",
+        "browser_download_url": "https://example/wine-vanilla.tar.xz",
+        "size": 100,
+    },
+    {
+        "name": "wine-11.15-amd64-wow64.tar.xz",
+        "browser_download_url": "https://example/wine-wow64.tar.xz",
+        "size": 90,
+    },
+    {
+        "name": "wine-11.15-staging-amd64.tar.xz",
+        "browser_download_url": "https://example/wine-staging.tar.xz",
+        "size": 110,
+    },
+    {
+        "name": "wine-11.15-staging-tkg-amd64.tar.xz",
+        "browser_download_url": "https://example/wine-tkg.tar.xz",
+        "size": 120,
+    },
+    {
+        "name": "wine-11.15-proton-amd64.tar.xz",
+        "browser_download_url": "https://example/wine-proton.tar.xz",
+        "size": 130,
+    },
+]
+
+
+class FamilyCatalogTests(unittest.TestCase):
+    def test_expected_families_are_present(self):
+        ids = [family.id for family in families()]
+        for expected in (
+            "proton-ge",
+            "proton-ge-rtsp",
+            "proton-cachyos",
+            "proton-em",
+            "wine-vanilla",
+            "wine-staging",
+            "wine-staging-tkg",
+            "wine-proton",
+        ):
+            self.assertIn(expected, ids)
+
+    def test_kron4ek_families_pick_distinct_assets(self):
+        cases = {
+            "wine-vanilla": "wine-11.15-amd64.tar.xz",
+            "wine-staging": "wine-11.15-staging-amd64.tar.xz",
+            "wine-staging-tkg": "wine-11.15-staging-tkg-amd64.tar.xz",
+            "wine-proton": "wine-11.15-proton-amd64.tar.xz",
+        }
+        for family_id, asset_name in cases.items():
+            chosen = pick_asset(KRON4EK_ASSETS, family_by_id(family_id))
+            self.assertIsNotNone(chosen, family_id)
+            self.assertEqual(chosen["name"], asset_name)
+
+    def test_wow64_and_v3_builds_are_excluded(self):
+        self.assertFalse(
+            asset_matches("wine-11.15-amd64-wow64.tar.xz", family_by_id("wine-vanilla"))
+        )
+        self.assertFalse(
+            asset_matches(
+                "proton-cachyos-11.0-v3-x86_64.tar.xz", family_by_id("proton-cachyos")
+            )
+        )
+
+    def test_parse_releases_honours_family(self):
+        payload = [{"tag_name": "11.15", "assets": KRON4EK_ASSETS}]
+        vanilla = ProtonManager.parse_releases(payload, "wine-vanilla")
+        staging = ProtonManager.parse_releases(payload, "wine-staging")
+        self.assertEqual(vanilla[0].name, "wine-11.15-amd64.tar.xz")
+        self.assertEqual(vanilla[0].family_id, "wine-vanilla")
+        self.assertEqual(vanilla[0].install_id, "wine-vanilla-11.15")
+        self.assertEqual(staging[0].name, "wine-11.15-staging-amd64.tar.xz")
+        self.assertEqual(staging[0].install_id, "wine-staging-11.15")
+
+    def test_ge_proton_keeps_tag_as_install_id(self):
+        release = ProtonManager.parse_releases(
+            [
+                {
+                    "tag_name": "GE-Proton9-5",
+                    "assets": [
+                        {
+                            "name": "GE-Proton9-5.tar.gz",
+                            "browser_download_url": "https://example/ge.tar.gz",
+                            "size": 1,
+                        }
+                    ],
+                }
+            ]
+        )[0]
+        self.assertEqual(release.install_id, "GE-Proton9-5")
+
+
+class WineLayoutTests(unittest.TestCase):
+    def test_finds_kron4ek_bin_wine(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "wine-11.15-amd64"
+        binary = root / "bin" / "wine"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("#!/bin/sh\n")
+        self.assertEqual(find_wine_binary(root), binary)
+
+    def test_runner_manager_discovers_wine_layout(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        binary = root / "wine-vanilla-11.15" / "bin" / "wine"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("#!/bin/sh\n")
+        manager = RunnerManager(root)
+        ids = [runner.id for runner in manager.installed_protons()]
+        self.assertIn("wine-vanilla-11.15", ids)
+        game = Game(name="App", exe_path="/g/app.exe", runner="wine-vanilla-11.15")
+        argv, _ = manager.get("wine-vanilla-11.15").build_command(game)
+        self.assertTrue(argv[0].endswith("wine-vanilla-11.15/bin/wine"))
+
+    def test_uninstall_removes_build(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        target = root / "GE-Proton9-5" / "files" / "bin"
+        target.mkdir(parents=True)
+        (target / "wine").write_text("#!/bin/sh\n")
+        manager = ProtonManager(root)
+        self.assertTrue(manager.is_installed("GE-Proton9-5"))
+        manager.uninstall("GE-Proton9-5")
+        self.assertFalse(manager.is_installed("GE-Proton9-5"))
+
+
+class LaunchOptionTests(unittest.TestCase):
+    def test_linux_native_command(self):
+        game = Game(name="Native", exe_path="/games/celeste", arguments="--fullscreen", kind="linux")
+        argv, _ = build_linux_command(game)
+        self.assertEqual(argv, ["/games/celeste", "--fullscreen"])
+
+    def test_wayland_and_hdr_environment(self):
+        game = Game(name="App", wayland=True, hdr=True, prefer_sdl=True)
+        argv, env = apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {"HOME": "/tmp"})
+        self.assertEqual(env["PROTON_ENABLE_WAYLAND"], "1")
+        self.assertEqual(env["PROTON_ENABLE_HDR"], "1")
+        self.assertEqual(env["PROTON_ENABLE_HIDAPI"], "1")
+        self.assertEqual(argv[0], "/usr/bin/wine")
+
+    def test_desktop_shortcut(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        game = Game(name="Half-Life", id="abcd1234deadbeef")
+        path = create_desktop_shortcut(game, "gamehandler --launch abcd1234deadbeef", Path(tmp.name))
+        text = path.read_text()
+        self.assertIn("Name=Half-Life", text)
+        self.assertIn("Exec=gamehandler --launch abcd1234deadbeef", text)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
