@@ -1,4 +1,4 @@
-app_id = 'org.gamehandler.GameHandler'
+app_id = 'com.goshapps.GameHandler'
 
 # Desktop entry
 desktop_file = app_id + '.desktop'

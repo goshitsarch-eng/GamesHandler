@@ -1,0 +1,20 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Meson and test output
+build/
+meson-logs/
+meson-private/
+
+# Flatpak builder and bundle output
+.flatpak-builder/
+build-flatpak/
+flatpak-repo/
+dist/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp

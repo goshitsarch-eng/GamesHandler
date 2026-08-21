@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.gamehandler.GameHandler</id>
+  <id>com.goshapps.GameHandler</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <name>GameHandler</name>
@@ -20,13 +20,14 @@
       <li>Add Windows or Linux games and pick a runner per title</li>
       <li>Download Proton-GE, Proton-CachyOS, Proton-EM, and Kron4ek Wine builds</li>
       <li>Guide for which Proton or Wine family to use</li>
-      <li>Offer to install MangoHud, GameMode, Winetricks, and UMU when missing</li>
+      <li>Detect optional MangoHud, GameMode, Winetricks, and UMU helpers</li>
     </ul>
   </description>
-  <launchable type="desktop-id">org.gamehandler.GameHandler.desktop</launchable>
-  <url type="homepage">https://github.com/gosh-arch/GameHandler</url>
-  <developer id="org.gamehandler">
-    <name>GameHandler contributors</name>
+  <launchable type="desktop-id">com.goshapps.GameHandler.desktop</launchable>
+  <url type="homepage">https://github.com/goshitsarch-eng/GamesHandler</url>
+  <url type="bugtracker">https://github.com/goshitsarch-eng/GamesHandler/issues</url>
+  <developer id="com.goshapps">
+    <name>Gosh Apps</name>
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>

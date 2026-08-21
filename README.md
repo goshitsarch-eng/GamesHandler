@@ -19,7 +19,7 @@ used by [ProtonPlus](https://github.com/Vysp3r/ProtonPlus).
 - Guide describing when to use each Proton or Wine family
 - Isolated Wine prefixes, Winecfg, Winetricks, and prefix folder access
 - Launch helpers: MangoHud, Feral GameMode, Prefer SDL, Wine Wayland, HDR
-- Plugins page that offers to install MangoHud, GameMode, Winetricks, and UMU
+- Plugins page that detects MangoHud, GameMode, Winetricks, and UMU
 - Desktop shortcuts that launch a library entry with `gamehandler --launch`
 
 ## Tech stack
@@ -70,11 +70,29 @@ sudo meson install -C build  # installs the `gamehandler` launcher, desktop file
 ## Building the Flatpak
 
 ```bash
-flatpak install -y flathub org.gnome.Platform//47 org.gnome.Sdk//47
-flatpak-builder --user --install --force-clean build-flatpak \
-  build-aux/flatpak/org.gamehandler.GameHandler.json
-flatpak run org.gamehandler.GameHandler
+./build-aux/flatpak/build.sh
+flatpak install --user dist/gamehandler-0.3.0.flatpak
+flatpak run com.goshapps.GameHandler
 ```
+
+The Flatpak uses GNOME 50 on the Wine `stable-25.08` BaseApp and inherits the
+Freedesktop `Compat.i386` and `GL32` extensions. `--allow=multiarch` is required
+for 32-bit Windows games and downloaded Wine/Proton builds.
+
+### Reviewed game-launcher permissions
+
+Unlike a document-oriented app, a game launcher must execute user-selected
+games and compatibility tools from arbitrary library locations and pass through
+controllers and other game hardware. The Flatpak therefore deliberately keeps
+`--filesystem=home` and `--device=all`. These are reviewed functionality
+exceptions, not permissions for package management or unrelated host changes.
+
+The Plugins page does **not** run `apt`, `dnf`, `pacman`, `zypper`, `sudo`, or
+`pkexec` inside Flatpak. Host packages are not visible merely because they were
+installed outside the sandbox, so missing optional helpers are shown as
+unavailable. Bundling or runtime-extension integration for MangoHud, GameMode,
+Winetricks, and UMU remains future packaging work. Source installs retain their
+existing package-manager helper.
 
 ## Running the tests
 

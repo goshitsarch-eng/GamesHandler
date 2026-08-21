@@ -99,7 +99,7 @@ class GameHandlerApplication(Adw.Application):
                 "with Wine and Proton. Download Proton-GE, Proton-CachyOS, "
                 "Proton-EM, Kron4ek Wine, and more — then pick a runner per game."
             ),
-            website="https://github.com/gosh-arch/GameHandler",
+            website="https://github.com/goshitsarch-eng/GamesHandler",
             license_type=Gtk.License.GPL_3_0,
         )
         about.present()

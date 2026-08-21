@@ -1,7 +1,8 @@
-"""Optional host helpers (MangoHud, GameMode, Winetricks, UMU).
+"""Optional launch helpers (MangoHud, GameMode, Winetricks, UMU).
 
-GameHandler can detect these plugins and offer an install command for
-the current distribution when they are missing.
+Source installations can offer a package-manager command when a helper is
+missing. Flatpak builds must never run sandbox package managers as if they
+could modify the host, so installation is explicitly disabled there.
 """
 
 from __future__ import annotations
@@ -89,8 +90,15 @@ def plugin_by_id(plugin_id: str) -> Plugin:
     raise KeyError(plugin_id)
 
 
+def in_flatpak() -> bool:
+    """Return whether GameHandler is running in a Flatpak sandbox."""
+    return bool(os.environ.get("FLATPAK_ID")) or Path("/.flatpak-info").exists()
+
+
 def detect_package_manager() -> str:
     """Return a short id for the host package manager, or empty."""
+    if in_flatpak():
+        return ""
     if shutil.which("apt-get") and Path("/etc/debian_version").exists():
         return "apt"
     if shutil.which("pacman") and Path("/etc/arch-release").exists():
@@ -106,6 +114,11 @@ def detect_package_manager() -> str:
 
 def install_command(plugin: Plugin, manager: str | None = None) -> list[str]:
     """Return the argv used to install *plugin*, without a privilege helper."""
+    if in_flatpak():
+        raise RuntimeError(
+            "Plugin installation is unavailable inside Flatpak; sandbox package "
+            "managers cannot install or expose host packages"
+        )
     manager = manager or detect_package_manager()
     package = plugin.packages.get(manager)
     if not manager or not package:
@@ -152,6 +165,7 @@ __all__ = [
     "Plugin",
     "PLUGINS",
     "plugin_by_id",
+    "in_flatpak",
     "detect_package_manager",
     "install_command",
     "privileged_command",

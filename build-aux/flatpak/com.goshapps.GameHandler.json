@@ -1,8 +1,11 @@
 {
-  "app-id": "org.gamehandler.GameHandler",
+  "app-id": "com.goshapps.GameHandler",
+  "branch": "stable",
   "runtime": "org.gnome.Platform",
-  "runtime-version": "47",
+  "runtime-version": "50",
   "sdk": "org.gnome.Sdk",
+  "base": "org.winehq.Wine",
+  "base-version": "stable-25.08",
   "command": "gamehandler",
   "finish-args": [
     "--share=network",
@@ -10,10 +13,14 @@
     "--socket=fallback-x11",
     "--socket=wayland",
     "--socket=pulseaudio",
+    "--allow=multiarch",
     "--device=all",
     "--filesystem=home",
-    "--filesystem=xdg-data/gamehandler:create",
     "--talk-name=org.freedesktop.Notifications"
+  ],
+  "inherit-extensions": [
+    "org.freedesktop.Platform.GL32",
+    "org.freedesktop.Platform.Compat.i386"
   ],
   "modules": [
     {
