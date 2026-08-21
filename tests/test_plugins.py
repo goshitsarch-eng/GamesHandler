@@ -4,6 +4,7 @@ from unittest import mock
 from gamehandler.plugins import (
     detect_package_manager,
     format_command,
+    in_flatpak,
     install_command,
     plugin_by_id,
     privileged_command,
@@ -38,6 +39,13 @@ class PluginCatalogTests(unittest.TestCase):
     def test_package_manager_detection_is_a_string(self):
         manager = detect_package_manager()
         self.assertIsInstance(manager, str)
+
+    def test_flatpak_never_offers_host_package_commands(self):
+        with mock.patch.dict("os.environ", {"FLATPAK_ID": "com.goshapps.GameHandler"}):
+            self.assertTrue(in_flatpak())
+            self.assertEqual(detect_package_manager(), "")
+            with self.assertRaisesRegex(RuntimeError, "unavailable inside Flatpak"):
+                install_command(plugin_by_id("mangohud"), manager="apt")
 
 
 class RunnerGuideTests(unittest.TestCase):

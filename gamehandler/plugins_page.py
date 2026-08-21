@@ -15,6 +15,7 @@ from .plugins import (
     PLUGINS,
     detect_package_manager,
     format_command,
+    in_flatpak,
     install_command,
     install_plugin,
     privileged_command,
@@ -42,13 +43,19 @@ class PluginsPage(Gtk.Box):
         page = Adw.PreferencesPage()
         toolbar.set_content(page)
 
+        sandboxed = in_flatpak()
         manager = detect_package_manager()
         intro = Adw.PreferencesGroup(
             title="Host plugins",
             description=(
-                "These tools are optional. GameHandler offers them on each game; "
-                "if one is missing you can install it here"
-                + (f" with {manager}." if manager else ".")
+                "These tools are optional. GameHandler offers them on each game. "
+                + (
+                    "The Flatpak can only use helpers bundled in its sandbox; "
+                    "host package installation is intentionally disabled."
+                    if sandboxed
+                    else "Missing helpers can be installed with the detected host package manager"
+                    + (f" ({manager})." if manager else ".")
+                )
             ),
         )
         page.add(intro)
@@ -76,6 +83,15 @@ class PluginsPage(Gtk.Box):
                 button.set_sensitive(False)
                 button.remove_css_class("suggested-action")
             else:
+                if in_flatpak():
+                    row.set_subtitle(
+                        f"{plugin.description} Not bundled in this Flatpak. "
+                        "Installing it on the host would not expose it to the sandbox."
+                    )
+                    button.set_label("Unavailable")
+                    button.set_sensitive(False)
+                    button.remove_css_class("suggested-action")
+                    continue
                 try:
                     command = format_command(privileged_command(install_command(plugin)))
                     extra = f" Install with: {command}"
