@@ -1,5 +1,10 @@
 app_id = 'com.goshapps.GameHandler'
 
+install_data(
+  meson.project_source_root() / 'LICENSE',
+  install_dir: get_option('datadir') / 'licenses' / app_id,
+)
+
 # Desktop entry
 desktop_file = app_id + '.desktop'
 install_data(

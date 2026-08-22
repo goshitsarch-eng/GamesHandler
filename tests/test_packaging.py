@@ -36,10 +36,14 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("org.freedesktop.Platform.Compat.i386", manifest["inherit-extensions"])
         self.assertIn("org.freedesktop.Platform.GL32", manifest["inherit-extensions"])
 
-    def test_gpl_license_is_present(self):
+    def test_gpl_license_is_present_and_installed(self):
         license_text = (ROOT / "LICENSE").read_text()
+        data_meson = (ROOT / "data" / "meson.build").read_text()
         self.assertIn("GNU GENERAL PUBLIC LICENSE", license_text)
         self.assertIn("Version 3, 29 June 2007", license_text)
+        self.assertGreater(len(license_text.splitlines()), 600)
+        self.assertIn("meson.project_source_root() / 'LICENSE'", data_meson)
+        self.assertIn("'licenses' / app_id", data_meson)
 
 
 if __name__ == "__main__":
