@@ -157,6 +157,16 @@ class GameFromInstallTests(unittest.TestCase):
         self.assertTrue(game.fsync)
         self.assertFalse(game.is_linux)
 
+    def test_discord_update_entry_keeps_required_process_start_arguments(self):
+        installer = installer_by_id("discord")
+        game = game_from_install(
+            installer,
+            "/pfx/drive_c/users/steamuser/AppData/Local/Discord/Update.exe",
+            "/pfx",
+            "wine-system",
+        )
+        self.assertEqual(game.arguments, "--processStart Discord.exe")
+
 
 if __name__ == "__main__":
     unittest.main()
