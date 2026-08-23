@@ -37,6 +37,7 @@ class Installer:
     kind: str  # exe | msi
     expected_exe: tuple[str, ...]
     arguments: str = ""
+    launch_arguments: str = ""
     notes: str = ""
     esync: bool = True
     fsync: bool = True
@@ -179,6 +180,7 @@ INSTALLERS: tuple[Installer, ...] = (
             "users/steamuser/AppData/Local/Discord/Update.exe",
             "users/steamuser/AppData/Local/Discord/Discord.exe",
         ),
+        launch_arguments="--processStart Discord.exe",
         library_category="Utility",
         notes="Discord lives under Local AppData. Launch Update.exe if the app folder version changes.",
     ),
@@ -384,6 +386,7 @@ def game_from_install(
         id=game_id or uuid.uuid4().hex,
         name=installer.name,
         exe_path=str(exe),
+        arguments=installer.launch_arguments,
         runner=runner_id,
         prefix_path=str(prefix),
         kind="windows",

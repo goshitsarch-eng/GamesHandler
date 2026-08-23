@@ -814,9 +814,11 @@ def launch(game: Game, manager: RunnerManager | None = None):
     manager = manager or RunnerManager()
     if game.is_linux:
         argv, env = build_linux_command(game)
+        runner_executable = ""
     else:
         runner = manager.get(game.runner)
         argv, env = runner.build_command(game)
+        runner_executable = argv[0] if argv else ""
         prefix = env.get("WINEPREFIX")
         if prefix:
             Path(prefix).mkdir(parents=True, exist_ok=True)
@@ -825,9 +827,7 @@ def launch(game: Game, manager: RunnerManager | None = None):
 
     extra = game.additional_app.strip()
     if extra:
-        extra_argv = [argv[0], extra] if not game.is_linux and argv else [extra]
-        if not game.is_linux:
-            extra_argv = [argv[0], extra]
+        extra_argv = [runner_executable, extra] if runner_executable else [extra]
         subprocess.Popen(extra_argv, env=env)
 
     cwd = game.working_directory or None

@@ -18,6 +18,7 @@ from gamehandler.runners import (
     family_by_id,
     find_anticheat_runtime,
     find_wine_binary,
+    launch,
     merge_dll_overrides,
     normalize_desktop_size,
     parse_env_block,
@@ -356,6 +357,34 @@ class LaunchOptionTests(unittest.TestCase):
             ["/usr/bin/gamescope", "--hdr-enabled", "--", "/usr/bin/wine", "/g/app.exe"],
         )
         self.assertEqual(env["PROTON_ENABLE_HDR"], "1")
+
+    def test_additional_app_uses_runner_before_gamescope_wrapping(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        game = Game(
+            name="App",
+            exe_path="/g/app.exe",
+            prefix_path=tmp.name,
+            additional_app="/g/helper.exe",
+            gamescope=True,
+        )
+        manager = mock.Mock()
+        manager.get.return_value = WineRunner(binary="/usr/bin/wine")
+
+        def which(name):
+            return "/usr/bin/gamescope" if name == "gamescope" else None
+
+        with (
+            mock.patch("gamehandler.runners.shutil.which", side_effect=which),
+            mock.patch("gamehandler.runners.subprocess.Popen") as popen,
+        ):
+            launch(game, manager)
+
+        self.assertEqual(popen.call_args_list[0].args[0], ["/usr/bin/wine", "/g/helper.exe"])
+        self.assertEqual(
+            popen.call_args_list[1].args[0],
+            ["/usr/bin/gamescope", "--", "/usr/bin/wine", "/g/app.exe"],
+        )
 
     def test_user_environment_overrides_toggles(self):
         game = Game(name="App", esync=True, environment="WINEESYNC=0 FOO=bar")
