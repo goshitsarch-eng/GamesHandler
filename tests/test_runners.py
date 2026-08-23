@@ -416,6 +416,18 @@ class LaunchOptionTests(unittest.TestCase):
         parsed = parse_env_block('LABEL="Radeon GPU" WINEESYNC=0')
         self.assertEqual(parsed, {"LABEL": "Radeon GPU", "WINEESYNC": "0"})
 
+    def test_parse_env_block_preserves_semicolons_inside_quoted_values(self):
+        parsed = parse_env_block(
+            'WINEDLLOVERRIDES="dinput8=n,b;winemenubuilder.exe=d";WINEESYNC=0'
+        )
+        self.assertEqual(
+            parsed,
+            {
+                "WINEDLLOVERRIDES": "dinput8=n,b;winemenubuilder.exe=d",
+                "WINEESYNC": "0",
+            },
+        )
+
     def test_find_anticheat_runtime_in_extra_root(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
