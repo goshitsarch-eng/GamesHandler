@@ -1,4 +1,4 @@
-"""Optional launch helpers (MangoHud, GameMode, Winetricks, UMU).
+"""Optional launch helpers (MangoHud, GameMode, Winetricks, UMU, Gamescope).
 
 Source installations can offer a package-manager command when a helper is
 missing. Flatpak builds must never run sandbox package managers as if they
@@ -78,6 +78,19 @@ PLUGINS: tuple[Plugin, ...] = (
             "apt": "umu-launcher",
             "pacman": "umu-launcher",
             "dnf": "umu-launcher",
+        },
+    ),
+    Plugin(
+        id="gamescope",
+        name="Gamescope",
+        binary="gamescope",
+        description="Nested compositor for scaling, HDR, and a stable game session.",
+        used_for="Wraps the launch command when Gamescope is enabled on a game.",
+        packages={
+            "apt": "gamescope",
+            "pacman": "gamescope",
+            "dnf": "gamescope",
+            "zypper": "gamescope",
         },
     ),
 )

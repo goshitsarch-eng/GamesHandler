@@ -28,6 +28,8 @@ class GameTests(unittest.TestCase):
             prefer_sdl=True,
             wayland=True,
             hdr=True,
+            esync=False,
+            fsync=False,
             additional_app="/opt/helper.exe",
         )
         restored = Game.from_dict(game.to_dict())
@@ -35,7 +37,48 @@ class GameTests(unittest.TestCase):
         self.assertTrue(restored.mangohud)
         self.assertTrue(restored.gamemode)
         self.assertTrue(restored.prefer_sdl)
+        self.assertFalse(restored.esync)
+        self.assertFalse(restored.fsync)
         self.assertEqual(restored.additional_app, "/opt/helper.exe")
+
+    def test_missing_sync_flags_default_on(self):
+        game = Game.from_dict({"name": "Doom"})
+        self.assertTrue(game.esync)
+        self.assertTrue(game.fsync)
+        self.assertTrue(game.dxvk)
+        self.assertTrue(game.vkd3d)
+        self.assertTrue(game.battleye)
+        self.assertTrue(game.eac)
+        self.assertFalse(game.nvapi)
+        self.assertFalse(game.fsr)
+        self.assertFalse(game.gamescope)
+        self.assertFalse(game.virtual_desktop)
+        self.assertEqual(game.virtual_desktop_size, "1920x1080")
+        self.assertEqual(game.environment, "")
+
+    def test_compatibility_flags_roundtrip(self):
+        game = Game(
+            name="Cyberpunk",
+            dxvk=False,
+            vkd3d=False,
+            nvapi=True,
+            fsr=True,
+            battleye=False,
+            eac=False,
+            gamescope=True,
+            virtual_desktop=True,
+            virtual_desktop_size="1280x720",
+            environment="DXVK_HUD=1",
+        )
+        restored = Game.from_dict(game.to_dict())
+        self.assertFalse(restored.dxvk)
+        self.assertFalse(restored.vkd3d)
+        self.assertTrue(restored.nvapi)
+        self.assertTrue(restored.fsr)
+        self.assertFalse(restored.battleye)
+        self.assertTrue(restored.gamescope)
+        self.assertEqual(restored.virtual_desktop_size, "1280x720")
+        self.assertEqual(restored.environment, "DXVK_HUD=1")
 
 
 class LibraryTests(unittest.TestCase):

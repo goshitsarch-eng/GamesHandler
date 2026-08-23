@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from gamehandler.models import Game
 from gamehandler.runners import (
@@ -15,8 +16,13 @@ from gamehandler.runners import (
     create_desktop_shortcut,
     families,
     family_by_id,
+    find_anticheat_runtime,
     find_wine_binary,
+    merge_dll_overrides,
+    normalize_desktop_size,
+    parse_env_block,
     pick_asset,
+    virtual_desktop_argv,
 )
 
 
@@ -279,7 +285,104 @@ class LaunchOptionTests(unittest.TestCase):
         self.assertEqual(env["PROTON_ENABLE_WAYLAND"], "1")
         self.assertEqual(env["PROTON_ENABLE_HDR"], "1")
         self.assertEqual(env["PROTON_ENABLE_HIDAPI"], "1")
+        self.assertEqual(env["WINEESYNC"], "1")
+        self.assertEqual(env["WINEFSYNC"], "1")
+        self.assertNotIn("PROTON_NO_ESYNC", env)
+        self.assertNotIn("PROTON_NO_FSYNC", env)
         self.assertEqual(argv[0], "/usr/bin/wine")
+
+    def test_disabled_esync_fsync_set_proton_off_flags(self):
+        game = Game(name="App", esync=False, fsync=False)
+        _, env = apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {"HOME": "/tmp"})
+        self.assertEqual(env["WINEESYNC"], "0")
+        self.assertEqual(env["WINEFSYNC"], "0")
+        self.assertEqual(env["PROTON_NO_ESYNC"], "1")
+        self.assertEqual(env["PROTON_NO_FSYNC"], "1")
+
+    def test_linux_native_skips_wine_sync_env(self):
+        game = Game(name="Native", kind="linux", esync=True, fsync=True)
+        _, env = apply_launch_options(game, ["/games/celeste"], {"HOME": "/tmp"})
+        self.assertNotIn("WINEESYNC", env)
+        self.assertNotIn("WINEFSYNC", env)
+        self.assertNotIn("PROTON_NO_ESYNC", env)
+        self.assertNotIn("PROTON_USE_WINED3D", env)
+        self.assertNotIn("PROTON_BATTLEYE_RUNTIME", env)
+
+    def test_dxvk_off_uses_wined3d(self):
+        game = Game(name="App", dxvk=False)
+        _, env = apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {"HOME": "/tmp"})
+        self.assertEqual(env["PROTON_USE_WINED3D"], "1")
+
+    def test_vkd3d_off_overrides_d3d12(self):
+        game = Game(name="App", vkd3d=False)
+        _, env = apply_launch_options(
+            game,
+            ["/usr/bin/wine", "/g/app.exe"],
+            {"WINEDLLOVERRIDES": "winemenubuilder.exe=d"},
+        )
+        self.assertIn("d3d12,d3d12core=b", env["WINEDLLOVERRIDES"])
+        self.assertIn("winemenubuilder.exe=d", env["WINEDLLOVERRIDES"])
+
+    def test_nvapi_and_fsr_environment(self):
+        game = Game(name="App", nvapi=True, fsr=True)
+        _, env = apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {})
+        self.assertEqual(env["PROTON_ENABLE_NVAPI"], "1")
+        self.assertEqual(env["DXVK_ENABLE_NVAPI"], "1")
+        self.assertEqual(env["DXVK_NVAPIHACK"], "0")
+        self.assertEqual(env["WINE_FULLSCREEN_FSR"], "1")
+        self.assertEqual(env["WINE_FULLSCREEN_FSR_STRENGTH"], "2")
+
+    def test_anticheat_off_clears_runtime_paths(self):
+        game = Game(name="App", battleye=False, eac=False)
+        _, env = apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {})
+        self.assertEqual(env["PROTON_BATTLEYE_RUNTIME"], "")
+        self.assertEqual(env["PROTON_EAC_RUNTIME"], "")
+
+    def test_virtual_desktop_wraps_explorer(self):
+        game = Game(name="Half-Life", virtual_desktop=True, virtual_desktop_size="1280x720")
+        argv, _ = apply_launch_options(game, ["/usr/bin/wine", "/g/hl.exe"], {})
+        self.assertEqual(argv, ["/usr/bin/wine", "explorer", "/desktop=HalfLife,1280x720", "/g/hl.exe"])
+
+    def test_gamescope_wraps_command_and_hdr_flag(self):
+        game = Game(name="App", gamescope=True, hdr=True)
+
+        def which(name):
+            return "/usr/bin/gamescope" if name == "gamescope" else None
+
+        with mock.patch("gamehandler.runners.shutil.which", side_effect=which):
+            argv, env = apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {})
+        self.assertEqual(
+            argv,
+            ["/usr/bin/gamescope", "--hdr-enabled", "--", "/usr/bin/wine", "/g/app.exe"],
+        )
+        self.assertEqual(env["PROTON_ENABLE_HDR"], "1")
+
+    def test_user_environment_overrides_toggles(self):
+        game = Game(name="App", esync=True, environment="WINEESYNC=0 FOO=bar")
+        _, env = apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {})
+        self.assertEqual(env["WINEESYNC"], "0")
+        self.assertEqual(env["FOO"], "bar")
+
+    def test_parse_env_block_and_desktop_size(self):
+        parsed = parse_env_block("FOO=1; BAR=two words\n# comment\nBAZ=3")
+        self.assertEqual(parsed["FOO"], "1")
+        self.assertEqual(parsed["BAR"], "two words")
+        self.assertEqual(parsed["BAZ"], "3")
+        self.assertEqual(normalize_desktop_size("2560 x 1440"), "2560x1440")
+        self.assertEqual(normalize_desktop_size("nope"), "1920x1080")
+        env = {"WINEDLLOVERRIDES": "winemenubuilder.exe=d"}
+        merge_dll_overrides(env, "d3d12=b")
+        self.assertEqual(env["WINEDLLOVERRIDES"], "winemenubuilder.exe=d;d3d12=b")
+
+    def test_find_anticheat_runtime_in_extra_root(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        runtime = Path(tmp.name) / "battleye_runtime"
+        runtime.mkdir()
+        (runtime / "marker").write_text("ok")
+        self.assertEqual(find_anticheat_runtime("battleye", extra_roots=[Path(tmp.name)]), str(runtime))
+        self.assertEqual(virtual_desktop_argv(["/usr/bin/wine", "a.exe"], Game(name="App")), 
+                         ["/usr/bin/wine", "explorer", "/desktop=App,1920x1080", "a.exe"])
 
     def test_desktop_shortcut(self):
         tmp = tempfile.TemporaryDirectory()

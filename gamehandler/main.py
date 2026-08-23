@@ -41,6 +41,7 @@ class GameHandlerApplication(Adw.Application):
         self.window: MainWindow | None = None
 
         self._add_action("add-game", self._on_add_game, ["<primary>n"])
+        self._add_action("installers", self._on_installers)
         self._add_action("manage-runners", self._on_manage_runners)
         self._add_action("manage-plugins", self._on_manage_plugins)
         self._add_action("preferences", self._on_preferences, ["<primary>comma"])
@@ -71,6 +72,10 @@ class GameHandlerApplication(Adw.Application):
     def _on_add_game(self, *_args):
         if self.window:
             self.window.open_add_game_dialog()
+
+    def _on_installers(self, *_args):
+        if self.window:
+            self.window.show_page("installers")
 
     def _on_manage_runners(self, *_args):
         if self.window:

@@ -29,6 +29,16 @@ class AddGameDialog(Adw.Dialog):
         default_mangohud: bool = False,
         default_gamemode: bool = False,
         default_prefer_sdl: bool = False,
+        default_esync: bool = True,
+        default_fsync: bool = True,
+        default_dxvk: bool = True,
+        default_vkd3d: bool = True,
+        default_nvapi: bool = False,
+        default_fsr: bool = False,
+        default_battleye: bool = True,
+        default_eac: bool = True,
+        default_gamescope: bool = False,
+        default_virtual_desktop: bool = False,
         extra_categories: list[str] | None = None,
         toast=None,
     ) -> None:
@@ -193,11 +203,86 @@ class AddGameDialog(Adw.Dialog):
         )
         tools.add(self.hdr_row)
 
+        self.esync_row = Adw.SwitchRow(
+            title="Esync",
+            subtitle="Eventfd-based Wine sync. Disable if you hit file-descriptor limits.",
+        )
+        tools.add(self.esync_row)
+
+        self.fsync_row = Adw.SwitchRow(
+            title="Fsync",
+            subtitle="Futex-based Wine sync. Preferred when the kernel supports it.",
+        )
+        tools.add(self.fsync_row)
+
+        self.gamescope_row = Adw.SwitchRow(
+            title="Gamescope",
+            subtitle="Nested compositor for scaling, a stable session, and optional HDR",
+        )
+        self._attach_plugin_install(self.gamescope_row, "gamescope")
+        tools.add(self.gamescope_row)
+
+        compat = Adw.PreferencesGroup(
+            title="Compatibility",
+            description="Lutris-style Wine/Proton toggles. Defaults match Proton for most games.",
+        )
+        page.add(compat)
+
+        self.dxvk_row = Adw.SwitchRow(
+            title="DXVK",
+            subtitle="Direct3D 8–11 through Vulkan. Turn off to use WineD3D instead.",
+        )
+        compat.add(self.dxvk_row)
+
+        self.vkd3d_row = Adw.SwitchRow(
+            title="VKD3D",
+            subtitle="Direct3D 12 through Vulkan. Turn off only to troubleshoot DX12 titles.",
+        )
+        compat.add(self.vkd3d_row)
+
+        self.nvapi_row = Adw.SwitchRow(
+            title="DXVK-NVAPI / DLSS",
+            subtitle="NVIDIA NVAPI and DLSS. Enable for games that need it.",
+        )
+        compat.add(self.nvapi_row)
+
+        self.fsr_row = Adw.SwitchRow(
+            title="AMD FSR",
+            subtitle="Wine fullscreen FidelityFX Super Resolution. Render below native, then upscale.",
+        )
+        compat.add(self.fsr_row)
+
+        self.battleye_row = Adw.SwitchRow(
+            title="BattlEye runtime",
+            subtitle="Proton BattlEye helper for supported online games.",
+        )
+        compat.add(self.battleye_row)
+
+        self.eac_row = Adw.SwitchRow(
+            title="Easy Anti-Cheat runtime",
+            subtitle="Proton EAC helper for supported online games.",
+        )
+        compat.add(self.eac_row)
+
+        self.desktop_row = Adw.SwitchRow(
+            title="Virtual desktop",
+            subtitle="Run the game inside a Wine desktop window. Helps with alt-tab and resolution bugs.",
+        )
+        self.desktop_row.connect("notify::active", self._on_desktop_toggle)
+        compat.add(self.desktop_row)
+
+        self.desktop_size_row = Adw.EntryRow(title="Desktop size")
+        self.desktop_size_row.set_tooltip_text("WidthxHeight, for example 1920x1080")
+        compat.add(self.desktop_size_row)
+
         extras = Adw.PreferencesGroup(title="Advanced")
         page.add(extras)
         self.extra_row = Adw.EntryRow(title="Additional application")
         self.extra_row.set_tooltip_text("Optional helper launched in the same prefix (trainer, overlay, …).")
         extras.add(self.extra_row)
+        self.env_row = Adw.EntryRow(title="Environment variables")
+        self.env_row.set_tooltip_text("KEY=value pairs, separated by spaces or semicolons. Overrides the toggles above.")
+        extras.add(self.env_row)
 
         if game:
             self._populate(game)
@@ -205,7 +290,19 @@ class AddGameDialog(Adw.Dialog):
             self.mangohud_row.set_active(default_mangohud)
             self.gamemode_row.set_active(default_gamemode)
             self.sdl_row.set_active(default_prefer_sdl)
+            self.esync_row.set_active(default_esync)
+            self.fsync_row.set_active(default_fsync)
+            self.dxvk_row.set_active(default_dxvk)
+            self.vkd3d_row.set_active(default_vkd3d)
+            self.nvapi_row.set_active(default_nvapi)
+            self.fsr_row.set_active(default_fsr)
+            self.battleye_row.set_active(default_battleye)
+            self.eac_row.set_active(default_eac)
+            self.gamescope_row.set_active(default_gamescope)
+            self.desktop_row.set_active(default_virtual_desktop)
+            self.desktop_size_row.set_text("1920x1080")
         self._on_kind_changed()
+        self._on_desktop_toggle()
         self._refresh_cover_row()
 
     def _attach_plugin_install(self, row, plugin_id: str):
@@ -264,6 +361,18 @@ class AddGameDialog(Adw.Dialog):
         self.sdl_row.set_active(game.prefer_sdl)
         self.wayland_row.set_active(game.wayland)
         self.hdr_row.set_active(game.hdr)
+        self.esync_row.set_active(game.esync)
+        self.fsync_row.set_active(game.fsync)
+        self.dxvk_row.set_active(game.dxvk)
+        self.vkd3d_row.set_active(game.vkd3d)
+        self.nvapi_row.set_active(game.nvapi)
+        self.fsr_row.set_active(game.fsr)
+        self.battleye_row.set_active(game.battleye)
+        self.eac_row.set_active(game.eac)
+        self.gamescope_row.set_active(game.gamescope)
+        self.desktop_row.set_active(game.virtual_desktop)
+        self.desktop_size_row.set_text(game.virtual_desktop_size or "1920x1080")
+        self.env_row.set_text(game.environment)
         category = game.category or "Uncategorized"
         if category in self.category_names:
             self.category_row.set_selected(self.category_names.index(category))
@@ -311,6 +420,20 @@ class AddGameDialog(Adw.Dialog):
         self.prefix_row.set_sensitive(not linux)
         self.wayland_row.set_sensitive(not linux)
         self.hdr_row.set_sensitive(not linux)
+        self.esync_row.set_sensitive(not linux)
+        self.fsync_row.set_sensitive(not linux)
+        self.dxvk_row.set_sensitive(not linux)
+        self.vkd3d_row.set_sensitive(not linux)
+        self.nvapi_row.set_sensitive(not linux)
+        self.fsr_row.set_sensitive(not linux)
+        self.battleye_row.set_sensitive(not linux)
+        self.eac_row.set_sensitive(not linux)
+        self.desktop_row.set_sensitive(not linux)
+        self.desktop_size_row.set_sensitive(not linux and self.desktop_row.get_active())
+
+    def _on_desktop_toggle(self, *_args):
+        linux = self.kind_row.get_selected() == 1
+        self.desktop_size_row.set_sensitive(not linux and self.desktop_row.get_active())
 
     def _validate(self, *_args):
         self.save_button.set_sensitive(bool(self.name_row.get_text().strip()))
@@ -423,6 +546,18 @@ class AddGameDialog(Adw.Dialog):
             prefer_sdl=self.sdl_row.get_active(),
             wayland=self.wayland_row.get_active(),
             hdr=self.hdr_row.get_active(),
+            esync=self.esync_row.get_active(),
+            fsync=self.fsync_row.get_active(),
+            dxvk=self.dxvk_row.get_active(),
+            vkd3d=self.vkd3d_row.get_active(),
+            nvapi=self.nvapi_row.get_active(),
+            fsr=self.fsr_row.get_active(),
+            battleye=self.battleye_row.get_active(),
+            eac=self.eac_row.get_active(),
+            gamescope=self.gamescope_row.get_active(),
+            virtual_desktop=self.desktop_row.get_active(),
+            virtual_desktop_size=self.desktop_size_row.get_text().strip() or "1920x1080",
+            environment=self.env_row.get_text().strip(),
             category=self._selected_category(),
             cover_path=self.cover_path,
             steam_appid=self.steam_appid,

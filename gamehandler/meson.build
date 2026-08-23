@@ -13,6 +13,8 @@ sources = [
   'runners_dialog.py',
   'plugins_page.py',
   'settings_page.py',
+  'installers.py',
+  'installers_page.py',
   'style.css',
 ]
 

@@ -18,6 +18,11 @@ class PluginCatalogTests(unittest.TestCase):
         self.assertEqual(plugin.binary, "mangohud")
         self.assertIn("apt", plugin.packages)
 
+    def test_gamescope_plugin_is_offered(self):
+        plugin = plugin_by_id("gamescope")
+        self.assertEqual(plugin.binary, "gamescope")
+        self.assertIn("pacman", plugin.packages)
+
     def test_apt_install_command(self):
         argv = install_command(plugin_by_id("mangohud"), manager="apt")
         self.assertEqual(argv, ["apt-get", "install", "-y", "mangohud"])

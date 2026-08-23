@@ -23,6 +23,16 @@ class Settings:
     default_mangohud: bool = False
     default_gamemode: bool = False
     default_prefer_sdl: bool = False
+    default_esync: bool = True
+    default_fsync: bool = True
+    default_dxvk: bool = True
+    default_vkd3d: bool = True
+    default_nvapi: bool = False
+    default_fsr: bool = False
+    default_battleye: bool = True
+    default_eac: bool = True
+    default_gamescope: bool = False
+    default_virtual_desktop: bool = False
     close_on_launch: bool = False
 
     @classmethod

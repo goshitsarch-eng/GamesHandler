@@ -32,6 +32,18 @@ class Game:
     prefer_sdl: bool = False
     wayland: bool = False
     hdr: bool = False
+    esync: bool = True
+    fsync: bool = True
+    dxvk: bool = True
+    vkd3d: bool = True
+    nvapi: bool = False
+    fsr: bool = False
+    battleye: bool = True
+    eac: bool = True
+    gamescope: bool = False
+    virtual_desktop: bool = False
+    virtual_desktop_size: str = "1920x1080"
+    environment: str = ""
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     added: float = field(default_factory=time.time)
     last_played: float = 0.0

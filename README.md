@@ -18,7 +18,8 @@ used by [ProtonPlus](https://github.com/Vysp3r/ProtonPlus).
   - Kron4ek Wine-Vanilla, Wine-Staging, Wine-Staging-Tkg, Wine-Proton
 - Guide describing when to use each Proton or Wine family
 - Isolated Wine prefixes, Winecfg, Winetricks, and prefix folder access
-- Launch helpers: MangoHud, Feral GameMode, Prefer SDL, Wine Wayland, HDR
+- Launch helpers: MangoHud, Feral GameMode, Prefer SDL, Wine Wayland, HDR, Esync, Fsync, DXVK, VKD3D, NVAPI/DLSS, FSR, BattlEye, EAC, Gamescope, virtual desktop, and custom environment variables
+- Easy installers for Battle.net, Epic, EA App, Ubisoft Connect, GOG Galaxy, Amazon Games, Rockstar, Steam, and Discord
 - Plugins page that detects MangoHud, GameMode, Winetricks, and UMU
 - Desktop shortcuts that launch a library entry with `gamehandler --launch`
 
@@ -71,7 +72,7 @@ sudo meson install -C build  # installs the `gamehandler` launcher, desktop file
 
 ```bash
 ./build-aux/flatpak/build.sh
-flatpak install --user dist/gamehandler-0.3.0.flatpak
+flatpak install --user dist/gamehandler-0.4.0.flatpak
 flatpak run com.goshapps.GameHandler
 ```
 
@@ -110,6 +111,8 @@ gamehandler/            # Python package (application code)
   main.py               # Adw.Application + entry point
   window.py             # library, runners, and settings shell
   add_game_dialog.py    # add / edit game dialog
+  installers.py         # easy-installer catalog and prefix helpers
+  installers_page.py    # Installers store page
   runners_dialog.py     # Proton/Wine download page
   settings.py           # persisted preferences
   models.py             # Game model + JSON-backed Library

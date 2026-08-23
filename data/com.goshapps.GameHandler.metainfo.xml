@@ -21,6 +21,8 @@
       <li>Download Proton-GE, Proton-CachyOS, Proton-EM, and Kron4ek Wine builds</li>
       <li>Guide for which Proton or Wine family to use</li>
       <li>Detect optional MangoHud, GameMode, Winetricks, and UMU helpers</li>
+      <li>Lutris-style Esync and Fsync toggles per game</li>
+      <li>Easy installers for store launchers and common Windows apps</li>
     </ul>
   </description>
   <launchable type="desktop-id">com.goshapps.GameHandler.desktop</launchable>
@@ -31,6 +33,24 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.0" date="2026-08-23">
+      <description>
+        <p>
+          Lutris-style compatibility toggles: DXVK, VKD3D, NVAPI/DLSS, FSR,
+          BattlEye, Easy Anti-Cheat, Gamescope, a Wine virtual desktop, and
+          free-form environment variables.
+        </p>
+      </description>
+    </release>
+    <release version="0.4.0" date="2026-08-23">
+      <description>
+        <p>
+          Per-game Esync and Fsync toggles, plus a catalog of easy installers
+          for Battle.net, Epic, EA App, Ubisoft Connect, GOG Galaxy, Amazon
+          Games, Rockstar, Steam, and Discord.
+        </p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-08-19">
       <description>
         <p>

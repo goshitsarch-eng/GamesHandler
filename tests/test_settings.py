@@ -13,6 +13,16 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.color_scheme, "dark")
         self.assertEqual(settings.view_mode, "grid")
         self.assertEqual(settings.default_runner, SYSTEM_WINE)
+        self.assertTrue(settings.default_esync)
+        self.assertTrue(settings.default_fsync)
+        self.assertTrue(settings.default_dxvk)
+        self.assertTrue(settings.default_vkd3d)
+        self.assertTrue(settings.default_battleye)
+        self.assertTrue(settings.default_eac)
+        self.assertFalse(settings.default_nvapi)
+        self.assertFalse(settings.default_fsr)
+        self.assertFalse(settings.default_gamescope)
+        self.assertFalse(settings.default_virtual_desktop)
 
     def test_roundtrip(self):
         tmp = tempfile.TemporaryDirectory()

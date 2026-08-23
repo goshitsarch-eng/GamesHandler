@@ -15,6 +15,7 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from .add_game_dialog import AddGameDialog  # noqa: E402
 from .covers import fetch_cover  # noqa: E402
+from .installers_page import InstallersPage  # noqa: E402
 from .models import Game  # noqa: E402
 from .plugins_page import PluginsPage  # noqa: E402
 from .runners import create_desktop_shortcut, launch, tool_command  # noqa: E402
@@ -123,6 +124,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.nav_list.connect("row-selected", self._on_nav)
         for icon, title in (
             ("applications-games-symbolic", "Library"),
+            ("application-x-executable-symbolic", "Installers"),
             ("folder-download-symbolic", "Runners"),
             ("system-software-install-symbolic", "Plugins"),
             ("emblem-system-symbolic", "Settings"),
@@ -141,6 +143,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.content_page = content_page
 
         self.content_stack.add_named(self._build_library(), "library")
+        self.installers_page = InstallersPage(
+            self.app.runner_manager,
+            self.app.settings,
+            self.toast,
+            on_installed=self._on_game_saved,
+        )
+        self.content_stack.add_named(self.installers_page, "installers")
         self.runners_page = RunnersPage(
             self.app.runner_manager,
             self.app.proton_manager,
@@ -238,10 +247,14 @@ class MainWindow(Adw.ApplicationWindow):
         empty_add.add_css_class("pill")
         empty_add.add_css_class("suggested-action")
         empty_add.connect("clicked", lambda *_: self.open_add_game_dialog())
+        empty_install = Gtk.Button(label="Easy install")
+        empty_install.add_css_class("pill")
+        empty_install.connect("clicked", lambda *_: self.show_page("installers"))
         empty_runners = Gtk.Button(label="Download a runner")
         empty_runners.add_css_class("pill")
         empty_runners.connect("clicked", lambda *_: self.show_page("runners"))
         empty_box.append(empty_add)
+        empty_box.append(empty_install)
         empty_box.append(empty_runners)
         self.empty_state.set_child(empty_box)
         self.library_stack.add_named(self.empty_state, "empty")
@@ -285,7 +298,7 @@ class MainWindow(Adw.ApplicationWindow):
         return toolbar_view
 
     def show_page(self, name: str):
-        mapping = {"library": 0, "runners": 1, "plugins": 2, "settings": 3}
+        mapping = {"library": 0, "installers": 1, "runners": 2, "plugins": 3, "settings": 4}
         index = mapping.get(name, 0)
         self.nav_list.select_row(self.nav_list.get_row_at_index(index))
         self._show_index(index)
@@ -296,13 +309,15 @@ class MainWindow(Adw.ApplicationWindow):
         self._show_index(row.get_index())
 
     def _show_index(self, index: int):
-        names = ("library", "runners", "plugins", "settings")
-        titles = ("Library", "Runners", "Plugins", "Settings")
+        names = ("library", "installers", "runners", "plugins", "settings")
+        titles = ("Library", "Installers", "Runners", "Plugins", "Settings")
         name = names[index]
         self.content_stack.set_visible_child_name(name)
         self.content_page.set_title(titles[index])
         if name == "plugins":
             self.plugins_page.refresh()
+        if name == "installers":
+            self.installers_page.reload_runners()
 
     def _reload_category_filter(self):
         current = self._selected_category_filter()
@@ -338,6 +353,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_runners_changed(self):
         self.settings_page.reload_runners()
+        self.installers_page.reload_runners()
         self.refresh()
 
     def refresh(self):
@@ -432,6 +448,16 @@ class MainWindow(Adw.ApplicationWindow):
             default_mangohud=settings.default_mangohud,
             default_gamemode=settings.default_gamemode,
             default_prefer_sdl=settings.default_prefer_sdl,
+            default_esync=settings.default_esync,
+            default_fsync=settings.default_fsync,
+            default_dxvk=settings.default_dxvk,
+            default_vkd3d=settings.default_vkd3d,
+            default_nvapi=settings.default_nvapi,
+            default_fsr=settings.default_fsr,
+            default_battleye=settings.default_battleye,
+            default_eac=settings.default_eac,
+            default_gamescope=settings.default_gamescope,
+            default_virtual_desktop=settings.default_virtual_desktop,
             extra_categories=self.app.library.categories(),
             toast=self.toast,
         )
@@ -578,6 +604,7 @@ def shutil_which_gamehandler() -> str:
 def _app_menu():
     menu = Gio.Menu()
     menu.append("Add Game", "app.add-game")
+    menu.append("Easy Installers", "app.installers")
     menu.append("Manage Runners", "app.manage-runners")
     menu.append("Plugins", "app.manage-plugins")
     menu.append("Preferences", "app.preferences")

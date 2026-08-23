@@ -59,8 +59,20 @@ def covers_dir() -> Path:
     return data_home() / "covers"
 
 
+def downloads_dir() -> Path:
+    """Where vendor installer files are cached."""
+    return data_home() / "downloads"
+
+
 def ensure_dirs() -> None:
-    for path in (config_home(), data_home(), runners_dir(), prefixes_dir(), covers_dir()):
+    for path in (
+        config_home(),
+        data_home(),
+        runners_dir(),
+        prefixes_dir(),
+        covers_dir(),
+        downloads_dir(),
+    ):
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -73,5 +85,6 @@ __all__ = [
     "runners_dir",
     "prefixes_dir",
     "covers_dir",
+    "downloads_dir",
     "ensure_dirs",
 ]

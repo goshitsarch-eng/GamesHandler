@@ -82,6 +82,77 @@ class SettingsPage(Gtk.Box):
         self.sdl_row.connect("notify::active", self._on_toggle, "default_prefer_sdl")
         defaults.add(self.sdl_row)
 
+        self.esync_row = Adw.SwitchRow(
+            title="Enable Esync by default",
+            subtitle="Eventfd-based Wine sync. Usually leave this on.",
+        )
+        self.esync_row.set_active(settings.default_esync)
+        self.esync_row.connect("notify::active", self._on_toggle, "default_esync")
+        defaults.add(self.esync_row)
+
+        self.fsync_row = Adw.SwitchRow(
+            title="Enable Fsync by default",
+            subtitle="Futex-based Wine sync. Preferred when the kernel supports it.",
+        )
+        self.fsync_row.set_active(settings.default_fsync)
+        self.fsync_row.connect("notify::active", self._on_toggle, "default_fsync")
+        defaults.add(self.fsync_row)
+
+        compat = Adw.PreferencesGroup(
+            title="New games · compatibility",
+            description="Lutris-style Wine/Proton defaults. You can still change them on each title.",
+        )
+        page.add(compat)
+
+        self.dxvk_row = Adw.SwitchRow(
+            title="Enable DXVK by default",
+            subtitle="Direct3D 8–11 through Vulkan.",
+        )
+        self.dxvk_row.set_active(settings.default_dxvk)
+        self.dxvk_row.connect("notify::active", self._on_toggle, "default_dxvk")
+        compat.add(self.dxvk_row)
+
+        self.vkd3d_row = Adw.SwitchRow(
+            title="Enable VKD3D by default",
+            subtitle="Direct3D 12 through Vulkan.",
+        )
+        self.vkd3d_row.set_active(settings.default_vkd3d)
+        self.vkd3d_row.connect("notify::active", self._on_toggle, "default_vkd3d")
+        compat.add(self.vkd3d_row)
+
+        self.nvapi_row = Adw.SwitchRow(
+            title="Enable DXVK-NVAPI / DLSS by default",
+            subtitle="Only needed for some NVIDIA / DLSS titles.",
+        )
+        self.nvapi_row.set_active(settings.default_nvapi)
+        self.nvapi_row.connect("notify::active", self._on_toggle, "default_nvapi")
+        compat.add(self.nvapi_row)
+
+        self.fsr_row = Adw.SwitchRow(title="Enable AMD FSR by default")
+        self.fsr_row.set_active(settings.default_fsr)
+        self.fsr_row.connect("notify::active", self._on_toggle, "default_fsr")
+        compat.add(self.fsr_row)
+
+        self.battleye_row = Adw.SwitchRow(title="Enable BattlEye runtime by default")
+        self.battleye_row.set_active(settings.default_battleye)
+        self.battleye_row.connect("notify::active", self._on_toggle, "default_battleye")
+        compat.add(self.battleye_row)
+
+        self.eac_row = Adw.SwitchRow(title="Enable Easy Anti-Cheat runtime by default")
+        self.eac_row.set_active(settings.default_eac)
+        self.eac_row.connect("notify::active", self._on_toggle, "default_eac")
+        compat.add(self.eac_row)
+
+        self.gamescope_row = Adw.SwitchRow(title="Enable Gamescope by default")
+        self.gamescope_row.set_active(settings.default_gamescope)
+        self.gamescope_row.connect("notify::active", self._on_toggle, "default_gamescope")
+        compat.add(self.gamescope_row)
+
+        self.desktop_row = Adw.SwitchRow(title="Enable virtual desktop by default")
+        self.desktop_row.set_active(settings.default_virtual_desktop)
+        self.desktop_row.connect("notify::active", self._on_toggle, "default_virtual_desktop")
+        compat.add(self.desktop_row)
+
         behavior = Adw.PreferencesGroup(title="Behavior")
         page.add(behavior)
         self.close_row = Adw.SwitchRow(

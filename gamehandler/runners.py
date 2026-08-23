@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -608,10 +609,122 @@ class ProtonManager:
         raise RuntimeError(f"Could not locate extracted files for {release.tag}")
 
 
+_DESKTOP_SIZE_RE = re.compile(r"^\d{2,5}x\d{2,5}$")
+_ANTICHEAT_DIR_NAMES = {
+    "battleye": ("battleye_runtime", "BattlEye_Runtime", "proton-battleye-runtime"),
+    "eac": ("easyanticheat_runtime", "eac_runtime", "EasyAntiCheatRuntime", "proton-eac-runtime"),
+}
+
+
+def parse_env_block(text: str) -> dict[str, str]:
+    """Parse ``KEY=value`` pairs from a free-form environment block."""
+    result: dict[str, str] = {}
+    if not text:
+        return result
+    for raw in text.replace("\r", "\n").replace(";", "\n").split("\n"):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        items = (
+            parts
+            if len(parts) > 1 and all("=" in part and not part.startswith("=") for part in parts)
+            else [line]
+        )
+        for item in items:
+            if "=" not in item:
+                continue
+            key, _, value = item.partition("=")
+            key = key.strip()
+            if key:
+                result[key] = value.strip().strip('"').strip("'")
+    return result
+
+
+def merge_dll_overrides(env: dict[str, str], extra: str) -> None:
+    """Append a WINEDLLOVERRIDES fragment onto *env*."""
+    extra = extra.strip().strip(";")
+    if not extra:
+        return
+    current = env.get("WINEDLLOVERRIDES", "").strip()
+    if not current:
+        env["WINEDLLOVERRIDES"] = extra
+        return
+    env["WINEDLLOVERRIDES"] = current.rstrip(";") + ";" + extra
+
+
+def normalize_desktop_size(value: str) -> str:
+    size = (value or "").strip().lower().replace(" ", "")
+    if _DESKTOP_SIZE_RE.match(size):
+        return size
+    return "1920x1080"
+
+
+def virtual_desktop_argv(argv: list[str], game: Game) -> list[str]:
+    """Insert Wine's ``explorer /desktop=Name,WxH`` wrapper after the launcher."""
+    if not argv:
+        return argv
+    slug = re.sub(r"[^A-Za-z0-9]+", "", game.name)[:16] or "Game"
+    size = normalize_desktop_size(game.virtual_desktop_size)
+    return [argv[0], "explorer", f"/desktop={slug},{size}", *argv[1:]]
+
+
+def _runtime_dir_ok(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    try:
+        return any(path.iterdir())
+    except OSError:
+        return False
+
+
+def find_anticheat_runtime(kind: str, extra_roots: Iterable[Path] | None = None) -> str:
+    """Locate a BattlEye or Easy Anti-Cheat Proton runtime directory."""
+    names = _ANTICHEAT_DIR_NAMES.get(kind)
+    if not names:
+        return ""
+    roots = [
+        Path.home() / ".local/share/umu",
+        Path.home() / ".local/share/lutris/runtime",
+        Path.home() / ".local/share/Steam/steamapps/common",
+        Path("/usr/share/umu"),
+        Path("/usr/share/steam/compatibilitytools.d"),
+        config.runners_dir(),
+    ]
+    if extra_roots:
+        roots = [*list(extra_roots), *roots]
+    for root in roots:
+        try:
+            exists = root.exists()
+        except OSError:
+            continue
+        if not exists:
+            continue
+        for name in names:
+            candidate = root / name
+            if _runtime_dir_ok(candidate):
+                return str(candidate)
+        try:
+            children = list(root.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir():
+                continue
+            for name in names:
+                candidate = child / name
+                if _runtime_dir_ok(candidate):
+                    return str(candidate)
+                nested = child / "files" / "share" / name
+                if _runtime_dir_ok(nested):
+                    return str(nested)
+    return ""
+
+
 def apply_launch_options(
     game: Game, argv: list[str], env: dict[str, str]
 ) -> tuple[list[str], dict[str, str]]:
-    """Apply Faugus-style launch helpers (MangoHud, GameMode, Wayland, HDR)."""
+    """Apply Lutris/Faugus-style launch helpers and compatibility toggles."""
     env = dict(env)
     wrapped = list(argv)
 
@@ -625,6 +738,42 @@ def apply_launch_options(
     if game.hdr:
         env["PROTON_ENABLE_HDR"] = "1"
         env["DXVK_HDR"] = "1"
+    if not game.is_linux:
+        if game.esync:
+            env["WINEESYNC"] = "1"
+        else:
+            env["WINEESYNC"] = "0"
+            env["PROTON_NO_ESYNC"] = "1"
+        if game.fsync:
+            env["WINEFSYNC"] = "1"
+        else:
+            env["WINEFSYNC"] = "0"
+            env["PROTON_NO_FSYNC"] = "1"
+        if not game.dxvk:
+            env["PROTON_USE_WINED3D"] = "1"
+        if not game.vkd3d:
+            merge_dll_overrides(env, "d3d12,d3d12core=b")
+        if game.nvapi:
+            env["PROTON_ENABLE_NVAPI"] = "1"
+            env["DXVK_ENABLE_NVAPI"] = "1"
+            env["DXVK_NVAPIHACK"] = "0"
+        if game.fsr:
+            env["WINE_FULLSCREEN_FSR"] = "1"
+            env.setdefault("WINE_FULLSCREEN_FSR_STRENGTH", "2")
+        if game.battleye:
+            runtime = find_anticheat_runtime("battleye")
+            if runtime:
+                env["PROTON_BATTLEYE_RUNTIME"] = runtime
+        else:
+            env["PROTON_BATTLEYE_RUNTIME"] = ""
+        if game.eac:
+            runtime = find_anticheat_runtime("eac")
+            if runtime:
+                env["PROTON_EAC_RUNTIME"] = runtime
+        else:
+            env["PROTON_EAC_RUNTIME"] = ""
+        if game.virtual_desktop:
+            wrapped = virtual_desktop_argv(wrapped, game)
 
     if game.mangohud:
         mangohud = shutil.which("mangohud")
@@ -636,6 +785,17 @@ def apply_launch_options(
         gamemode = shutil.which("gamemoderun")
         if gamemode:
             wrapped = [gamemode, *wrapped]
+    if game.gamescope:
+        gamescope = shutil.which("gamescope")
+        if gamescope:
+            gs = [gamescope]
+            if game.hdr:
+                gs.append("--hdr-enabled")
+            gs.append("--")
+            wrapped = [*gs, *wrapped]
+
+    for key, value in parse_env_block(game.environment).items():
+        env[key] = value
 
     return wrapped, env
 
@@ -739,6 +899,11 @@ __all__ = [
     "runner_guides",
     "SYSTEM_WINE_GUIDE",
     "find_wine_binary",
+    "parse_env_block",
+    "merge_dll_overrides",
+    "normalize_desktop_size",
+    "virtual_desktop_argv",
+    "find_anticheat_runtime",
     "apply_launch_options",
     "build_linux_command",
     "create_desktop_shortcut",
