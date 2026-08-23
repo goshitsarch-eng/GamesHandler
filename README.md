@@ -23,6 +23,12 @@ used by [ProtonPlus](https://github.com/Vysp3r/ProtonPlus).
 - Plugins page that detects MangoHud, GameMode, Winetricks, and UMU
 - Desktop shortcuts that launch a library entry with `gamehandler --launch`
 
+Flatpak users who enable Gamescope also need the matching Freedesktop 25.08 extension:
+
+```bash
+flatpak install flathub org.freedesktop.Platform.VulkanLayer.gamescope//25.08
+```
+
 ## Tech stack
 
 | Area | Choice |
