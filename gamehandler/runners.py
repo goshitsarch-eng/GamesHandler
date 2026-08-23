@@ -625,7 +625,10 @@ def parse_env_block(text: str) -> dict[str, str]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        parts = line.split()
+        try:
+            parts = shlex.split(line)
+        except ValueError:
+            parts = [line]
         items = (
             parts
             if len(parts) > 1 and all("=" in part and not part.startswith("=") for part in parts)
@@ -751,6 +754,7 @@ def apply_launch_options(
             env["PROTON_NO_FSYNC"] = "1"
         if not game.dxvk:
             env["PROTON_USE_WINED3D"] = "1"
+            merge_dll_overrides(env, "dxgi,d3d11,d3d10core,d3d9=b")
         if not game.vkd3d:
             merge_dll_overrides(env, "d3d12,d3d12core=b")
         if game.nvapi:
