@@ -627,7 +627,35 @@ def parse_env_block(text: str) -> dict[str, str]:
     result: dict[str, str] = {}
     if not text:
         return result
-    for raw in text.replace("\r", "\n").replace(";", "\n").split("\n"):
+
+    raw_lines: list[str] = []
+    current: list[str] = []
+    quote = ""
+    escaped = False
+    for char in text.replace("\r", "\n"):
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\" and quote:
+            current.append(char)
+            escaped = True
+            continue
+        if char in {"'", '"'}:
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ""
+            current.append(char)
+            continue
+        if not quote and char in {";", "\n"}:
+            raw_lines.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    raw_lines.append("".join(current))
+
+    for raw in raw_lines:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
