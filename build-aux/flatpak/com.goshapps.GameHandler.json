@@ -16,6 +16,7 @@
     "--allow=multiarch",
     "--device=all",
     "--filesystem=home",
+    "--env=PATH=/usr/lib/extensions/vulkan/gamescope/bin:/app/bin:/usr/bin",
     "--talk-name=org.freedesktop.Notifications"
   ],
   "inherit-extensions": [

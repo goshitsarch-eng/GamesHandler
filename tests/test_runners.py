@@ -359,6 +359,14 @@ class LaunchOptionTests(unittest.TestCase):
         )
         self.assertEqual(env["PROTON_ENABLE_HDR"], "1")
 
+    def test_gamescope_missing_fails_instead_of_silently_ignoring_toggle(self):
+        game = Game(name="App", gamescope=True)
+        with (
+            mock.patch("gamehandler.runners.shutil.which", return_value=None),
+            self.assertRaisesRegex(RuntimeError, "VulkanLayer.gamescope"),
+        ):
+            apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {})
+
     def test_additional_app_uses_runner_before_gamescope_wrapping(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -417,6 +425,18 @@ class LaunchOptionTests(unittest.TestCase):
         self.assertEqual(find_anticheat_runtime("battleye", extra_roots=[Path(tmp.name)]), str(runtime))
         self.assertEqual(virtual_desktop_argv(["/usr/bin/wine", "a.exe"], Game(name="App")), 
                          ["/usr/bin/wine", "explorer", "/desktop=App,1920x1080", "a.exe"])
+
+    def test_finds_normal_steam_anticheat_runtime_names(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        battleye = root / "Proton BattlEye Runtime"
+        eac = root / "Proton EasyAntiCheat Runtime"
+        for runtime in (battleye, eac):
+            runtime.mkdir()
+            (runtime / "marker").write_text("ok")
+        self.assertEqual(find_anticheat_runtime("battleye", extra_roots=[root]), str(battleye))
+        self.assertEqual(find_anticheat_runtime("eac", extra_roots=[root]), str(eac))
 
     def test_desktop_shortcut(self):
         tmp = tempfile.TemporaryDirectory()

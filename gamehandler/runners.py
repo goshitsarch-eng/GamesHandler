@@ -611,8 +611,14 @@ class ProtonManager:
 
 _DESKTOP_SIZE_RE = re.compile(r"^\d{2,5}x\d{2,5}$")
 _ANTICHEAT_DIR_NAMES = {
-    "battleye": ("battleye_runtime", "BattlEye_Runtime", "proton-battleye-runtime"),
-    "eac": ("easyanticheat_runtime", "eac_runtime", "EasyAntiCheatRuntime", "proton-eac-runtime"),
+    "battleye": (
+        "battleye_runtime", "BattlEye_Runtime", "proton-battleye-runtime",
+        "Proton BattlEye Runtime",
+    ),
+    "eac": (
+        "easyanticheat_runtime", "eac_runtime", "EasyAntiCheatRuntime",
+        "proton-eac-runtime", "Proton EasyAntiCheat Runtime",
+    ),
 }
 
 
@@ -797,6 +803,11 @@ def apply_launch_options(
                 gs.append("--hdr-enabled")
             gs.append("--")
             wrapped = [*gs, *wrapped]
+        else:
+            raise RuntimeError(
+                "Gamescope is enabled but unavailable. Flatpak users must install "
+                "org.freedesktop.Platform.VulkanLayer.gamescope//25.08 from Flathub."
+            )
 
     for key, value in parse_env_block(game.environment).items():
         env[key] = value
