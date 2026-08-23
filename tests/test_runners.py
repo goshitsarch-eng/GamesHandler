@@ -313,6 +313,7 @@ class LaunchOptionTests(unittest.TestCase):
         game = Game(name="App", dxvk=False)
         _, env = apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {"HOME": "/tmp"})
         self.assertEqual(env["PROTON_USE_WINED3D"], "1")
+        self.assertIn("dxgi,d3d11,d3d10core,d3d9=b", env["WINEDLLOVERRIDES"])
 
     def test_vkd3d_off_overrides_d3d12(self):
         game = Game(name="App", vkd3d=False)
@@ -402,6 +403,10 @@ class LaunchOptionTests(unittest.TestCase):
         env = {"WINEDLLOVERRIDES": "winemenubuilder.exe=d"}
         merge_dll_overrides(env, "d3d12=b")
         self.assertEqual(env["WINEDLLOVERRIDES"], "winemenubuilder.exe=d;d3d12=b")
+
+    def test_parse_env_block_preserves_keys_after_quoted_values(self):
+        parsed = parse_env_block('LABEL="Radeon GPU" WINEESYNC=0')
+        self.assertEqual(parsed, {"LABEL": "Radeon GPU", "WINEESYNC": "0"})
 
     def test_find_anticheat_runtime_in_extra_root(self):
         tmp = tempfile.TemporaryDirectory()
