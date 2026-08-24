@@ -9,14 +9,24 @@ sources used by ProtonPlus (GitHub releases), then lets each game pick one.
 
 from __future__ import annotations
 
+import bz2
+import ctypes
+import errno
+import gzip
+import hashlib
+import io
 import json
+import lzma
 import os
+import posixpath
 import re
 import shlex
 import shutil
 import subprocess
 import tarfile
-from dataclasses import dataclass, field
+import tempfile
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 from urllib.request import Request, urlopen
@@ -29,6 +39,15 @@ METADATA_NAME = ".gamehandler.json"
 USER_AGENT = "GameHandler"
 DXVK_VERSION = "3.0.2"
 DXVK_ROOT = Path("/app/share/gamehandler/dxvk")
+
+# Runner releases are large, but all supported upstream archives fit well below
+# 2 GiB compressed. The expanded ceiling leaves room for Proton's runtime while
+# preventing small compressed tar bombs from consuming the whole disk.
+MAX_RUNNER_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
+MAX_ARCHIVE_UNCOMPRESSED_BYTES = 20 * 1024 * 1024 * 1024
+# Includes tar headers, PAX/GNU metadata, padding, and file payloads.
+MAX_ARCHIVE_DECOMPRESSED_BYTES = 24 * 1024 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 250_000
 
 # Layouts used by Proton tarballs and Kron4ek Wine-Builds.
 _WINE_CANDIDATES = (
@@ -300,10 +319,16 @@ class ReleaseInfo:
     @property
     def install_id(self) -> str:
         """Stable directory name used under the runners folder."""
+        safe_tag = sanitise_release_tag(self.tag)
         if self.family_id == "proton-ge":
-            return self.tag
-        safe_tag = self.tag.replace("/", "-")
-        return f"{self.family_id}-{safe_tag}"
+            return safe_tag
+        safe_family = sanitise_release_tag(self.family_id)
+        combined = f"{safe_family}~f{safe_tag}"
+        if len(combined) <= 180:
+            return safe_install_id(combined)
+        identity = f"{len(self.family_id)}:{self.family_id}{self.tag}"
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+        return safe_install_id(f"{combined[:166]}~i{digest}")
 
     @property
     def family(self) -> RunnerFamily:
@@ -467,51 +492,178 @@ def safe_install_id(install_id: str) -> str:
     return candidate
 
 
-def extract_archive(archive: Path, destination: Path) -> None:
-    """Extract a Proton/Wine tarball, refusing members that escape *destination*.
+def sanitise_release_tag(tag: str) -> str:
+    """Turn an untrusted release tag into one safe, collision-resistant component.
 
-    Uses tarfile's ``data`` filter (CPython 3.11.4+/3.12+), which rejects
-    absolute paths, ``..`` traversal, device files, and symlinks pointing
-    outside the tree, while keeping the executable bit Wine builds need.
+    Common upstream tags remain unchanged. If filtering or truncation changes a
+    tag, bind the resulting component to the complete raw value with a short
+    hash so distinct releases cannot alias the same install directory.
     """
+    raw = str(tag or "").strip()
+    candidate = re.sub(r"[^A-Za-z0-9._+-]+", "-", raw)
+    candidate = candidate.strip(" ._-")
+    if not candidate:
+        raise ValueError(f"Unsafe runner tag: {tag!r}")
+    if candidate == raw and len(candidate) <= 180:
+        return safe_install_id(candidate)
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    prefix = candidate[:166].rstrip(" ._-") or "runner"
+    # ``~`` is outside the accepted raw-tag alphabet, so transformed IDs live
+    # in a namespace that an unchanged raw tag can never occupy.
+    return safe_install_id(f"{prefix}~h{digest}")
+
+
+class _BoundedReader(io.RawIOBase):
+    """Count every decompressed tar byte before tarfile parses metadata."""
+
+    def __init__(self, source, limit: int):
+        self.source = source
+        self.limit = limit
+        self.consumed = 0
+
+    def read(self, size: int = -1) -> bytes:
+        remaining = self.limit - self.consumed
+        request = remaining + 1 if size < 0 or size > remaining + 1 else size
+        chunk = self.source.read(request)
+        self.consumed += len(chunk)
+        if self.consumed > self.limit:
+            raise RuntimeError("Runner archive exceeds the decompressed stream limit")
+        return chunk
+
+    def readable(self) -> bool:
+        return True
+
+
+@contextmanager
+def _bounded_decompressed_stream(archive: Path):
+    """Yield a size-limited uncompressed tar stream for supported formats."""
+
+    raw = archive.open("rb")
+    stream = raw
+    try:
+        magic = raw.read(6)
+        raw.seek(0)
+        if magic.startswith(b"\x1f\x8b"):
+            stream = gzip.GzipFile(fileobj=raw, mode="rb")
+        elif magic.startswith(b"\xfd7zXZ\x00"):
+            stream = lzma.LZMAFile(raw, mode="rb")
+        elif magic.startswith(b"BZh"):
+            stream = bz2.BZ2File(raw, mode="rb")
+        yield _BoundedReader(stream, MAX_ARCHIVE_DECOMPRESSED_BYTES)
+    finally:
+        if stream is not raw:
+            stream.close()
+        raw.close()
+
+
+def extract_archive(archive: Path, destination: Path) -> None:
+    """Safely stream a bounded Proton/Wine tarball into private staging.
+
+    The caller always supplies a fresh staging directory that is discarded on
+    failure, so members can be validated and extracted in one bounded pass. The
+    decompressed-byte limit includes PAX/GNU metadata before tarfile parses it.
+    """
+    data_filter = getattr(tarfile, "data_filter", None)
+    if data_filter is None:  # pragma: no cover - supported production Pythons
+        raise RuntimeError("Secure tar extraction requires Python tarfile.data_filter")
+
     destination.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(archive) as tar:
-        try:
-            tar.extractall(destination, filter="data")
-        except TypeError:  # pragma: no cover - Python without extraction filters
-            _legacy_extractall(tar, destination)
+    member_count = 0
+    payload_bytes = 0
+    with _bounded_decompressed_stream(archive) as stream:
+        with tarfile.open(fileobj=stream, mode="r|") as tar:
+            for member in tar:
+                member_count += 1
+                if member_count > MAX_ARCHIVE_MEMBERS:
+                    raise RuntimeError("Runner archive contains too many members")
+                if member.size < 0:
+                    raise RuntimeError(
+                        f"Runner archive has an invalid member size: {member.name}"
+                    )
+                payload_bytes += member.size
+                if payload_bytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                    raise RuntimeError(
+                        "Runner archive exceeds the uncompressed payload size limit"
+                    )
+                data_filter(member, str(destination))
+                tar.extract(member, destination, filter="data")
 
 
-def _legacy_extractall(tar: tarfile.TarFile, destination: Path) -> None:
-    root = destination.resolve()
-    safe = []
-    for member in tar.getmembers():
-        if member.isdev():
-            raise RuntimeError(f"Refusing special file in archive: {member.name}")
-        target = (root / member.name).resolve()
-        if target != root and root not in target.parents:
-            raise RuntimeError(f"Refusing path traversal in archive: {member.name}")
-        if member.issym() or member.islnk():
-            link = Path(member.linkname)
-            if link.is_absolute():
-                raise RuntimeError(f"Refusing absolute link in archive: {member.name}")
-            base = target.parent if member.issym() else root
-            resolved = (base / link).resolve()
-            if resolved != root and root not in resolved.parents:
-                raise RuntimeError(f"Refusing escaping link in archive: {member.name}")
-        safe.append(member)
-    tar.extractall(destination, members=safe)
+def _validate_staged_runner(candidate: Path, extraction_root: Path) -> None:
+    """Ensure a selected staged tree is self-contained and still runnable."""
+    root = extraction_root.resolve()
+    resolved = candidate.resolve()
+    if candidate.is_symlink() or (resolved != root and root not in resolved.parents):
+        raise RuntimeError("Runner archive resolved outside its private staging directory")
+    if (candidate / METADATA_NAME).exists() or (candidate / METADATA_NAME).is_symlink():
+        raise RuntimeError(f"Runner archive contains reserved file {METADATA_NAME}")
+
+    # A link that is safe relative to the extraction root can become unsafe
+    # after a top-level runner is moved beside existing installations. Re-check
+    # links against the exact tree that will be renamed into place.
+    for current, directories, files in os.walk(candidate, followlinks=False):
+        for name in [*directories, *files]:
+            path = Path(current) / name
+            if not path.is_symlink():
+                continue
+            link_target = os.readlink(path)
+            if Path(link_target).is_absolute():
+                raise RuntimeError(f"Refusing escaping link in runner: {path}")
+            relative_parent = path.relative_to(candidate).parent.as_posix()
+            lexical_target = posixpath.normpath(
+                posixpath.join(relative_parent, link_target)
+            )
+            if lexical_target == ".." or lexical_target.startswith("../"):
+                raise RuntimeError(f"Refusing escaping link in runner: {path}")
+
+    if find_wine_binary(candidate) is None and not (candidate / "proton").is_file():
+        raise RuntimeError("Extracted archive does not contain a usable runner")
 
 
-def _read_family_id(root: Path) -> str:
+def _rename_noreplace(source: Path, target: Path) -> None:
+    """Atomically rename *source* to a target that must not already exist."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:  # pragma: no cover - supported on Linux targets
+        raise RuntimeError("Atomic no-replace runner installation is unavailable")
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    result = renameat2(
+        -100,  # AT_FDCWD
+        os.fsencode(source),
+        -100,
+        os.fsencode(target),
+        1,  # RENAME_NOREPLACE
+    )
+    if result == 0:
+        return
+    error = ctypes.get_errno()
+    if error == errno.EEXIST:
+        raise FileExistsError(f"Runner '{target.name}' is already installed")
+    raise OSError(error, os.strerror(error), str(target))
+
+
+def _read_metadata(root: Path) -> dict:
+    if root.is_symlink():
+        return {}
     meta = root / METADATA_NAME
     if not meta.exists():
-        return ""
+        return {}
     try:
         data = json.loads(meta.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return ""
-    return str(data.get("family") or "")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _read_family_id(root: Path) -> str:
+    return str(_read_metadata(root).get("family") or "")
 
 
 def _write_metadata(root: Path, release: ReleaseInfo) -> None:
@@ -521,7 +673,9 @@ def _write_metadata(root: Path, release: ReleaseInfo) -> None:
         "asset": release.name,
         "source": release.family.github,
     }
-    (root / METADATA_NAME).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    with (root / METADATA_NAME).open("x", encoding="utf-8") as stream:
+        json.dump(payload, stream, indent=2)
+        stream.write("\n")
 
 
 class RunnerManager:
@@ -645,8 +799,24 @@ class ProtonManager:
                 tag=tag, name="", download_url="", size=0, family_id=family_id
             ).install_id
         else:
-            target = self.runners_directory / tag
-        return find_wine_binary(target) is not None or (target / "proton").exists()
+            target = self.runners_directory / sanitise_release_tag(tag)
+        if find_wine_binary(target) is not None or (target / "proton").exists():
+            return True
+        if family_id and self.runners_directory.is_dir():
+            # Preserve recognition of runners installed with the earlier,
+            # non-namespaced directory scheme by their authoritative metadata.
+            for child in self.runners_directory.iterdir():
+                metadata = _read_metadata(child)
+                if (
+                    metadata.get("family") == family_id
+                    and metadata.get("tag") == tag
+                    and (
+                        find_wine_binary(child) is not None
+                        or (child / "proton").is_file()
+                    )
+                ):
+                    return True
+        return False
 
     def is_release_installed(self, release: ReleaseInfo) -> bool:
         return self.is_installed(release.tag, release.family_id)
@@ -657,39 +827,56 @@ class ProtonManager:
         progress_cb: Callable[[float], None] | None = None,
         timeout: int = 60,
     ) -> Path:
-        """Download and extract a build, returning its install directory."""
+        """Download, stage, validate, and atomically install a runner build."""
         self.runners_directory.mkdir(parents=True, exist_ok=True)
         install_id = safe_install_id(release.install_id)
-        archive = self.runners_directory / safe_archive_name(
-            release.name, f"{install_id}.tar.gz"
-        )
-        req = Request(release.download_url, headers={"User-Agent": USER_AGENT})
-        with urlopen(req, timeout=timeout) as resp:  # noqa: S310
-            total = int(resp.headers.get("Content-Length", release.size) or 0)
-            downloaded = 0
-            with open(archive, "wb") as fh:
-                while True:
-                    chunk = resp.read(1024 * 256)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    downloaded += len(chunk)
-                    if progress_cb and total:
-                        progress_cb(downloaded / total)
-
-        before = {p.name for p in self.runners_directory.iterdir() if p.is_dir()}
-        try:
-            extract_archive(archive, self.runners_directory)
-        finally:
-            archive.unlink(missing_ok=True)
-
-        extracted = self._resolve_extracted(release, before)
         target = self.runners_directory / install_id
-        if extracted.resolve() != target.resolve():
-            if target.exists():
-                shutil.rmtree(target)
-            extracted.rename(target)
-        _write_metadata(target, release)
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(f"Runner '{install_id}' is already installed")
+        if release.size < 0 or release.size > MAX_RUNNER_ARCHIVE_BYTES:
+            raise RuntimeError("Runner archive exceeds the download size limit")
+
+        with tempfile.TemporaryDirectory(
+            dir=self.runners_directory, prefix=".install-"
+        ) as staging_name:
+            staging = Path(staging_name)
+            # The archive's remote name is irrelevant once inside the private
+            # staging directory, so do not use it as a local path at all.
+            archive = staging / "runner.archive"
+            extraction_root = staging / "extracted"
+            extraction_root.mkdir(mode=0o700)
+
+            req = Request(release.download_url, headers={"User-Agent": USER_AGENT})
+            with urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                try:
+                    declared = int(resp.headers.get("Content-Length", 0) or 0)
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError("Runner download has an invalid Content-Length") from exc
+                if declared < 0 or declared > MAX_RUNNER_ARCHIVE_BYTES:
+                    raise RuntimeError("Runner archive exceeds the download size limit")
+                total = declared or release.size
+                downloaded = 0
+                with archive.open("xb") as stream:
+                    while True:
+                        chunk = resp.read(1024 * 256)
+                        if not chunk:
+                            break
+                        downloaded += len(chunk)
+                        if downloaded > MAX_RUNNER_ARCHIVE_BYTES:
+                            raise RuntimeError(
+                                "Runner archive exceeds the download size limit"
+                            )
+                        stream.write(chunk)
+                        if progress_cb and total:
+                            progress_cb(min(downloaded / total, 1.0))
+
+            extract_archive(archive, extraction_root)
+            extracted = self._resolve_staged(extraction_root)
+            _validate_staged_runner(extracted, extraction_root)
+            _write_metadata(extracted, release)
+            if progress_cb:
+                progress_cb(1.0)
+            _rename_noreplace(extracted, target)
         return target
 
     def uninstall(self, runner_id: str) -> None:
@@ -700,19 +887,27 @@ class ProtonManager:
             return
         shutil.rmtree(target)
 
-    def _resolve_extracted(self, release: ReleaseInfo, before: set[str]) -> Path:
-        after = {p.name for p in self.runners_directory.iterdir() if p.is_dir()}
-        created = [name for name in sorted(after - before) if name != release.install_id]
-        tagged = self.runners_directory / release.tag
-        if tagged.is_dir():
-            return tagged
-        if len(created) == 1:
-            return self.runners_directory / created[0]
-        for name in created:
-            candidate = self.runners_directory / name
-            if find_wine_binary(candidate) or (candidate / "proton").exists():
-                return candidate
-        raise RuntimeError(f"Could not locate extracted files for {release.tag}")
+    @staticmethod
+    def _resolve_staged(extraction_root: Path) -> Path:
+        """Select a usable root from immediate, non-symlink staged entries."""
+        entries = sorted(extraction_root.iterdir(), key=lambda path: path.name)
+        # Some Wine archives are rootless (bin/wine); keep their complete
+        # extracted tree together rather than guessing one child to move.
+        if find_wine_binary(extraction_root) or (extraction_root / "proton").is_file():
+            return extraction_root
+        if any(entry.is_symlink() for entry in entries):
+            raise RuntimeError("Runner archive contains an unsafe top-level link")
+
+        candidates = []
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            safe_install_id(entry.name)
+            if find_wine_binary(entry) or (entry / "proton").is_file():
+                candidates.append(entry)
+        if len(candidates) != 1:
+            raise RuntimeError("Could not locate one usable runner in the staged archive")
+        return candidates[0]
 
 
 _DESKTOP_SIZE_RE = re.compile(r"^\d{2,5}x\d{2,5}$")
