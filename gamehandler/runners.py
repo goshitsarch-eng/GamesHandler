@@ -723,7 +723,15 @@ def install_bundled_dxvk(
     prefix.mkdir(parents=True, exist_ok=True)
 
     windows = prefix / "drive_c" / "windows"
-    if env.get("WINEARCH") == "win32":
+    is_win32 = env.get("WINEARCH", "").strip().lower() == "win32"
+    if not is_win32:
+        try:
+            is_win32 = "#arch=win32" in (prefix / "system.reg").read_text(
+                encoding="utf-8", errors="ignore"
+            )[:512]
+        except OSError:
+            pass
+    if is_win32:
         targets = ((source / "x32", windows / "system32"),)
     else:
         targets = (
@@ -909,6 +917,7 @@ def launch(game: Game, manager: RunnerManager | None = None):
     else:
         runner = manager.get(game.runner)
         argv, env = runner.build_command(game)
+        env.update(parse_env_block(game.environment))
         runner_executable = argv[0] if argv else ""
         prefix = env.get("WINEPREFIX")
         if prefix:
