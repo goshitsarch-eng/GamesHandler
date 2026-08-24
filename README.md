@@ -57,6 +57,7 @@ System packages (Debian/Ubuntu names):
 python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 libadwaita-1-0
 meson ninja-build gettext desktop-file-utils appstream
 wine        # to actually launch Windows games
+osslsigncode # version 2.14+ verifies Easy Installer Authenticode signatures
 ```
 
 Optional helpers: `winetricks`, `mangohud`, `gamemode`, `umu-run`.
@@ -107,6 +108,13 @@ flatpak run com.goshapps.GameHandler
 The Flatpak uses GNOME 50 on the Wine `stable-25.08` BaseApp and inherits the
 Freedesktop `Compat.i386` and `GL32` extensions. `--allow=multiarch` is required
 for 32-bit Windows games and downloaded Wine/Proton builds.
+The package bundles a checksum-pinned osslsigncode build for authenticated
+Easy Installer downloads. The Microsoft Identity Verification Root CA used for
+Ubisoft's Azure Trusted Signing chain comes from Microsoft's official PKI
+repository at
+`https://www.microsoft.com/pkiops/certs/microsoft%20identity%20verification%20root%20certificate%20authority%202020.crt`;
+its DER SHA-256 is
+`5367f20c7ade0e2bca790915056d086b720c33c1fa2a2661acf787e3292e1270`.
 
 ### Reviewed game-launcher permissions
 

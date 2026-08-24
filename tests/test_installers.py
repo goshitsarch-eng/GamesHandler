@@ -1,7 +1,10 @@
+import io
 import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from gamehandler.installers import (
     APPS,
@@ -9,6 +12,7 @@ from gamehandler.installers import (
     LAUNCHERS,
     MAX_SCAN_DEPTH,
     build_installer_command,
+    download_installer,
     find_prefix_exe,
     game_from_install,
     installer_argv,
@@ -16,8 +20,9 @@ from gamehandler.installers import (
     installers,
     resolve_case_insensitive,
     search_installers,
+    verify_installer_authenticity,
 )
-from gamehandler.runners import WineRunner
+from gamehandler.runners import ProtonRunner, WineRunner
 
 
 EXPECTED_IDS = (
@@ -49,10 +54,18 @@ class CatalogTests(unittest.TestCase):
             self.assertTrue(item.expected_exe, item.id)
             self.assertTrue(item.name)
             self.assertTrue(item.description)
+            self.assertTrue(item.allowed_hosts, item.id)
+            self.assertTrue(item.publishers, item.id)
 
     def test_epic_is_msi(self):
         self.assertEqual(installer_by_id("epic").kind, "msi")
         self.assertTrue(installer_by_id("epic").filename.lower().endswith(".msi"))
+
+    def test_gog_requires_the_full_publisher_identity(self):
+        self.assertEqual(
+            installer_by_id("gog").publishers,
+            ("CN=GOG  sp. z o.o,O=GOG  sp. z o.o",),
+        )
 
     def test_search_and_category_filter(self):
         hits = search_installers("epic")
@@ -61,6 +74,83 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual([item.id for item in apps], ["discord"])
         none = search_installers("no-such-launcher")
         self.assertEqual(none, [])
+
+
+class FakeResponse(io.BytesIO):
+    def __init__(self, body: bytes, final_url: str):
+        super().__init__(body)
+        self._final_url = final_url
+        self.headers = {"Content-Length": str(len(body))}
+
+    def geturl(self):
+        return self._final_url
+
+
+class DownloadSecurityTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dest = Path(self.tmp.name)
+        self.installer = installer_by_id("steam")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_download_is_authenticated_before_atomic_install(self):
+        body = b"MZ" + b"safe-installer"
+        response = FakeResponse(body, self.installer.download_url)
+        with (
+            mock.patch("gamehandler.installers.urlopen", return_value=response),
+            mock.patch("gamehandler.installers.verify_installer_authenticity") as verify,
+        ):
+            target = download_installer(self.installer, self.dest)
+        self.assertEqual(target.read_bytes(), body)
+        verify.assert_called_once()
+        self.assertEqual([item for item in self.dest.iterdir() if item.name.endswith(".part")], [])
+
+    def test_untrusted_redirect_is_rejected_and_removed(self):
+        response = FakeResponse(b"MZpayload", "https://evil.example/SteamSetup.exe")
+        with (
+            mock.patch("gamehandler.installers.urlopen", return_value=response),
+            mock.patch("gamehandler.installers.verify_installer_authenticity") as verify,
+            self.assertRaisesRegex(RuntimeError, "untrusted download origin"),
+        ):
+            download_installer(self.installer, self.dest)
+        verify.assert_not_called()
+        self.assertFalse((self.dest / self.installer.filename).exists())
+        self.assertEqual([item for item in self.dest.iterdir() if item.name.endswith(".part")], [])
+
+    def test_non_pe_payload_is_rejected_before_signature_check(self):
+        response = FakeResponse(b"not-an-executable", self.installer.download_url)
+        with (
+            mock.patch("gamehandler.installers.urlopen", return_value=response),
+            mock.patch("gamehandler.installers.verify_installer_authenticity") as verify,
+            self.assertRaisesRegex(RuntimeError, "not a valid EXE"),
+        ):
+            download_installer(self.installer, self.dest)
+        verify.assert_not_called()
+
+    def test_signature_requires_approved_publisher(self):
+        result = SimpleNamespace(
+            returncode=0,
+            stdout="Signature verification: ok\nSubject: /O=Impostor Corp./CN=Impostor Corp.",
+        )
+        with (
+            mock.patch("gamehandler.installers.shutil.which", return_value="/usr/bin/osslsigncode"),
+            mock.patch("gamehandler.installers.subprocess.run", return_value=result),
+            self.assertRaisesRegex(RuntimeError, "approved publisher"),
+        ):
+            verify_installer_authenticity(self.installer, self.dest / "SteamSetup.exe")
+
+    def test_signature_accepts_verified_approved_publisher(self):
+        result = SimpleNamespace(
+            returncode=0,
+            stdout="Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+        )
+        with (
+            mock.patch("gamehandler.installers.shutil.which", return_value="/usr/bin/osslsigncode"),
+            mock.patch("gamehandler.installers.subprocess.run", return_value=result),
+        ):
+            verify_installer_authenticity(self.installer, self.dest / "SteamSetup.exe")
 
 
 class MsiexecArgvTests(unittest.TestCase):
@@ -75,6 +165,42 @@ class MsiexecArgvTests(unittest.TestCase):
     def test_extra_arguments_are_appended(self):
         argv = installer_argv("/usr/bin/wine", "/tmp/setup.exe", "exe", "/S")
         self.assertEqual(argv[-1], "/S")
+
+    def test_raw_wine_installer_run_gets_no_proton_only_variables(self):
+        """Mirrors the gating launch() applies; Proton vars mean nothing to Wine.
+
+        The anti-cheat runtimes are stubbed as present, otherwise the lookup
+        finds nothing on a test machine and the assertion proves nothing.
+        """
+        runner = WineRunner(binary="/usr/bin/wine")
+        with unittest.mock.patch(
+            "gamehandler.runners.find_anticheat_runtime", lambda *a, **k: "/opt/runtime"
+        ):
+            _argv, env = build_installer_command(
+                runner, "/tmp/prefix", installer_by_id("steam"), "/tmp/SteamSetup.exe"
+            )
+        for key in ("PROTON_BATTLEYE_RUNTIME", "PROTON_EAC_RUNTIME"):
+            self.assertNotIn(key, env, f"{key} leaked into a raw Wine installer run")
+        # Wine's own knobs still apply.
+        self.assertEqual(env["WINEESYNC"], "1")
+        self.assertEqual(env["WINEFSYNC"], "1")
+
+    def test_proton_installer_run_keeps_proton_features(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "GE-Proton"
+        (root / "files" / "bin").mkdir(parents=True)
+        (root / "files" / "bin" / "wine").write_text("#!/bin/sh\n")
+        (root / "proton").write_text("#!/usr/bin/env python\n")
+        runner = ProtonRunner(root)
+        with unittest.mock.patch(
+            "gamehandler.runners.shutil.which", lambda name: "/usr/bin/umu-run"
+        ):
+            argv, env = build_installer_command(
+                runner, "/tmp/prefix", installer_by_id("steam"), "/tmp/SteamSetup.exe"
+            )
+        self.assertEqual(Path(argv[0]).name, "umu-run")
+        self.assertEqual(env["PROTONPATH"], str(root))
 
     def test_build_installer_command_sets_prefix_and_sync(self):
         runner = WineRunner(binary="/usr/bin/wine")
