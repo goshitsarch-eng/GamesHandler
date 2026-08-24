@@ -7,7 +7,6 @@ from unittest import mock
 from gamehandler.models import Game
 from gamehandler.runners import (
     ProtonManager,
-    ProtonRunner,
     RunnerManager,
     SYSTEM_WINE,
     WineRunner,
@@ -217,9 +216,9 @@ class FamilyCatalogTests(unittest.TestCase):
         staging = ProtonManager.parse_releases(payload, "wine-staging")
         self.assertEqual(vanilla[0].name, "wine-11.15-amd64.tar.xz")
         self.assertEqual(vanilla[0].family_id, "wine-vanilla")
-        self.assertEqual(vanilla[0].install_id, "wine-vanilla-11.15")
+        self.assertEqual(vanilla[0].install_id, "wine-vanilla~f11.15")
         self.assertEqual(staging[0].name, "wine-11.15-staging-amd64.tar.xz")
-        self.assertEqual(staging[0].install_id, "wine-staging-11.15")
+        self.assertEqual(staging[0].install_id, "wine-staging~f11.15")
 
     def test_ge_proton_keeps_tag_as_install_id(self):
         release = ProtonManager.parse_releases(
