@@ -425,10 +425,8 @@ class LaunchOptionTests(unittest.TestCase):
             (source / "d3d11.dll").write_bytes(arch.encode())
             (source / "dxgi.dll").write_bytes(arch.encode())
         env = {"WINEPREFIX": str(prefix)}
-        with mock.patch("gamehandler.runners.subprocess.run") as run:
-            install_bundled_dxvk("/usr/bin/wine", env, root)
-            install_bundled_dxvk("/usr/bin/wine", env, root)
-        run.assert_called_once()
+        install_bundled_dxvk(env, root)
+        install_bundled_dxvk(env, root)
         self.assertEqual(
             (prefix / "drive_c/windows/system32/d3d11.dll").read_bytes(), b"x64"
         )
