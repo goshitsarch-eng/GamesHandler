@@ -69,14 +69,17 @@ class Game:
             value = values.get(key)
             if value is None:
                 continue
-            valid = (
-                not isinstance(value, bool)
-                and isinstance(value, (int, float))
-                and math.isfinite(value)
-                and value >= 0
-            )
+            try:
+                numeric = (
+                    float(value)
+                    if not isinstance(value, bool) and isinstance(value, (int, float))
+                    else math.nan
+                )
+            except (TypeError, ValueError, OverflowError):
+                numeric = math.nan
+            valid = math.isfinite(numeric) and numeric >= 0
             if valid:
-                values[key] = float(value)
+                values[key] = numeric
             elif key == "added":
                 values.pop(key)
             else:

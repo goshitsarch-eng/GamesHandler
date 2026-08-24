@@ -114,6 +114,7 @@ class CorruptLibraryTests(unittest.TestCase):
                     {"name": "Text", "added": "yesterday", "last_played": "never"},
                     {"name": "Boolean", "added": True, "last_played": False},
                     {"name": "Nonfinite", "added": float("inf"), "last_played": float("nan")},
+                    {"name": "Overflow", "added": 10**400, "last_played": 10**400},
                 ]
             ),
             encoding="utf-8",
@@ -121,7 +122,7 @@ class CorruptLibraryTests(unittest.TestCase):
         library = Library(self.path)
         self.assertEqual(
             {game.name for game in library.all(sort="added")},
-            {"Text", "Boolean", "Nonfinite"},
+            {"Text", "Boolean", "Nonfinite", "Overflow"},
         )
         for game in library.all(sort="recent"):
             self.assertIsInstance(game.added, float)
