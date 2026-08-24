@@ -884,6 +884,7 @@ def find_anticheat_runtime(kind: str, extra_roots: Iterable[Path] | None = None)
         Path.home() / ".local/share/umu",
         Path.home() / ".local/share/lutris/runtime",
         Path.home() / ".local/share/Steam/steamapps/common",
+        Path.home() / ".var/app/com.valvesoftware.Steam/data/Steam/steamapps/common",
         Path("/usr/share/umu"),
         Path("/usr/share/steam/compatibilitytools.d"),
         config.runners_dir(),

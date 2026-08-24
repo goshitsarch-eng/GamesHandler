@@ -614,6 +614,20 @@ class LaunchOptionTests(unittest.TestCase):
         self.assertEqual(find_anticheat_runtime("battleye", extra_roots=[root]), str(battleye))
         self.assertEqual(find_anticheat_runtime("eac", extra_roots=[root]), str(eac))
 
+    def test_finds_flatpak_steam_anticheat_runtime(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        runtime = (
+            home
+            / ".var/app/com.valvesoftware.Steam/data/Steam/steamapps/common"
+            / "Proton BattlEye Runtime"
+        )
+        runtime.mkdir(parents=True)
+        (runtime / "marker").write_text("ok")
+        with mock.patch("gamehandler.runners.Path.home", return_value=home):
+            self.assertEqual(find_anticheat_runtime("battleye"), str(runtime))
+
     def test_desktop_shortcut(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

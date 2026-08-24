@@ -16,6 +16,7 @@
     "--allow=multiarch",
     "--device=all",
     "--filesystem=home",
+    "--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro",
     "--env=PATH=/usr/lib/extensions/vulkan/gamescope/bin:/app/bin:/usr/bin",
     "--talk-name=org.freedesktop.Notifications"
   ],
