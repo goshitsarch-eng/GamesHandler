@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 import uuid
 from dataclasses import asdict, dataclass, field, fields
@@ -63,7 +64,24 @@ class Game:
     @classmethod
     def from_dict(cls, data: dict) -> "Game":
         known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        values = {k: v for k, v in data.items() if k in known}
+        for key in ("added", "last_played"):
+            value = values.get(key)
+            if value is None:
+                continue
+            valid = (
+                not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and math.isfinite(value)
+                and value >= 0
+            )
+            if valid:
+                values[key] = float(value)
+            elif key == "added":
+                values.pop(key)
+            else:
+                values[key] = 0.0
+        return cls(**values)
 
     def to_dict(self) -> dict:
         return asdict(self)

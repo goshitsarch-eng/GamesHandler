@@ -107,6 +107,27 @@ class CorruptLibraryTests(unittest.TestCase):
         self.path.write_text('[{"name": "X", "from_the_future": 1}]', encoding="utf-8")
         self.assertEqual([g.name for g in Library(self.path).all()], ["X"])
 
+    def test_invalid_persisted_timestamps_are_normalized(self):
+        self.path.write_text(
+            json.dumps(
+                [
+                    {"name": "Text", "added": "yesterday", "last_played": "never"},
+                    {"name": "Boolean", "added": True, "last_played": False},
+                    {"name": "Nonfinite", "added": float("inf"), "last_played": float("nan")},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        library = Library(self.path)
+        self.assertEqual(
+            {game.name for game in library.all(sort="added")},
+            {"Text", "Boolean", "Nonfinite"},
+        )
+        for game in library.all(sort="recent"):
+            self.assertIsInstance(game.added, float)
+            self.assertEqual(game.last_played, 0.0)
+            self.assertEqual(format_last_played(game.last_played), "Never played")
+
 
 class PresentationHelperTests(unittest.TestCase):
     def test_initials_cover_the_shapes_a_library_contains(self):
