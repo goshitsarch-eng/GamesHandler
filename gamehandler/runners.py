@@ -815,22 +815,28 @@ def find_anticheat_runtime(kind: str, extra_roots: Iterable[Path] | None = None)
 
 
 def apply_launch_options(
-    game: Game, argv: list[str], env: dict[str, str]
+    game: Game,
+    argv: list[str],
+    env: dict[str, str],
+    *,
+    proton_features: bool = True,
 ) -> tuple[list[str], dict[str, str]]:
     """Apply Lutris/Faugus-style launch helpers and compatibility toggles."""
     env = dict(env)
     wrapped = list(argv)
 
     if game.prefer_sdl:
-        env["PROTON_ENABLE_HIDAPI"] = "1"
         env["SDL_JOYSTICK_HIDAPI"] = "1"
-        env["PROTON_NO_HIDRAW"] = "1"
-    if game.wayland:
+        if proton_features:
+            env["PROTON_ENABLE_HIDAPI"] = "1"
+            env["PROTON_NO_HIDRAW"] = "1"
+    if game.wayland and proton_features:
         env["PROTON_ENABLE_WAYLAND"] = "1"
         env["DISPLAY"] = ""
     if game.hdr:
-        env["PROTON_ENABLE_HDR"] = "1"
         env["DXVK_HDR"] = "1"
+        if proton_features:
+            env["PROTON_ENABLE_HDR"] = "1"
     if not game.is_linux:
         if game.esync:
             env["WINEESYNC"] = "1"
@@ -847,25 +853,26 @@ def apply_launch_options(
             merge_dll_overrides(env, "dxgi,d3d11,d3d10core,d3d9=b")
         if not game.vkd3d:
             merge_dll_overrides(env, "d3d12,d3d12core=b")
-        if game.nvapi:
+        if game.nvapi and proton_features:
             env["PROTON_ENABLE_NVAPI"] = "1"
             env["DXVK_ENABLE_NVAPI"] = "1"
             env["DXVK_NVAPIHACK"] = "0"
-        if game.fsr:
+        if game.fsr and proton_features:
             env["WINE_FULLSCREEN_FSR"] = "1"
             env.setdefault("WINE_FULLSCREEN_FSR_STRENGTH", "2")
-        if game.battleye:
-            runtime = find_anticheat_runtime("battleye")
-            if runtime:
-                env["PROTON_BATTLEYE_RUNTIME"] = runtime
-        else:
-            env["PROTON_BATTLEYE_RUNTIME"] = ""
-        if game.eac:
-            runtime = find_anticheat_runtime("eac")
-            if runtime:
-                env["PROTON_EAC_RUNTIME"] = runtime
-        else:
-            env["PROTON_EAC_RUNTIME"] = ""
+        if proton_features:
+            if game.battleye:
+                runtime = find_anticheat_runtime("battleye")
+                if runtime:
+                    env["PROTON_BATTLEYE_RUNTIME"] = runtime
+            else:
+                env["PROTON_BATTLEYE_RUNTIME"] = ""
+            if game.eac:
+                runtime = find_anticheat_runtime("eac")
+                if runtime:
+                    env["PROTON_EAC_RUNTIME"] = runtime
+            else:
+                env["PROTON_EAC_RUNTIME"] = ""
         if game.virtual_desktop:
             wrapped = virtual_desktop_argv(wrapped, game)
 
@@ -911,6 +918,7 @@ def build_linux_command(game: Game) -> tuple[list[str], dict[str, str]]:
 def launch(game: Game, manager: RunnerManager | None = None):
     """Launch *game* with its configured runner. Returns the ``Popen`` handle."""
     manager = manager or RunnerManager()
+    uses_proton = False
     if game.is_linux:
         argv, env = build_linux_command(game)
         runner_executable = ""
@@ -931,11 +939,13 @@ def launch(game: Game, manager: RunnerManager | None = None):
             raise RuntimeError("NVAPI/DLSS requires a Proton runner through UMU")
         if game.fsr and not uses_proton:
             raise RuntimeError("FSR requires a compatible Proton runner through UMU")
+        if game.wayland and not uses_proton:
+            raise RuntimeError("Wayland mode requires a Proton runner through UMU")
         dxvk_root = Path(os.environ.get("GAMEHANDLER_DXVK_ROOT", str(DXVK_ROOT)))
         if game.dxvk and not uses_proton and dxvk_root.is_dir():
             install_bundled_dxvk(env, dxvk_root)
 
-    argv, env = apply_launch_options(game, argv, env)
+    argv, env = apply_launch_options(game, argv, env, proton_features=uses_proton)
 
     extra = game.additional_app.strip()
     if extra:

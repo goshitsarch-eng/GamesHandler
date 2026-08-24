@@ -147,7 +147,7 @@ INSTALLERS: tuple[Installer, ...] = (
             "Program Files/GOG Galaxy/GalaxyClient.exe",
         ),
         allowed_hosts=("content-system.gog.com", "gog-cdn-fastly.gog.com"),
-        publishers=("sp. z o.o",),
+        publishers=("CN=GOG  sp. z o.o,O=GOG  sp. z o.o",),
     ),
     Installer(
         id="amazon",

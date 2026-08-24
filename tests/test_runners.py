@@ -469,6 +469,47 @@ class LaunchOptionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "FSR requires a compatible Proton runner"):
             launch(game, manager)
 
+    def test_wayland_rejects_raw_wine_runner(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        game = Game(
+            name="App",
+            exe_path="/g/app.exe",
+            prefix_path=str(Path(tmp.name) / "prefix"),
+            dxvk=False,
+            wayland=True,
+        )
+        manager = mock.Mock()
+        manager.get.return_value = WineRunner(binary="/usr/bin/wine")
+        with self.assertRaisesRegex(RuntimeError, "Wayland mode requires a Proton runner"):
+            launch(game, manager)
+
+    def test_raw_wine_omits_proton_only_anticheat_variables(self):
+        game = Game(name="App", battleye=True, eac=True)
+        with mock.patch("gamehandler.runners.find_anticheat_runtime") as find_runtime:
+            _, env = apply_launch_options(
+                game,
+                ["/usr/bin/wine", "/g/app.exe"],
+                {},
+                proton_features=False,
+            )
+        find_runtime.assert_not_called()
+        self.assertNotIn("PROTON_BATTLEYE_RUNTIME", env)
+        self.assertNotIn("PROTON_EAC_RUNTIME", env)
+
+    def test_raw_wine_keeps_generic_sdl_and_hdr_without_proton_variables(self):
+        game = Game(name="App", prefer_sdl=True, hdr=True)
+        _, env = apply_launch_options(
+            game,
+            ["/usr/bin/wine", "/g/app.exe"],
+            {},
+            proton_features=False,
+        )
+        self.assertEqual(env["SDL_JOYSTICK_HIDAPI"], "1")
+        self.assertEqual(env["DXVK_HDR"], "1")
+        self.assertNotIn("PROTON_ENABLE_HIDAPI", env)
+        self.assertNotIn("PROTON_ENABLE_HDR", env)
+
     def test_user_environment_overrides_toggles(self):
         game = Game(name="App", esync=True, environment="WINEESYNC=0 FOO=bar")
         _, env = apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {})
