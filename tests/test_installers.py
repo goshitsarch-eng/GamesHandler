@@ -58,6 +58,12 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(installer_by_id("epic").kind, "msi")
         self.assertTrue(installer_by_id("epic").filename.lower().endswith(".msi"))
 
+    def test_gog_requires_the_full_publisher_identity(self):
+        self.assertEqual(
+            installer_by_id("gog").publishers,
+            ("CN=GOG  sp. z o.o,O=GOG  sp. z o.o",),
+        )
+
     def test_search_and_category_filter(self):
         hits = search_installers("epic")
         self.assertEqual([item.id for item in hits], ["epic"])
