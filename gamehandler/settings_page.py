@@ -163,6 +163,16 @@ class SettingsPage(Gtk.Box):
         self.close_row.connect("notify::active", self._on_toggle, "close_on_launch")
         behavior.add(self.close_row)
 
+    def sync_view_mode(self, mode: str):
+        """Mirror the library toolbar's grid/list toggle without re-saving."""
+        if mode not in VIEW_MODES:
+            return
+        self._reloading = True
+        try:
+            self.view_row.set_selected(VIEW_MODES.index(mode))
+        finally:
+            self._reloading = False
+
     def reload_runners(self):
         self._reloading = True
         model = Gtk.StringList()

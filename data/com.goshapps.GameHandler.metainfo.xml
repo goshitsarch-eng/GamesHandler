@@ -12,6 +12,14 @@
       interface for organising your library, downloading Proton and Wine
       builds, and launching games in isolated prefixes.
     </p>
+    <p>
+      GameHandler is a front-end, not a compatibility layer. Windows games run on
+      Wine, usually through a Proton build maintained by someone else, with
+      Direct3D translated by DXVK and VKD3D-Proton. GameHandler downloads those
+      builds from their maintainers own release pages, sets up isolated
+      prefixes, and stays out of their way. A Credits page inside the
+      application names every upstream project it depends on.
+    </p>
     <p>Features:</p>
     <ul>
       <li>Dark mode with system and light alternatives</li>
@@ -23,6 +31,7 @@
       <li>Detect optional MangoHud, GameMode, Winetricks, and UMU helpers</li>
       <li>Lutris-style Esync and Fsync toggles per game</li>
       <li>Easy installers for store launchers and common Windows apps</li>
+      <li>Credits page listing every upstream project, with links and licenses</li>
     </ul>
   </description>
   <launchable type="desktop-id">com.goshapps.GameHandler.desktop</launchable>
@@ -33,6 +42,23 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.6.0" date="2026-08-24">
+      <description>
+        <p>
+          A polish and hardening release. The library grid now tiles correctly
+          instead of showing one card per row, games without artwork get a
+          generated cover, and the library gained sorting plus a remove
+          confirmation. Downloaded runner archives are extracted with path
+          traversal protection, and desktop shortcuts escape their values.
+        </p>
+        <p>
+          Adds a Credits page acknowledging Wine, Proton, DXVK, VKD3D-Proton,
+          the Proton and Wine build maintainers, and the launchers GameHandler
+          learned from, together with the reasoning behind shipping one app
+          instead of asking people to assemble the stack themselves.
+        </p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-08-23">
       <description>
         <p>

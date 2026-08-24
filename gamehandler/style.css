@@ -1,9 +1,12 @@
 /* GameHandler — professional dark-first launcher chrome.
-   Libadwaita already themes widgets; this only refines spacing and cards. */
+   Libadwaita already themes widgets; this only refines spacing, cards, and the
+   placeholder artwork used when a game has no cover yet. */
 
 @define-color accent_bg_color #4c8dff;
 @define-color accent_fg_color #ffffff;
 @define-color accent_color #8bb4ff;
+
+/* ---------------------------------------------------------------- sidebar */
 
 .gh-sidebar {
   background-color: alpha(@window_bg_color, 0.92);
@@ -19,40 +22,81 @@
   padding: 4px 2px;
 }
 
+.gh-sidebar row:hover {
+  background-color: alpha(@accent_bg_color, 0.08);
+}
+
 .gh-sidebar row:selected {
   background-color: alpha(@accent_bg_color, 0.18);
 }
 
+.gh-sidebar-footer {
+  border-top: 1px solid alpha(currentColor, 0.08);
+}
+
+.gh-credit-link {
+  font-size: 0.82em;
+  opacity: 0.7;
+  border-radius: 8px;
+}
+
+.gh-credit-link:hover {
+  opacity: 1;
+}
+
+/* ------------------------------------------------------------- game cards */
+
 .game-card {
   border-radius: 16px;
-  padding: 8px 8px 4px;
-  min-width: 196px;
-  min-height: 228px;
-  background-color: alpha(@card_bg_color, 0.9);
+  padding: 0;
+  background-color: alpha(@card_bg_color, 0.92);
+  transition: background-color 150ms ease, box-shadow 150ms ease;
 }
 
 .game-card:hover {
-  background-color: alpha(@accent_bg_color, 0.10);
+  background-color: alpha(@accent_bg_color, 0.12);
+  box-shadow: 0 2px 12px alpha(#000000, 0.28);
 }
 
-.game-card .game-art {
-  margin-top: 8px;
-  border-radius: 12px;
+.game-card .game-title {
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .game-cover {
   border-radius: 12px;
-  min-height: 160px;
 }
 
-.game-card .game-title {
-  font-weight: 600;
-  letter-spacing: 0.01em;
+/* Placeholder plate: initials on a tinted panel, used instead of a themed icon
+   so the library stays readable even where our symbolics are missing. */
+.game-art-plate {
+  font-size: 2.2em;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: alpha(#ffffff, 0.92);
+  text-shadow: 0 1px 2px alpha(#000000, 0.45);
+  border-radius: 12px;
 }
+
+.game-art-plate-compact {
+  font-size: 0.95em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.gh-art-0 { background-image: linear-gradient(150deg, #3f6fd8, #23407f); }
+.gh-art-1 { background-image: linear-gradient(150deg, #8a4fd6, #4b2380); }
+.gh-art-2 { background-image: linear-gradient(150deg, #1f8f78, #10513f); }
+.gh-art-3 { background-image: linear-gradient(150deg, #c1533f, #6f2a20); }
+.gh-art-4 { background-image: linear-gradient(150deg, #b8862c, #6d4a12); }
+.gh-art-5 { background-image: linear-gradient(150deg, #2c7fa8, #164b64); }
+.gh-art-6 { background-image: linear-gradient(150deg, #a4406e, #5d1f3c); }
+.gh-art-7 { background-image: linear-gradient(150deg, #4c6b8a, #2a3c50); }
 
 .game-badge {
   font-size: 0.75em;
-  padding: 2px 8px;
+  font-weight: 600;
+  padding: 2px 9px;
   border-radius: 999px;
   background-color: alpha(@accent_bg_color, 0.16);
 }
@@ -61,14 +105,23 @@
   background: transparent;
 }
 
-.gh-hero {
-  padding: 8px 4px 16px;
+.play-pill {
+  min-width: 84px;
+  font-weight: 600;
 }
 
-.play-pill {
-  min-width: 88px;
-}
+/* ------------------------------------------------------------------ pages */
 
 .runner-progress {
   margin: 8px 12px 0;
+}
+
+.gh-credit-intro {
+  padding: 6px 2px 2px;
+  opacity: 0.85;
+}
+
+.gh-section-note {
+  font-size: 0.9em;
+  opacity: 0.75;
 }

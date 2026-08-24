@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import uuid
 from pathlib import Path
 
 import gi
@@ -14,8 +15,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from .installers import (  # noqa: E402
-    APPS,
-    LAUNCHERS,
+    INSTALLER_CATEGORIES,
     Installer,
     build_installer_command,
     download_installer,
@@ -24,7 +24,6 @@ from .installers import (  # noqa: E402
     prepare_prefix,
     search_installers,
 )
-from .models import Game  # noqa: E402
 from .runners import SYSTEM_WINE  # noqa: E402
 
 
@@ -49,6 +48,24 @@ class InstallersPage(Gtk.Box):
         )
         toolbar.add_top_bar(header)
 
+        self.search_button = Gtk.ToggleButton(icon_name="system-search-symbolic")
+        self.search_button.set_tooltip_text("Search the catalog")
+        header.pack_end(self.search_button)
+
+        self.search_bar = Gtk.SearchBar()
+        self.search_entry = Gtk.SearchEntry(placeholder_text="Search installers…")
+        self.search_entry.set_hexpand(True)
+        self.search_entry.connect("search-changed", lambda *_: self._rebuild_list())
+        clamp = Adw.Clamp(maximum_size=640, tightening_threshold=420)
+        clamp.set_child(self.search_entry)
+        self.search_bar.set_child(clamp)
+        self.search_bar.connect_entry(self.search_entry)
+        self.search_button.bind_property(
+            "active", self.search_bar, "search-mode-enabled", 2 | 1
+        )
+        self.search_bar.connect("notify::search-mode-enabled", lambda *_: self._rebuild_list())
+        toolbar.add_top_bar(self.search_bar)
+
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.progress = Gtk.ProgressBar()
         self.progress.add_css_class("runner-progress")
@@ -62,24 +79,22 @@ class InstallersPage(Gtk.Box):
         intro = Adw.PreferencesGroup(
             title="Easy install",
             description=(
-                "Download the official Windows installer, run it in an isolated "
-                "prefix, and add the result to your library. You finish the vendor "
-                "wizard yourself — GameHandler just sets up Wine/Proton."
+                "GameHandler downloads the vendor's official Windows installer, runs "
+                "it in a fresh isolated Wine prefix, then adds the result to your "
+                "library. You complete the vendor's own wizard — silent-install "
+                "flags are unreliable under Wine."
             ),
         )
         page.add(intro)
 
         self.runner_ids: list[str] = []
         self.runner_row = Adw.ComboRow(title="Runner for new installs")
+        self.runner_row.set_subtitle("Each install gets its own prefix under your data directory.")
         intro.add(self.runner_row)
         self.reload_runners()
 
-        self.search_row = Adw.EntryRow(title="Search")
-        self.search_row.connect("changed", lambda *_: self._rebuild_list())
-        intro.add(self.search_row)
-
         filter_model = Gtk.StringList()
-        self.filter_ids = ["All", LAUNCHERS, APPS]
+        self.filter_ids = ["All", *INSTALLER_CATEGORIES]
         for name in self.filter_ids:
             filter_model.append(name)
         self.filter_row = Adw.ComboRow(title="Show", model=filter_model)
@@ -89,7 +104,7 @@ class InstallersPage(Gtk.Box):
 
         self.catalog_group = Adw.PreferencesGroup(
             title="Catalog",
-            description="Official vendor downloads only. No game files are redistributed.",
+            description="Official vendor downloads only. No game or launcher files are redistributed.",
         )
         page.add(self.catalog_group)
         self._rebuild_list()
@@ -122,18 +137,30 @@ class InstallersPage(Gtk.Box):
             return self.filter_ids[idx]
         return "All"
 
+    def _query(self) -> str:
+        return self.search_entry.get_text() if self.search_bar.get_search_mode() else ""
+
     def _rebuild_list(self):
         for row in _iter_rows(self.catalog_group):
             self.catalog_group.remove(row)
 
-        items = search_installers(self.search_row.get_text(), self._selected_category())
+        items = search_installers(self._query(), self._selected_category())
         if not items:
-            empty = Adw.ActionRow(title="No matching installers")
+            empty = Adw.ActionRow(
+                title="No matching installers",
+                subtitle="Try a different search, or switch the Show filter back to All.",
+            )
             empty.set_sensitive(False)
             self.catalog_group.add(empty)
             return
         for installer in items:
-            row = Adw.ActionRow(title=installer.name, subtitle=installer.description)
+            # notes carry vendor-specific gotchas; showing them here is the only
+            # place a user finds out before the wizard opens.
+            subtitle = installer.description
+            if installer.notes:
+                subtitle = f"{subtitle}\n{installer.notes}"
+            row = Adw.ActionRow(title=installer.name, subtitle=subtitle)
+            row.set_subtitle_lines(0)
             badge = Gtk.Label(label=installer.category)
             badge.add_css_class("game-badge")
             badge.set_valign(Gtk.Align.CENTER)
@@ -143,6 +170,7 @@ class InstallersPage(Gtk.Box):
             button.add_css_class("pill")
             button.set_valign(Gtk.Align.CENTER)
             button.set_sensitive(not self._busy)
+            button.set_tooltip_text(f"Download and run the official {installer.name} installer")
             button.connect("clicked", self._on_install, installer)
             row.add_suffix(button)
             self.catalog_group.add(row)
@@ -162,8 +190,12 @@ class InstallersPage(Gtk.Box):
         if not runner.is_available():
             self.toast(f"{runner.name} is not available. Download a runner first.")
             return
-        game_id = Game(name=installer.name).id
-        prefix = prepare_prefix(game_id)
+        game_id = uuid.uuid4().hex
+        try:
+            prefix = prepare_prefix(game_id)
+        except OSError as exc:
+            self.toast(f"Could not create a prefix for {installer.name}: {exc}")
+            return
         self._set_busy(True)
         self.progress.set_fraction(0)
         self.toast(f"Downloading {installer.name}…")
@@ -212,7 +244,7 @@ class InstallersPage(Gtk.Box):
             self._finish_install(installer, found, prefix, runner_id, game_id)
             return False
         suffix = f" (installer exited {returncode})" if returncode else ""
-        self.toast(f"Could not find the {installer.name} executable in the prefix{suffix}. Browse for it?")
+        self.toast(f"Could not find the {installer.name} executable in the prefix{suffix}.")
         self._offer_browse(installer, prefix, runner_id, game_id)
         return False
 
@@ -279,3 +311,6 @@ def _iter_rows(group):
                 stack.append(child)
             child = child.get_next_sibling()
     return rows
+
+
+__all__ = ["InstallersPage"]
