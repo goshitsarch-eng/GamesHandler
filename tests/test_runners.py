@@ -432,6 +432,21 @@ class LaunchOptionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "NVAPI/DLSS requires a Proton runner"):
             launch(game, manager)
 
+    def test_fsr_rejects_raw_wine_runner(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        game = Game(
+            name="App",
+            exe_path="/g/app.exe",
+            prefix_path=str(Path(tmp.name) / "prefix"),
+            dxvk=False,
+            fsr=True,
+        )
+        manager = mock.Mock()
+        manager.get.return_value = WineRunner(binary="/usr/bin/wine")
+        with self.assertRaisesRegex(RuntimeError, "FSR requires a compatible Proton runner"):
+            launch(game, manager)
+
     def test_user_environment_overrides_toggles(self):
         game = Game(name="App", esync=True, environment="WINEESYNC=0 FOO=bar")
         _, env = apply_launch_options(game, ["/usr/bin/wine", "/g/app.exe"], {})
