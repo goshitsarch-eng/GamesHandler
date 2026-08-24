@@ -918,8 +918,11 @@ def launch(game: Game, manager: RunnerManager | None = None):
             and runner.proton_script() is not None
             and Path(runner_executable).name == "umu-run"
         )
-        if game.dxvk and not uses_proton:
-            install_bundled_dxvk(env)
+        if game.nvapi and not uses_proton:
+            raise RuntimeError("NVAPI/DLSS requires a Proton runner through UMU")
+        dxvk_root = Path(os.environ.get("GAMEHANDLER_DXVK_ROOT", str(DXVK_ROOT)))
+        if game.dxvk and not uses_proton and dxvk_root.is_dir():
+            install_bundled_dxvk(env, dxvk_root)
 
     argv, env = apply_launch_options(game, argv, env)
 

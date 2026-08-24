@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -396,6 +397,40 @@ class LaunchOptionTests(unittest.TestCase):
             popen.call_args_list[1].args[0],
             ["/usr/bin/gamescope", "--", "/usr/bin/wine", "/g/app.exe"],
         )
+
+    def test_source_install_without_flatpak_dxvk_bundle_still_launches(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        game = Game(
+            name="App",
+            exe_path="/g/app.exe",
+            prefix_path=str(Path(tmp.name) / "prefix"),
+            dxvk=True,
+        )
+        manager = mock.Mock()
+        manager.get.return_value = WineRunner(binary="/usr/bin/wine")
+        missing = str(Path(tmp.name) / "missing-dxvk")
+        with (
+            mock.patch.dict(os.environ, {"GAMEHANDLER_DXVK_ROOT": missing}),
+            mock.patch("gamehandler.runners.subprocess.Popen") as popen,
+        ):
+            launch(game, manager)
+        self.assertEqual(popen.call_args.args[0], ["/usr/bin/wine", "/g/app.exe"])
+
+    def test_nvapi_rejects_raw_wine_runner(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        game = Game(
+            name="App",
+            exe_path="/g/app.exe",
+            prefix_path=str(Path(tmp.name) / "prefix"),
+            dxvk=False,
+            nvapi=True,
+        )
+        manager = mock.Mock()
+        manager.get.return_value = WineRunner(binary="/usr/bin/wine")
+        with self.assertRaisesRegex(RuntimeError, "NVAPI/DLSS requires a Proton runner"):
+            launch(game, manager)
 
     def test_user_environment_overrides_toggles(self):
         game = Game(name="App", esync=True, environment="WINEESYNC=0 FOO=bar")
