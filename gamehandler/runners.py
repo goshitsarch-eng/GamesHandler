@@ -697,7 +697,6 @@ def merge_dll_overrides(env: dict[str, str], extra: str) -> None:
 
 
 def install_bundled_dxvk(
-    wine: str,
     env: dict[str, str],
     root: Path | None = None,
 ) -> None:
@@ -722,14 +721,6 @@ def install_bundled_dxvk(
         pass
 
     prefix.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [wine, "wineboot", "-u"],
-        env=env,
-        check=True,
-        timeout=120,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
 
     windows = prefix / "drive_c" / "windows"
     if env.get("WINEARCH") == "win32":
@@ -928,7 +919,7 @@ def launch(game: Game, manager: RunnerManager | None = None):
             and Path(runner_executable).name == "umu-run"
         )
         if game.dxvk and not uses_proton:
-            install_bundled_dxvk(runner_executable, env)
+            install_bundled_dxvk(env)
 
     argv, env = apply_launch_options(game, argv, env)
 
