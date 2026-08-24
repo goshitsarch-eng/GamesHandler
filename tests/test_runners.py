@@ -417,6 +417,28 @@ class LaunchOptionTests(unittest.TestCase):
             launch(game, manager)
         self.assertEqual(popen.call_args.args[0], ["/usr/bin/wine", "/g/app.exe"])
 
+    def test_per_game_winearch_reaches_dxvk_installer(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        dxvk_root = Path(tmp.name) / "dxvk"
+        dxvk_root.mkdir()
+        game = Game(
+            name="App",
+            exe_path="/g/app.exe",
+            prefix_path=str(Path(tmp.name) / "prefix"),
+            environment="WINEARCH=win32",
+            dxvk=True,
+        )
+        manager = mock.Mock()
+        manager.get.return_value = WineRunner(binary="/usr/bin/wine")
+        with (
+            mock.patch.dict(os.environ, {"GAMEHANDLER_DXVK_ROOT": str(dxvk_root)}),
+            mock.patch("gamehandler.runners.install_bundled_dxvk") as install,
+            mock.patch("gamehandler.runners.subprocess.Popen"),
+        ):
+            launch(game, manager)
+        self.assertEqual(install.call_args.args[0]["WINEARCH"], "win32")
+
     def test_nvapi_rejects_raw_wine_runner(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -487,6 +509,24 @@ class LaunchOptionTests(unittest.TestCase):
             (prefix / ".gamehandler-dxvk-version").read_text().strip(), "3.0.2"
         )
         self.assertIn("d3d11", env["WINEDLLOVERRIDES"])
+
+    def test_installs_x32_dxvk_for_existing_win32_prefix(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "dxvk"
+        prefix = Path(tmp.name) / "prefix"
+        for arch in ("x32", "x64"):
+            source = root / arch
+            source.mkdir(parents=True)
+            (source / "d3d11.dll").write_bytes(arch.encode())
+        prefix.mkdir()
+        (prefix / "system.reg").write_text("WINE REGISTRY Version 2\n#arch=win32\n")
+        env = {"WINEPREFIX": str(prefix)}
+        install_bundled_dxvk(env, root)
+        self.assertEqual(
+            (prefix / "drive_c/windows/system32/d3d11.dll").read_bytes(), b"x32"
+        )
+        self.assertFalse((prefix / "drive_c/windows/syswow64").exists())
 
     def test_parse_env_block_preserves_keys_after_quoted_values(self):
         parsed = parse_env_block('LABEL="Radeon GPU" WINEESYNC=0')
