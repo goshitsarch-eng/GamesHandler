@@ -78,7 +78,7 @@ sudo meson install -C build  # installs the `gamehandler` launcher, desktop file
 
 ```bash
 ./build-aux/flatpak/build.sh
-flatpak install --user dist/gamehandler-0.4.0.flatpak
+flatpak --user install --reinstall dist/gamehandler-0.5.0.flatpak
 flatpak run com.goshapps.GameHandler
 ```
 

@@ -18,6 +18,7 @@ from gamehandler.runners import (
     family_by_id,
     find_anticheat_runtime,
     find_wine_binary,
+    install_bundled_dxvk,
     launch,
     merge_dll_overrides,
     normalize_desktop_size,
@@ -373,9 +374,10 @@ class LaunchOptionTests(unittest.TestCase):
         game = Game(
             name="App",
             exe_path="/g/app.exe",
-            prefix_path=tmp.name,
-            additional_app="/g/helper.exe",
+            prefix_path=str(Path(tmp.name) / "prefix"),
+            dxvk=False,
             gamescope=True,
+            additional_app="/g/helper.exe",
         )
         manager = mock.Mock()
         manager.get.return_value = WineRunner(binary="/usr/bin/wine")
@@ -412,6 +414,32 @@ class LaunchOptionTests(unittest.TestCase):
         merge_dll_overrides(env, "d3d12=b")
         self.assertEqual(env["WINEDLLOVERRIDES"], "winemenubuilder.exe=d;d3d12=b")
 
+    def test_installs_bundled_dxvk_into_raw_wine_prefix_once(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "dxvk"
+        prefix = Path(tmp.name) / "prefix"
+        for arch in ("x32", "x64"):
+            source = root / arch
+            source.mkdir(parents=True)
+            (source / "d3d11.dll").write_bytes(arch.encode())
+            (source / "dxgi.dll").write_bytes(arch.encode())
+        env = {"WINEPREFIX": str(prefix)}
+        with mock.patch("gamehandler.runners.subprocess.run") as run:
+            install_bundled_dxvk("/usr/bin/wine", env, root)
+            install_bundled_dxvk("/usr/bin/wine", env, root)
+        run.assert_called_once()
+        self.assertEqual(
+            (prefix / "drive_c/windows/system32/d3d11.dll").read_bytes(), b"x64"
+        )
+        self.assertEqual(
+            (prefix / "drive_c/windows/syswow64/d3d11.dll").read_bytes(), b"x32"
+        )
+        self.assertEqual(
+            (prefix / ".gamehandler-dxvk-version").read_text().strip(), "3.0.2"
+        )
+        self.assertIn("d3d11", env["WINEDLLOVERRIDES"])
+
     def test_parse_env_block_preserves_keys_after_quoted_values(self):
         parsed = parse_env_block('LABEL="Radeon GPU" WINEESYNC=0')
         self.assertEqual(parsed, {"LABEL": "Radeon GPU", "WINEESYNC": "0"})
@@ -426,6 +454,13 @@ class LaunchOptionTests(unittest.TestCase):
                 "WINEDLLOVERRIDES": "dinput8=n,b;winemenubuilder.exe=d",
                 "WINEESYNC": "0",
             },
+        )
+
+    def test_parse_env_block_preserves_unquoted_windows_backslashes(self):
+        parsed = parse_env_block(r"MOD_PATH=C:\Games\Mods WINEESYNC=0")
+        self.assertEqual(
+            parsed,
+            {"MOD_PATH": r"C:\Games\Mods", "WINEESYNC": "0"},
         )
 
     def test_find_anticheat_runtime_in_extra_root(self):

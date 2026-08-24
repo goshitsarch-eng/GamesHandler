@@ -27,6 +27,8 @@ from .models import Game
 SYSTEM_WINE = "wine-system"
 METADATA_NAME = ".gamehandler.json"
 USER_AGENT = "GameHandler"
+DXVK_VERSION = "3.0.2"
+DXVK_ROOT = Path("/app/share/gamehandler/dxvk")
 
 # Layouts used by Proton tarballs and Kron4ek Wine-Builds.
 _WINE_CANDIDATES = (
@@ -660,7 +662,11 @@ def parse_env_block(text: str) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         try:
-            parts = shlex.split(line)
+            lexer = shlex.shlex(line, posix=True)
+            lexer.whitespace_split = True
+            lexer.commenters = ""
+            lexer.escape = ""
+            parts = list(lexer)
         except ValueError:
             parts = [line]
         items = (
@@ -688,6 +694,57 @@ def merge_dll_overrides(env: dict[str, str], extra: str) -> None:
         env["WINEDLLOVERRIDES"] = extra
         return
     env["WINEDLLOVERRIDES"] = current.rstrip(";") + ";" + extra
+
+
+def install_bundled_dxvk(
+    wine: str,
+    env: dict[str, str],
+    root: Path | None = None,
+) -> None:
+    """Install the bundled DXVK DLLs into a raw-Wine prefix once per version."""
+    prefix_value = env.get("WINEPREFIX", "").strip()
+    if not prefix_value:
+        raise RuntimeError("DXVK requires a configured Wine prefix")
+    source = Path(root) if root is not None else Path(
+        os.environ.get("GAMEHANDLER_DXVK_ROOT", str(DXVK_ROOT))
+    )
+    required = [source / arch / "d3d11.dll" for arch in ("x32", "x64")]
+    if not all(path.is_file() for path in required):
+        raise RuntimeError("Bundled DXVK runtime is unavailable")
+
+    prefix = Path(prefix_value)
+    marker = prefix / ".gamehandler-dxvk-version"
+    try:
+        if marker.read_text(encoding="utf-8").strip() == DXVK_VERSION:
+            merge_dll_overrides(env, "d3d8,d3d9,d3d10core,d3d11,dxgi=n,b")
+            return
+    except OSError:
+        pass
+
+    prefix.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [wine, "wineboot", "-u"],
+        env=env,
+        check=True,
+        timeout=120,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    windows = prefix / "drive_c" / "windows"
+    if env.get("WINEARCH") == "win32":
+        targets = ((source / "x32", windows / "system32"),)
+    else:
+        targets = (
+            (source / "x64", windows / "system32"),
+            (source / "x32", windows / "syswow64"),
+        )
+    for source_dir, target_dir in targets:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for dll in source_dir.glob("*.dll"):
+            shutil.copy2(dll, target_dir / dll.name)
+    marker.write_text(DXVK_VERSION + "\n", encoding="utf-8")
+    merge_dll_overrides(env, "d3d8,d3d9,d3d10core,d3d11,dxgi=n,b")
 
 
 def normalize_desktop_size(value: str) -> str:
@@ -865,6 +922,13 @@ def launch(game: Game, manager: RunnerManager | None = None):
         prefix = env.get("WINEPREFIX")
         if prefix:
             Path(prefix).mkdir(parents=True, exist_ok=True)
+        uses_proton = (
+            isinstance(runner, ProtonRunner)
+            and runner.proton_script() is not None
+            and Path(runner_executable).name == "umu-run"
+        )
+        if game.dxvk and not uses_proton:
+            install_bundled_dxvk(runner_executable, env)
 
     argv, env = apply_launch_options(game, argv, env)
 
@@ -944,6 +1008,7 @@ __all__ = [
     "find_wine_binary",
     "parse_env_block",
     "merge_dll_overrides",
+    "install_bundled_dxvk",
     "normalize_desktop_size",
     "virtual_desktop_argv",
     "find_anticheat_runtime",

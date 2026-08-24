@@ -25,6 +25,22 @@
   ],
   "modules": [
     {
+      "name": "dxvk-runtime",
+      "buildsystem": "simple",
+      "build-commands": [
+        "mkdir -p /app/share/gamehandler/dxvk /app/share/licenses/com.goshapps.GameHandler",
+        "cp -a x32 x64 /app/share/gamehandler/dxvk/",
+        "install -Dm644 LICENSE /app/share/licenses/com.goshapps.GameHandler/DXVK.txt"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/doitsujin/dxvk/releases/download/v3.0.2/dxvk-3.0.2.tar.gz",
+          "sha256": "9c538924110a7cdef871ca36dee218c0774124374ffdeb38af4b76be55bdf7c2"
+        }
+      ]
+    },
+    {
       "name": "gamehandler",
       "buildsystem": "meson",
       "sources": [
