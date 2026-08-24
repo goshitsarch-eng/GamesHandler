@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
+import subprocess
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from . import config
@@ -36,12 +40,15 @@ class Installer:
     filename: str
     kind: str  # exe | msi
     expected_exe: tuple[str, ...]
+    allowed_hosts: tuple[str, ...]
+    publishers: tuple[str, ...]
     arguments: str = ""
     launch_arguments: str = ""
     notes: str = ""
     esync: bool = True
     fsync: bool = True
     library_category: str = LAUNCHERS
+    microsoft_trust_root: bool = False
 
 
 INSTALLERS: tuple[Installer, ...] = (
@@ -62,6 +69,8 @@ INSTALLERS: tuple[Installer, ...] = (
             "Program Files/Battle.net/Battle.net Launcher.exe",
             "Program Files/Battle.net/Battle.net.exe",
         ),
+        allowed_hosts=("downloader.battle.net",),
+        publishers=("Blizzard Entertainment",),
         notes="Complete the Battle.net wizard, then sign in once before launching games.",
     ),
     Installer(
@@ -80,6 +89,11 @@ INSTALLERS: tuple[Installer, ...] = (
             "Program Files (x86)/Epic Games/Launcher/Portal/Binaries/Win64/EpicGamesLauncher.exe",
             "Program Files/Epic Games/Launcher/Portal/Binaries/Win64/EpicGamesLauncher.exe",
         ),
+        allowed_hosts=(
+            "launcher-public-service-prod06.ol.epicgames.com",
+            "epicgames-download1.akamaized.net",
+        ),
+        publishers=("Epic Games Inc.",),
     ),
     Installer(
         id="ea-app",
@@ -97,6 +111,8 @@ INSTALLERS: tuple[Installer, ...] = (
             "Program Files/Electronic Arts/EA Desktop/EA Desktop/EADesktop.exe",
             "Program Files (x86)/Electronic Arts/EA Desktop/EA Desktop/EALauncher.exe",
         ),
+        allowed_hosts=("origin-a.akamaihd.net",),
+        publishers=("Electronic Arts",),
     ),
     Installer(
         id="ubisoft",
@@ -111,6 +127,9 @@ INSTALLERS: tuple[Installer, ...] = (
             "Program Files/Ubisoft/Ubisoft Game Launcher/UbisoftConnect.exe",
             "Program Files (x86)/Ubisoft/Ubisoft Game Launcher/upc.exe",
         ),
+        allowed_hosts=("static3.cdn.ubi.com",),
+        publishers=("UBISOFT ENTERTAINMENT",),
+        microsoft_trust_root=True,
     ),
     Installer(
         id="gog",
@@ -119,14 +138,16 @@ INSTALLERS: tuple[Installer, ...] = (
         category=LAUNCHERS,
         download_url=(
             "https://content-system.gog.com/open_link/download"
-            "?path=/open/galaxy/client/setup_galaxy_2.0.exe"
+            "?path=/open/galaxy/client/setup_galaxy_2.1.8.30.exe"
         ),
-        filename="setup_galaxy_2.0.exe",
+        filename="setup_galaxy_2.1.8.30.exe",
         kind="exe",
         expected_exe=(
             "Program Files (x86)/GOG Galaxy/GalaxyClient.exe",
             "Program Files/GOG Galaxy/GalaxyClient.exe",
         ),
+        allowed_hosts=("content-system.gog.com", "gog-cdn-fastly.gog.com"),
+        publishers=("sp. z o.o",),
     ),
     Installer(
         id="amazon",
@@ -141,6 +162,8 @@ INSTALLERS: tuple[Installer, ...] = (
             "Program Files/Amazon Games/App/Amazon Games.exe",
             "Program Files (x86)/Amazon Games/App/Amazon Games.exe",
         ),
+        allowed_hosts=("download.amazongames.com",),
+        publishers=("Amazon.com Services LLC",),
     ),
     Installer(
         id="rockstar",
@@ -154,6 +177,8 @@ INSTALLERS: tuple[Installer, ...] = (
             "Program Files/Rockstar Games/Launcher/Launcher.exe",
             "Program Files (x86)/Rockstar Games/Launcher/Launcher.exe",
         ),
+        allowed_hosts=("gamedownloads.rockstargames.com",),
+        publishers=("Rockstar Games",),
     ),
     Installer(
         id="steam",
@@ -167,6 +192,8 @@ INSTALLERS: tuple[Installer, ...] = (
             "Program Files (x86)/Steam/steam.exe",
             "Program Files/Steam/steam.exe",
         ),
+        allowed_hosts=("cdn.akamai.steamstatic.com",),
+        publishers=("Valve Corp.",),
     ),
     Installer(
         id="discord",
@@ -180,6 +207,8 @@ INSTALLERS: tuple[Installer, ...] = (
             "users/steamuser/AppData/Local/Discord/Update.exe",
             "users/steamuser/AppData/Local/Discord/Discord.exe",
         ),
+        allowed_hosts=("discord.com", "stable.dl2.discordapp.net"),
+        publishers=("Discord Inc.",),
         launch_arguments="--processStart Discord.exe",
         library_category="Utility",
         notes="Discord lives under Local AppData. Launch Update.exe if the app folder version changes.",
@@ -339,29 +368,113 @@ def find_prefix_exe(prefix: str | Path, expected: Iterable[str]) -> Path | None:
     return None
 
 
+MAX_INSTALLER_BYTES = 1024 * 1024 * 1024
+_AUTHENTICODE_ROOT_NAME = "microsoft-identity-verification-root-ca-2020.pem"
+
+
+def _authenticode_root_path() -> Path:
+    override = os.environ.get("GAMEHANDLER_AUTHENTICODE_ROOT", "").strip()
+    candidates = (
+        Path(override) if override else None,
+        Path(__file__).with_name(_AUTHENTICODE_ROOT_NAME),
+        Path(__file__).resolve().parent.parent / "data" / _AUTHENTICODE_ROOT_NAME,
+        Path("/app/share/gamehandler") / _AUTHENTICODE_ROOT_NAME,
+    )
+    for candidate in candidates:
+        if candidate is not None and candidate.is_file():
+            return candidate
+    raise RuntimeError("The Microsoft Authenticode trust root is unavailable")
+
+
+def _validate_download_origin(installer: Installer, final_url: str) -> None:
+    parsed = urlparse(final_url)
+    host = (parsed.hostname or "").lower()
+    allowed = {item.lower() for item in installer.allowed_hosts}
+    if parsed.scheme.lower() != "https" or host not in allowed:
+        raise RuntimeError(
+            f"{installer.name} redirected to an untrusted download origin: {final_url}"
+        )
+
+
+def _validate_installer_magic(installer: Installer, path: Path) -> None:
+    with path.open("rb") as stream:
+        magic = stream.read(8)
+    expected = b"MZ" if installer.kind == "exe" else bytes.fromhex("D0CF11E0A1B11AE1")
+    if not magic.startswith(expected):
+        raise RuntimeError(f"{installer.name} download is not a valid {installer.kind.upper()} file")
+
+
+def verify_installer_authenticity(installer: Installer, path: Path) -> None:
+    """Verify the Authenticode chain and expected publisher before execution."""
+    verifier = shutil.which("osslsigncode")
+    if verifier is None:
+        raise RuntimeError("osslsigncode is required to verify downloaded installers")
+    command = [verifier, "verify", "-in", str(path)]
+    if installer.microsoft_trust_root:
+        root = str(_authenticode_root_path())
+        command[2:2] = ["-CAfile", root, "-TSA-CAfile", root]
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=90,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Timed out verifying {installer.name}'s signature") from exc
+    output = result.stdout or ""
+    if result.returncode != 0 or "Signature verification: ok" not in output:
+        tail = "\n".join(output.splitlines()[-8:])
+        raise RuntimeError(f"{installer.name} has an invalid Authenticode signature\n{tail}")
+    folded = output.casefold()
+    if not any(publisher.casefold() in folded for publisher in installer.publishers):
+        raise RuntimeError(f"{installer.name} is not signed by an approved publisher")
+
+
 def download_installer(
     installer: Installer,
     dest_dir: Path | None = None,
     progress_cb: Callable[[float], None] | None = None,
     timeout: int = 60,
 ) -> Path:
-    """Download the vendor installer and return the local file path."""
+    """Atomically download and authenticate a vendor installer."""
     dest = Path(dest_dir) if dest_dir is not None else config.downloads_dir()
     dest.mkdir(parents=True, exist_ok=True)
     target = dest / installer.filename
-    req = Request(installer.download_url, headers={"User-Agent": USER_AGENT})
-    with urlopen(req, timeout=timeout) as resp:  # noqa: S310
-        total = int(resp.headers.get("Content-Length", 0) or 0)
-        downloaded = 0
-        with open(target, "wb") as fh:
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=dest, prefix=f".{installer.filename}.", suffix=".part"
+    )
+    temporary = Path(temporary_name)
+    try:
+        req = Request(installer.download_url, headers={"User-Agent": USER_AGENT})
+        with os.fdopen(descriptor, "wb") as stream, urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            _validate_download_origin(installer, resp.geturl())
+            total = int(resp.headers.get("Content-Length", 0) or 0)
+            if total > MAX_INSTALLER_BYTES:
+                raise RuntimeError(f"{installer.name} installer exceeds the download size limit")
+            downloaded = 0
             while True:
                 chunk = resp.read(1024 * 256)
                 if not chunk:
                     break
-                fh.write(chunk)
                 downloaded += len(chunk)
+                if downloaded > MAX_INSTALLER_BYTES:
+                    raise RuntimeError(f"{installer.name} installer exceeds the download size limit")
+                stream.write(chunk)
                 if progress_cb and total:
                     progress_cb(min(downloaded / total, 1.0))
+        _validate_installer_magic(installer, temporary)
+        verify_installer_authenticity(installer, temporary)
+        os.replace(temporary, target)
+    except Exception:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        temporary.unlink(missing_ok=True)
+        raise
     if progress_cb:
         progress_cb(1.0)
     return target
@@ -413,4 +526,5 @@ __all__ = [
     "prepare_prefix",
     "resolve_case_insensitive",
     "search_installers",
+    "verify_installer_authenticity",
 ]

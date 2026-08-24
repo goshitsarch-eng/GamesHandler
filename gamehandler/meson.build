@@ -19,3 +19,8 @@ sources = [
 ]
 
 py.install_sources(sources, subdir: 'gamehandler')
+
+install_data(
+  '../data/microsoft-identity-verification-root-ca-2020.pem',
+  install_dir: py.get_install_dir() / 'gamehandler',
+)
