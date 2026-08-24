@@ -7,6 +7,7 @@ fallbacks). No SteamGridDB key is required.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -80,6 +81,28 @@ DEFAULT_CATEGORIES = (
     "Utility",
     "Emulation",
 )
+
+
+# Tile art falls back to initials on a coloured plate when a game has no cover,
+# which also keeps the library readable when an icon theme lacks our symbolics.
+COVER_ACCENTS = 8
+
+
+def initials(name: str) -> str:
+    """Up to two uppercase initials for placeholder cover art."""
+    words = [word for word in re.split(r"[^0-9A-Za-z]+", name or "") if word]
+    if not words:
+        return "?"
+    if len(words) == 1:
+        return words[0][:2].upper()
+    return (words[0][0] + words[1][0]).upper()
+
+
+def accent_index(seed: str, buckets: int = COVER_ACCENTS) -> int:
+    """A stable colour bucket for *seed*, so a game's tile never changes shade."""
+    buckets = max(1, buckets)
+    digest = hashlib.sha256((seed or "").encode("utf-8")).digest()
+    return digest[0] % buckets
 
 
 def normalize_title(value: str) -> str:
@@ -163,12 +186,19 @@ def cover_urls_for_app(appid: int, tiny_image: str = "") -> list[str]:
     return urls
 
 
-def _request(url: str, timeout: int = 20) -> bytes:
+# Covers are small; refuse to buffer a CDN that streams without end.
+MAX_RESPONSE_BYTES = 12 * 1024 * 1024
+
+
+def _request(url: str, timeout: int = 20, limit: int = MAX_RESPONSE_BYTES) -> bytes:
     req = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
     with urlopen(req, timeout=timeout) as resp:  # noqa: S310
         if getattr(resp, "status", 200) >= 400:
             raise urllib.error.HTTPError(url, resp.status, "HTTP error", resp.headers, None)
-        return resp.read()
+        data = resp.read(limit + 1)
+    if len(data) > limit:
+        raise RuntimeError(f"Response from {url} exceeded {limit} bytes")
+    return data
 
 
 def search_steam(query: str, timeout: int = 20) -> list[dict]:
@@ -266,7 +296,10 @@ def fetch_cover(query: str, game_id: str, timeout: int = 20) -> CoverHit:
 
 
 __all__ = [
+    "COVER_ACCENTS",
     "DEFAULT_CATEGORIES",
+    "accent_index",
+    "initials",
     "CoverHit",
     "normalize_title",
     "score_title",

@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 from . import config
+from .models import SORT_MODES
 from .runners import SYSTEM_WINE
 
 COLOR_SCHEMES = ("system", "light", "dark")
@@ -19,6 +20,7 @@ class Settings:
 
     color_scheme: str = "dark"
     view_mode: str = "grid"
+    sort_mode: str = "name"
     default_runner: str = SYSTEM_WINE
     default_mangohud: bool = False
     default_gamemode: bool = False
@@ -44,6 +46,8 @@ class Settings:
             settings.color_scheme = "dark"
         if settings.view_mode not in VIEW_MODES:
             settings.view_mode = "grid"
+        if settings.sort_mode not in SORT_MODES:
+            settings.sort_mode = "name"
         return settings
 
     def to_dict(self) -> dict:
@@ -70,4 +74,4 @@ class Settings:
         tmp.replace(target)
 
 
-__all__ = ["COLOR_SCHEMES", "VIEW_MODES", "Settings"]
+__all__ = ["COLOR_SCHEMES", "SORT_MODES", "VIEW_MODES", "Settings"]

@@ -11,6 +11,9 @@ from typing import Iterable
 
 from . import config
 
+UNCATEGORIZED = "Uncategorized"
+SORT_MODES = ("name", "recent", "added")
+
 
 @dataclass
 class Game:
@@ -52,6 +55,11 @@ class Game:
     def is_linux(self) -> bool:
         return self.kind == "linux"
 
+    @property
+    def display_category(self) -> str:
+        """The category shown and filtered on; blanks fold into Uncategorized."""
+        return (self.category or "").strip() or UNCATEGORIZED
+
     @classmethod
     def from_dict(cls, data: dict) -> "Game":
         known = {f.name for f in fields(cls)}
@@ -59,6 +67,33 @@ class Game:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def format_last_played(timestamp: float, now: float | None = None) -> str:
+    """A short, human-readable 'last played' label for library rows."""
+    if not timestamp:
+        return "Never played"
+    current = time.time() if now is None else now
+    seconds = max(0.0, current - timestamp)
+    minutes = seconds / 60
+    if minutes < 2:
+        return "Played just now"
+    if minutes < 60:
+        return f"Played {int(minutes)} min ago"
+    hours = minutes / 60
+    if hours < 24:
+        count = int(hours)
+        return f"Played {count} hour ago" if count == 1 else f"Played {count} hours ago"
+    days = int(hours / 24)
+    if days == 1:
+        return "Played yesterday"
+    if days < 30:
+        return f"Played {days} days ago"
+    months = days // 30
+    if months < 12:
+        return f"Played {months} month ago" if months == 1 else f"Played {months} months ago"
+    years = months // 12
+    return f"Played {years} year ago" if years == 1 else f"Played {years} years ago"
 
 
 class Library:
@@ -71,13 +106,23 @@ class Library:
 
     def load(self) -> None:
         self._games = {}
-        if self.path.exists():
+        if not self.path.exists():
+            return
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            raw = []
+        if not isinstance(raw, list):
+            # A corrupt or hand-edited file must not take the library down.
+            raw = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
             try:
-                raw = json.loads(self.path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                raw = []
-            for item in raw:
                 game = Game.from_dict(item)
+            except (TypeError, ValueError):
+                continue
+            if game.name:
                 self._games[game.id] = game
 
     def save(self) -> None:
@@ -87,8 +132,14 @@ class Library:
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         tmp.replace(self.path)
 
-    def all(self) -> list[Game]:
-        return sorted(self._games.values(), key=lambda g: g.name.lower())
+    def all(self, sort: str = "name") -> list[Game]:
+        games = list(self._games.values())
+        if sort == "recent":
+            # Never-played titles sink to the bottom, then alphabetical.
+            return sorted(games, key=lambda g: (-g.last_played, g.name.lower()))
+        if sort == "added":
+            return sorted(games, key=lambda g: (-g.added, g.name.lower()))
+        return sorted(games, key=lambda g: g.name.lower())
 
     def get(self, game_id: str) -> Game | None:
         return self._games.get(game_id)
@@ -113,22 +164,22 @@ class Library:
             game.last_played = time.time()
             self.save()
 
-    def search(self, query: str, category: str = "") -> list[Game]:
+    def search(self, query: str, category: str = "", sort: str = "name") -> list[Game]:
         query = query.strip().lower()
-        games = self.all()
+        games = self.all(sort=sort)
         if category and category != "All":
-            games = [g for g in games if g.category == category]
+            games = [g for g in games if g.display_category == category]
         if not query:
             return games
         return [
             g
             for g in games
-            if query in g.name.lower() or query in (g.category or "").lower()
+            if query in g.name.lower() or query in g.display_category.lower()
         ]
 
     def categories(self) -> list[str]:
-        found = {g.category.strip() or "Uncategorized" for g in self._games.values()}
-        return sorted(found, key=lambda name: (name == "Uncategorized", name.lower()))
+        found = {g.display_category for g in self._games.values()}
+        return sorted(found, key=lambda name: (name == UNCATEGORIZED, name.lower()))
 
     def __len__(self) -> int:
         return len(self._games)
@@ -137,4 +188,4 @@ class Library:
         return iter(self.all())
 
 
-__all__ = ["Game", "Library"]
+__all__ = ["SORT_MODES", "UNCATEGORIZED", "Game", "Library", "format_last_played"]

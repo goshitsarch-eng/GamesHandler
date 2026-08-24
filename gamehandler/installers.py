@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 
 from . import config
 from .models import Game
-from .runners import USER_AGENT, Runner, apply_launch_options
+from .runners import USER_AGENT, Runner, apply_launch_options, uses_proton_runtime
 
 LAUNCHERS = "Launchers"
 APPS = "Apps"
@@ -275,7 +275,19 @@ def build_installer_command(
     if not argv:
         raise RuntimeError(f"Runner '{runner.name}' produced an empty command")
     wrapped = installer_argv(argv[0], installer_path, installer.kind, installer.arguments)
-    return apply_launch_options(placeholder, wrapped, env)
+    # A vendor installer run under raw Wine must not be handed Proton-only
+    # variables, for the same reason launch() gates them.
+    return apply_launch_options(
+        placeholder, wrapped, env, proton_features=uses_proton_runtime(runner, argv)
+    )
+
+
+def safe_download_name(filename: str, fallback: str = "installer") -> str:
+    """Reduce a catalog filename to a bare name before joining it onto a path."""
+    candidate = Path(str(filename or "").replace("\\", "/")).name.strip()
+    if not candidate or candidate in {".", ".."}:
+        return f"{fallback}.exe"
+    return candidate
 
 
 def _iter_ci_children(directory: Path):
@@ -311,23 +323,48 @@ def _user_profile_candidates(drive_c: Path) -> list[Path]:
     return [child for child in _iter_ci_children(users) if child.is_dir()]
 
 
-def _search_known_roots(drive_c: Path, filename: str) -> Path | None:
-    """Look for *filename* under typical install locations without walking all of drive_c."""
+# A finished prefix holds tens of thousands of files. Bound the fallback scan so
+# a missing executable costs a moment, not a frozen window.
+MAX_SCAN_DEPTH = 6
+MAX_SCAN_ENTRIES = 40000
+_SKIP_DIRS = {"windows", "syswow64", "system32", "winsxs", "temp", "tmp", "cache"}
+
+
+def _search_known_roots(drive_c: Path, filenames: Iterable[str]) -> Path | None:
+    """Find the first of *filenames* under typical install locations.
+
+    Walks each root once for the whole set of names — scanning per name used to
+    re-read Program Files from scratch for every candidate — and stops at a
+    bounded depth and entry count so an unlucky prefix cannot hang the UI.
+    """
+    targets = {name.lower() for name in filenames if name}
+    if not targets:
+        return None
     roots = [
         drive_c / "Program Files",
         drive_c / "Program Files (x86)",
         *_user_profile_candidates(drive_c),
     ]
-    target = filename.lower()
+    budget = MAX_SCAN_ENTRIES
     for root in roots:
-        if not root.exists():
+        if not root.is_dir():
             continue
-        try:
-            for path in root.rglob("*"):
-                if path.is_file() and path.name.lower() == target:
-                    return path
-        except OSError:
-            continue
+        stack: list[tuple[Path, int]] = [(root, 0)]
+        while stack and budget > 0:
+            current, depth = stack.pop()
+            for child in _iter_ci_children(current):
+                budget -= 1
+                if budget <= 0:
+                    break
+                try:
+                    is_dir = child.is_dir()
+                except OSError:
+                    continue
+                if is_dir:
+                    if depth < MAX_SCAN_DEPTH and child.name.lower() not in _SKIP_DIRS:
+                        stack.append((child, depth + 1))
+                elif child.name.lower() in targets:
+                    return child
     return None
 
 
@@ -355,17 +392,8 @@ def find_prefix_exe(prefix: str | Path, expected: Iterable[str]) -> Path | None:
                 if found is not None and found.is_file():
                     return found
 
-    seen: set[str] = set()
-    for rel in expected_list:
-        name = Path(rel).name
-        key = name.lower()
-        if not name or key in seen:
-            continue
-        seen.add(key)
-        found = _search_known_roots(drive_c, name)
-        if found is not None:
-            return found
-    return None
+    names = [Path(rel).name for rel in expected_list if Path(rel).name]
+    return _search_known_roots(drive_c, names)
 
 
 MAX_INSTALLER_BYTES = 1024 * 1024 * 1024
@@ -442,9 +470,13 @@ def download_installer(
     """Atomically download and authenticate a vendor installer."""
     dest = Path(dest_dir) if dest_dir is not None else config.downloads_dir()
     dest.mkdir(parents=True, exist_ok=True)
-    target = dest / installer.filename
+    # Reduce the catalog filename to a bare name before it reaches the
+    # filesystem: it is joined onto a directory and used as a mkstemp prefix,
+    # neither of which tolerates a separator.
+    filename = safe_download_name(installer.filename, installer.id)
+    target = dest / filename
     descriptor, temporary_name = tempfile.mkstemp(
-        dir=dest, prefix=f".{installer.filename}.", suffix=".part"
+        dir=dest, prefix=f".{filename}.", suffix=".part"
     )
     temporary = Path(temporary_name)
     try:
@@ -525,6 +557,7 @@ __all__ = [
     "installers",
     "prepare_prefix",
     "resolve_case_insensitive",
+    "safe_download_name",
     "search_installers",
     "verify_installer_authenticity",
 ]

@@ -1,8 +1,9 @@
 import json
+import re
 import unittest
 from pathlib import Path
 
-from gamehandler import APP_ID
+from gamehandler import APP_ID, __version__
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +45,32 @@ class PackagingTests(unittest.TestCase):
         self.assertGreater(len(license_text.splitlines()), 600)
         self.assertIn("meson.project_source_root() / 'LICENSE'", data_meson)
         self.assertIn("'licenses' / app_id", data_meson)
+
+
+class VersionLockstepTests(unittest.TestCase):
+    """__init__.py, meson.build, and the metainfo release notes must agree."""
+
+    def test_meson_project_version_matches_the_package(self):
+        meson = (ROOT / "meson.build").read_text()
+        match = re.search(r"version:\s*'([^']+)'", meson)
+        self.assertIsNotNone(match, "meson.build declares a project version")
+        self.assertEqual(match.group(1), __version__)
+
+    def test_metainfo_documents_the_current_version_first(self):
+        metainfo = (ROOT / "data" / f"{APP_ID_EXPECTED}.metainfo.xml").read_text()
+        versions = re.findall(r'<release version="([^"]+)"', metainfo)
+        self.assertTrue(versions, "the metainfo lists releases")
+        self.assertEqual(versions[0], __version__, "newest release note is this version")
+
+    def test_readme_flatpak_bundle_name_matches_the_version(self):
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn(f"gamehandler-{__version__}.flatpak", readme)
+
+    def test_every_python_module_is_installed_by_meson(self):
+        listed = (ROOT / "gamehandler" / "meson.build").read_text()
+        for module in sorted((ROOT / "gamehandler").glob("*.py")):
+            with self.subTest(module=module.name):
+                self.assertIn(f"'{module.name}'", listed)
 
 
 if __name__ == "__main__":

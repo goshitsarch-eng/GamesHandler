@@ -47,6 +47,7 @@ class RunnerFamily:
     description: str
     github: str
     kind: str  # proton | wine
+    maintainer: str = ""
     require: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
     prefer: tuple[str, ...] = ()
@@ -70,6 +71,7 @@ RUNNER_FAMILIES: tuple[RunnerFamily, ...] = (
         description="GloriousEggroll's community Proton with codecs and game fixes.",
         github="GloriousEggroll/proton-ge-custom",
         kind="proton",
+        maintainer="GloriousEggroll",
         when_to_use=(
             "Start here for most Windows games. GE includes codecs, protonfixes, "
             "and the broadest out-of-the-box compatibility."
@@ -81,6 +83,7 @@ RUNNER_FAMILIES: tuple[RunnerFamily, ...] = (
         description="Proton build with RTSP and media playback patches (VRChat).",
         github="SpookySkeletons/proton-rtsp",
         kind="proton",
+        maintainer="SpookySkeletons",
         when_to_use=(
             "Use for VRChat or titles that play in-game video over RTSP. "
             "Not a general replacement for Proton-GE."
@@ -92,6 +95,7 @@ RUNNER_FAMILIES: tuple[RunnerFamily, ...] = (
         description="CachyOS Proton with extra performance and Wayland work.",
         github="CachyOS/proton-cachyos",
         kind="proton",
+        maintainer="The CachyOS project",
         prefer=("slr", "x86_64"),
         exclude=("v3", "znver4", "native"),
         when_to_use=(
@@ -105,6 +109,7 @@ RUNNER_FAMILIES: tuple[RunnerFamily, ...] = (
         description="Etaash Proton with Wine Wayland, HDR, and FSR additions.",
         github="Etaash-mathamsetty/Proton",
         kind="proton",
+        maintainer="Etaash Mathamsetty",
         when_to_use=(
             "Pick this for native Wine Wayland, HDR, or FSR extras. Needs a "
             "recent GPU stack; keep Proton-GE as the fallback."
@@ -116,6 +121,7 @@ RUNNER_FAMILIES: tuple[RunnerFamily, ...] = (
         description="Kron4ek upstream Wine, without staging patches.",
         github="Kron4ek/Wine-Builds",
         kind="wine",
+        maintainer="Kron4ek",
         require=("amd64",),
         exclude=("staging", "tkg", "proton", "wow64"),
         when_to_use=(
@@ -129,6 +135,7 @@ RUNNER_FAMILIES: tuple[RunnerFamily, ...] = (
         description="Kron4ek Wine with the Staging patchset.",
         github="Kron4ek/Wine-Builds",
         kind="wine",
+        maintainer="Kron4ek",
         require=("staging", "amd64"),
         exclude=("tkg", "wow64"),
         when_to_use=(
@@ -142,6 +149,7 @@ RUNNER_FAMILIES: tuple[RunnerFamily, ...] = (
         description="Kron4ek Wine Staging plus TkG gaming patches.",
         github="Kron4ek/Wine-Builds",
         kind="wine",
+        maintainer="Kron4ek",
         require=("staging-tkg", "amd64"),
         exclude=("wow64",),
         when_to_use=(
@@ -155,6 +163,7 @@ RUNNER_FAMILIES: tuple[RunnerFamily, ...] = (
         description="Kron4ek Wine built from Proton's Wine tree.",
         github="Kron4ek/Wine-Builds",
         kind="wine",
+        maintainer="Kron4ek",
         require=("proton", "amd64"),
         exclude=("staging", "wow64"),
         when_to_use=(
@@ -183,12 +192,44 @@ def families() -> tuple[RunnerFamily, ...]:
     return RUNNER_FAMILIES
 
 
+@dataclass(frozen=True)
+class RunnerGuide:
+    """A "which runner should I use?" row, with credit to its maintainer."""
+
+    title: str
+    kind: str
+    advice: str
+    maintainer: str = ""
+    homepage: str = ""
+
+
+def runner_guide_details() -> list[RunnerGuide]:
+    """Guide rows including who maintains each build and where it lives."""
+    rows = [
+        RunnerGuide(
+            title="System Wine",
+            kind="wine",
+            advice=SYSTEM_WINE_GUIDE,
+            maintainer="WineHQ",
+            homepage="https://www.winehq.org",
+        )
+    ]
+    for family in RUNNER_FAMILIES:
+        rows.append(
+            RunnerGuide(
+                title=family.name,
+                kind=family.kind,
+                advice=family.when_to_use,
+                maintainer=family.maintainer,
+                homepage=family.homepage,
+            )
+        )
+    return rows
+
+
 def runner_guides() -> list[tuple[str, str, str]]:
     """``(title, kind, advice)`` rows for the Runners guide."""
-    rows = [("System Wine", "wine", SYSTEM_WINE_GUIDE)]
-    for family in RUNNER_FAMILIES:
-        rows.append((family.name, family.kind, family.when_to_use))
-    return rows
+    return [(row.title, row.kind, row.advice) for row in runner_guide_details()]
 
 
 def _looks_like_archive(name: str) -> bool:
@@ -404,6 +445,64 @@ class ProtonRunner(Runner):
         return argv, env
 
 
+def safe_archive_name(name: str, fallback: str = "runner.tar.gz") -> str:
+    """Reduce a remote asset name to a bare, safe filename.
+
+    GitHub asset names are attacker-controllable if an upstream account is
+    compromised, so never join them onto a directory unfiltered.
+    """
+    candidate = Path(str(name or "").replace("\\", "/")).name.strip()
+    if not candidate or candidate in {".", ".."} or "/" in candidate:
+        return fallback
+    return candidate
+
+
+def safe_install_id(install_id: str) -> str:
+    """Reject runner directory names that could escape the runners directory."""
+    candidate = str(install_id or "").strip()
+    if not candidate or candidate in {".", ".."}:
+        raise ValueError(f"Unsafe runner id: {install_id!r}")
+    if "/" in candidate or "\\" in candidate or candidate.startswith("."):
+        raise ValueError(f"Unsafe runner id: {install_id!r}")
+    return candidate
+
+
+def extract_archive(archive: Path, destination: Path) -> None:
+    """Extract a Proton/Wine tarball, refusing members that escape *destination*.
+
+    Uses tarfile's ``data`` filter (CPython 3.11.4+/3.12+), which rejects
+    absolute paths, ``..`` traversal, device files, and symlinks pointing
+    outside the tree, while keeping the executable bit Wine builds need.
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive) as tar:
+        try:
+            tar.extractall(destination, filter="data")
+        except TypeError:  # pragma: no cover - Python without extraction filters
+            _legacy_extractall(tar, destination)
+
+
+def _legacy_extractall(tar: tarfile.TarFile, destination: Path) -> None:
+    root = destination.resolve()
+    safe = []
+    for member in tar.getmembers():
+        if member.isdev():
+            raise RuntimeError(f"Refusing special file in archive: {member.name}")
+        target = (root / member.name).resolve()
+        if target != root and root not in target.parents:
+            raise RuntimeError(f"Refusing path traversal in archive: {member.name}")
+        if member.issym() or member.islnk():
+            link = Path(member.linkname)
+            if link.is_absolute():
+                raise RuntimeError(f"Refusing absolute link in archive: {member.name}")
+            base = target.parent if member.issym() else root
+            resolved = (base / link).resolve()
+            if resolved != root and root not in resolved.parents:
+                raise RuntimeError(f"Refusing escaping link in archive: {member.name}")
+        safe.append(member)
+    tar.extractall(destination, members=safe)
+
+
 def _read_family_id(root: Path) -> str:
     meta = root / METADATA_NAME
     if not meta.exists():
@@ -560,7 +659,10 @@ class ProtonManager:
     ) -> Path:
         """Download and extract a build, returning its install directory."""
         self.runners_directory.mkdir(parents=True, exist_ok=True)
-        archive = self.runners_directory / release.name
+        install_id = safe_install_id(release.install_id)
+        archive = self.runners_directory / safe_archive_name(
+            release.name, f"{install_id}.tar.gz"
+        )
         req = Request(release.download_url, headers={"User-Agent": USER_AGENT})
         with urlopen(req, timeout=timeout) as resp:  # noqa: S310
             total = int(resp.headers.get("Content-Length", release.size) or 0)
@@ -576,12 +678,13 @@ class ProtonManager:
                         progress_cb(downloaded / total)
 
         before = {p.name for p in self.runners_directory.iterdir() if p.is_dir()}
-        with tarfile.open(archive) as tar:
-            tar.extractall(self.runners_directory)
-        archive.unlink(missing_ok=True)
+        try:
+            extract_archive(archive, self.runners_directory)
+        finally:
+            archive.unlink(missing_ok=True)
 
         extracted = self._resolve_extracted(release, before)
-        target = self.runners_directory / release.install_id
+        target = self.runners_directory / install_id
         if extracted.resolve() != target.resolve():
             if target.exists():
                 shutil.rmtree(target)
@@ -592,9 +695,10 @@ class ProtonManager:
     def uninstall(self, runner_id: str) -> None:
         if runner_id in {"", SYSTEM_WINE}:
             raise ValueError("System Wine cannot be uninstalled")
-        target = self.runners_directory / runner_id
-        if target.exists():
-            shutil.rmtree(target)
+        target = self.runners_directory / safe_install_id(runner_id)
+        if target.is_symlink() or not target.is_dir():
+            return
+        shutil.rmtree(target)
 
     def _resolve_extracted(self, release: ReleaseInfo, before: set[str]) -> Path:
         after = {p.name for p in self.runners_directory.iterdir() if p.is_dir()}
@@ -814,6 +918,21 @@ def find_anticheat_runtime(kind: str, extra_roots: Iterable[Path] | None = None)
     return ""
 
 
+def uses_proton_runtime(runner: "Runner", argv: list[str]) -> bool:
+    """Whether *argv* reaches a real Proton build through UMU.
+
+    Proton-only environment variables are meaningless, and misleading in a bug
+    report, when the command is plain Wine. Both ``launch()`` and the easy
+    installers gate on this, so it lives in one place.
+    """
+    return (
+        isinstance(runner, ProtonRunner)
+        and runner.proton_script() is not None
+        and bool(argv)
+        and Path(argv[0]).name == "umu-run"
+    )
+
+
 def apply_launch_options(
     game: Game,
     argv: list[str],
@@ -925,16 +1044,15 @@ def launch(game: Game, manager: RunnerManager | None = None):
     else:
         runner = manager.get(game.runner)
         argv, env = runner.build_command(game)
+        # Apply the user's environment block early as well as last: prefix setup
+        # and the bundled-DXVK installer below read WINEARCH from this env.
+        # apply_launch_options() re-applies it so it still wins over the toggles.
         env.update(parse_env_block(game.environment))
         runner_executable = argv[0] if argv else ""
         prefix = env.get("WINEPREFIX")
         if prefix:
             Path(prefix).mkdir(parents=True, exist_ok=True)
-        uses_proton = (
-            isinstance(runner, ProtonRunner)
-            and runner.proton_script() is not None
-            and Path(runner_executable).name == "umu-run"
-        )
+        uses_proton = uses_proton_runtime(runner, argv)
         if game.nvapi and not uses_proton:
             raise RuntimeError("NVAPI/DLSS requires a Proton runner through UMU")
         if game.fsr and not uses_proton:
@@ -958,22 +1076,44 @@ def launch(game: Game, manager: RunnerManager | None = None):
     return subprocess.Popen(argv, env=env, cwd=cwd)
 
 
+def escape_desktop_value(value: str) -> str:
+    """Escape a string for a Desktop Entry value.
+
+    Newlines are the dangerous case: an unescaped one in a game name would let
+    the title inject extra keys (including its own ``Exec=``) into the file.
+    """
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+
+
+def desktop_exec(command: str) -> str:
+    """Escape a command for ``Exec=``, which reserves ``%`` for field codes."""
+    return escape_desktop_value(command).replace("%", "%%")
+
+
 def create_desktop_shortcut(game: Game, command: str, directory: Path | None = None) -> Path:
     """Write a ``.desktop`` launcher for *game* and return its path."""
     apps = directory or (Path.home() / ".local" / "share" / "applications")
     apps.mkdir(parents=True, exist_ok=True)
     slug = "".join(ch if ch.isalnum() else "-" for ch in game.name.lower()).strip("-")
     path = apps / f"gamehandler-{game.id[:8]}-{slug or 'game'}.desktop"
-    icon = game.cover_path or "applications-games"
+    icon = game.cover_path if game.cover_path else "applications-games"
+    name = escape_desktop_value(game.name) or "Game"
     body = "\n".join(
         [
             "[Desktop Entry]",
             "Type=Application",
-            f"Name={game.name}",
-            f"Comment=Launch {game.name} with GameHandler",
-            f"Exec={command}",
-            f"Icon={icon}",
+            f"Name={name}",
+            f"Comment=Launch {name} with GameHandler",
+            f"Exec={desktop_exec(command)}",
+            f"Icon={escape_desktop_value(icon)}",
             "Terminal=false",
+            "StartupNotify=true",
             "Categories=Game;",
             "",
         ]
@@ -1019,6 +1159,8 @@ __all__ = [
     "family_by_id",
     "families",
     "runner_guides",
+    "runner_guide_details",
+    "RunnerGuide",
     "SYSTEM_WINE_GUIDE",
     "find_wine_binary",
     "parse_env_block",
@@ -1028,8 +1170,14 @@ __all__ = [
     "virtual_desktop_argv",
     "find_anticheat_runtime",
     "apply_launch_options",
+    "uses_proton_runtime",
     "build_linux_command",
     "create_desktop_shortcut",
+    "escape_desktop_value",
+    "desktop_exec",
+    "extract_archive",
+    "safe_archive_name",
+    "safe_install_id",
     "tool_command",
     "launch",
 ]

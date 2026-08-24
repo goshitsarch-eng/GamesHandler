@@ -7,6 +7,8 @@ sources = [
   'config.py',
   'settings.py',
   'covers.py',
+  'credits.py',
+  'credits_page.py',
   'plugins.py',
   'runners.py',
   'add_game_dialog.py',

@@ -91,6 +91,7 @@ PLUGINS: tuple[Plugin, ...] = (
             "pacman": "gamescope",
             "dnf": "gamescope",
             "zypper": "gamescope",
+            "flatpak": "org.freedesktop.Platform.VulkanLayer.gamescope",
         },
     ),
 )
