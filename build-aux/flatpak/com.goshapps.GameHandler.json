@@ -25,6 +25,24 @@
   ],
   "modules": [
     {
+      "name": "osslsigncode",
+      "buildsystem": "cmake-ninja",
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBASH_COMPLETION_USER_DIR=/app/share"
+      ],
+      "post-install": [
+        "install -Dm644 LICENSE.txt /app/share/licenses/com.goshapps.GameHandler/osslsigncode-LICENSE.txt"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/mtrojnar/osslsigncode/archive/refs/tags/2.14.tar.gz",
+          "sha256": "0f033fd6069387d2e489fbd2187e62f624764eb8c2758ee94e3e793e5150b5c5"
+        }
+      ]
+    },
+    {
       "name": "dxvk-runtime",
       "buildsystem": "simple",
       "build-commands": [
