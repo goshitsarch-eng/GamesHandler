@@ -104,7 +104,10 @@ class AddGameDialog(Adw.Dialog):
 
         library = Adw.PreferencesGroup(
             title="Library",
-            description="Categorize the game and set a cover. GameHandler can pull artwork from Steam by name.",
+            description=(
+                "Categorize the game and set a cover. GameHandler looks the name up on "
+                "Steam, and falls back to the icon a Windows executable carries."
+            ),
         )
         page.add(library)
 
@@ -126,12 +129,12 @@ class AddGameDialog(Adw.Dialog):
 
         self.cover_row = Adw.ActionRow(
             title="Cover art",
-            subtitle="No cover yet — browse a file or fetch one from Steam",
+            subtitle="No cover yet — browse a file or look one up",
         )
         fetch = Gtk.Button(label="Find cover")
         fetch.add_css_class("pill")
         fetch.set_valign(Gtk.Align.CENTER)
-        fetch.set_tooltip_text("Search Steam for a matching cover")
+        fetch.set_tooltip_text("Search Steam, then fall back to the executable's own icon")
         fetch.connect("clicked", self._on_fetch_cover)
         self.cover_row.add_suffix(fetch)
         cover_browse = Gtk.Button(icon_name="document-open-symbolic")
@@ -409,10 +412,15 @@ class AddGameDialog(Adw.Dialog):
                 picture.set_content_fit(Gtk.ContentFit.COVER)
             self.cover_row.add_prefix(picture)
             self._cover_preview = picture
-            source = "Steam artwork" if self.steam_appid else "Custom image"
+            if self.cover_path.lower().endswith(".ico"):
+                source = "App icon"
+            elif self.steam_appid:
+                source = "Steam artwork"
+            else:
+                source = "Custom image"
             self.cover_row.set_subtitle(f"{source} ready")
         else:
-            self.cover_row.set_subtitle("No cover yet — browse a file or fetch one from Steam")
+            self.cover_row.set_subtitle("No cover yet — browse a file or look one up")
 
     def _on_kind_changed(self, *_args):
         linux = self.kind_row.get_selected() == 1
@@ -497,11 +505,13 @@ class AddGameDialog(Adw.Dialog):
         if not name:
             self.toast("Enter a game name first")
             return
-        self.toast(f"Searching Steam for “{name}”…")
+        self.toast(f"Looking for artwork for “{name}”…")
+        # A Windows app that Steam has never heard of still ships its own icon.
+        exe_path = "" if self.kind_row.get_selected() == 1 else self.exe_row.get_text().strip()
 
         def worker():
             try:
-                hit = fetch_cover(name, self.game_id)
+                hit = fetch_cover(name, self.game_id, exe_path=exe_path)
                 GLib.idle_add(self._cover_fetched, hit)
             except Exception as exc:  # noqa: BLE001
                 GLib.idle_add(self._cover_failed, str(exc))
@@ -510,12 +520,13 @@ class AddGameDialog(Adw.Dialog):
 
     def _cover_fetched(self, hit):
         self.cover_path = hit.cover_path
-        self.steam_appid = hit.appid
+        if hit.appid:
+            self.steam_appid = hit.appid
         self._refresh_cover_row()
         if hit.category and hit.category != "Uncategorized":
             if hit.category in self.category_names:
                 self.category_row.set_selected(self.category_names.index(hit.category))
-        self.toast(f"Cover found: {hit.name}")
+        self.toast(f"Cover found via {hit.origin_label}: {hit.name}")
         return False
 
     def _cover_failed(self, message):

@@ -21,6 +21,9 @@ from gamehandler.installers import (
     resolve_case_insensitive,
     search_installers,
     verify_installer_authenticity,
+    wait_for_installer,
+    wait_for_prefix_idle,
+    wineserver_binary,
 )
 from gamehandler.runners import ProtonRunner, WineRunner
 
@@ -372,6 +375,172 @@ class CategoryConstantTests(unittest.TestCase):
         notes = {item.id: item.notes for item in installers()}
         self.assertTrue(notes["battlenet"])
         self.assertTrue(notes["discord"])
+
+
+class ProtonPrefixLayoutTests(unittest.TestCase):
+    """Proton keeps drive_c under "pfx"; an install there is still an install.
+
+    umu-run passes WINEPREFIX to Proton as STEAM_COMPAT_DATA_PATH, so a title
+    installed with any Proton runner lands one directory deeper than a raw Wine
+    one. Searching only the Wine layout reported every Proton install as a
+    missing executable.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.prefix = Path(self.tmp.name)
+
+    def _install(self, drive_c: Path) -> Path:
+        target = drive_c / "Program Files (x86)" / "Steam" / "steam.exe"
+        target.parent.mkdir(parents=True)
+        target.write_text("stub")
+        return target
+
+    def test_an_executable_under_pfx_is_found(self):
+        target = self._install(self.prefix / "pfx" / "drive_c")
+        found = find_prefix_exe(self.prefix, installer_by_id("steam").expected_exe)
+        self.assertEqual(target, found)
+
+    def test_the_wine_layout_still_works(self):
+        target = self._install(self.prefix / "drive_c")
+        found = find_prefix_exe(self.prefix, installer_by_id("steam").expected_exe)
+        self.assertEqual(target, found)
+
+    def test_the_proton_layout_wins_when_both_directories_exist(self):
+        (self.prefix / "drive_c").mkdir()
+        target = self._install(self.prefix / "pfx" / "drive_c")
+        found = find_prefix_exe(self.prefix, installer_by_id("steam").expected_exe)
+        self.assertEqual(target, found)
+
+    def test_an_empty_expected_list_finds_nothing(self):
+        self._install(self.prefix / "drive_c")
+        self.assertIsNone(find_prefix_exe(self.prefix, []))
+
+
+class InstallerHandoffTests(unittest.TestCase):
+    """Vendor installers bootstrap: the process we start is not the wizard.
+
+    Battle.net, the EA App, GOG Galaxy and Discord all unpack a payload, start
+    the real installer as a separate process, and exit within seconds. Scanning
+    the prefix at that moment reported "could not find the executable" for an
+    install that then went on to succeed.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.prefix = Path(self.tmp.name)
+        (self.prefix / "drive_c").mkdir()
+        self.runner = WineRunner(binary="/usr/bin/wine")
+        self.expected = installer_by_id("steam").expected_exe
+        self.now = 0.0
+
+    def _install_now(self):
+        target = self.prefix / "drive_c" / "Program Files (x86)" / "Steam" / "steam.exe"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("stub")
+        return target
+
+    def _run(self, *, wait_seconds: float, install_after: float | None = None):
+        """Drive one wait on a virtual clock.
+
+        *wait_seconds* is how long the wineserver wait appears to take, and
+        *install_after* the simulated moment the wizard writes its executable.
+        Returns ``(found, seconds spent looking after the wait)``.
+        """
+        self.now = 0.0
+        marks = {}
+
+        def clock():
+            return self.now
+
+        def sleep(seconds):
+            self.now += seconds
+            if install_after is not None and self.now >= install_after:
+                self._install_now()
+
+        def idle(_runner, _env, **_kwargs):
+            self.now += wait_seconds
+            marks["after_wait"] = self.now
+            return True
+
+        with unittest.mock.patch("gamehandler.installers.wait_for_prefix_idle", idle):
+            found = wait_for_installer(
+                self.runner,
+                {"WINEPREFIX": str(self.prefix)},
+                self.prefix,
+                self.expected,
+                sleep=sleep,
+                clock=clock,
+            )
+        return found, self.now - marks["after_wait"]
+
+    def test_polls_until_the_wizard_writes_the_executable(self):
+        found, _window = self._run(wait_seconds=0, install_after=60)
+        self.assertIsNotNone(found)
+        self.assertTrue(found.is_file())
+
+    def test_gives_up_at_the_deadline_instead_of_polling_forever(self):
+        found, window = self._run(wait_seconds=0)
+        self.assertIsNone(found)
+        self.assertLess(window, 60 * 60, "the wizard window is bounded")
+
+    def test_a_wineserver_that_really_waited_shortens_the_window(self):
+        """The wizard is provably gone, so do not sit here for ten more minutes."""
+        _found, window = self._run(wait_seconds=30)
+        self.assertLess(window, 60)
+
+    def test_a_wineserver_that_returned_at_once_proves_nothing(self):
+        """umu runs Proton's wineserver where a host one cannot attach to it.
+
+        Treating that instant answer as "the wizard has finished" would cut
+        Proton installs off after a few seconds, straight back to the bug.
+        """
+        _found, window = self._run(wait_seconds=0)
+        self.assertGreater(window, 60)
+
+    def test_an_already_installed_executable_is_returned_immediately(self):
+        target = self._install_now()
+        found, window = self._run(wait_seconds=30)
+        self.assertEqual(target, found)
+        self.assertEqual(0, window, "no polling once the executable is there")
+
+
+class WineserverLookupTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_prefers_the_wineserver_beside_the_runners_own_wine(self):
+        binaries = self.root / "files" / "bin"
+        binaries.mkdir(parents=True)
+        (binaries / "wine").write_text("#!/bin/sh\n")
+        server = binaries / "wineserver"
+        server.write_text("#!/bin/sh\n")
+        server.chmod(0o755)
+        self.assertEqual(str(server), wineserver_binary(WineRunner(binary=str(binaries / "wine"))))
+
+    def test_falls_back_to_the_one_on_PATH(self):
+        with unittest.mock.patch(
+            "gamehandler.installers.shutil.which", return_value="/usr/bin/wineserver"
+        ):
+            self.assertEqual(
+                "/usr/bin/wineserver", wineserver_binary(WineRunner(binary="/nowhere/wine"))
+            )
+
+    def test_no_wineserver_means_no_wait_rather_than_a_crash(self):
+        with unittest.mock.patch("gamehandler.installers.shutil.which", return_value=None):
+            self.assertFalse(
+                wait_for_prefix_idle(WineRunner(binary=None), {"WINEPREFIX": str(self.root)})
+            )
+
+    def test_a_prefixless_environment_is_never_waited_on(self):
+        with unittest.mock.patch(
+            "gamehandler.installers.shutil.which", return_value="/usr/bin/wineserver"
+        ):
+            self.assertFalse(wait_for_prefix_idle(WineRunner(binary=None), {}))
 
 
 if __name__ == "__main__":

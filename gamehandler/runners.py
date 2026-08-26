@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,11 @@ from .models import Game
 SYSTEM_WINE = "wine-system"
 METADATA_NAME = ".gamehandler.json"
 USER_AGENT = "GameHandler"
+# umu-run hands WINEPREFIX to Proton as STEAM_COMPAT_DATA_PATH, and Proton
+# builds its Wine prefix in a "pfx" subdirectory of that. So a title installed
+# through a Proton runner lives in <prefix>/pfx/drive_c, while the same
+# directory used by raw Wine holds drive_c directly.
+PROTON_PREFIX_SUBDIR = "pfx"
 DXVK_VERSION = "3.0.2"
 DXVK_ROOT = Path("/app/share/gamehandler/dxvk")
 
@@ -335,6 +341,33 @@ class ReleaseInfo:
         return family_by_id(self.family_id)
 
 
+def prefix_drive_cs(prefix: str | Path) -> list[Path]:
+    """Every ``drive_c`` that exists under *prefix*, Proton's layout first."""
+    root = Path(prefix)
+    candidates = (root / PROTON_PREFIX_SUBDIR / "drive_c", root / "drive_c")
+    return [candidate for candidate in candidates if candidate.is_dir()]
+
+
+def prefix_drive_c(prefix: str | Path) -> Path | None:
+    """The ``drive_c`` a prefix actually installed into, if it has one."""
+    found = prefix_drive_cs(prefix)
+    return found[0] if found else None
+
+
+def wine_prefix_root(prefix: str | Path) -> str:
+    """Where ``WINEPREFIX`` must point for raw Wine to see *prefix*'s files.
+
+    A prefix that Proton created keeps its registry and drive_c one level
+    down. Pointing plain Wine at the parent makes it build a second, empty
+    prefix beside the real one, which looks exactly like a game that installed
+    fine and then refuses to start.
+    """
+    root = Path(prefix)
+    if (root / PROTON_PREFIX_SUBDIR / "drive_c").is_dir():
+        return str(root / PROTON_PREFIX_SUBDIR)
+    return str(root)
+
+
 class Runner:
     """Base class for anything that can launch a Windows executable."""
 
@@ -359,7 +392,9 @@ class Runner:
 
         prefix = game.prefix_path or str(config.prefixes_dir() / game.id)
         env = dict(os.environ)
-        env["WINEPREFIX"] = prefix
+        # Raw Wine has no Proton indirection, so it needs the directory that
+        # actually holds drive_c — including when Proton created it.
+        env["WINEPREFIX"] = wine_prefix_root(prefix)
         # Keep first-run quiet and non-interactive for Windows games.
         env.setdefault("WINEDLLOVERRIDES", "winemenubuilder.exe=d;mscoree,mshtml=")
         env.setdefault("WINEDEBUG", "-all")
@@ -449,6 +484,7 @@ class ProtonRunner(Runner):
         umu = shutil.which("umu-run")
         proton = self.proton_script()
         if umu and proton is not None:
+            # Proton appends "pfx" itself, so umu keeps the parent directory.
             env["PROTONPATH"] = str(self.path)
             env["GAMEID"] = f"gh-{game.id[:8]}"
             env["STORE"] = "none"
@@ -462,6 +498,9 @@ class ProtonRunner(Runner):
         wine = self.wine_binary()
         if not wine:
             raise RuntimeError(f"Runner '{self.name}' is not available")
+        # Without umu this build runs as plain Wine, which cannot see through
+        # Proton's "pfx" indirection on its own.
+        env["WINEPREFIX"] = wine_prefix_root(prefix)
         argv = [wine]
         if game.exe_path:
             argv.append(game.exe_path)
@@ -1230,8 +1269,98 @@ def build_linux_command(game: Game) -> tuple[list[str], dict[str, str]]:
     return argv, dict(os.environ)
 
 
-def launch(game: Game, manager: RunnerManager | None = None):
-    """Launch *game* with its configured runner. Returns the ``Popen`` handle."""
+# How long a launched title gets to stay alive before we stop watching it. A
+# real game is still running after this; one that mis-configured its prefix or
+# never found its executable is long gone.
+LAUNCH_GRACE_SECONDS = 6.0
+# Wine is chatty even at WINEDEBUG=-all; only the tail is worth showing.
+_ERROR_TAIL_LINES = 4
+_ERROR_MESSAGE_CHARS = 240
+_ERROR_BUFFER_BYTES = 64 * 1024
+_NOISE_PREFIXES = ("fixme:", "warn:", "trace:", "info:")
+
+
+def _readable_error(text: str) -> str:
+    """Reduce a runner's output to the part worth putting in a toast."""
+    lines = [line.strip() for line in text.replace("\r", "\n").splitlines()]
+    useful = [
+        line
+        for line in lines
+        if line and not line.lower().startswith(_NOISE_PREFIXES)
+    ]
+    tail = (useful or [line for line in lines if line])[-_ERROR_TAIL_LINES:]
+    return " ".join(tail)[:_ERROR_MESSAGE_CHARS]
+
+
+class _ErrorTail:
+    """Drain a child's stderr on a thread, keeping only its last few KB.
+
+    Draining is what makes capturing safe: an undrained pipe fills and stalls
+    the game, and an unbounded buffer would grow for as long as the title runs.
+    """
+
+    def __init__(self, stream, limit: int = _ERROR_BUFFER_BYTES) -> None:
+        self._limit = limit
+        self._chunks: list[bytes] = []
+        self._size = 0
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._drain, args=(stream,), daemon=True)
+        self._thread.start()
+
+    def _drain(self, stream) -> None:
+        try:
+            with stream:
+                for chunk in iter(lambda: stream.read(4096), b""):
+                    if not isinstance(chunk, (bytes, bytearray)):
+                        break
+                    with self._lock:
+                        self._chunks.append(chunk)
+                        self._size += len(chunk)
+                        while self._size > self._limit and len(self._chunks) > 1:
+                            self._size -= len(self._chunks.pop(0))
+        except (OSError, ValueError):  # pragma: no cover - the child closed first
+            pass
+
+    def text(self) -> str:
+        with self._lock:
+            return b"".join(self._chunks).decode("utf-8", "replace")
+
+
+@dataclass
+class LaunchedGame:
+    """A started title, plus the means to notice it died on the doorstep."""
+
+    process: subprocess.Popen
+    errors: _ErrorTail | None = None
+
+    @property
+    def pid(self) -> int:
+        return self.process.pid
+
+    def failure(self, timeout: float = LAUNCH_GRACE_SECONDS) -> str | None:
+        """Why the title stopped, if it stopped badly within *timeout*.
+
+        ``Popen`` succeeding only proves the runner binary exists. Wine exiting
+        two seconds later because it could not find the executable looked
+        exactly like a successful launch, which is the whole reason this exists.
+        """
+        try:
+            code = self.process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None
+        if code == 0:
+            return None
+        detail = _readable_error(self.errors.text()) if self.errors is not None else ""
+        return detail or f"the runner exited with status {code}"
+
+
+def launch(game: Game, manager: RunnerManager | None = None) -> LaunchedGame:
+    """Launch *game* with its configured runner.
+
+    Returns a :class:`LaunchedGame` whose ``failure()`` reports a title that
+    exited immediately, so a broken launch surfaces instead of looking like a
+    successful one.
+    """
     manager = manager or RunnerManager()
     uses_proton = False
     if game.is_linux:
@@ -1269,7 +1398,11 @@ def launch(game: Game, manager: RunnerManager | None = None):
     cwd = game.working_directory or None
     if not cwd and game.exe_path and Path(game.exe_path).exists():
         cwd = str(Path(game.exe_path).parent)
-    return subprocess.Popen(argv, env=env, cwd=cwd)
+    # stdout stays inherited so running from a terminal still shows the game's
+    # own output; only stderr is captured, and only to explain a fast exit.
+    process = subprocess.Popen(argv, env=env, cwd=cwd, stderr=subprocess.PIPE)
+    errors = _ErrorTail(process.stderr) if process.stderr is not None else None
+    return LaunchedGame(process, errors)
 
 
 def escape_desktop_value(value: str) -> str:
@@ -1325,7 +1458,7 @@ def tool_command(game: Game, manager: RunnerManager, tool: str) -> tuple[list[st
     wine = runner.wine_binary()
     if not wine:
         raise RuntimeError(f"Runner '{runner.name}' is not available")
-    prefix = game.prefix_path or str(config.prefixes_dir() / game.id)
+    prefix = wine_prefix_root(game.prefix_path or str(config.prefixes_dir() / game.id))
     env = dict(os.environ)
     env["WINEPREFIX"] = prefix
     Path(prefix).mkdir(parents=True, exist_ok=True)
@@ -1342,6 +1475,9 @@ def tool_command(game: Game, manager: RunnerManager, tool: str) -> tuple[list[st
 __all__ = [
     "SYSTEM_WINE",
     "METADATA_NAME",
+    "PROTON_PREFIX_SUBDIR",
+    "LAUNCH_GRACE_SECONDS",
+    "LaunchedGame",
     "RUNNER_FAMILIES",
     "ReleaseInfo",
     "RunnerFamily",
@@ -1359,6 +1495,9 @@ __all__ = [
     "RunnerGuide",
     "SYSTEM_WINE_GUIDE",
     "find_wine_binary",
+    "prefix_drive_c",
+    "prefix_drive_cs",
+    "wine_prefix_root",
     "parse_env_block",
     "merge_dll_overrides",
     "install_bundled_dxvk",

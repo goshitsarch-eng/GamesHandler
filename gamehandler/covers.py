@@ -3,6 +3,11 @@
 Looks up a title on the public Steam store search API, scores the best
 match, then downloads a portrait library cover (with header/capsule
 fallbacks). No SteamGridDB key is required.
+
+Store launchers and ordinary Windows apps are not Steam store products, so
+that search finds nothing for them. Those fall back to the icon the
+executable already carries, which needs no network and is always the right
+artwork for the thing it was taken from.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from . import config
+from .exe_icons import extract_icon
 
 USER_AGENT = "GameHandler"
 STORE_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"
@@ -122,16 +128,21 @@ def score_title(query: str, candidate: str) -> float:
         return 0.0
     if left == right:
         return 1.0
-    if right.startswith(left) or left.startswith(right):
-        return 0.92
     left_parts = set(left.split())
     right_parts = set(right.split())
-    if not left_parts:
+    shared = left_parts & right_parts
+    if not left_parts or not shared:
         return 0.0
-    overlap = len(left_parts & right_parts) / len(left_parts)
-    if left in right or right in left:
-        overlap = max(overlap, 0.8)
-    return overlap
+    coverage = len(shared) / len(left_parts)
+    precision = len(shared) / len(right_parts)
+    if right.startswith(left + " ") or left.startswith(right + " "):
+        # An edition or sequel suffix ("Half-Life 2") is still the same series.
+        coverage = max(coverage, 0.92)
+    # Words the query never mentioned mark a different product far more often
+    # than a longer spelling of the same one — "Battle.net" is not "Mega Man
+    # Battle Network", and "EA App" is not "Easy Game Builder App". Charging
+    # for those extra words is what keeps someone else's art off the tile.
+    return round(coverage * (0.6 + 0.4 * precision), 6)
 
 
 def map_steam_genre(genres: list[str]) -> str:
@@ -162,17 +173,30 @@ def parse_store_search(payload: dict) -> list[dict]:
     return items
 
 
+# A single-word title is too generic to accept a partial match on: Steam's
+# search answers "Steam" with "DCS World Steam Edition" and "Discord" with
+# "Bot Maker For Discord". Hanging that art on the tile is worse than leaving
+# the tile blank, so one-word queries have to match a title outright.
+GENERIC_QUERY_MINIMUM = 0.9
+
+
 def pick_best_match(query: str, items: list[dict], minimum: float = 0.45) -> dict | None:
     """Choose the Steam search hit that best matches *query*."""
+    threshold = minimum
+    if len(normalize_title(query).split()) < 2:
+        threshold = max(minimum, GENERIC_QUERY_MINIMUM)
     ranked = []
     for item in items:
         if item.get("type") and item["type"] not in {"app", "game", ""}:
             continue
-        score = score_title(query, item.get("name") or "")
-        if score >= minimum:
-            ranked.append((score, item))
-    ranked.sort(key=lambda pair: pair[0], reverse=True)
-    return ranked[0][1] if ranked else None
+        name = item.get("name") or ""
+        score = score_title(query, name)
+        if score >= threshold:
+            # Equal scores go to the tighter title, not to whichever hit the
+            # store happened to rank first.
+            ranked.append((score, -len(normalize_title(name).split()), item))
+    ranked.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+    return ranked[0][2] if ranked else None
 
 
 def cover_urls_for_app(appid: int, tiny_image: str = "") -> list[str]:
@@ -226,6 +250,10 @@ def fetch_app_details(appid: int, timeout: int = 20) -> dict:
     }
 
 
+STEAM_SOURCE = "steam"
+ICON_SOURCE = "icon"
+
+
 @dataclass
 class CoverHit:
     appid: int
@@ -233,6 +261,12 @@ class CoverHit:
     category: str
     cover_path: str
     source_url: str
+    source: str = STEAM_SOURCE
+
+    @property
+    def origin_label(self) -> str:
+        """Where the artwork came from, for the toast that announces it."""
+        return "the app icon" if self.source == ICON_SOURCE else "Steam"
 
 
 def download_image(url: str, destination: Path, timeout: int = 30) -> Path:
@@ -270,7 +304,33 @@ def copy_custom_cover(source: str | Path, game_id: str) -> Path:
     return destination
 
 
-def fetch_cover(query: str, game_id: str, timeout: int = 20) -> CoverHit:
+def save_exe_icon(exe_path: str | Path, game_id: str) -> Path:
+    """Write the icon embedded in a Windows executable into the covers dir."""
+    icon = extract_icon(exe_path)
+    if not icon:
+        raise RuntimeError(f"{Path(exe_path).name} carries no icon to use as a cover")
+    destination = config.covers_dir() / f"{game_id}.ico"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destination.with_suffix(destination.suffix + ".tmp")
+    tmp.write_bytes(icon)
+    tmp.replace(destination)
+    return destination
+
+
+def icon_cover(name: str, exe_path: str | Path, game_id: str) -> CoverHit:
+    """Build a :class:`CoverHit` from a Windows executable's own icon."""
+    path = save_exe_icon(exe_path, game_id)
+    return CoverHit(
+        appid=0,
+        name=name or Path(exe_path).stem,
+        category="Uncategorized",
+        cover_path=str(path),
+        source_url=str(exe_path),
+        source=ICON_SOURCE,
+    )
+
+
+def steam_cover(query: str, game_id: str, timeout: int = 20) -> CoverHit:
     """Search Steam for *query* and download the best matching cover."""
     items = search_steam(query, timeout=timeout)
     match = pick_best_match(query, items)
@@ -292,12 +352,42 @@ def fetch_cover(query: str, game_id: str, timeout: int = 20) -> CoverHit:
         category=details.get("category") or "Uncategorized",
         cover_path=str(path),
         source_url=source,
+        source=STEAM_SOURCE,
     )
+
+
+def fetch_cover(query: str, game_id: str, timeout: int = 20, exe_path: str | Path = "") -> CoverHit:
+    """Find artwork for *query*, preferring Steam and falling back to the exe.
+
+    Steam has real portrait library art for the games it sells, so it goes
+    first. It has nothing at all for store launchers and ordinary Windows
+    apps, which is why *exe_path* is the second source: the executable's own
+    icon is offline, unambiguous, and belongs to the thing being launched.
+    """
+    try:
+        return steam_cover(query, game_id, timeout=timeout)
+    except (
+        OSError,
+        RuntimeError,
+        json.JSONDecodeError,
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+    ) as exc:
+        steam_error = str(exc)
+    if exe_path and Path(exe_path).is_file():
+        try:
+            return icon_cover(query, exe_path, game_id)
+        except (OSError, RuntimeError):
+            pass
+    raise RuntimeError(steam_error)
 
 
 __all__ = [
     "COVER_ACCENTS",
     "DEFAULT_CATEGORIES",
+    "GENERIC_QUERY_MINIMUM",
+    "ICON_SOURCE",
+    "STEAM_SOURCE",
     "accent_index",
     "initials",
     "CoverHit",
@@ -309,5 +399,8 @@ __all__ = [
     "cover_urls_for_app",
     "copy_custom_cover",
     "fetch_cover",
+    "icon_cover",
+    "save_exe_icon",
     "search_steam",
+    "steam_cover",
 ]

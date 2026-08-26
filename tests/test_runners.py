@@ -7,6 +7,7 @@ from unittest import mock
 from gamehandler.models import Game
 from gamehandler.runners import (
     ProtonManager,
+    ProtonRunner,
     RunnerManager,
     SYSTEM_WINE,
     WineRunner,
@@ -24,7 +25,9 @@ from gamehandler.runners import (
     normalize_desktop_size,
     parse_env_block,
     pick_asset,
+    tool_command,
     virtual_desktop_argv,
+    wine_prefix_root,
 )
 
 
@@ -637,6 +640,121 @@ class LaunchOptionTests(unittest.TestCase):
         self.assertIn("Exec=gamehandler --launch abcd1234deadbeef", text)
 
 
+
+
+
+class ProtonPrefixIndirectionTests(unittest.TestCase):
+    """Raw Wine cannot see through Proton's "pfx" directory on its own.
+
+    Installing with a Proton runner and then launching — or running winecfg —
+    with plain Wine pointed at the parent built a second, empty prefix beside
+    the real one. The title looked installed and refused to start.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.prefix = Path(self.tmp.name) / "prefix"
+        (self.prefix / "pfx" / "drive_c").mkdir(parents=True)
+
+    def test_wine_prefix_root_descends_into_a_proton_prefix(self):
+        self.assertEqual(str(self.prefix / "pfx"), wine_prefix_root(self.prefix))
+
+    def test_wine_prefix_root_leaves_a_plain_wine_prefix_alone(self):
+        plain = Path(self.tmp.name) / "plain"
+        (plain / "drive_c").mkdir(parents=True)
+        self.assertEqual(str(plain), wine_prefix_root(plain))
+
+    def test_an_untouched_directory_is_used_as_is(self):
+        empty = Path(self.tmp.name) / "empty"
+        self.assertEqual(str(empty), wine_prefix_root(empty))
+
+    def test_system_wine_launches_into_the_prefix_proton_built(self):
+        runner = WineRunner(binary="/usr/bin/wine")
+        game = Game(name="Steam", exe_path="/x.exe", prefix_path=str(self.prefix))
+        _argv, env = runner.build_command(game)
+        self.assertEqual(str(self.prefix / "pfx"), env["WINEPREFIX"])
+
+    def test_umu_keeps_the_parent_because_proton_appends_pfx_itself(self):
+        root = Path(self.tmp.name) / "GE-Proton"
+        (root / "files" / "bin").mkdir(parents=True)
+        (root / "files" / "bin" / "wine").write_text("#!/bin/sh\n")
+        (root / "proton").write_text("#!/usr/bin/env python\n")
+        game = Game(name="Steam", exe_path="/x.exe", prefix_path=str(self.prefix))
+        with mock.patch("gamehandler.runners.shutil.which", lambda name: "/usr/bin/umu-run"):
+            argv, env = ProtonRunner(root).build_command(game)
+        self.assertEqual("umu-run", Path(argv[0]).name)
+        self.assertEqual(str(self.prefix), env["WINEPREFIX"])
+
+    def test_a_proton_build_without_umu_falls_back_to_the_inner_prefix(self):
+        root = Path(self.tmp.name) / "Wine-Proton"
+        (root / "files" / "bin").mkdir(parents=True)
+        (root / "files" / "bin" / "wine").write_text("#!/bin/sh\n")
+        game = Game(name="Steam", exe_path="/x.exe", prefix_path=str(self.prefix))
+        with mock.patch("gamehandler.runners.shutil.which", lambda name: None):
+            _argv, env = ProtonRunner(root).build_command(game)
+        self.assertEqual(str(self.prefix / "pfx"), env["WINEPREFIX"])
+
+    def test_prefix_tools_open_the_prefix_that_holds_drive_c(self):
+        manager = mock.Mock()
+        manager.get.return_value = WineRunner(binary="/usr/bin/wine")
+        game = Game(name="Steam", prefix_path=str(self.prefix))
+        argv, env = tool_command(game, manager, "winecfg")
+        self.assertEqual(["/usr/bin/wine", "winecfg"], argv)
+        self.assertEqual(str(self.prefix / "pfx"), env["WINEPREFIX"])
+
+
+class EarlyExitReportingTests(unittest.TestCase):
+    """Popen succeeding only proves the runner exists, not that the game ran.
+
+    A title whose prefix or executable is wrong exits a second later. That used
+    to be indistinguishable from a healthy launch, so the window said
+    "Launching…" and then nothing ever appeared.
+    """
+
+    def _game(self, script: str) -> Game:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        wine = Path(tmp.name) / "wine"
+        wine.write_text(script)
+        wine.chmod(0o755)
+        return Game(
+            name="App",
+            kind="linux",
+            exe_path=str(wine),
+            dxvk=False,
+        )
+
+    def test_a_failing_launch_reports_the_runners_own_error(self):
+        game = self._game('#!/bin/sh\necho \'wine: cannot find "C:\\\\app.exe"\' >&2\nexit 53\n')
+        reason = launch(game).failure(timeout=15)
+        self.assertIsNotNone(reason)
+        self.assertIn("cannot find", reason)
+
+    def test_a_failing_launch_without_output_still_reports_the_status(self):
+        game = self._game("#!/bin/sh\nexit 9\n")
+        self.assertIn("status 9", launch(game).failure(timeout=15))
+
+    def test_a_clean_exit_is_not_a_failure(self):
+        game = self._game("#!/bin/sh\nexit 0\n")
+        self.assertIsNone(launch(game).failure(timeout=15))
+
+    def test_a_title_that_keeps_running_is_not_reported(self):
+        game = self._game("#!/bin/sh\nsleep 30\n")
+        started = launch(game)
+        self.addCleanup(started.process.kill)
+        self.assertIsNone(started.failure(timeout=1.0))
+
+    def test_wine_debug_noise_is_kept_out_of_the_message(self):
+        game = self._game(
+            "#!/bin/sh\n"
+            "echo 'fixme:heap:RtlSetHeapInformation stub' >&2\n"
+            "echo 'err: the real problem' >&2\n"
+            "exit 1\n"
+        )
+        reason = launch(game).failure(timeout=15)
+        self.assertEqual("err: the real problem", reason)
+
+
 if __name__ == "__main__":
     unittest.main()
-

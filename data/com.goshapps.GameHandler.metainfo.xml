@@ -24,7 +24,7 @@
     <ul>
       <li>Dark mode with system and light alternatives</li>
       <li>Categorize games and filter the library</li>
-      <li>Custom covers or automatic Steam artwork lookup</li>
+      <li>Custom covers, Steam artwork lookup, or the executable's own icon</li>
       <li>Add Windows or Linux games and pick a runner per title</li>
       <li>Download Proton-GE, Proton-CachyOS, Proton-EM, and Kron4ek Wine builds</li>
       <li>Guide for which Proton or Wine family to use</li>
@@ -42,6 +42,30 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.6.1" date="2026-08-26">
+      <description>
+        <p>
+          A bug-fix release for adding and starting titles. Easy installers now
+          wait for the vendor's own wizard to finish instead of scanning the
+          prefix while it is still open, and they find what Proton installed:
+          a Proton prefix keeps its files one directory deeper, which used to
+          make every Proton install look like a missing executable. A finished
+          install offers to start the launcher straight away.
+        </p>
+        <p>
+          Artwork lookup no longer attaches the wrong cover. A store launcher
+          is not a Steam product, so searching Steam for one returned an
+          unrelated game; those matches are now rejected, and Windows titles
+          Steam has never sold fall back to the icon their executable already
+          carries. Lookups that find nothing say so instead of failing in
+          silence.
+        </p>
+        <p>
+          A game that exits the moment it starts now reports why, rather than
+          leaving a "Launching..." message behind and no window.
+        </p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-08-24">
       <description>
         <p>

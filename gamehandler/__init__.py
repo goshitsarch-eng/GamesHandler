@@ -1,4 +1,4 @@
 """GameHandler — a modern GTK4/libadwaita game manager for running Windows games on Linux via Wine and Proton."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 APP_ID = "com.goshapps.GameHandler"
