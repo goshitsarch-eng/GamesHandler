@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +22,15 @@ from urllib.request import Request, urlopen
 
 from . import config
 from .models import Game
-from .runners import USER_AGENT, Runner, apply_launch_options, uses_proton_runtime
+from .runners import (
+    USER_AGENT,
+    Runner,
+    apply_launch_options,
+    prefix_drive_c,
+    prefix_drive_cs,
+    uses_proton_runtime,
+    wine_prefix_root,
+)
 
 LAUNCHERS = "Launchers"
 APPS = "Apps"
@@ -282,6 +291,103 @@ def build_installer_command(
     )
 
 
+# Vendor installers are almost all bootstrappers: the downloaded exe unpacks a
+# payload, starts the real wizard as a separate process, and exits within
+# seconds. Waiting on that first process alone means scanning the prefix while
+# the user is still on the wizard's first page — which is why an install that
+# plainly succeeded used to end in "could not find the executable".
+INSTALL_SETTLE_TIMEOUT = 6 * 60 * 60
+
+
+def wineserver_binary(runner: Runner) -> str | None:
+    """The ``wineserver`` that goes with *runner*, if one can be found."""
+    wine = runner.wine_binary()
+    if wine:
+        sibling = Path(wine).with_name("wineserver")
+        if sibling.is_file() and os.access(sibling, os.X_OK):
+            return str(sibling)
+    return shutil.which("wineserver")
+
+
+def wait_for_prefix_idle(
+    runner: Runner,
+    env: dict[str, str],
+    timeout: int = INSTALL_SETTLE_TIMEOUT,
+) -> bool:
+    """Block until nothing is running in the prefix any more.
+
+    ``wineserver -w`` returns once the server owning ``WINEPREFIX`` has no
+    processes left, which is the only reliable "the wizard is closed" signal
+    when the installer we started has already handed off and exited.
+    """
+    server = wineserver_binary(runner)
+    prefix = env.get("WINEPREFIX")
+    if not server or not prefix:
+        return False
+    # A Proton install put its registry under "pfx"; that is the prefix whose
+    # server is worth waiting on.
+    waiting_env = dict(env)
+    waiting_env["WINEPREFIX"] = wine_prefix_root(prefix)
+    try:
+        subprocess.run(
+            [server, "-w"],
+            env=waiting_env,
+            check=False,
+            timeout=timeout,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
+# Long enough for a bootstrapper to unpack and start the real wizard.
+INSTALL_HANDOFF_SECONDS = 3.0
+INSTALL_POLL_SECONDS = 2.0
+# Waiting on a wineserver only tells us something if it actually waited.
+# Returning at once means there was no server to attach to — which is what
+# happens for a Proton install, whose wineserver runs inside umu's container
+# where a host wineserver cannot see it.
+INSTALL_WAIT_EVIDENCE_SECONDS = 5.0
+# Once the prefix is known idle, only the wizard's last writes are still in
+# flight. Without that, the wizard itself is what we are waiting on, so the
+# window has to cover a person reading and clicking through it.
+INSTALL_FLUSH_SECONDS = 20.0
+INSTALL_WIZARD_SECONDS = 10 * 60.0
+
+
+def wait_for_installer(
+    runner: Runner,
+    env: dict[str, str],
+    prefix: str | Path,
+    expected: Iterable[str],
+    *,
+    sleep=time.sleep,
+    clock=time.monotonic,
+) -> Path | None:
+    """Wait out a vendor wizard and return the executable it installed.
+
+    The process GameHandler started is usually just the bootstrapper, so its
+    exit says nothing about whether the install finished. Wait for the prefix
+    to fall idle where ``wineserver`` can tell us, and poll for the executable
+    either way.
+    """
+    expected = list(expected)
+    sleep(INSTALL_HANDOFF_SECONDS)
+    started = clock()
+    idle = wait_for_prefix_idle(runner, env)
+    confirmed = idle and (clock() - started) >= INSTALL_WAIT_EVIDENCE_SECONDS
+    deadline = clock() + (INSTALL_FLUSH_SECONDS if confirmed else INSTALL_WIZARD_SECONDS)
+    while True:
+        found = find_prefix_exe(prefix, expected)
+        if found is not None:
+            return found
+        if clock() >= deadline:
+            return None
+        sleep(INSTALL_POLL_SECONDS)
+
+
 def safe_download_name(filename: str, fallback: str = "installer") -> str:
     """Reduce a catalog filename to a bare name before joining it onto a path."""
     candidate = Path(str(filename or "").replace("\\", "/")).name.strip()
@@ -368,18 +474,7 @@ def _search_known_roots(drive_c: Path, filenames: Iterable[str]) -> Path | None:
     return None
 
 
-def find_prefix_exe(prefix: str | Path, expected: Iterable[str]) -> Path | None:
-    """Locate an installed executable under *prefix*/drive_c.
-
-    Tries each expected ``drive_c``-relative path case-insensitively, then
-    substitutes every Wine user profile for ``users/<name>/...`` entries,
-    then searches Program Files and user profiles for the basename.
-    """
-    drive_c = Path(prefix) / "drive_c"
-    if not drive_c.exists():
-        return None
-
-    expected_list = [item for item in expected if item]
+def _find_in_drive_c(drive_c: Path, expected_list: list[str]) -> Path | None:
     for rel in expected_list:
         found = resolve_case_insensitive(drive_c, rel)
         if found is not None and found.is_file():
@@ -394,6 +489,25 @@ def find_prefix_exe(prefix: str | Path, expected: Iterable[str]) -> Path | None:
 
     names = [Path(rel).name for rel in expected_list if Path(rel).name]
     return _search_known_roots(drive_c, names)
+
+
+def find_prefix_exe(prefix: str | Path, expected: Iterable[str]) -> Path | None:
+    """Locate an installed executable under *prefix*.
+
+    Tries each expected ``drive_c``-relative path case-insensitively, then
+    substitutes every Wine user profile for ``users/<name>/...`` entries,
+    then searches Program Files and user profiles for the basename. Both
+    prefix layouts are searched: raw Wine puts ``drive_c`` directly under the
+    prefix, Proton puts it under ``pfx``.
+    """
+    expected_list = [item for item in expected if item]
+    if not expected_list:
+        return None
+    for drive_c in prefix_drive_cs(prefix):
+        found = _find_in_drive_c(drive_c, expected_list)
+        if found is not None:
+            return found
+    return None
 
 
 MAX_INSTALLER_BYTES = 1024 * 1024 * 1024
@@ -546,6 +660,7 @@ __all__ = [
     "APPS",
     "INSTALLERS",
     "INSTALLER_CATEGORIES",
+    "INSTALL_WIZARD_SECONDS",
     "LAUNCHERS",
     "Installer",
     "build_installer_command",
@@ -555,9 +670,13 @@ __all__ = [
     "installer_argv",
     "installer_by_id",
     "installers",
+    "prefix_drive_c",
     "prepare_prefix",
     "resolve_case_insensitive",
     "safe_download_name",
     "search_installers",
     "verify_installer_authenticity",
+    "wait_for_installer",
+    "wait_for_prefix_idle",
+    "wineserver_binary",
 ]

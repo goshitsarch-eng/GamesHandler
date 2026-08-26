@@ -19,7 +19,12 @@ from .credits_page import CreditsPage  # noqa: E402
 from .installers_page import InstallersPage  # noqa: E402
 from .models import Game, format_last_played  # noqa: E402
 from .plugins_page import PluginsPage  # noqa: E402
-from .runners import create_desktop_shortcut, launch, tool_command  # noqa: E402
+from .runners import (  # noqa: E402
+    create_desktop_shortcut,
+    launch,
+    prefix_drive_c,
+    tool_command,
+)
 from .runners_dialog import RunnersPage  # noqa: E402
 from .settings_page import SettingsPage  # noqa: E402
 
@@ -43,6 +48,10 @@ SORT_LABELS = (("name", "Name"), ("recent", "Recently played"), ("added", "Recen
 CARD_WIDTH = 188
 COVER_HEIGHT = 172
 TITLE_MAX_CHARS = 18
+
+# Artwork taken from an executable's own resources keeps the .ico suffix,
+# which is how the tile knows to letterbox it instead of cropping it.
+ICON_COVER_SUFFIX = ".ico"
 
 
 class GameCard(Gtk.Box):
@@ -201,7 +210,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.app.runner_manager,
             self.app.settings,
             self.toast,
-            on_installed=self._on_game_saved,
+            on_installed=self._on_easy_install_finished,
         )
         self.content_stack.add_named(self.installers_page, "installers")
         self.runners_page = RunnersPage(
@@ -640,19 +649,35 @@ class MainWindow(Adw.ApplicationWindow):
     def open_runners_window(self):
         self.show_page("runners")
 
-    def _on_game_saved(self, game: Game):
+    def _save_game(self, game: Game) -> bool:
+        """Persist *game* and refresh the views; ``True`` when it is new."""
         existing = self.app.library.get(game.id)
         if existing:
             self.app.library.update(game)
-            self.toast(f"Updated “{game.name}”")
         else:
             self.app.library.add(game)
-            self.toast(f"Added “{game.name}”")
         self.selected_game = game
         self._reload_category_filter()
         self.refresh()
         if not game.cover_path:
             self._autofetch_cover(game)
+        return existing is None
+
+    def _on_game_saved(self, game: Game):
+        added = self._save_game(game)
+        self.toast(f"Added “{game.name}”" if added else f"Updated “{game.name}”")
+
+    def _on_easy_install_finished(self, game: Game):
+        """An easy installer finished: add the entry, then offer to start it."""
+        self._save_game(game)
+        self.show_page("library")
+        # Installing a store launcher is only half of what the user asked for —
+        # they still have to open it and sign in. Offer that here rather than
+        # leaving them to find the new card and work out that it is done.
+        toast = Adw.Toast(title=f"Installed “{game.name}”", timeout=10)
+        toast.set_button_label("Play")
+        toast.connect("button-clicked", lambda *_: self.play_game(game))
+        self.toasts.add_toast(toast)
 
     def play_game(self, game: Game | None = None):
         game = game or self.selected_game
@@ -660,15 +685,40 @@ class MainWindow(Adw.ApplicationWindow):
             self.toast("Select a game first")
             return
         try:
-            launch(game, self.app.runner_manager)
+            started = launch(game, self.app.runner_manager)
         except Exception as exc:  # noqa: BLE001 - surface any launch failure
             self.toast(f"Could not launch “{game.name}”: {exc}")
             return
         self.app.library.mark_played(game.id)
         self.toast(f"Launching “{game.name}”…")
         self.refresh()
+        self._watch_launch(game.name, started)
         if self.app.settings.close_on_launch:
             self.set_visible(False)
+
+    def _watch_launch(self, name: str, started):
+        """Report a title that exits immediately instead of claiming success.
+
+        Starting the runner always succeeds; the game dying a second later
+        because its prefix or executable is wrong looked identical, which is
+        how a broken launch ended up looking like nothing happening at all.
+        """
+
+        def worker():
+            reason = started.failure()
+            if reason:
+                GLib.idle_add(self._launch_died, name, reason)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _launch_died(self, name: str, reason: str):
+        if not self.get_visible():
+            # close-on-launch hid the window; an error nobody can see is no
+            # better than the silence it replaced.
+            self.set_visible(True)
+            self.present()
+        self.toast(f"“{name}” stopped right away: {reason}")
+        return False
 
     def edit_selected(self):
         if self.selected_game:
@@ -714,15 +764,18 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _autofetch_cover(self, game: Game, announce: bool = False):
         if announce:
-            self.toast(f"Searching Steam for “{game.name}”…")
+            self.toast(f"Looking for artwork for “{game.name}”…")
+        exe_path = "" if game.is_linux else game.exe_path
 
         def worker():
             try:
-                hit = fetch_cover(game.name, game.id)
+                hit = fetch_cover(game.name, game.id, exe_path=exe_path)
                 GLib.idle_add(self._cover_ready, game.id, hit)
             except Exception as exc:  # noqa: BLE001
-                if announce:
-                    GLib.idle_add(self.toast, str(exc))
+                # Even the automatic lookup reports itself. Failing in silence
+                # is why an entry with no artwork looked like a lookup that
+                # never ran at all.
+                GLib.idle_add(self.toast, str(exc))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -731,13 +784,14 @@ class MainWindow(Adw.ApplicationWindow):
         if not game:
             return False
         game.cover_path = hit.cover_path
-        game.steam_appid = hit.appid
+        if hit.appid:
+            game.steam_appid = hit.appid
         if game.display_category == "Uncategorized" and hit.category:
             game.category = hit.category
         self.app.library.update(game)
         self._reload_category_filter()
         self.refresh()
-        self.toast(f"Cover set from Steam: {hit.name}")
+        self.toast(f"Cover set from {hit.origin_label}: {hit.name}")
         return False
 
     def run_tool(self, tool: str):
@@ -766,10 +820,13 @@ class MainWindow(Adw.ApplicationWindow):
             return
         from . import config
 
-        prefix = game.prefix_path or str(config.prefixes_dir() / game.id)
+        prefix = Path(game.prefix_path or str(config.prefixes_dir() / game.id))
+        # Show the prefix that holds drive_c, not Proton's parent directory.
+        drive_c = prefix_drive_c(prefix)
+        target = drive_c.parent if drive_c is not None else prefix
         try:
-            Path(prefix).mkdir(parents=True, exist_ok=True)
-            Gio.AppInfo.launch_default_for_uri(Path(prefix).resolve().as_uri(), None)
+            target.mkdir(parents=True, exist_ok=True)
+            Gio.AppInfo.launch_default_for_uri(target.resolve().as_uri(), None)
         except (OSError, GLib.Error) as exc:
             self.toast(f"Could not open the prefix folder: {exc}")
 
@@ -804,12 +861,23 @@ def cover_widget(
     """A game's cover, or a coloured initials plate when it has none."""
     path = game.cover_path
     if path and Path(path).is_file():
+        is_icon = Path(path).suffix.lower() == ICON_COVER_SUFFIX
         picture = Gtk.Picture.new_for_filename(path)
         picture.set_size_request(width, height)
         picture.set_can_shrink(True)
         if hasattr(Gtk, "ContentFit"):
-            picture.set_content_fit(Gtk.ContentFit.COVER)
+            # An app icon is square and mostly transparent; cropping it to a
+            # portrait tile cuts the logo in half. Steam's portrait art is the
+            # shape the tile was built for, so only that gets cropped to fill.
+            picture.set_content_fit(
+                Gtk.ContentFit.CONTAIN if is_icon else Gtk.ContentFit.COVER
+            )
         picture.add_css_class("game-cover")
+        if is_icon:
+            # Give a transparent icon the same plate the placeholder uses, so
+            # it reads as a tile rather than floating on the card background.
+            picture.add_css_class("game-art-plate")
+            picture.add_css_class(f"gh-art-{accent_index(game.id or game.name)}")
         picture.set_overflow(Gtk.Overflow.HIDDEN)
         return picture
 

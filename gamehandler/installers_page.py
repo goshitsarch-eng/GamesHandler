@@ -14,15 +14,17 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
+from .covers import save_exe_icon  # noqa: E402
 from .installers import (  # noqa: E402
     INSTALLER_CATEGORIES,
     Installer,
     build_installer_command,
     download_installer,
-    find_prefix_exe,
     game_from_install,
+    prefix_drive_c,
     prepare_prefix,
     search_installers,
+    wait_for_installer,
 )
 from .runners import SYSTEM_WINE  # noqa: E402
 
@@ -216,7 +218,8 @@ class InstallersPage(Gtk.Box):
 
     def _download_done(self, installer, runner, runner_id, prefix, game_id, archive: Path):
         self.toast(
-            f"Launching the {installer.name} installer… Finish the vendor wizard, then close it."
+            f"Launching the {installer.name} installer… Finish the vendor wizard, "
+            "then close it — GameHandler adds it as soon as the install lands."
         )
 
         def worker():
@@ -224,6 +227,11 @@ class InstallersPage(Gtk.Box):
                 argv, env = build_installer_command(runner, prefix, installer, archive)
                 Path(prefix).mkdir(parents=True, exist_ok=True)
                 completed = subprocess.run(argv, env=env, cwd=str(archive.parent), check=False)
+                # The process we started is usually only the bootstrapper, so
+                # the real wizard is still on screen when it exits. Waiting
+                # here is what turns a finished install into a library entry
+                # instead of a "could not find the executable" dead end.
+                found = wait_for_installer(runner, env, prefix, installer.expected_exe)
                 GLib.idle_add(
                     self._installer_finished,
                     installer,
@@ -231,6 +239,7 @@ class InstallersPage(Gtk.Box):
                     prefix,
                     game_id,
                     completed.returncode,
+                    found,
                 )
             except Exception as exc:  # noqa: BLE001
                 GLib.idle_add(self._install_failed, installer, str(exc))
@@ -238,8 +247,7 @@ class InstallersPage(Gtk.Box):
         threading.Thread(target=worker, daemon=True).start()
         return False
 
-    def _installer_finished(self, installer, runner_id, prefix, game_id, returncode):
-        found = find_prefix_exe(prefix, installer.expected_exe)
+    def _installer_finished(self, installer, runner_id, prefix, game_id, returncode, found):
         if found is not None:
             self._finish_install(installer, found, prefix, runner_id, game_id)
             return False
@@ -250,9 +258,15 @@ class InstallersPage(Gtk.Box):
 
     def _finish_install(self, installer, exe_path, prefix, runner_id, game_id):
         game = game_from_install(installer, exe_path, prefix, runner_id, game_id=game_id)
+        # A store launcher is not a Steam store product, so searching Steam for
+        # its name finds nothing or something else entirely. The executable the
+        # vendor just installed carries the right artwork already.
+        try:
+            game.cover_path = str(save_exe_icon(exe_path, game_id))
+        except (OSError, RuntimeError):
+            game.cover_path = ""
         self._set_busy(False)
         self.on_installed(game)
-        self.toast(f"Added “{game.name}” to your library")
         return False
 
     def _offer_browse(self, installer, prefix, runner_id, game_id):
@@ -268,8 +282,9 @@ class InstallersPage(Gtk.Box):
         all_filter.add_pattern("*")
         filters.append(all_filter)
         dialog.set_filters(filters)
-        initial = Path(prefix) / "drive_c"
-        if initial.is_dir():
+        # Proton keeps drive_c one level down, under "pfx".
+        initial = prefix_drive_c(prefix)
+        if initial is not None:
             dialog.set_initial_folder(Gio.File.new_for_path(str(initial)))
         dialog.open(
             self.get_root(),

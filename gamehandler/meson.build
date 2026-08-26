@@ -7,6 +7,7 @@ sources = [
   'config.py',
   'settings.py',
   'covers.py',
+  'exe_icons.py',
   'credits.py',
   'credits_page.py',
   'plugins.py',

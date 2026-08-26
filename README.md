@@ -19,7 +19,9 @@ and [Bottles](https://usebottles.com). Full acknowledgements are
 - Dark mode by default, plus system and light themes
 - Grid and list library views, search, categories, sorting, and per-game edit
 - Generated cover art for titles without artwork, so the grid never looks empty
-- Custom cover art, plus automatic Steam cover lookup by game name
+- Custom cover art, automatic Steam lookup by game name, and — for anything
+  Steam has never sold, such as a store launcher — the icon the Windows
+  executable already carries
 - Add Windows `.exe` titles or Linux-native games
 - Choose a Proton or Wine runner when adding a game, and change it later
 - Download and remove compatibility tools from inside the app:
@@ -28,7 +30,8 @@ and [Bottles](https://usebottles.com). Full acknowledgements are
 - Guide describing when to use each Proton or Wine family
 - Isolated Wine prefixes, Winecfg, Winetricks, and prefix folder access
 - Launch helpers: MangoHud, Feral GameMode, Prefer SDL, Wine Wayland, HDR, Esync, Fsync, DXVK, VKD3D, NVAPI/DLSS, FSR, BattlEye, EAC, Gamescope, virtual desktop, and custom environment variables
-- Easy installers for Battle.net, Epic, EA App, Ubisoft Connect, GOG Galaxy, Amazon Games, Rockstar, Steam, and Discord
+- Easy installers for Battle.net, Epic, EA App, Ubisoft Connect, GOG Galaxy, Amazon Games, Rockstar, Steam, and Discord —
+  each waits for the vendor's own wizard to finish, then adds the result with a Play button
 - Plugins page that detects MangoHud, GameMode, Winetricks, UMU, and Gamescope
 - Credits page naming every upstream project, with links and licenses
 - Desktop shortcuts that launch a library entry with `gamehandler --launch`
@@ -101,7 +104,7 @@ sudo meson install -C build  # installs the `gamehandler` launcher, desktop file
 
 ```bash
 ./build-aux/flatpak/build.sh
-flatpak --user install --reinstall dist/gamehandler-0.6.0.flatpak
+flatpak --user install --reinstall dist/gamehandler-0.6.1.flatpak
 flatpak run com.goshapps.GameHandler
 ```
 

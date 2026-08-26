@@ -204,11 +204,16 @@ def _launch_from_cli(game_id: str) -> int:
         print(f"GameHandler: no game with id {game_id}", file=sys.stderr)
         return 1
     try:
-        launch(game, RunnerManager())
+        started = launch(game, RunnerManager())
     except Exception as exc:  # noqa: BLE001 - a shortcut must fail with a message
         print(f"GameHandler: could not launch {game.name}: {exc}", file=sys.stderr)
         return 1
     library.mark_played(game.id)
+    # A shortcut that opens nothing and exits 0 tells the user nothing at all.
+    reason = started.failure()
+    if reason:
+        print(f"GameHandler: {game.name} stopped right away: {reason}", file=sys.stderr)
+        return 1
     return 0
 
 
