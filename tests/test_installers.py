@@ -447,23 +447,31 @@ class InstallerHandoffTests(unittest.TestCase):
 
         *wait_seconds* is how long the wineserver wait appears to take, and
         *install_after* the simulated moment the wizard writes its executable.
-        Returns ``(found, seconds spent looking after the wait)``.
+        The idle stub honours ``timeout`` so a leftover store client cannot
+        hide an already-written launcher. Returns ``(found, elapsed, idle_calls)``.
         """
         self.now = 0.0
-        marks = {}
+        remaining = [wait_seconds]
+        idle_calls = []
 
         def clock():
             return self.now
 
-        def sleep(seconds):
-            self.now += seconds
+        def maybe_install():
             if install_after is not None and self.now >= install_after:
                 self._install_now()
 
-        def idle(_runner, _env, **_kwargs):
-            self.now += wait_seconds
-            marks["after_wait"] = self.now
-            return True
+        def sleep(seconds):
+            self.now += seconds
+            maybe_install()
+
+        def idle(_runner, _env, timeout=6 * 60 * 60, **_kwargs):
+            idle_calls.append(timeout)
+            step = min(remaining[0], float(timeout))
+            remaining[0] -= step
+            self.now += step
+            maybe_install()
+            return remaining[0] <= 0
 
         with unittest.mock.patch("gamehandler.installers.wait_for_prefix_idle", idle):
             found = wait_for_installer(
@@ -474,22 +482,22 @@ class InstallerHandoffTests(unittest.TestCase):
                 sleep=sleep,
                 clock=clock,
             )
-        return found, self.now - marks["after_wait"]
+        return found, self.now, idle_calls
 
     def test_polls_until_the_wizard_writes_the_executable(self):
-        found, _window = self._run(wait_seconds=0, install_after=60)
+        found, _elapsed, _idle = self._run(wait_seconds=0, install_after=60)
         self.assertIsNotNone(found)
         self.assertTrue(found.is_file())
 
     def test_gives_up_at_the_deadline_instead_of_polling_forever(self):
-        found, window = self._run(wait_seconds=0)
+        found, elapsed, _idle = self._run(wait_seconds=0)
         self.assertIsNone(found)
-        self.assertLess(window, 60 * 60, "the wizard window is bounded")
+        self.assertLess(elapsed, 60 * 60, "the wizard window is bounded")
 
     def test_a_wineserver_that_really_waited_shortens_the_window(self):
         """The wizard is provably gone, so do not sit here for ten more minutes."""
-        _found, window = self._run(wait_seconds=30)
-        self.assertLess(window, 60)
+        _found, elapsed, _idle = self._run(wait_seconds=30)
+        self.assertLess(elapsed, 60)
 
     def test_a_wineserver_that_returned_at_once_proves_nothing(self):
         """umu runs Proton's wineserver where a host one cannot attach to it.
@@ -497,14 +505,27 @@ class InstallerHandoffTests(unittest.TestCase):
         Treating that instant answer as "the wizard has finished" would cut
         Proton installs off after a few seconds, straight back to the bug.
         """
-        _found, window = self._run(wait_seconds=0)
-        self.assertGreater(window, 60)
+        _found, elapsed, _idle = self._run(wait_seconds=0)
+        self.assertGreater(elapsed, 60)
 
     def test_an_already_installed_executable_is_returned_immediately(self):
         target = self._install_now()
-        found, window = self._run(wait_seconds=30)
+        found, elapsed, idle_calls = self._run(wait_seconds=30)
         self.assertEqual(target, found)
-        self.assertEqual(0, window, "no polling once the executable is there")
+        self.assertEqual([], idle_calls)
+        self.assertEqual(3.0, elapsed, "only the bootstrap handoff, no wineserver wait")
+
+    def test_finds_the_launcher_while_wineserver_is_still_busy(self):
+        """Steam/EA/Battle.net keep wineserver alive after writing the exe."""
+        found, elapsed, idle_calls = self._run(
+            wait_seconds=6 * 60 * 60,
+            install_after=10,
+        )
+        self.assertIsNotNone(found)
+        self.assertTrue(found.is_file())
+        self.assertLess(elapsed, 60)
+        self.assertGreater(len(idle_calls), 0)
+        self.assertTrue(all(timeout <= 2 for timeout in idle_calls))
 
 
 class WineserverLookupTests(unittest.TestCase):

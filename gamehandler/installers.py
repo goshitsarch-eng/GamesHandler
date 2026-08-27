@@ -369,23 +369,43 @@ def wait_for_installer(
     """Wait out a vendor wizard and return the executable it installed.
 
     The process GameHandler started is usually just the bootstrapper, so its
-    exit says nothing about whether the install finished. Wait for the prefix
-    to fall idle where ``wineserver`` can tell us, and poll for the executable
-    either way.
+    exit says nothing about whether the install finished. Poll for the
+    expected executable the whole time: store clients often keep ``wineserver``
+    busy after the launcher is already on disk, so waiting for idle first can
+    stall for hours. Slice the wineserver wait so a leftover process cannot
+    hide a finished install.
     """
     expected = list(expected)
     sleep(INSTALL_HANDOFF_SECONDS)
     started = clock()
-    idle = wait_for_prefix_idle(runner, env)
-    confirmed = idle and (clock() - started) >= INSTALL_WAIT_EVIDENCE_SECONDS
-    deadline = clock() + (INSTALL_FLUSH_SECONDS if confirmed else INSTALL_WIZARD_SECONDS)
+    busy_wait = 0.0
+    deadline = started + INSTALL_SETTLE_TIMEOUT
     while True:
         found = find_prefix_exe(prefix, expected)
         if found is not None:
             return found
-        if clock() >= deadline:
+        now = clock()
+        if now >= deadline:
             return None
-        sleep(INSTALL_POLL_SECONDS)
+        remaining = deadline - now
+        slice_timeout = max(1, int(min(INSTALL_POLL_SECONDS, remaining)))
+        wait_started = clock()
+        idle = wait_for_prefix_idle(runner, env, timeout=slice_timeout)
+        waited = clock() - wait_started
+        if idle:
+            confirmed = (
+                waited >= INSTALL_WAIT_EVIDENCE_SECONDS
+                or busy_wait >= INSTALL_WAIT_EVIDENCE_SECONDS
+            )
+            extra = INSTALL_FLUSH_SECONDS if confirmed else INSTALL_WIZARD_SECONDS
+            deadline = min(deadline, clock() + extra)
+        else:
+            busy_wait += waited
+        leftover = INSTALL_POLL_SECONDS - waited
+        if leftover > 0:
+            now = clock()
+            if now < deadline:
+                sleep(min(leftover, deadline - now))
 
 
 def safe_download_name(filename: str, fallback: str = "installer") -> str:
