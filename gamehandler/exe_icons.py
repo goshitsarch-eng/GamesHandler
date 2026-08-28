@@ -6,7 +6,7 @@ similar name. The executable the vendor's own installer just wrote is a
 source that is always present, always the right artwork, needs no network,
 and redistributes nothing: the icon comes out of the user's own install.
 
-Pure stdlib and GTK-free, so the parser can be unit tested headlessly.
+Pure stdlib and UI-free, so the parser can be unit tested headlessly.
 """
 
 from __future__ import annotations

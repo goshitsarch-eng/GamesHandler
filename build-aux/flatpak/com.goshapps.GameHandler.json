@@ -1,9 +1,12 @@
 {
   "app-id": "com.goshapps.GameHandler",
   "branch": "stable",
-  "runtime": "org.gnome.Platform",
-  "runtime-version": "50",
-  "sdk": "org.gnome.Sdk",
+  "runtime": "org.kde.Platform",
+  "runtime-version": "6.9",
+  "sdk": "org.kde.Sdk",
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.llvm18"
+  ],
   "base": "org.winehq.Wine",
   "base-version": "stable-25.08",
   "command": "gamehandler",
@@ -16,15 +19,46 @@
     "--allow=multiarch",
     "--device=all",
     "--filesystem=home",
+    "--filesystem=xdg-run/gvfs",
     "--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro",
     "--env=PATH=/usr/lib/extensions/vulkan/gamescope/bin:/app/bin:/usr/bin",
+    "--env=PYTHONPATH=/app/lib/python3.12/site-packages",
     "--talk-name=org.freedesktop.Notifications"
   ],
   "inherit-extensions": [
     "org.freedesktop.Platform.GL32",
     "org.freedesktop.Platform.Compat.i386"
   ],
+  "cleanup": [
+    "/include",
+    "/lib/cmake",
+    "/lib/pkgconfig",
+    "/share/doc"
+  ],
   "modules": [
+    {
+      "name": "pyside6",
+      "buildsystem": "simple",
+      "build-options": {
+        "append-path": "/usr/lib/sdk/llvm18/bin",
+        "env": {
+          "CLANG_INSTALL_DIR": "/usr/lib/sdk/llvm18",
+          "LLVM_INSTALL_DIR": "/usr/lib/sdk/llvm18"
+        }
+      },
+      "build-commands": [
+        "cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/app -DBUILD_TESTS=OFF -DNO_QT_TOOLS=yes -DMODULES='Core;Gui;Widgets;Qml;Quick;QuickControls2;Svg' .",
+        "cmake --build build",
+        "cmake --install build"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.9.3-src/pyside-setup-everywhere-src-6.9.3.tar.xz",
+          "sha256": "7cd2d5abb98f2e6f442b0e41f5fcf930e7312ae4b17f681316b1adc7b63bb172"
+        }
+      ]
+    },
     {
       "name": "osslsigncode",
       "buildsystem": "cmake-ninja",

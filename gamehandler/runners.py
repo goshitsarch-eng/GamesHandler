@@ -1,6 +1,6 @@
 """Wine and Proton runner management.
 
-This module is intentionally free of any GTK dependency so launching and
+This module is intentionally free of any UI dependency so launching and
 compatibility-tool logic can be unit tested headlessly.
 
 GameHandler downloads Proton and Wine builds itself from the same upstream
@@ -27,13 +27,14 @@ import tarfile
 import tempfile
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable
 from urllib.request import Request, urlopen
 
 from . import config
 from .models import Game
+from .netpaths import as_local_path, is_remote_url, unreachable_share_message
 
 SYSTEM_WINE = "wine-system"
 METADATA_NAME = ".gamehandler.json"
@@ -1269,6 +1270,25 @@ def build_linux_command(game: Game) -> tuple[list[str], dict[str, str]]:
     return argv, dict(os.environ)
 
 
+def resolve_game_paths(game: Game) -> Game:
+    """Return *game* with picker URLs and share locations turned into paths.
+
+    A library entry that lives on a network share is stored however the file
+    dialog handed it over. Resolving through the GVFS FUSE mount here means a
+    share-hosted title launches like a local one instead of failing with a
+    URL Wine cannot execute. A share that is not mounted any more fails with
+    an instruction, not a mystery.
+    """
+    exe = as_local_path(game.exe_path)
+    cwd = as_local_path(game.working_directory)
+    extra = as_local_path(game.additional_app)
+    if is_remote_url(exe):
+        raise RuntimeError(unreachable_share_message(game.exe_path))
+    if (exe, cwd, extra) == (game.exe_path, game.working_directory, game.additional_app):
+        return game
+    return replace(game, exe_path=exe, working_directory=cwd, additional_app=extra)
+
+
 # How long a launched title gets to stay alive before we stop watching it. A
 # real game is still running after this; one that mis-configured its prefix or
 # never found its executable is long gone.
@@ -1362,6 +1382,7 @@ def launch(game: Game, manager: RunnerManager | None = None) -> LaunchedGame:
     successful one.
     """
     manager = manager or RunnerManager()
+    game = resolve_game_paths(game)
     uses_proton = False
     if game.is_linux:
         argv, env = build_linux_command(game)
@@ -1461,6 +1482,13 @@ def tool_command(game: Game, manager: RunnerManager, tool: str) -> tuple[list[st
     prefix = wine_prefix_root(game.prefix_path or str(config.prefixes_dir() / game.id))
     env = dict(os.environ)
     env["WINEPREFIX"] = prefix
+    # Point the tool at the same Wine the game runs on. Winetricks otherwise
+    # falls back to the system wine, which refuses (or silently migrates) a
+    # prefix that a newer Proton/Wine build created.
+    env["WINE"] = wine
+    wineserver = Path(wine).with_name("wineserver")
+    if wineserver.is_file() and os.access(wineserver, os.X_OK):
+        env["WINESERVER"] = str(wineserver)
     Path(prefix).mkdir(parents=True, exist_ok=True)
     if tool == "winecfg":
         return [wine, "winecfg"], env
@@ -1504,6 +1532,7 @@ __all__ = [
     "normalize_desktop_size",
     "virtual_desktop_argv",
     "find_anticheat_runtime",
+    "resolve_game_paths",
     "apply_launch_options",
     "uses_proton_runtime",
     "build_linux_command",

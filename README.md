@@ -1,7 +1,7 @@
 # GameHandler
 
 GameHandler is a modern game manager for Linux, focused on running **Windows games**
-via **Wine** and **Proton**, built with a clean **GTK4 + libadwaita** interface.
+via **Wine** and **Proton**, built with a clean **Qt 6 + Kirigami** interface.
 
 It is a **front-end, not a compatibility layer**. Every Windows game it launches runs
 on [Wine](https://www.winehq.org), usually through a [Proton](https://github.com/ValveSoftware/Proton)
@@ -16,7 +16,8 @@ and [Bottles](https://usebottles.com). Full acknowledgements are
 
 ## Features
 
-- Dark mode by default, plus system and light themes
+- Dark mode by default, plus system and light themes — both first-class in the
+  Kirigami interface
 - Grid and list library views, search, categories, sorting, and per-game edit
 - Generated cover art for titles without artwork, so the grid never looks empty
 - Custom cover art, automatic Steam lookup by game name, and — for anything
@@ -35,6 +36,8 @@ and [Bottles](https://usebottles.com). Full acknowledgements are
 - Plugins page that detects MangoHud, GameMode, Winetricks, UMU, and Gamescope
 - Credits page naming every upstream project, with links and licenses
 - Desktop shortcuts that launch a library entry with `gamehandler --launch`
+- Games and covers on network shares work: `smb://`-style locations are
+  resolved through their mounted GVFS path so Wine can actually run them
 
 Flatpak users who enable Gamescope also need the matching Freedesktop 25.08 extension:
 
@@ -47,9 +50,9 @@ flatpak install flathub org.freedesktop.Platform.VulkanLayer.gamescope//25.08
 | Area | Choice |
 | --- | --- |
 | Language | Python 3 |
-| UI toolkit | GTK 4 + libadwaita (`PyGObject`) |
+| UI toolkit | Qt 6 + Kirigami (`PySide6` + QML) |
 | Build system | Meson |
-| Packaging | Flatpak (GNOME runtime) |
+| Packaging | Flatpak (KDE runtime) |
 | Runners | System Wine plus downloaded Proton/Wine builds |
 
 ## Requirements
@@ -57,11 +60,17 @@ flatpak install flathub org.freedesktop.Platform.VulkanLayer.gamescope//25.08
 System packages (Debian/Ubuntu names):
 
 ```
-python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 libadwaita-1-0
+python3-pyside6.qtcore python3-pyside6.qtgui python3-pyside6.qtwidgets python3-pyside6.qtqml python3-pyside6.qtquick
+qml6-module-org-kde-kirigami qml6-module-qtquick-dialogs qml6-module-qtquick-layouts qqc2-desktop-style
 meson ninja-build gettext desktop-file-utils appstream
 wine        # to actually launch Windows games
 osslsigncode # version 2.14+ verifies Easy Installer Authenticode signatures
 ```
+
+On Arch: `pyside6 kirigami qqc2-desktop-style`. On Fedora:
+`python3-pyside6 kf6-kirigami qqc2-desktop-style`. PySide6 from pip also works
+(`pip install PySide6`), as long as the distribution provides the Kirigami QML
+modules and `qqc2-desktop-style`.
 
 Optional helpers: `winetricks`, `mangohud`, `gamemode`, `umu-run`.
 
@@ -104,13 +113,17 @@ sudo meson install -C build  # installs the `gamehandler` launcher, desktop file
 
 ```bash
 ./build-aux/flatpak/build.sh
-flatpak --user install --reinstall dist/gamehandler-0.6.1.flatpak
+flatpak --user install --reinstall dist/gamehandler-0.7.0.flatpak
 flatpak run com.goshapps.GameHandler
 ```
 
-The Flatpak uses GNOME 50 on the Wine `stable-25.08` BaseApp and inherits the
-Freedesktop `Compat.i386` and `GL32` extensions. `--allow=multiarch` is required
-for 32-bit Windows games and downloaded Wine/Proton builds.
+The Flatpak uses the KDE 6.9 runtime (which ships Qt 6 and the Kirigami QML
+modules) on the Wine `stable-25.08` BaseApp and inherits the Freedesktop
+`Compat.i386` and `GL32` extensions. PySide6 is built from the official Qt
+source release against the runtime's own Qt. `--allow=multiarch` is required
+for 32-bit Windows games and downloaded Wine/Proton builds, and
+`--filesystem=xdg-run/gvfs` lets games on mounted network shares launch from
+inside the sandbox.
 The package bundles a checksum-pinned osslsigncode build for authenticated
 Easy Installer downloads. The Microsoft Identity Verification Root CA used for
 Ubisoft's Azure Trusted Signing chain comes from Microsoft's official PKI
@@ -202,12 +215,12 @@ Optional tools GameHandler detects and wraps launches with. They are installed f
 
 What GameHandler itself is built and shipped with.
 
-- **[GTK](https://www.gtk.org)** — The GNOME Project _(LGPL-2.1-or-later)_  
-  The toolkit the whole interface is built on.
-- **[libadwaita](https://gitlab.gnome.org/GNOME/libadwaita)** — The GNOME Project _(LGPL-2.1-or-later)_  
-  Adaptive widgets, the dark theme, and the GNOME look.
-- **[PyGObject](https://pygobject.gnome.org)** — The PyGObject maintainers _(LGPL-2.1-or-later)_  
-  The Python bindings that let GameHandler drive GTK.
+- **[Qt](https://www.qt.io)** — The Qt Company and the Qt Project _(LGPL-3.0-only)_  
+  The Qt 6 application framework the whole interface runs on.
+- **[Kirigami](https://develop.kde.org/frameworks/kirigami/)** — The KDE community _(LGPL-2.0-or-later)_  
+  KDE's QML framework behind the adaptive pages, drawer navigation, and the light and dark themes.
+- **[PySide6](https://doc.qt.io/qtforpython-6/)** — The Qt Company _(LGPL-3.0-only)_  
+  The official Python bindings that let GameHandler drive Qt.
 - **[Meson and Flatpak](https://flatpak.org)** — The Meson and Flatpak projects  
   How GameHandler is built and packaged.
 - **[Steam store web API](https://store.steampowered.com)** — Valve Software  
@@ -221,7 +234,7 @@ Running a Windows game on Linux takes a compatibility layer, a Proton or Wine bu
 
 ### One app instead of five
 
-Without GameHandler the usual route is ProtonPlus (or a hand-extracted tarball) for runners, Lutris or Bottles for prefixes, winetricks by hand for runtimes, a separate wiki tab to learn which Proton fork a game needs, and a vendor installer run manually for each store launcher. GameHandler does those five jobs in one GTK4 window.
+Without GameHandler the usual route is ProtonPlus (or a hand-extracted tarball) for runners, Lutris or Bottles for prefixes, winetricks by hand for runtimes, a separate wiki tab to learn which Proton fork a game needs, and a vendor installer run manually for each store launcher. GameHandler does those five jobs in one window.
 
 ### Bundling the workflow, not the projects
 
@@ -248,20 +261,28 @@ python3 -m unittest discover -s tests
 
 ```
 gamehandler/            # Python package (application code)
-  main.py               # Adw.Application + entry point
-  window.py             # library, runners, and settings shell
-  add_game_dialog.py    # add / edit game dialog
+  main.py               # CLI entry point + Qt application bootstrap
+  bridge.py             # the QML-facing backend (library, runners, installers…)
+  theme.py              # light/dark/system color schemes
+  qml/                  # the Kirigami interface
+    Main.qml            # application window, navigation, notifications
+    LibraryPage.qml     # grid/list library with search, sort, categories
+    GameFormPage.qml    # add / edit game form
+    InstallersPage.qml  # one-click store-launcher installs
+    RunnersPage.qml     # Proton/Wine downloads and guide
+    PluginsPage.qml     # optional helper detection
+    CreditsPage.qml     # upstream acknowledgements
+    SettingsPage.qml    # appearance, defaults, behavior
+    CoverArt.qml        # cover tiles and generated placeholder art
   installers.py         # easy-installer catalog and prefix helpers
-  installers_page.py    # Installers store page
-  runners_dialog.py     # Proton/Wine download page
   settings.py           # persisted preferences
   models.py             # Game model + JSON-backed Library
   credits.py            # upstream acknowledgements (source of truth)
-  credits_page.py       # in-app Credits page
   runners.py            # runner families, downloads, launch helpers
+  netpaths.py           # network-share (GVFS) path resolution
   config.py             # XDG paths
 bin/gamehandler.in      # installed launcher template
 data/                   # desktop entry, AppStream metainfo, icon
 build-aux/flatpak/      # Flatpak manifest
-tests/                  # headless unit tests
+tests/                  # headless unit tests (incl. an offscreen QML smoke test)
 ```
