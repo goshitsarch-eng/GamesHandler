@@ -3,11 +3,11 @@
 GameHandler runs no Windows game by itself. Every title it launches is running
 on someone else's compatibility layer, someone else's Proton build, and
 someone else's Vulkan translation layer. This module is the single source of
-truth for crediting them: the About dialog, the in-app Credits page, and the
-README acknowledgements section are all generated from the data here, so they
+truth for crediting them: the in-app Credits page and the README
+acknowledgements section are both generated from the data here, so they
 cannot drift apart.
 
-Kept free of GTK imports so it can be unit tested headlessly.
+Kept free of any UI toolkit import so it can be unit tested headlessly.
 """
 
 from __future__ import annotations
@@ -249,25 +249,28 @@ CREDIT_SECTIONS: tuple[CreditSection, ...] = (
         summary="What GameHandler itself is built and shipped with.",
         entries=(
             Credit(
-                name="GTK",
-                url="https://www.gtk.org",
-                role="The toolkit the whole interface is built on.",
-                license="LGPL-2.1-or-later",
-                authors="The GNOME Project",
+                name="Qt",
+                url="https://www.qt.io",
+                role="The Qt 6 application framework the whole interface runs on.",
+                license="LGPL-3.0-only",
+                authors="The Qt Company and the Qt Project",
             ),
             Credit(
-                name="libadwaita",
-                url="https://gitlab.gnome.org/GNOME/libadwaita",
-                role="Adaptive widgets, the dark theme, and the GNOME look.",
-                license="LGPL-2.1-or-later",
-                authors="The GNOME Project",
+                name="Kirigami",
+                url="https://develop.kde.org/frameworks/kirigami/",
+                role=(
+                    "KDE's QML framework behind the adaptive pages, drawer "
+                    "navigation, and the light and dark themes."
+                ),
+                license="LGPL-2.0-or-later",
+                authors="The KDE community",
             ),
             Credit(
-                name="PyGObject",
-                url="https://pygobject.gnome.org",
-                role="The Python bindings that let GameHandler drive GTK.",
-                license="LGPL-2.1-or-later",
-                authors="The PyGObject maintainers",
+                name="PySide6",
+                url="https://doc.qt.io/qtforpython-6/",
+                role="The official Python bindings that let GameHandler drive Qt.",
+                license="LGPL-3.0-only",
+                authors="The Qt Company",
             ),
             Credit(
                 name="Meson and Flatpak",
@@ -307,7 +310,7 @@ WHY_ALL_IN_ONE: tuple[tuple[str, str], ...] = (
         "tarball) for runners, Lutris or Bottles for prefixes, winetricks by hand "
         "for runtimes, a separate wiki tab to learn which Proton fork a game needs, "
         "and a vendor installer run manually for each store launcher. GameHandler "
-        "does those five jobs in one GTK4 window.",
+        "does those five jobs in one window.",
     ),
     (
         "Bundling the workflow, not the projects",
@@ -356,10 +359,10 @@ def credit_by_name(name: str) -> Credit:
 
 
 def about_credit_sections() -> list[tuple[str, list[str]]]:
-    """``(title, ["Name https://url", ...])`` pairs for Adw.AboutDialog.
+    """``(title, ["Name https://url", ...])`` pairs for about-style listings.
 
-    libadwaita renders a trailing URL in each entry as a link, so the name and
-    its homepage are joined into one string per project.
+    The name and its homepage are joined into one string per project so a
+    plain-text renderer can show the link inline.
     """
     rendered = []
     for section in CREDIT_SECTIONS:

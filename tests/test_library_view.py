@@ -1,6 +1,6 @@
 """Tests for library filtering, sorting, and the presentation helpers.
 
-These cover the GTK-free logic behind the library grid and list, so a broken
+These cover the UI-free logic behind the library grid and list, so a broken
 filter or sort shows up here rather than as an empty window.
 """
 

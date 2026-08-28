@@ -32,8 +32,9 @@ REQUIRED = (
     "Faugus Launcher",
     "Bottles",
     "ProtonPlus",
-    "GTK",
-    "libadwaita",
+    "Qt",
+    "Kirigami",
+    "PySide6",
 )
 
 
@@ -89,9 +90,11 @@ class CreditCatalogTests(unittest.TestCase):
             self.assertTrue(heading.strip())
             self.assertGreater(len(body.split()), 15)
 
-    def test_module_is_gtk_free(self):
+    def test_module_is_ui_toolkit_free(self):
         source = Path(credits_module.__file__).read_text(encoding="utf-8")
         self.assertNotIn("import gi", source)
+        self.assertNotIn("PySide6 import", source)
+        self.assertNotIn("import PySide6", source)
 
 
 class ReadmeSyncTests(unittest.TestCase):

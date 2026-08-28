@@ -1,19 +1,15 @@
 project(
   'gamehandler',
-  version: '0.6.1',
+  version: '0.7.0',
   license: 'GPL-3.0-or-later',
-  meson_version: '>= 0.62.0',
+  meson_version: '>= 0.64.0',
 )
 
 python = import('python')
-py = python.find_installation('python3', modules: ['gi'])
+# PySide6 and the Kirigami QML modules are runtime dependencies; they are
+# deliberately not required at build time so packaging stays headless.
+py = python.find_installation('python3')
 
 subdir('gamehandler')
 subdir('bin')
 subdir('data')
-
-gnome = import('gnome')
-gnome.post_install(
-  gtk_update_icon_cache: true,
-  update_desktop_database: true,
-)

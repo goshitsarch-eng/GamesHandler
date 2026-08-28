@@ -28,14 +28,35 @@ class PackagingTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text())
         self.assertEqual(manifest["app-id"], APP_ID_EXPECTED)
         self.assertEqual(manifest["branch"], "stable")
-        self.assertEqual(manifest["runtime-version"], "50")
+        self.assertEqual(manifest["runtime"], "org.kde.Platform")
+        self.assertEqual(manifest["sdk"], "org.kde.Sdk")
         self.assertEqual(manifest["base"], "org.winehq.Wine")
         self.assertEqual(manifest["base-version"], "stable-25.08")
         self.assertIn("--allow=multiarch", manifest["finish-args"])
         self.assertIn("--filesystem=home", manifest["finish-args"])
+        self.assertIn("--filesystem=xdg-run/gvfs", manifest["finish-args"])
         self.assertIn("--device=all", manifest["finish-args"])
         self.assertIn("org.freedesktop.Platform.Compat.i386", manifest["inherit-extensions"])
         self.assertIn("org.freedesktop.Platform.GL32", manifest["inherit-extensions"])
+        module_names = [module["name"] for module in manifest["modules"]]
+        self.assertIn("pyside6", module_names)
+
+    def test_no_gtk_or_adwaita_remains_anywhere(self):
+        """The Qt rewrite must leave nothing of the old stack behind."""
+        tracked = [
+            *sorted((ROOT / "gamehandler").rglob("*.py")),
+            *sorted((ROOT / "gamehandler").rglob("*.qml")),
+        ]
+        for path in tracked:
+            if "__pycache__" in path.parts:
+                continue
+            source = path.read_text(encoding="utf-8", errors="ignore")
+            with self.subTest(file=path.name):
+                self.assertNotIn("import gi", source)
+                self.assertNotIn("gi.repository", source)
+                self.assertNotIn("Adwaita", source)
+                self.assertNotIn("libadwaita", source)
+                self.assertNotIn("Gtk.", source)
 
     def test_gpl_license_is_present_and_installed(self):
         license_text = (ROOT / "LICENSE").read_text()

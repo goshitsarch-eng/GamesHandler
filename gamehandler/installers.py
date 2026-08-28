@@ -1,6 +1,6 @@
 """First-party easy-installer catalog and Wine prefix helpers.
 
-This module is GTK-free so catalog lookup, download, msiexec argv, and
+This module is free of any UI import so catalog lookup, download, msiexec argv, and
 prefix exe discovery can be unit tested headlessly. Official vendor
 download URLs only — no redistributed game binaries.
 """

@@ -8,7 +8,7 @@
   <description>
     <p>
       GameHandler is a modern game manager for Linux, focused on running Windows
-      games through Wine and Proton. It provides a GTK4 and libadwaita
+      games through Wine and Proton. It provides a Qt 6 and Kirigami
       interface for organising your library, downloading Proton and Wine
       builds, and launching games in isolated prefixes.
     </p>
@@ -22,7 +22,7 @@
     </p>
     <p>Features:</p>
     <ul>
-      <li>Dark mode with system and light alternatives</li>
+      <li>Light and dark modes, plus following the system theme</li>
       <li>Categorize games and filter the library</li>
       <li>Custom covers, Steam artwork lookup, or the executable's own icon</li>
       <li>Add Windows or Linux games and pick a runner per title</li>
@@ -42,6 +42,27 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.0" date="2026-08-28">
+      <description>
+        <p>
+          The interface has been rewritten from scratch on Qt 6 and KDE's
+          Kirigami framework; nothing of the old GTK and libadwaita stack
+          remains. Light and dark modes are both first-class, alongside
+          following the system theme.
+        </p>
+        <p>
+          Games and covers picked from network shares now work: locations such
+          as smb:// are resolved through their mounted GVFS path instead of
+          asking another application to open them, and a share that is not
+          mounted says so with an instruction rather than failing silently.
+        </p>
+        <p>
+          Winetricks and winecfg now run with the same Wine build the game
+          uses, so prefixes created by a downloaded Proton or Wine build are
+          no longer refused or silently migrated by the system Wine.
+        </p>
+      </description>
+    </release>
     <release version="0.6.1" date="2026-08-26">
       <description>
         <p>
