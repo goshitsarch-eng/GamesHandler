@@ -2,10 +2,10 @@
   "app-id": "com.goshapps.GameHandler",
   "branch": "stable",
   "runtime": "org.kde.Platform",
-  "runtime-version": "6.9",
+  "runtime-version": "6.10",
   "sdk": "org.kde.Sdk",
   "sdk-extensions": [
-    "org.freedesktop.Sdk.Extension.llvm18"
+    "org.freedesktop.Sdk.Extension.llvm21"
   ],
   "base": "org.winehq.Wine",
   "base-version": "stable-25.08",
@@ -22,7 +22,7 @@
     "--filesystem=xdg-run/gvfs",
     "--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro",
     "--env=PATH=/usr/lib/extensions/vulkan/gamescope/bin:/app/bin:/usr/bin",
-    "--env=PYTHONPATH=/app/lib/python3.12/site-packages",
+    "--env=PYTHONPATH=/app/lib/python3.13/site-packages",
     "--talk-name=org.freedesktop.Notifications"
   ],
   "inherit-extensions": [
@@ -33,29 +33,61 @@
     "/include",
     "/lib/cmake",
     "/lib/pkgconfig",
-    "/share/doc"
+    "/share/doc",
+    "/lib/libLLVM*",
+    "/lib/libclang*",
+    "/lib/python*/site-packages/OpenGL",
+    "/lib/python*/site-packages/build",
+    "/lib/python*/site-packages/build-*",
+    "/lib/python*/site-packages/distro",
+    "/lib/python*/site-packages/distro-*",
+    "/lib/python*/site-packages/numpy",
+    "/lib/python*/site-packages/numpy-*",
+    "/lib/python*/site-packages/numpy.libs",
+    "/lib/python*/site-packages/packaging",
+    "/lib/python*/site-packages/packaging-*",
+    "/lib/python*/site-packages/patchelf-*",
+    "/lib/python*/site-packages/pyopengl-*",
+    "/lib/python*/site-packages/pyproject_hooks",
+    "/lib/python*/site-packages/pyproject_hooks-*",
+    "/lib/python*/site-packages/shiboken6_generator",
+    "/lib/python*/site-packages/shiboken6_generator-*"
   ],
   "modules": [
+    "python3-pyside-requirements.json",
     {
       "name": "pyside6",
       "buildsystem": "simple",
       "build-options": {
-        "append-path": "/usr/lib/sdk/llvm18/bin",
+        "append-path": "/usr/lib/sdk/llvm21/bin",
+        "append-ld-library-path": "/usr/lib/sdk/llvm21/lib",
         "env": {
-          "CLANG_INSTALL_DIR": "/usr/lib/sdk/llvm18",
-          "LLVM_INSTALL_DIR": "/usr/lib/sdk/llvm18"
+          "LLVM_INSTALL_DIR": "/usr/lib/sdk/llvm21",
+          "SHIBOKEN_DEBUG_LEVEL": "full"
         }
       },
       "build-commands": [
-        "cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/app -DBUILD_TESTS=OFF -DNO_QT_TOOLS=yes -DMODULES='Core;Gui;Widgets;Qml;Quick;QuickControls2;Svg' .",
-        "cmake --build build",
-        "cmake --install build"
+        "python3 setup.py build --qtpaths=/usr/bin/qtpaths --ignore-git --parallel=1 --log-level=verbose --flatpak --module-subset=Core,Gui,Widgets,Network,OpenGL,Qml,Quick,QuickControls2,Svg",
+        "python3 create_wheels.py --build-dir ./build/qfp-*-release",
+        "rm -rf ./dist/pyside6*examples*.whl",
+        "pip3 install ./dist/*.whl --prefix=${FLATPAK_DEST}",
+        "install -Dm755 /usr/lib/sdk/llvm21/lib/libLLVM.so.21.1 ${FLATPAK_DEST}/lib/",
+        "install -Dm755 /usr/lib/sdk/llvm21/lib/libclang-cpp.so.21.1 ${FLATPAK_DEST}/lib/",
+        "install -Dm755 /usr/lib/sdk/llvm21/lib/libclang.so.21.1 ${FLATPAK_DEST}/lib/",
+        "ln -s libLLVM.so.21.1 ${FLATPAK_DEST}/lib/libLLVM.so.21",
+        "ln -s libLLVM.so.21.1 ${FLATPAK_DEST}/lib/libLLVM.so",
+        "ln -s libclang-cpp.so.21.1 ${FLATPAK_DEST}/lib/libclang-cpp.so.21",
+        "ln -s libclang-cpp.so.21.1 ${FLATPAK_DEST}/lib/libclang-cpp.so",
+        "ln -s libclang.so.21.1 ${FLATPAK_DEST}/lib/libclang.so.21",
+        "ln -s libclang.so.21.1 ${FLATPAK_DEST}/lib/libclang.so",
+        "rm -rf ${FLATPAK_DEST}/lib/python*/site-packages/PySide6/examples",
+        "rm -rf ${FLATPAK_DEST}/lib/python*/site-packages/pyside6_examples-*.dist-info"
       ],
       "sources": [
         {
           "type": "archive",
-          "url": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.9.3-src/pyside-setup-everywhere-src-6.9.3.tar.xz",
-          "sha256": "7cd2d5abb98f2e6f442b0e41f5fcf930e7312ae4b17f681316b1adc7b63bb172"
+          "url": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.10.3-src/pyside-setup-everywhere-src-6.10.3.tar.xz",
+          "sha256": "2c7462fe0cecb5b8ac0a3d92014b8d0b88bd4d9f8646709dab5286d9416f45bc"
         }
       ]
     },

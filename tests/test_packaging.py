@@ -29,7 +29,9 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(manifest["app-id"], APP_ID_EXPECTED)
         self.assertEqual(manifest["branch"], "stable")
         self.assertEqual(manifest["runtime"], "org.kde.Platform")
+        self.assertEqual(manifest["runtime-version"], "6.10")
         self.assertEqual(manifest["sdk"], "org.kde.Sdk")
+        self.assertEqual(manifest["sdk-extensions"], ["org.freedesktop.Sdk.Extension.llvm21"])
         self.assertEqual(manifest["base"], "org.winehq.Wine")
         self.assertEqual(manifest["base-version"], "stable-25.08")
         self.assertIn("--allow=multiarch", manifest["finish-args"])
@@ -38,8 +40,52 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("--device=all", manifest["finish-args"])
         self.assertIn("org.freedesktop.Platform.Compat.i386", manifest["inherit-extensions"])
         self.assertIn("org.freedesktop.Platform.GL32", manifest["inherit-extensions"])
-        module_names = [module["name"] for module in manifest["modules"]]
+        self.assertIn("--env=PYTHONPATH=/app/lib/python3.13/site-packages", manifest["finish-args"])
+        self.assertIn("python3-pyside-requirements.json", manifest["modules"])
+        module_names = [module["name"] for module in manifest["modules"] if isinstance(module, dict)]
         self.assertIn("pyside6", module_names)
+        pyside = next(
+            module for module in manifest["modules"] if isinstance(module, dict) and module["name"] == "pyside6"
+        )
+        source = pyside["sources"][0]
+        self.assertIn("PySide6-6.10.3-src", source["url"])
+        build_command = pyside["build-commands"][0]
+        self.assertIn("setup.py build", build_command)
+        self.assertIn("--flatpak", build_command)
+        self.assertIn("--parallel=1", build_command)
+        self.assertIn("Network", build_command)
+        self.assertIn("OpenGL", build_command)
+        self.assertTrue(any("create_wheels.py" in command for command in pyside["build-commands"]))
+        cleanup = manifest["cleanup"]
+        for path in (
+            "/lib/libLLVM*",
+            "/lib/libclang*",
+            "/lib/python*/site-packages/shiboken6_generator",
+            "/lib/python*/site-packages/shiboken6_generator-*",
+            "/lib/python*/site-packages/numpy",
+            "/lib/python*/site-packages/numpy-*",
+            "/lib/python*/site-packages/OpenGL",
+            "/lib/python*/site-packages/pyopengl-*",
+        ):
+            self.assertIn(path, cleanup)
+        self.assertEqual(
+            source["sha256"],
+            "2c7462fe0cecb5b8ac0a3d92014b8d0b88bd4d9f8646709dab5286d9416f45bc",
+        )
+
+    def test_about_and_public_metadata_use_gosh_without_a_personal_name(self):
+        main = (ROOT / "gamehandler" / "qml" / "Main.qml").read_text()
+        credits = (ROOT / "gamehandler" / "qml" / "CreditsPage.qml").read_text()
+        metainfo = (ROOT / "data" / f"{APP_ID_EXPECTED}.metainfo.xml").read_text()
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn('text: "About & Credits"', main)
+        self.assertIn('title: "About & Credits"', credits)
+        self.assertIn('text: "Made by Gosh."', credits)
+        self.assertIn('text: "Version " + backend.appVersion', credits)
+        self.assertIn("<name>Gosh</name>", metainfo)
+        public_text = "\n".join((main, credits, metainfo, readme))
+        self.assertNotIn("Vaughan", public_text)
+        self.assertNotIn("Jones", public_text)
 
     def test_no_gtk_or_adwaita_remains_anywhere(self):
         """The Qt rewrite must leave nothing of the old stack behind."""
@@ -86,6 +132,8 @@ class VersionLockstepTests(unittest.TestCase):
     def test_readme_flatpak_bundle_name_matches_the_version(self):
         readme = (ROOT / "README.md").read_text()
         self.assertIn(f"gamehandler-{__version__}.flatpak", readme)
+        self.assertIn(f"Current release: **{__version__}**", readme)
+        self.assertIn("unittest discover -s tests -t .", readme)
 
     def test_every_python_module_is_installed_by_meson(self):
         listed = (ROOT / "gamehandler" / "meson.build").read_text()

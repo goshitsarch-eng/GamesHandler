@@ -7,7 +7,7 @@ import org.kde.kirigami as Kirigami
 Kirigami.ScrollablePage {
     id: page
 
-    title: "Credits"
+    title: "About & Credits"
 
     ColumnLayout {
         spacing: Kirigami.Units.largeSpacing
@@ -15,6 +15,15 @@ Kirigami.ScrollablePage {
         Kirigami.Heading {
             level: 3
             text: "Standing on other people's work"
+        }
+
+        QQC2.Label {
+            text: "Made by Gosh."
+            font.bold: true
+        }
+        QQC2.Label {
+            text: "Version " + backend.appVersion
+            opacity: 0.8
         }
 
         QQC2.Label {

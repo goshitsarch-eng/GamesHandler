@@ -3,6 +3,10 @@
 GameHandler is a modern game manager for Linux, focused on running **Windows games**
 via **Wine** and **Proton**, built with a clean **Qt 6 + Kirigami** interface.
 
+Current release: **0.7.1**. This release aligns the Flatpak with KDE/PySide
+6.10, adds an **About & Credits** page identifying the maker as **Gosh**, and
+fixes the documented test invocation so the entire package-aware suite runs.
+
 It is a **front-end, not a compatibility layer**. Every Windows game it launches runs
 on [Wine](https://www.winehq.org), usually through a [Proton](https://github.com/ValveSoftware/Proton)
 build maintained by someone else, with Direct3D translated by [DXVK](https://github.com/doitsujin/dxvk)
@@ -12,7 +16,7 @@ sources [ProtonPlus](https://github.com/Vysp3r/ProtonPlus) uses — sets up isol
 prefixes, and stays out of their way. Its design owes a lot to
 [Lutris](https://lutris.net), [Faugus Launcher](https://github.com/Faugus/faugus-launcher),
 and [Bottles](https://usebottles.com). Full acknowledgements are
-[below](#thanks-to-the-projects-gamehandler-stands-on) and on the app's own Credits page.
+[below](#thanks-to-the-projects-gamehandler-stands-on) and on the app's own About & Credits page.
 
 ## Features
 
@@ -34,7 +38,7 @@ and [Bottles](https://usebottles.com). Full acknowledgements are
 - Easy installers for Battle.net, Epic, EA App, Ubisoft Connect, GOG Galaxy, Amazon Games, Rockstar, Steam, and Discord —
   each waits for the vendor's own wizard to finish, then adds the result with a Play button
 - Plugins page that detects MangoHud, GameMode, Winetricks, UMU, and Gamescope
-- Credits page naming every upstream project, with links and licenses
+- About & Credits page naming every upstream project, with links and licenses
 - Desktop shortcuts that launch a library entry with `gamehandler --launch`
 - Games and covers on network shares work: `smb://`-style locations are
   resolved through their mounted GVFS path so Wine can actually run them
@@ -113,11 +117,11 @@ sudo meson install -C build  # installs the `gamehandler` launcher, desktop file
 
 ```bash
 ./build-aux/flatpak/build.sh
-flatpak --user install --reinstall dist/gamehandler-0.7.0.flatpak
+flatpak --user install --reinstall dist/gamehandler-0.7.1.flatpak
 flatpak run com.goshapps.GameHandler
 ```
 
-The Flatpak uses the KDE 6.9 runtime (which ships Qt 6 and the Kirigami QML
+The Flatpak uses the KDE 6.10 runtime (which ships Qt 6 and the Kirigami QML
 modules) on the Wine `stable-25.08` BaseApp and inherits the Freedesktop
 `Compat.i386` and `GL32` extensions. PySide6 is built from the official Qt
 source release against the runtime's own Qt. `--allow=multiarch` is required
@@ -254,7 +258,7 @@ The core logic (library persistence, runner command building, multi-family
 Proton/Wine release parsing) is covered by headless unit tests:
 
 ```bash
-python3 -m unittest discover -s tests
+python3 -m unittest discover -s tests -t .
 ```
 
 ## Project layout
@@ -271,7 +275,7 @@ gamehandler/            # Python package (application code)
     InstallersPage.qml  # one-click store-launcher installs
     RunnersPage.qml     # Proton/Wine downloads and guide
     PluginsPage.qml     # optional helper detection
-    CreditsPage.qml     # upstream acknowledgements
+    CreditsPage.qml     # About, maker identity, and upstream acknowledgements
     SettingsPage.qml    # appearance, defaults, behavior
     CoverArt.qml        # cover tiles and generated placeholder art
   installers.py         # easy-installer catalog and prefix helpers

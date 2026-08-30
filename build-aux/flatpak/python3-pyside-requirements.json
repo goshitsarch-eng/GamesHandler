@@ -1,0 +1,197 @@
+{
+    "name": "python3-requirements",
+    "buildsystem": "simple",
+    "build-commands": [],
+    "modules": [
+        {
+            "name": "python3-packaging",
+            "buildsystem": "simple",
+            "build-commands": [
+                "pip3 install --verbose --exists-action=i --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} \"packaging==25.0\" --no-build-isolation --ignore-installed"
+            ],
+            "sources": [
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl",
+                    "sha256": "29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484",
+                    "x-checker-data": {
+                        "type": "pypi",
+                        "name": "packaging",
+                        "packagetype": "bdist_wheel"
+                    }
+                }
+            ],
+            "cleanup": [
+                "/bin",
+                "/share/man/man1"
+            ]
+        },
+        {
+            "name": "python3-build",
+            "buildsystem": "simple",
+            "build-commands": [
+                "pip3 install --verbose --exists-action=i --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} \"build==1.3.0\" --no-build-isolation"
+            ],
+            "sources": [
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/cb/8c/2b30c12155ad8de0cf641d76a8b396a16d2c36bc6d50b621a62b7c4567c1/build-1.3.0-py3-none-any.whl",
+                    "sha256": "7145f0b5061ba90a1500d60bd1b13ca0a8a4cebdd0cc16ed8adf1c0e739f43b4",
+                    "x-checker-data": {
+                        "type": "pypi",
+                        "name": "build",
+                        "packagetype": "bdist_wheel"
+                    }
+                },
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl",
+                    "sha256": "29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484",
+                    "x-checker-data": {
+                        "type": "pypi",
+                        "name": "packaging",
+                        "packagetype": "bdist_wheel"
+                    }
+                },
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/bd/24/12818598c362d7f300f18e74db45963dbcb85150324092410c8b49405e42/pyproject_hooks-1.2.0-py3-none-any.whl",
+                    "sha256": "9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913",
+                    "x-checker-data": {
+                        "type": "pypi",
+                        "name": "pyproject_hooks",
+                        "packagetype": "bdist_wheel"
+                    }
+                }
+            ],
+            "cleanup": [
+                "/bin",
+                "/share/man/man1"
+            ]
+        },
+        {
+            "name": "python3-distro",
+            "buildsystem": "simple",
+            "build-commands": [
+                "pip3 install --verbose --exists-action=i --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} \"distro==1.9.0\" --no-build-isolation"
+            ],
+            "sources": [
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl",
+                    "sha256": "7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2",
+                    "x-checker-data": {
+                        "type": "pypi",
+                        "name": "distro",
+                        "packagetype": "bdist_wheel"
+                    }
+                }
+            ],
+            "cleanup": [
+                "/bin",
+                "/share/man/man1"
+            ]
+        },
+        {
+            "name": "python3-patchelf",
+            "buildsystem": "simple",
+            "build-commands": [
+                "pip3 install --verbose --exists-action=i --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} \"patchelf==0.17.2\" --no-build-isolation"
+            ],
+            "sources": [
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/2d/d3/92c27afa61ab5259d35f6283f1d401d61019d56a77ca00d29ba77ffd36df/patchelf-0.17.2.0-py2.py3-none-manylinux_2_5_x86_64.manylinux1_x86_64.musllinux_1_1_x86_64.whl",
+                    "sha256": "1b9fd14f300341dc020ae05c49274dd1fa6727eabb4e61dd7fb6fb3600acd26e",
+                    "only-arches": [
+                        "x86_64"
+                    ],
+                    "x-checker-data": {
+                        "type": "pypi",
+                        "name": "patchelf",
+                        "packagetype": "bdist_wheel"
+                    }
+                },
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/cb/c8/059d8b660636951f7de76f04920b2ef759f4e1ed354aab452cbdc73d0a0b/patchelf-0.17.2.0-py2.py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl",
+                    "sha256": "b8d86f32e1414d6964d5d166ddd2cf829d156fba0d28d32a3bd0192f987f4529",
+                    "only-arches": [
+                        "aarch64"
+                    ],
+                    "x-checker-data": {
+                        "type": "pypi",
+                        "name": "patchelf",
+                        "packagetype": "bdist_wheel"
+                    }
+                }
+            ],
+            "cleanup": [
+                "/bin",
+                "/share/man/man1"
+            ]
+        },
+        {
+            "name": "python3-numpy",
+            "buildsystem": "simple",
+            "build-commands": [
+                "pip3 install --verbose --exists-action=i --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} \"numpy==2.3.5\" --no-build-isolation"
+            ],
+            "sources": [
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/f5/10/ca162f45a102738958dcec8023062dad0cbc17d1ab99d68c4e4a6c45fb2b/numpy-2.3.5-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+                    "sha256": "11e06aa0af8c0f05104d56450d6093ee639e15f24ecf62d417329d06e522e017",
+                    "only-arches": [
+                        "x86_64"
+                    ],
+                    "x-checker-data": {
+                        "type": "pypi",
+                        "name": "numpy",
+                        "packagetype": "bdist_wheel"
+                    }
+                },
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/95/03/dc0723a013c7d7c19de5ef29e932c3081df1c14ba582b8b86b5de9db7f0f/numpy-2.3.5-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl",
+                    "sha256": "9c75442b2209b8470d6d5d8b1c25714270686f14c749028d2199c54e29f20b4d",
+                    "only-arches": [
+                        "aarch64"
+                    ],
+                    "x-checker-data": {
+                        "type": "pypi",
+                        "name": "numpy",
+                        "packagetype": "bdist_wheel"
+                    }
+                }
+            ],
+            "cleanup": [
+                "/bin",
+                "/share/man/man1"
+            ]
+        },
+        {
+            "name": "python3-PyOpenGL",
+            "buildsystem": "simple",
+            "build-commands": [
+                "pip3 install --verbose --exists-action=i --no-index --find-links=\"file://${PWD}\" --prefix=${FLATPAK_DEST} \"PyOpenGL\" --no-build-isolation"
+            ],
+            "sources": [
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/de/e4/1ba6f44e491c4eece978685230dde56b14d51a0365bc1b774ddaa94d14cd/pyopengl-3.1.10-py3-none-any.whl",
+                    "sha256": "794a943daced39300879e4e47bd94525280685f42dbb5a998d336cfff151d74f",
+                    "x-checker-data": {
+                        "type": "pypi",
+                        "name": "PyOpenGL",
+                        "packagetype": "bdist_wheel"
+                    }
+                }
+            ],
+            "cleanup": [
+                "/bin",
+                "/share/man/man1"
+            ]
+        }
+    ]
+}
