@@ -742,7 +742,12 @@ class EarlyExitReportingTests(unittest.TestCase):
     def test_a_title_that_keeps_running_is_not_reported(self):
         game = self._game("#!/bin/sh\nsleep 30\n")
         started = launch(game)
-        self.addCleanup(started.process.kill)
+
+        def stop_process():
+            started.process.kill()
+            started.process.wait(timeout=5)
+
+        self.addCleanup(stop_process)
         self.assertIsNone(started.failure(timeout=1.0))
 
     def test_wine_debug_noise_is_kept_out_of_the_message(self):

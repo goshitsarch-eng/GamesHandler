@@ -91,8 +91,8 @@ Kirigami.ApplicationWindow {
                 onTriggered: root.showPage("plugins")
             },
             Kirigami.Action {
-                text: "Credits"
-                icon.name: "favorite"
+                text: "About & Credits"
+                icon.name: "help-about"
                 checkable: true
                 checked: root.currentPage === "credits"
                 onTriggered: root.showPage("credits")

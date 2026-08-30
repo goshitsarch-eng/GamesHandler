@@ -6,6 +6,6 @@ Exec=gamehandler
 Icon=com.goshapps.GameHandler
 Terminal=false
 Type=Application
-Categories=Game;Utility;
+Categories=Qt;KDE;Game;
 Keywords=Wine;Proton;Windows;Games;Emulation;
 StartupNotify=true

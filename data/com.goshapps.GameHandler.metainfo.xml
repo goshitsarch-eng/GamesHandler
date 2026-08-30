@@ -38,10 +38,19 @@
   <url type="homepage">https://github.com/goshitsarch-eng/GamesHandler</url>
   <url type="bugtracker">https://github.com/goshitsarch-eng/GamesHandler/issues</url>
   <developer id="com.goshapps">
-    <name>Gosh Apps</name>
+    <name>Gosh</name>
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.1" date="2026-08-29">
+      <description>
+        <p>
+          Align the Flatpak with KDE and PySide 6.10, add a Gosh-identified
+          About and Credits page, synchronize release metadata, and correct
+          the documented test command.
+        </p>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-08-28">
       <description>
         <p>
