@@ -56,6 +56,18 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("Network", build_command)
         self.assertIn("OpenGL", build_command)
         self.assertTrue(any("create_wheels.py" in command for command in pyside["build-commands"]))
+        cleanup = manifest["cleanup"]
+        for path in (
+            "/lib/libLLVM*",
+            "/lib/libclang*",
+            "/lib/python*/site-packages/shiboken6_generator",
+            "/lib/python*/site-packages/shiboken6_generator-*",
+            "/lib/python*/site-packages/numpy",
+            "/lib/python*/site-packages/numpy-*",
+            "/lib/python*/site-packages/OpenGL",
+            "/lib/python*/site-packages/pyopengl-*",
+        ):
+            self.assertIn(path, cleanup)
         self.assertEqual(
             source["sha256"],
             "2c7462fe0cecb5b8ac0a3d92014b8d0b88bd4d9f8646709dab5286d9416f45bc",
