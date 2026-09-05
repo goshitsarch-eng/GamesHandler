@@ -3,9 +3,9 @@
 GameHandler is a modern game manager for Linux, focused on running **Windows games**
 via **Wine** and **Proton**, built with a clean **Qt 6 + Kirigami** interface.
 
-Current release: **0.7.1**. This release aligns the Flatpak with KDE/PySide
-6.10, adds an **About & Credits** page identifying the maker as **Gosh**, and
-fixes the documented test invocation so the entire package-aware suite runs.
+Current release: **0.7.2**. This patch fixes package-aware test discovery on
+hosts without PySide6: the test-only Kirigami stub now loads Qt types lazily,
+so the core tests run and the optional QML smoke test skips as intended.
 
 It is a **front-end, not a compatibility layer**. Every Windows game it launches runs
 on [Wine](https://www.winehq.org), usually through a [Proton](https://github.com/ValveSoftware/Proton)
@@ -117,7 +117,7 @@ sudo meson install -C build  # installs the `gamehandler` launcher, desktop file
 
 ```bash
 ./build-aux/flatpak/build.sh
-flatpak --user install --reinstall dist/gamehandler-0.7.1.flatpak
+flatpak --user install --reinstall dist/gamehandler-0.7.2.flatpak
 flatpak run com.goshapps.GameHandler
 ```
 
@@ -260,6 +260,10 @@ Proton/Wine release parsing) is covered by headless unit tests:
 ```bash
 python3 -m unittest discover -s tests -t .
 ```
+
+No PySide6 installation is needed for the core tests. The offscreen QML smoke
+test runs when PySide6 is installed and is reported as skipped otherwise.
+Discovery itself never imports the stub’s Qt types.
 
 ## Project layout
 
