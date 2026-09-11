@@ -427,8 +427,7 @@ fn installed_card(row: &InstalledRow) -> Element<'_, Message> {
         // page, where the guard is at least a value). This line is checked by
         // reading it.
         line = line.push(
-            button::icon(icon::from_name("delete"))
-                .on_press(Message::UninstallRunner(row.runner_id.clone())),
+            button::icon(icon::from_name("delete")).on_press(remove_press(row)),
         );
     }
 
