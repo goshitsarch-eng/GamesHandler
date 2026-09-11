@@ -6,6 +6,8 @@
 //!
 //! ```text
 //! installer_categories → the filter's options, "All" first
+//! selected_category    → which of those options the filter is showing
+//! installer_rows       → the catalog, filtered, as the cards the page draws
 //! runner_choices       → the runner selector's labels
 //! runner_index         → which one is selected
 //! card_subtitle        → the description, plus the notes when there are any
@@ -16,33 +18,56 @@
 //! progress_fraction    → whether the bar is drawn, and how full
 //! ```
 //!
-//! Which cards are *shown* is deliberately not on that list. The filtering is
-//! `search_installers` (`installers.py:241-255`), which is T-04's
-//! `core::installers` and belongs in the crate that owns the catalog — the
-//! page draws the list it is handed. (An earlier revision of this table named a
-//! `filtered` function here; there was never one in this file.)
+//! Which cards are *shown* is [`installer_rows`], and the *rule* is not this
+//! file's: matching is `search_installers` (`installers.py:241-255`), in
+//! `core::installers`, the crate that owns the catalog. [`installer_rows`]
+//! calls it and reshapes the result into the cards the page draws
+//! (`bridge.py:813-828`); it never re-implements the match, so there is still
+//! exactly one place where a query decides what matches. (An earlier revision of
+//! this table named a `filtered` function here; there was never one in this
+//! file, and the one added later is named for the catalog rather than for the
+//! act of filtering.)
 //!
-//! # What this page needs that does not exist yet, all of it named
+//! # What this page still needs, and what it no longer does
 //!
-//! The page is complete as a *view*: every item ux.md §4 lists is drawn. Three
-//! things it draws read data that has no source in this crate today, and each
-//! is left where the reference leaves it rather than invented:
+//! The page is complete as a *view*, and since T-04/T-34 the catalog is real
+//! data rather than a promise: [`installer_rows`] builds it from
+//! `core::installers`, so P-51 (the nine cards) and P-52 (the search box and the
+//! Launchers/Apps filter) are met here and tested. What is still missing is
+//! named rather than left to look finished:
 //!
-//! * **The catalog.** `installers()` (`installers.py:230`) is T-04,
-//!   `core::installers`, and has not landed — `crates/core/src/` has no
-//!   `installers.rs`. The nine cards are P-51's acceptance criterion.
+//! * **The page is still routed to `pending_page`, and that is deliberate.**
+//!   `Page::Installers` is the last entry in `PENDING_PAGES` (`main.rs`) and the
+//!   only entry in `PINNED_PENDING` (`crates/app/tests/pending_pages.rs`), and
+//!   it stays there: P-53…P-59 are the install flow — its own prefix, the
+//!   download and its verification, the wizard wait, the Locate fallback, the
+//!   library entry, the concurrent guard — and none of them is here. A page that
+//!   drew nine cards and an Install button wired to nothing would be #65
+//!   exactly, which is why the entry is not deleted and the dispatch arm is not
+//!   changed: under D-52 the task is not LANDED while an id in its scope is
+//!   unmet. **The install flow is its own task, T-38.**
 //! * **The runner choices** for the "Runner for new installs" selector, which
-//!   are [`RunnerManager::choices`] and belong in the page's arguments for the
-//!   same off-the-render-path reason [`super::runners`] gives.
+//!   are [`RunnerManager::choices`] ([`runner_choices`]) and belong in the
+//!   page's arguments for the same off-the-render-path reason
+//!   [`super::runners`] gives. The page is unreachable, so no caller passes them
+//!   yet.
+//! * **The Install button's tooltip.** [`install_tooltip`] carries
+//!   `InstallersPage.qml:126`'s sentence and is tested, and **no card applies
+//!   it**: `grep -rn 'tooltip' crates/app/src/` finds this file only. The
+//!   reference sets `QQC2.ToolTip.text` on the button that `install_press` feeds,
+//!   so the card is missing a sentence the reference shows. Named here rather
+//!   than left as a tested function with no caller, which reads as coverage — and
+//!   left unimplemented because the button it decorates is T-38's.
 //! * **The file chooser** behind P-57's "Locate exe" dialog, which is T-15 and
 //!   stays with UX (this task's brief says so explicitly). The reference's
 //!   `easyInstallNeedsExe` path is `Message::EasyInstallWizardFinished`, and
 //!   this page does not open the chooser.
 //!
-//! Nothing here is stubbed with a placeholder that looks implemented. The
-//! catalog arrives through [`InstallersView::catalog`], so the page is
-//! exercised by tests today and renders the real nine cards the moment T-04
-//! lands, with no change to this file beyond the caller passing them.
+//! Nothing here is stubbed with a placeholder that looks implemented: the
+//! catalog arrives through [`InstallersView::catalog`], which is
+//! [`installer_rows`]' result, so the cards are exercised by tests today and the
+//! page renders the real nine the moment it is wired, with no change to this
+//! file beyond the caller passing them.
 //!
 //! # The concurrent-install guard is the reference's, and it is *not* a lock
 //!
@@ -55,6 +80,7 @@ use cosmic::app::Task;
 use cosmic::widget::{Column, Row, Space, button, container, icon, progress_bar, text};
 use cosmic::iced::{Alignment, Background, Border, Length};
 use cosmic::Element;
+use gamehandler_core::installers::{Installer, INSTALLER_CATEGORIES, search_installers};
 use gamehandler_core::runners::RunnerManager;
 
 use gamehandler_core::models::UNCATEGORIZED;
@@ -88,9 +114,50 @@ pub fn runner_choices(manager: &RunnerManager) -> Vec<(String, String)> {
 }
 
 /// The filter's options, in the reference's order: "All", then the catalog's
-/// categories.
+/// categories — `["All", *INSTALLER_CATEGORIES]` (`bridge.py:787`).
+///
+/// # #74: this returned the sentinel alone, and the list was the defect
+///
+/// Until T-12 the body was `["All"]`, with a comment naming the missing catalog
+/// as the reason. The catalog then landed (`core::installers`, `60ee689`) and
+/// the list did not — the ordinary way a placeholder becomes a defect, because
+/// nothing looks wrong: the selector draws correctly and offers the one option
+/// that was never in doubt, while a card can read "Launchers" next to a filter
+/// that cannot select "Launchers". It is the same shape as the module doc's own
+/// warning and as #65: a control that renders and does nothing.
+///
+/// The list is **derived** from [`INSTALLER_CATEGORIES`] rather than spelled
+/// out beside it, so it cannot drift from the catalog again — and
+/// `every_category_the_catalog_can_produce_is_one_the_filter_offers` checks the
+/// other direction, against the real nine recipes.
 pub fn installer_categories() -> Vec<String> {
-    std::iter::once(ALL_CATEGORIES.to_string()).collect()
+    std::iter::once(ALL_CATEGORIES.to_string())
+        .chain(INSTALLER_CATEGORIES.iter().map(|item| (*item).to_string()))
+        .collect()
+}
+
+/// Which of [`installer_categories`]' options the filter is showing, by
+/// position — what the category dropdown needs to draw its own selection.
+///
+/// `None` when the current value is not one of the options, which the dropdown
+/// renders as no selection rather than silently as the first entry: a filter set
+/// to something the list does not offer would otherwise draw "All" over a
+/// filtered catalog, which is #74's defect one level down.
+///
+/// # What this extraction does and does not close — measured, not argued
+///
+/// The lookup is covered: `.position(|item| item == category)` mutated to `!=`,
+/// or to `.map(|_| 0)`, each fail
+/// `the_selected_filter_is_the_position_of_the_current_value`.
+///
+/// The **call site** survives — in [`view`], replacing
+/// `selected_category(page.categories, page.category)` with `Some(0)` leaves the
+/// whole suite green. A `Dropdown`'s selected index is not one of `Operation`'s
+/// arms, the same wall `install_press`'s call site hits, so no test can read
+/// which option a built dropdown is showing. Recorded rather than papered over:
+/// that wiring is checked by reading [`view`], not by a test that cannot see it.
+pub fn selected_category(categories: &[String], category: &str) -> Option<usize> {
+    categories.iter().position(|item| item == category)
 }
 
 /// The selected runner's id, by position in [`runner_choices`].
@@ -153,7 +220,9 @@ pub fn installing(state: &State) -> bool {
 ///
 /// **The guard is now readable; the call site is not.** The extracted body is
 /// covered: `(!busy).then(..)` mutated to `true.then(..)` fails
-/// [`tests::install_is_disabled_while_busy_and_names_what_it_would_install`],
+/// `install_is_disabled_while_busy_and_names_what_it_would_install` (a code
+/// span, not a link — rustdoc does not document `#[cfg(test)]` items, so a
+/// bracket form here would be the #75 defect and would still read as a link),
 /// as does transposing the installer and the runner in the payload and
 /// `installer_id`/`runner_id` the other way round.
 ///
@@ -210,12 +279,46 @@ pub fn card_category(category: &str) -> &str {
 }
 
 // ---------------------------------------------------------------------------
+// The catalog
+// ---------------------------------------------------------------------------
+
+/// The cards the page draws: every recipe the search box and the category filter
+/// leave, in the catalog's order (`bridge.py:813-828`).
+///
+/// The *matching* is [`search_installers`]' — the reference's every rule about
+/// what a query hits and how the category is compared lives there and in one
+/// place, and this function adds none of its own. What it does is the bridge's
+/// half of the same property: turn a recipe into the four fields a card has. The
+/// one thing worth naming is that `query` and `category` reach the catalog
+/// **as the page holds them**; there is no second fold and no second default, so
+/// `""` means "no filter" here only because the reference's `ALL_CATEGORIES` and
+/// `""` both do there (`installers.py:245`).
+pub fn installer_rows(query: &str, category: &str) -> Vec<InstallerRow> {
+    search_installers(query, category)
+        .into_iter()
+        .map(installer_row)
+        .collect()
+}
+
+/// One recipe as one card. `bridge.py:815-820`'s four fields, and the subtitle
+/// is [`card_subtitle`]'s rule rather than a second spelling of it.
+fn installer_row(installer: &Installer) -> InstallerRow {
+    InstallerRow {
+        installer_id: installer.id.to_string(),
+        name: installer.name.to_string(),
+        subtitle: card_subtitle(installer.description, installer.notes),
+        category: installer.category.to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The view
 // ---------------------------------------------------------------------------
 
 /// Everything the page draws, borrowed.
 pub struct InstallersView<'a> {
-    /// From [`search_installers`]' port, or empty until T-04 lands.
+    /// [`installer_rows`]' result for [`Self::search`] and [`Self::category`] —
+    /// i.e. already filtered. The page draws the list it is handed.
     pub catalog: &'a [InstallerRow],
     /// [`State::installer_search`].
     pub search: &'a str,
@@ -238,10 +341,7 @@ pub fn view<'a>(page: &'a InstallersView<'_>) -> Element<'a, Message> {
     let mut body = Column::new().spacing(12).width(Length::Fill);
 
     // ---- The header toolbar: search and category ---------------------------
-    let selected = page
-        .categories
-        .iter()
-        .position(|category| category == page.category);
+    let selected = selected_category(page.categories, page.category);
 
     body = body.push(
         Row::new()
@@ -391,6 +491,7 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gamehandler_core::installers::{APPS, LAUNCHERS};
     use gamehandler_core::models::Library;
     use gamehandler_core::runners::RunnerManager;
     use gamehandler_core::settings::Settings;
@@ -681,12 +782,222 @@ mod tests {
         assert_eq!(EMPTY_EXPLANATION, "Try a different search, or switch the filter back to All.");
     }
 
-    /// The categories list starts with the sentinel, which is what makes the
-    /// first entry of the selector "all of them".
+    /// The categories list is the reference's `["All", *INSTALLER_CATEGORIES]`
+    /// (`bridge.py:787`) — **the whole list**, derived from the constant rather
+    /// than re-spelled beside it.
+    ///
+    /// The test this replaces asserted only `categories[0] == ALL_CATEGORIES`.
+    /// That passed while the function returned `["All"]` and would have passed
+    /// after: it pinned the single element that was never in doubt, which is
+    /// #74's defect surviving its own test.
     #[test]
-    fn the_category_list_leads_with_the_all_sentinel() {
+    fn the_category_list_is_the_sentinel_then_the_catalogs_own_categories() {
         let categories = installer_categories();
-        assert_eq!(categories[0], ALL_CATEGORIES);
+        let expected: Vec<String> = std::iter::once(ALL_CATEGORIES.to_string())
+            .chain(INSTALLER_CATEGORIES.iter().map(|item| (*item).to_string()))
+            .collect();
+
+        assert_eq!(categories, expected);
+        assert_eq!(categories[0], ALL_CATEGORIES, "the sentinel is first");
+        assert_eq!(categories.len(), 1 + INSTALLER_CATEGORIES.len());
+        assert_ne!(categories.len(), 1, "the list is not the sentinel alone (#74)");
+    }
+
+    /// Every category the catalog can put on a card is one the filter can
+    /// select — #74's trap, checked against the real nine recipes rather than
+    /// argued from the constants.
+    ///
+    /// The defect the missing list produced is invisible in the view: the badge
+    /// renders from the row and the dropdown renders from the list, and nothing
+    /// compared the two. This is that comparison, and it fails if a recipe is
+    /// ever given a third category without `INSTALLER_CATEGORIES` growing with
+    /// it.
+    #[test]
+    fn every_category_the_catalog_can_produce_is_one_the_filter_offers() {
+        let categories = installer_categories();
+        let rows = installer_rows("", ALL_CATEGORIES);
+        assert_eq!(rows.len(), 9, "P-51's acceptance is the nine cards");
+
+        let mut seen: Vec<&str> = Vec::new();
+        for row in &rows {
+            if row.category.trim().is_empty() {
+                continue;
+            }
+            assert!(
+                categories.iter().any(|category| category == &row.category),
+                "a card can read {:?} while the filter cannot select it",
+                row.category
+            );
+            if !seen.contains(&row.category.as_str()) {
+                seen.push(&row.category);
+            }
+        }
+
+        // The other half: both options are actually used by the catalog, so the
+        // loop above is not vacuous and neither constant is dead.
+        for category in INSTALLER_CATEGORIES {
+            assert!(
+                seen.contains(&category),
+                "{category} is offered by the filter and used by no recipe"
+            );
+        }
+    }
+
+    /// The dropdown's selection is the position of the page's current value, and
+    /// a value the list does not offer is no selection — not the first entry,
+    /// which is what would draw "All" over a filtered catalog.
+    #[test]
+    fn the_selected_filter_is_the_position_of_the_current_value() {
+        let categories = installer_categories();
+        assert_eq!(selected_category(&categories, ALL_CATEGORIES), Some(0));
+        assert_eq!(
+            selected_category(&categories, LAUNCHERS),
+            Some(1),
+            "the sentinel holds index 0, so the catalog's categories start at 1"
+        );
+        assert_eq!(selected_category(&categories, APPS), Some(2));
+        assert_eq!(selected_category(&categories, "uncategorized"), None);
+        assert_eq!(selected_category(&categories, ""), None);
+        assert_ne!(
+            selected_category(&categories, APPS),
+            selected_category(&categories, ALL_CATEGORIES),
+            "the last option must not draw as the first"
+        );
+    }
+
+    // ---- installer_rows: the catalog ---------------------------------------
+
+    /// The catalog is `core::installers`' own, in its order, field for field —
+    /// compared against the core array rather than against a list written here,
+    /// so a tenth recipe or a reordering is a change to the test's *source*
+    /// rather than to its numbers.
+    #[test]
+    fn the_catalog_is_the_core_catalogs_recipes_in_its_order() {
+        let rows = installer_rows("", ALL_CATEGORIES);
+        let catalog = gamehandler_core::installers::installers();
+        assert_eq!(rows.len(), catalog.len(), "no recipe is dropped or invented");
+
+        for (row, installer) in rows.iter().zip(catalog) {
+            assert_eq!(row.installer_id, installer.id);
+            assert_eq!(row.name, installer.name);
+            assert_eq!(row.category, installer.category);
+        }
+
+        // The order is load-bearing: `search_installers` filters and never
+        // sorts, so the cards appear in exactly this order and `INSTALLERS[0]`
+        // is the first card drawn.
+        assert_eq!(rows[0].installer_id, catalog[0].id);
+        assert_eq!(
+            rows[rows.len() - 1].installer_id,
+            catalog[catalog.len() - 1].id
+        );
+    }
+
+    /// A card's second line is the recipe's own notes when it has any, and the
+    /// description alone when it has none — over **every** recipe in the
+    /// catalog, with both branches asserted to be non-empty so neither is a
+    /// vacuous loop.
+    ///
+    /// Written against the data rather than against a named recipe because the
+    /// first version of this test named `steam` and went red: Steam does have no
+    /// notes, but the query `"steam"` also matches EA's description
+    /// ("Steam-unlisted EA titles"), so it returned two cards and
+    /// `assert_eq!(rows.len(), 1)` failed. The catalog is the authority, so the
+    /// catalog is what this test reads.
+    #[test]
+    fn a_card_carries_the_recipes_notes_on_a_second_line_when_it_has_any() {
+        let mut with_notes = 0;
+        let mut without_notes = 0;
+
+        for installer in gamehandler_core::installers::installers() {
+            let row = installer_rows(installer.id, ALL_CATEGORIES)
+                .into_iter()
+                .find(|row| row.installer_id == installer.id)
+                .expect("a recipe's own id must find its own card");
+
+            if installer.notes.is_empty() {
+                without_notes += 1;
+                assert_eq!(
+                    row.subtitle, installer.description,
+                    "an entry with no notes must gain nothing, not a blank line"
+                );
+            } else {
+                with_notes += 1;
+                assert_eq!(
+                    row.subtitle,
+                    format!("{}\n{}", installer.description, installer.notes),
+                    "the notes go on their own line, not joined to the description"
+                );
+                assert_eq!(
+                    row.subtitle.lines().count(),
+                    installer.description.lines().count() + installer.notes.lines().count()
+                );
+            }
+        }
+
+        assert!(with_notes > 0, "no recipe has notes, so the branch is untested");
+        assert!(
+            without_notes > 0,
+            "every recipe has notes, so the other branch is untested"
+        );
+
+        // Named once concretely, so the shape is legible without the loop:
+        // Battle.net is the entry the reference explains on a second line.
+        let battle_net = installer_rows("battlenet", ALL_CATEGORIES)
+            .into_iter()
+            .find(|row| row.installer_id == "battlenet")
+            .expect("battlenet is a recipe id");
+        assert_eq!(battle_net.subtitle.lines().count(), 2);
+    }
+
+    /// The search box and the category filter reach the catalog, and they reach
+    /// it with the reference's rules — matching is `search_installers`' and this
+    /// test holds the page's half: that the query and the category the page
+    /// holds are the ones the catalog is filtered by.
+    #[test]
+    fn the_search_box_and_the_category_filter_reach_the_catalog() {
+        let all = installer_rows("", ALL_CATEGORIES);
+        assert_eq!(all.len(), 9);
+        assert_eq!(
+            installer_rows("", "").len(),
+            all.len(),
+            "\"\" is also no filter (installers.py:245)"
+        );
+
+        // A description-only match: "blizzard" is in no recipe's name or id.
+        let blizzard = installer_rows("blizzard", ALL_CATEGORIES);
+        assert!(
+            blizzard.iter().any(|row| row.installer_id == "battlenet"),
+            "the query must reach the description"
+        );
+        assert!(blizzard.len() < all.len(), "and it must actually filter");
+
+        let launchers = installer_rows("", LAUNCHERS);
+        assert!(!launchers.is_empty());
+        assert!(launchers.iter().all(|row| row.category == LAUNCHERS));
+
+        let apps = installer_rows("", APPS);
+        assert!(apps.iter().all(|row| row.category == APPS));
+        assert_eq!(apps.len() + launchers.len(), all.len(), "the filter partitions");
+
+        // The category is compared **exactly**, with no case folding
+        // (`installers.py:245`): a lowercased value is neither the sentinel nor
+        // any recipe's category, so it selects nothing. That reads like a bug
+        // and is the reference's behaviour, which is why it is pinned.
+        assert!(
+            installer_rows("", "launchers").is_empty(),
+            "the category is matched exactly — a lowercased one matches nothing"
+        );
+
+        // And the two compose: the query is applied to what the filter left.
+        let composed = installer_rows("blizzard", LAUNCHERS);
+        assert_eq!(composed.len(), 1);
+        assert_eq!(composed[0].installer_id, "battlenet");
+        assert!(
+            installer_rows("blizzard", APPS).is_empty(),
+            "the category still filters what the query left"
+        );
+        assert!(installer_rows("nonesuchatall", ALL_CATEGORIES).is_empty());
     }
 
     // ---- the card is built from the row ------------------------------------
