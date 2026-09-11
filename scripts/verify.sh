@@ -303,7 +303,17 @@ begin() {
     # Cleared here and set only by `run_stage`, so the marker always describes
     # *this* stage and never survives into the next one.
     STAGE_RAN=""
+    # Truncated here, so the log holds *this* stage's output and nothing else.
+    # Without this, a stage that is skipped still finds the log a previous run
+    # left behind, and `finish_skip`'s `echo_subchecks` prints it: a run with
+    # `--skip-flatpak` displayed four `ok ...` lines under `SKIP smoke-test`,
+    # byte-identical to a `smoke-test.log` written two hours earlier, from a
+    # stage that this run did not run. That is the same defect as the rest of
+    # this file — a result reported that was never produced — on the one path
+    # that is supposed to report *no result*. Truncating rather than teaching
+    # `finish_skip` not to read makes it unrepresentable at every call site.
     STAGE_LOG="$LOGDIR/$1.log"
+    : > "$STAGE_LOG"
     STAGE_START="$SECONDS"
     printf '### %s\n' "$STAGE"
 }
