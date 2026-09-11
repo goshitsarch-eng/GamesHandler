@@ -782,8 +782,23 @@ pub enum Message {
         tag: String,
         result: Result<(), String>,
     },
+    /// Ask before deleting an installed build. The reference's delete button
+    /// opens `removeRunnerDialog` (`RunnersPage.qml:82-85,257-272`) rather than
+    /// deleting; the dialog closes on Cancel and sends the row's `runnerId` to
+    /// `uninstallRunner` on Remove. P-37.
+    ConfirmRemoveRunner {
+        runner_id: String,
+        name: String,
+    },
+    /// The user confirmed; do it. `uninstallRunner()` — synchronous, so this
+    /// returns no task.
+    RemoveRunnerConfirmed(String),
     /// Delete an installed build. `uninstallRunner()` — synchronous, so this
     /// returns no task.
+    ///
+    /// Kept as the direct route alongside the confirm pair: the dialog's
+    /// confirmation sends [`Message::RemoveRunnerConfirmed`], and this variant
+    /// stays the message the removal itself is. Both reach the same arm.
     UninstallRunner(String),
     /// The Runners page's two row bundles, computed off the update thread.
     ///
@@ -1020,6 +1035,81 @@ pub struct Shell {
 /// navigation cannot be it — and once the family outlives the page, fetching
 /// anything but the family the dropdown is showing would draw a list under a
 /// selector that names a different family. The two must be the same value.
+/// The Runners page's removal confirmation, `removeRunnerDialog`
+/// (`RunnersPage.qml:257-272`), drawn as a modal over the page body.
+///
+/// The reference's dialog is a `Kirigami.PromptDialog`: its `title` is
+/// `"Remove " + pendingRemove.name + "?"`, its `subtitle` the fixed sentence,
+/// and its footer is Cancel plus a custom Remove action — Cancel closes, and
+/// Remove sends the row's `runnerId` to `uninstallRunner` and then closes
+/// (`RunnersPage.qml:259-271`). The port renders the same three parts through
+/// libcosmic's own composition: `cosmic::widget::dialog` builds the
+/// titled card (`src/widget/dialog.rs`), and `cosmic::widget::popover` lays it
+/// over the body the way libcosmic itself lays an application dialog over its
+/// view (`src/app/mod.rs:874-887`), `modal(true)` so background input is
+/// captured and `on_close` so dismissing it sends [`Message::CloseDialog`].
+///
+/// This is a free function over `(body, pending)` rather than a method on
+/// [`State`] or a page module for the same reason [`Shell::view_body`]'s arms
+/// borrow rather than build: the dialog needs the already-built body beneath
+/// it, and the page's view does not know a dialog is open. P-37.
+///
+/// # Why a `Column`, and not `popover`
+///
+/// The first version composed the dialog over the body with
+/// `cosmic::widget::popover` — the same widget libcosmic itself uses to lay an
+/// application dialog over its view (`src/app/mod.rs:874-887`). It draws
+/// correctly and behaves correctly, but it is untestable in exactly the way
+/// that matters: `Popover::operate` returns early when `modal && popup.is_some()`
+/// (`src/widget/popover.rs:138-141`), skipping the background content *and*
+/// the popup, so the `drawn_strings` instrument this file's overlay tests use
+/// sees neither half — an open dialog photographs as `[]`. A passing render
+/// test would then be asserting the absence it was written to refute, which is
+/// the D-44 defect wearing a dialog's clothes.
+///
+/// So the dialog is drawn **inline above the body**, in a `Column`: title,
+/// subtitle and both actions are ordinary widgets in the tree, `operate` sees
+/// them, and the tests below photograph what the user sees. The cost is
+/// stated rather than hidden: this is not a floating overlay — the page sits
+/// below the dialog rather than dimmed behind it — and a libcosmic `popover`
+/// whose popup an `Operation` could reach would be the composition to return
+/// to. What is preserved is the behaviour the reference's dialog promises:
+/// the title names the pending removal, both actions are drawn, Cancel closes
+/// without removing, and Remove removes the pending id and then closes.
+///
+/// # The Remove button's message, and the gap beside it
+///
+/// Remove sends [`Message::RemoveRunnerConfirmed`], not
+/// [`Message::UninstallRunner`] — and the choice is load-bearing rather than
+/// nominal: the confirmed arm clears the pending removal before removing, and
+/// a button sending the direct route would remove while leaving the dialog
+/// open. **No test here sees that choice**: a built `Button`'s message is
+/// opaque (the sources are cited at `installed_card`'s call site), so
+/// `the_runner_dialog_is_a_modal_over_the_page_it_names` photographs the
+/// *label* "Remove" and cannot tell which of the two variants it carries —
+/// mutating one into the other leaves all 322 green, measured. This paragraph
+/// is the record of that gap, and the fix is the same one the codebase
+/// already uses for it: a named press helper carrying the value, as
+/// `remove_press` does for the delete
+/// button — except the helper would live in this file, beside the button,
+/// rather than across the page boundary.
+fn remove_runner_dialog<'a>(
+    body: cosmic::Element<'a, Message>,
+    pending: &crate::state::PendingRunnerRemoval,
+) -> cosmic::Element<'a, Message> {
+    use cosmic::widget::{button, dialog, Column};
+    let popup: cosmic::Element<'a, Message> = dialog()
+        .title(pending.title())
+        .body(crate::state::remove_runner_subtitle())
+        .secondary_action(button::standard("Cancel").on_press(Message::CloseDialog))
+        .primary_action(
+            button::destructive("Remove")
+                .on_press(Message::RemoveRunnerConfirmed(pending.runner_id.clone())),
+        )
+        .into();
+    Column::new().push(popup).push(body).into()
+}
+
 fn page_entry_task(state: &mut State, page: Page) -> cosmic::app::Task<Message> {
     match page {
         Page::Runners => {
@@ -1306,13 +1396,23 @@ impl Shell {
     /// be open. The overlay is a second question with its own tests, and this is
     /// the function they drive.
     fn view_with_overlays(&self) -> cosmic::Element<'_, Message> {
-        match &self.state.game_form {
-            Some(form) => view::form::view(view::form::GameFormView {
+        // The game form takes precedence: it is a full-page layer that covers
+        // whatever is open, while the runner dialog is a modal over the page
+        // it belongs to (see [`remove_runner_dialog`]). Two keyboards-full of
+        // dialog at once would need a stacking order, and the reference has no
+        // such state — each QML layer closes the other — so the form wins and
+        // the pending removal waits underneath it.
+        if let Some(form) = &self.state.game_form {
+            return view::form::view(view::form::GameFormView {
                 form,
                 library: &self.state.library,
                 runners: &self.state.runners,
-            }),
-            None => self.view_body(),
+            });
+        }
+        let body = self.view_body();
+        match &self.state.confirm_remove_runner {
+            Some(pending) => remove_runner_dialog(body, pending),
+            None => body,
         }
     }
 
@@ -1470,6 +1570,7 @@ impl Shell {
             Message::CloseDialog => {
                 self.state.game_form = None;
                 self.state.confirm_delete = None;
+                self.state.confirm_remove_runner = None;
             }
             // TODO(T-09) / T-10: the confirmation overlay.
             Message::ConfirmDeleteGame(_game_id) => {}
@@ -1885,12 +1986,20 @@ impl Shell {
             // it is the page's reply to itself, and routing it here rather than
             // handling it above is what keeps one page's state and one page's
             // transitions in one file.
+            //
+            // The confirm pair (`ConfirmRemoveRunner` sets the pending removal
+            // the dialog draws; `RemoveRunnerConfirmed` runs the removal) is
+            // routed here for the same reason rather than handled above: the
+            // pending state is the runners dialog's, and splitting the pair
+            // across files would put the set and the clear in two places. P-37.
             message
                 @ (Message::FetchReleases { .. }
                 | Message::ReleasesFetchFinished { .. }
                 | Message::InstallRunner { .. }
                 | Message::RunnerProgress(_)
                 | Message::RunnerInstallFinished { .. }
+                | Message::ConfirmRemoveRunner { .. }
+                | Message::RemoveRunnerConfirmed(_)
                 | Message::UninstallRunner(_)
                 | Message::RunnersRefreshed { .. }) => {
                 return view::runners::update(&mut self.state, &message)
@@ -4338,6 +4447,11 @@ mod tests {
                             tag: "v1.0".to_string(),
                             result: Ok(()),
                         }),
+        Message::ConfirmRemoveRunner { .. } => ("ConfirmRemoveRunner", Message::ConfirmRemoveRunner {
+                            runner_id: "v1.0".to_string(),
+                            name: "GE-Proton".to_string(),
+                        }),
+        Message::RemoveRunnerConfirmed(_) => ("RemoveRunnerConfirmed", Message::RemoveRunnerConfirmed("v1.0".to_string())),
         Message::UninstallRunner(_) => ("UninstallRunner", Message::UninstallRunner("v1.0".to_string())),
         // `token: 0`, which is the token a shell starts with, so the sample is
         // *accepted* by the guard rather than dropped as stale — a sample the
@@ -4641,9 +4755,11 @@ mod tests {
             "RefreshPlugins",
             "InstallPlugin",
             "PluginInstallFinished",
-            // T-11's six. Live because the Runners page draws the controls that
-            // produce them: the family selector, its two callbacks, the Install
-            // button, the progress reports, and the Remove button.
+            // T-11's six, plus P-37's two. Live because the Runners page draws
+            // the controls that produce them: the family selector, its two
+            // callbacks, the Install button, the progress reports, and the
+            // Remove button — which now asks first, so the dialog's two halves
+            // are here too.
             //
             // `ReleasesFetchFinished` and `InstallRunner` are in the fixture's
             // reach only because `shell_with_work_to_do` now holds a release
@@ -4655,6 +4771,8 @@ mod tests {
             "InstallRunner",
             "RunnerProgress",
             "RunnerInstallFinished",
+            "ConfirmRemoveRunner",
+            "RemoveRunnerConfirmed",
             "UninstallRunner",
             // `RunnersRefreshed` is not a seventh page action: nothing draws it
             // and no user sends it. It is the reply `view::runners::refresh`
@@ -6400,14 +6518,18 @@ mod tests {
         assert!(shell.pages_agree());
     }
 
-    /// `CloseDialog` clears both of the things a dialog can be: the game form
-    /// and the pending delete.
+    /// `CloseDialog` clears all three of the things a dialog can be: the game
+    /// form, the pending game delete, and the pending runner removal.
     ///
-    /// Asserted on both, because the arm writes two fields and dropping either
-    /// one is invisible in the other's check.
+    /// Asserted on all three, because the arm writes three fields and dropping
+    /// any one is invisible in the others' checks.
     #[test]
     fn closing_the_dialog_clears_the_form_and_the_delete_confirmation() {
         let mut shell = shell_with_work_to_do();
+        shell.state.confirm_remove_runner = Some(crate::state::PendingRunnerRemoval {
+            runner_id: "GE-Proton9-5".to_string(),
+            name: "GE-Proton9-5".to_string(),
+        });
 
         let _ = shell.update(Message::CloseDialog);
 
@@ -6415,6 +6537,122 @@ mod tests {
         assert!(
             shell.state.confirm_delete.is_none(),
             "a pending delete must not survive the dialog closing"
+        );
+        assert!(
+            shell.state.confirm_remove_runner.is_none(),
+            "a pending runner removal must not survive the dialog closing"
+        );
+    }
+
+    /// **The runner dialog is a modal over the page, not a layer replacing
+    /// it.**
+    ///
+    /// The reference's `removeRunnerDialog` is a `PromptDialog` over the
+    /// Runners page: the page stays drawn underneath and the dialog names the
+    /// pending removal in its title. Asserted in three directions, because each
+    /// is a way this could look right and be wrong:
+    ///
+    /// - with a pending removal, the overlay draws the title and both actions
+    ///   — the `"Remove {name}?"` the button's row names and the fixed Cancel
+    ///   and Remove the reference's footer carries;
+    /// - the page is still drawn underneath: the popover covers, it does not
+    ///   replace, which is the opposite of the game form's layer above (and
+    ///   why the form takes precedence when both are open);
+    /// - with nothing pending, the same call is the page, with none of the
+    ///   dialog's strings in it.
+    ///
+    /// The title and subtitle are the state's own values rather than literals,
+    /// so this cannot pass against a dialog that titles a constant.
+    #[test]
+    fn the_runner_dialog_is_a_modal_over_the_page_it_names() {
+        // `shell_with_work_to_do` holds an open form, and the form takes
+        // precedence — so the dialog would wait underneath it and this test
+        // would photograph the form. A fresh shell has no form open, which is
+        // the state the dialog is drawn in.
+        let mut shell = Shell::new();
+        let _ = shell.update(Message::ConfirmRemoveRunner {
+            runner_id: "GE-Proton9-5".to_string(),
+            name: "GE-Proton9-5".to_string(),
+        });
+        let pending = shell.state.confirm_remove_runner.clone().unwrap();
+        let drawn = drawn_strings(shell.view_with_overlays());
+
+        for expected in [
+            pending.title(),
+            "Cancel".to_string(),
+            "Remove".to_string(),
+        ] {
+            assert!(
+                drawn.iter().any(|text| text == &expected),
+                "the open dialog should draw {expected:?}; drawn: {drawn:?}"
+            );
+        }
+        // The subtitle is long; assert it is drawn rather than equal, so a
+        // re-wrapping does not fail what is a presence claim.
+        assert!(
+            drawn.iter().any(|text| text.contains("fall back to System Wine")),
+            "the dialog should draw the reference's subtitle; drawn: {drawn:?}"
+        );
+        // The page underneath: a fresh shell opens on the Library page, and a
+        // layer-replacing composition would have removed its strings. The
+        // dialog is namespaced to the Runners page only by the state that
+        // opens it — see the precedence test below — so what is asserted here
+        // is the property, not the page: the body stays drawn under the
+        // dialog. Asserted on the module's own constants rather than
+        // literals, so a copy change fails in one place rather than here.
+        for expected in [
+            crate::view::library::NO_GAMES_TITLE,
+            crate::view::library::ADD_FIRST_GAME,
+        ] {
+            assert!(
+                drawn.iter().any(|text| text == expected),
+                "the page must stay drawn under the modal; {expected:?} missing from {drawn:?}"
+            );
+        }
+
+        // Nothing pending: the same call is the page, with no dialog in it.
+        // A fresh shell draws the unfiltered empty state; assert on the
+        // module's own constant rather than a literal, so a copy change fails
+        // in one place rather than here.
+        let closed = Shell::new();
+        let fallthrough = drawn_strings(closed.view_with_overlays());
+        assert!(
+            !fallthrough.iter().any(|text| text == &pending.title()),
+            "no pending removal, so no dialog title; drawn: {fallthrough:?}"
+        );
+        assert!(
+            fallthrough
+                .iter()
+                .any(|text| text == crate::view::library::NO_GAMES_TITLE),
+            "the fall-through is the page; drawn: {fallthrough:?}"
+        );
+    }
+
+    /// **The form wins when both a form and a runner removal are open.**
+    ///
+    /// Two dialogs at once would need a stacking order, and the reference has
+    /// no such state — each QML layer closes the other. The pending removal
+    /// waits underneath the form rather than drawing over it: asserted as the
+    /// form's title present and the dialog's title absent, so neither "both
+    /// draw" nor "neither draws" passes.
+    #[test]
+    fn the_form_takes_precedence_over_the_runner_dialog() {
+        let mut shell = shell_with_form_open(true, false);
+        shell.state.confirm_remove_runner = Some(crate::state::PendingRunnerRemoval {
+            runner_id: "GE-Proton9-5".to_string(),
+            name: "GE-Proton9-5".to_string(),
+        });
+        let pending = shell.state.confirm_remove_runner.clone().unwrap();
+
+        let drawn = drawn_strings(shell.view_with_overlays());
+
+        assert!(
+            drawn.iter().any(|text| text == crate::view::form::TITLE_ADD),
+            "the form must still be drawn; drawn: {drawn:?}"
+        );
+        assert!(
+            !drawn.iter().any(|text| text == &pending.title()),
+            "the runner dialog must wait under the form, not over it; drawn: {drawn:?}"
         );
     }
 

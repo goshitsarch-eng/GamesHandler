@@ -507,9 +507,9 @@ fn installed_card(row: &InstalledRow) -> Element<'_, Message> {
 
     if row.removable {
         // The site is **unobservable**, and naming it here is the whole
-        // mitigation. `Message::UninstallRunner(row.runner_id.clone())` mutated
-        // to name a constant — `"system"`, one keystroke from `SYSTEM_WINE` —
-        // survives every test in this file.
+        // mitigation. [`remove_press`] mutated to name a constant —
+        // `"system"`, one keystroke from `SYSTEM_WINE` — survives every test
+        // in this file.
         //
         // There is no reader to close it with, and this is established by
         // reading the vendored sources rather than by assuming:
@@ -716,6 +716,13 @@ fn uninstall_line<E: std::fmt::Display>(runner_id: &str, result: Result<(), E>) 
 /// message back out (the sources are cited at the call site). Naming the helper
 /// keeps the claim inside what the measurement supports.
 ///
+/// The message is the confirm pair's first half, not the removal: the
+/// reference's delete button opens `removeRunnerDialog` (`RunnersPage.qml:84`)
+/// and the dialog's Remove is what sends `runnerId` to `uninstallRunner`
+/// (`:267-271`). It carries the row's display name too, because the dialog
+/// titles `"Remove {name}?"` (`:259`) and the button is the only place that
+/// knows both halves. P-37.
+///
 /// This is [`InstalledRow::runner_id`]'s remaining consumer. The field's other
 /// half — the value [`installed_rows`] puts there — is pinned by
 /// `the_system_row_names_python_s_runner_id_and_not_the_family_id` (a code span:
@@ -728,7 +735,10 @@ fn uninstall_line<E: std::fmt::Display>(runner_id: &str, result: Result<(), E>) 
 /// unobservable for the reason given there. This is the third such gap, beside
 /// `uninstall_line`'s call site (A) and `install_press`'s (B).
 fn remove_press(row: &InstalledRow) -> Message {
-    Message::UninstallRunner(row.runner_id.clone())
+    Message::ConfirmRemoveRunner {
+        runner_id: row.runner_id.clone(),
+        name: row.name.clone(),
+    }
 }
 
 /// The Runners page's half of the dispatcher.
@@ -1030,17 +1040,29 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
         // the reference cannot reach — it renders "No builds found for this
         // family." directly above the list, because [`status_line`]'s `Idle` arm
         // is the same sentence as its empty-`Ready` one.
-        Message::UninstallRunner(runner_id) => {
-            // A build is gone from disk, so the Installed list and the badges go
-            // with it — whether the removal succeeded or not, for the reason
-            // above.
-            let rows = refresh(state);
-            let line = uninstall_line(
-                runner_id,
-                proton::uninstall(state.runners.runners_directory(), runner_id),
-            );
-            Some(Task::batch([rows, push_toast(state, line)]))
+        // The delete button on an installed row (`RunnersPage.qml:82-85`): the
+        // reference opens `removeRunnerDialog` rather than deleting, and the
+        // dialog's Remove sends the row's `runnerId` to `uninstallRunner`. The
+        // pending removal is the page-local `pendingRemove` (`:15`) — the id
+        // the removal will name and the display name the dialog titles — held
+        // on `State` because `view` is handed data and reads no globals. P-37.
+        Message::ConfirmRemoveRunner { runner_id, name } => {
+            state.confirm_remove_runner = Some(crate::state::PendingRunnerRemoval {
+                runner_id: runner_id.clone(),
+                name: name.clone(),
+            });
+            Some(Task::none())
         }
+        // The dialog's Remove (`RunnersPage.qml:267-271`): the pending removal
+        // is cleared first so the dialog closes whether or not the removal
+        // succeeds, and the removal itself is the same one `UninstallRunner`
+        // names below — reached through [`remove_runner`] so the two cannot
+        // diverge.
+        Message::RemoveRunnerConfirmed(runner_id) => {
+            state.confirm_remove_runner = None;
+            Some(remove_runner(state, runner_id))
+        }
+        Message::UninstallRunner(runner_id) => Some(remove_runner(state, runner_id)),
         // The rows [`refresh`] computed, back from the worker thread that
         // spawned Wine.
         //
@@ -1062,6 +1084,23 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
         }
         _ => None,
     }
+}
+
+/// The removal `uninstallRunner` names (`bridge.py:772-782`), shared by the
+/// dialog's confirmation and the direct route so the two cannot diverge.
+///
+/// A build is gone from disk, so the Installed list and the badges go with it
+/// — whether the removal succeeded or not, for the reason the arm below used
+/// to spell out: `uninstallRunner` assigns no field of the bridge at all, it
+/// only notifies, and the held rows have to be recomputed explicitly or they
+/// go stale exactly when the user is looking for the reason.
+fn remove_runner(state: &mut State, runner_id: &str) -> Task<Message> {
+    let rows = refresh(state);
+    let line = uninstall_line(
+        runner_id,
+        proton::uninstall(state.runners.runners_directory(), runner_id),
+    );
+    Task::batch([rows, push_toast(state, line)])
 }
 
 /// `notify` (`bridge.py`), which every path above ends in.
@@ -2269,14 +2308,23 @@ mod tests {
 
     // ---- uninstall_line ----------------------------------------------------
 
-    /// [`remove_press`] builds the row's own id, and never a constant.
+    /// [`remove_press`] asks first — and names the row's own id and name, never a
+    /// constant — so the dialog titles the right build and the removal deletes
+    /// it.
     ///
     /// `"system"` is the mutation this exists for: the family id is one
     /// keystroke from `SYSTEM_WINE`, it reads as correct, and removing a
     /// Windows game's runner by asking to remove the *family* is a refusal at
     /// best. Asserted as an equality against `row.runner_id` so the helper and
     /// the row cannot diverge, plus the literal so a second constant with the
-    /// same value cannot shadow the first.
+    /// same value cannot shadow the first. The name is asserted likewise: an
+    /// id without it would open a dialog titled for the wrong build.
+    ///
+    /// The `UninstallRunner` rejection is deliberate and load-bearing, not
+    /// fallout of the retarget: the button must not delete on click, so a
+    /// helper that still builds the removal directly is the defect P-37 exists
+    /// to end, and this test fails on it rather than merely not covering the
+    /// new message.
     ///
     /// **The name says `helper` because that is the only thing this measures.**
     /// It cannot see the button: `installed_card` could build the message
@@ -2293,15 +2341,17 @@ mod tests {
         let rows = installed_rows(&WineRunner::with_binary(None), &protons);
 
         match remove_press(&rows[1]) {
-            Message::UninstallRunner(id) => {
-                assert_eq!(id, rows[1].runner_id, "the helper names its own row");
-                assert_eq!(id, "GE-Proton9-5");
+            Message::ConfirmRemoveRunner { runner_id, name } => {
+                assert_eq!(runner_id, rows[1].runner_id, "the helper names its own row");
+                assert_eq!(runner_id, "GE-Proton9-5");
                 assert_ne!(
-                    id, "system",
+                    runner_id, "system",
                     "\"system\" is the family id, and removing it names no runner"
                 );
+                assert_eq!(name, rows[1].name, "the dialog titles the same row");
+                assert_eq!(name, "GE-Proton9-5");
             }
-            other => panic!("the remove helper must build a removal, got {other:?}"),
+            other => panic!("the remove helper must ask first, got {other:?}"),
         }
 
         assert!(
@@ -2311,6 +2361,106 @@ mod tests {
         assert!(
             !rows[0].removable,
             "and the system row does not, so this value is never built for it"
+        );
+    }
+
+    /// The ask sets the pending removal; the dialog draws the title it names.
+    ///
+    /// Two mutations this exists for, separated because they are in two files:
+    /// an arm that answers without writing `confirm_remove_runner` — the
+    /// button clicks and no dialog opens — and an arm that writes a constant
+    /// instead of the message's own id, which opens the dialog for the wrong
+    /// build. Both leave `is_handled` green, which is why this asserts the
+    /// field rather than the effect.
+    #[test]
+    fn asking_sets_the_pending_removal_the_dialog_draws() {
+        let mut state = state();
+        let task = update(
+            &mut state,
+            &Message::ConfirmRemoveRunner {
+                runner_id: "GE-Proton9-5".to_string(),
+                name: "GE-Proton9-5".to_string(),
+            },
+        );
+
+        assert!(task.is_some(), "the ask is this page's to handle");
+        assert_eq!(
+            state.confirm_remove_runner,
+            Some(crate::state::PendingRunnerRemoval {
+                runner_id: "GE-Proton9-5".to_string(),
+                name: "GE-Proton9-5".to_string(),
+            }),
+            "the pending removal is the message's own halves"
+        );
+        assert_eq!(
+            state.confirm_remove_runner.as_ref().unwrap().title(),
+            "Remove GE-Proton9-5?",
+            "the dialog titles the row the button was pressed on"
+        );
+    }
+
+    /// The confirmation clears the pending removal and runs the removal —
+    /// through the refused id, so this needs no fixture.
+    ///
+    /// The clear is asserted, not just the toast: an arm that removed without
+    /// clearing would leave the dialog open over the list it just changed.
+    /// `RemoveRunnerConfirmed` reaching `proton::uninstall` is covered from the
+    /// other side by `a_refused_removal_is_handled_and_leaves_the_release_status_alone`
+    /// for the direct route; both routes call [`remove_runner`], so one
+    /// refusal covers the shared half.
+    #[test]
+    fn confirming_clears_the_pending_removal_and_removes() {
+        let mut state = state();
+        state.confirm_remove_runner = Some(crate::state::PendingRunnerRemoval {
+            runner_id: SYSTEM_WINE.to_string(),
+            name: "System Wine".to_string(),
+        });
+
+        let task = update(
+            &mut state,
+            &Message::RemoveRunnerConfirmed(SYSTEM_WINE.to_string()),
+        );
+
+        assert!(task.is_some(), "the confirmation is this page's to handle");
+        assert!(
+            state.confirm_remove_runner.is_none(),
+            "the dialog must close on confirmation"
+        );
+        assert!(!state.runner_busy, "a removal is not a busy job");
+    }
+
+    /// `CloseDialog` clears a pending runner removal, like the form and the
+    /// pending game delete — but that arm lives in `main.rs`, so it is
+    /// asserted there rather than here. This test pins the page's half of the
+    /// contract: the field the dialog reads is the field the ask writes, and
+    /// clearing it is what closes the dialog.
+    #[test]
+    fn the_dialog_is_open_exactly_while_a_removal_is_pending() {
+        let mut state = state();
+        assert!(
+            state.confirm_remove_runner.is_none(),
+            "a fresh page has no dialog open"
+        );
+
+        let _ = update(
+            &mut state,
+            &Message::ConfirmRemoveRunner {
+                runner_id: "GE-Proton9-5".to_string(),
+                name: "GE-Proton9-5".to_string(),
+            },
+        );
+        assert!(
+            state.confirm_remove_runner.is_some(),
+            "the ask opens the dialog"
+        );
+
+        let _ = update(
+            &mut state,
+            &Message::RemoveRunnerConfirmed("GE-Proton9-5".to_string()),
+        );
+        assert!(
+            state.confirm_remove_runner.is_none(),
+            "the confirmation closes it"
         );
     }
 

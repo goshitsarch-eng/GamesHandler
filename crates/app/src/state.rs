@@ -265,6 +265,39 @@ pub struct PendingInstall {
     pub game_id: GameId,
 }
 
+/// A runner removal waiting for the user to confirm it.
+///
+/// The reference's `page.pendingRemove` (`RunnersPage.qml:15`) is the installed
+/// row the delete button was pressed on; `removeRunnerDialog` then names it in
+/// its title and sends its `runnerId` to `uninstallRunner` on Remove. The port
+/// holds the same two halves here — the id the removal names and the display
+/// name the dialog titles — rather than the row index, which would be stale the
+/// moment the list refreshes. P-37.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingRunnerRemoval {
+    /// The runner id `UninstallRunner` will name on confirmation.
+    pub runner_id: String,
+    /// The display name the dialog titles (`"Remove {name}?"`).
+    pub name: String,
+}
+
+impl PendingRunnerRemoval {
+    /// The dialog's title: `"Remove {name}?"`, the reference's
+    /// `"Remove " + page.pendingRemove.name + "?"` (`RunnersPage.qml:259`).
+    pub fn title(&self) -> String {
+        format!("Remove {}?", self.name)
+    }
+}
+
+/// The dialog's subtitle, verbatim from the reference (`RunnersPage.qml:260`).
+/// A free function rather than a method because it names no field of the
+/// removal — it is the dialog's constant half, and a second copy beside the
+/// title would be a sentence that has to agree with a table it is not derived
+/// from.
+pub fn remove_runner_subtitle() -> &'static str {
+    "The downloaded build is deleted from disk. Games using it fall back to System Wine until you pick another runner."
+}
+
 /// The field values of the add/edit game form.
 ///
 /// Mirrors the `values` map `saveGame` reads (`bridge.py:404-446`) so the
@@ -768,6 +801,14 @@ pub struct State {
     ///
     /// A behaviour change, recorded in §2.5: QML deleted without confirming.
     pub confirm_delete: Option<GameId>,
+    /// The runner a removal is being confirmed for, or `None`.
+    ///
+    /// The reference's `RunnersPage.qml` holds the pending removal in a
+    /// page-local `property var pendingRemove` and opens `removeRunnerDialog`
+    /// (`RunnersPage.qml:15,257-272`) rather than deleting on click; the port
+    /// holds it here for the same reason a QML property cannot be used: `view`
+    /// is handed data and reads no globals. P-37.
+    pub confirm_remove_runner: Option<PendingRunnerRemoval>,
     /// was `_search_text`.
     pub search_text: String,
     /// was `_category_filter`, defaulting to "All".
@@ -926,6 +967,7 @@ impl State {
             page: Page::Library,
             game_form: None,
             confirm_delete: None,
+            confirm_remove_runner: None,
             search_text: String::new(),
             category_filter: "All".to_string(),
             installer_search: String::new(),
