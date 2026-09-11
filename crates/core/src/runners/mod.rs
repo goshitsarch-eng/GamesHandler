@@ -195,7 +195,7 @@ impl RunnerError {
     /// applied by the *renderer*, where the empty case is a value it sees,
     /// rather than ruled out here by an invariant nothing enforces.
     ///
-    /// [`ArchiveError]: crate::runners::archive::ArchiveError
+    /// [`ArchiveError`]: crate::runners::archive::ArchiveError
     /// [`Shell`]: RunnerError::Shell
     pub fn class_name(&self) -> &'static str {
         match self {

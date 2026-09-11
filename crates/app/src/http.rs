@@ -1,7 +1,10 @@
 //! The concrete [`HttpClient`] this binary injects into `core` (DECISIONS D-26).
 //!
-//! `core` defines the trait and never imports a client, so its 358 tests stay
-//! offline and hermetic; the binary picks the concrete one and passes it in.
+//! `core` defines the trait and never imports a client, so its whole test suite
+//! stays offline and hermetic; the binary picks the concrete one and passes it
+//! in. (The count that used to stand where "whole test suite" now does was 358,
+//! and it was stale within a commit — a number in a sentence about a property
+//! is archaeology, and the property is what the sentence is for.)
 //! This module is that choice and nothing else.
 //!
 //! # Which client, and why the system trust store

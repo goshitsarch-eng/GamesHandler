@@ -607,19 +607,26 @@ fn remove_press(row: &InstalledRow) -> Message {
 ///
 /// Each arm below is one of `bridge.py`'s async `done`/`fail` closures, ported
 /// as the state transition they are.
-/// Python's `limit=12` (`bridge.py:701`), applied after parsing by
+/// Python's `limit=12` (`bridge.py:702`), applied after parsing by
 /// [`proton::fetch_available`], so these are twelve *usable* releases.
 const RELEASES_LIMIT: usize = 12;
 
 /// The fetch's ceiling.
 ///
-/// Python passes no timeout and inherits `requests`' — which is none at all, so
-/// a stalled connection leaves its worker thread parked forever. The thread is
-/// a daemon and the page still recovers when the next fetch starts, which is
-/// why this was never a visible bug there. Here it would be visible: the task
-/// owns no cancel handle, so `Loading` would be the page's last word. 30s is
-/// this port's bound, not Python's, and it is generous enough that a slow
-/// GitHub response is not mistaken for a failure.
+/// `fetch_available`'s own default (`runners.py:818`), applied to the request
+/// at `urlopen(req, timeout=timeout)` (`runners.py:830`), with `fetchReleases`
+/// passing nothing to override it (`bridge.py:702`) — so 30 s is the
+/// **reference's** bound rather than a number chosen here. [`HttpClient::get`]
+/// takes its timeout as an argument and has no default, and this constant is
+/// what carries the reference's value into it; the port adds no second bound.
+///
+/// **An earlier version of this comment said the opposite**, and the reversal
+/// is worth one line because the comment is what a reader trusts instead of
+/// re-reading the Python: it claimed Python passed no timeout, inherited
+/// `requests`', and left a worker parked forever. All three are false —
+/// `gamehandler/` imports `urllib.request` and never `requests` (`runners.py`
+/// `:33`), the timeout is explicit, and a stalled connection fails at 30 s
+/// there exactly as it does here.
 const RELEASES_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Fetch one family's releases through the injected client (D-26).
@@ -795,12 +802,13 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             }
             Some(Task::none())
         }
-        // `installRelease` (`bridge.py:742-764`).
+        // `installRelease` (`bridge.py:738-769`).
         //
         // The two early returns are the reference's, and both are silent: a
         // click while a download is already running is dropped rather than
-        // queued (`if self._runner_busy: return`), and so is a tag that is not
-        // in the list the page is showing (`if release is None: return`) —
+        // queued (`if self._runner_busy: return`, `bridge.py:739-740`), and so
+        // is a tag that is not in the list the page is showing
+        // (`if release is None: return`, `bridge.py:742-743`) —
         // which a stale page can still send after a family change, since the
         // button was drawn from the list that has since been replaced.
         //
@@ -824,14 +832,14 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
                 install_runner_task(release.clone(), state.runners.runners_directory().to_path_buf()),
             ]))
         }
-        // `_progress_cb` (`bridge.py:730-732`).
+        // `_progress_cb` (`bridge.py:733-735`).
         Message::RunnerProgress(fraction) => {
             state.progress = Some(*fraction);
             Some(Task::none())
         }
         // `done` and `fail` both clear the guard and the bar before they
         // differ, so they are written once and the message is the only
-        // difference (`bridge.py:745-760`).
+        // difference (`bridge.py:753-767`).
         Message::RunnerInstallFinished(result) => {
             state.runner_busy = false;
             state.progress = None;
@@ -1347,7 +1355,7 @@ mod tests {
         );
     }
 
-    /// Python's `limit=12` (`bridge.py:701`), applied after parsing. Twenty
+    /// Python's `limit=12` (`bridge.py:702`), applied after parsing. Twenty
     /// usable releases in, twelve out: a port that passed a different limit, or
     /// none at all, is caught here rather than by a user reading a longer list
     /// than the reference shows.
@@ -1506,7 +1514,8 @@ mod tests {
 
     /// An install finishing clears the guard and the bar whichever way it went.
     /// The reference writes that pair before the success/failure branch
-    /// (`bridge.py:753-759`), so a port that only cleared them on success would
+    /// (`bridge.py:753-755` and `:764-766`), so a port that only cleared them on
+    /// success would
     /// leave the page permanently busy after one failure.
     #[test]
     fn an_install_finishing_clears_the_guard_on_success_and_on_failure() {
@@ -1592,7 +1601,7 @@ mod tests {
     }
 
     /// A second click while a download is in flight is dropped rather than
-    /// queued — `if self._runner_busy: return` (`bridge.py:743-744`).
+    /// queued — `if self._runner_busy: return` (`bridge.py:739-740`).
     ///
     /// Without it the second click would start a second task against the same
     /// directory, which the install would refuse as already-installed once the
@@ -1691,7 +1700,7 @@ mod tests {
 
     /// A failed removal says *what* went wrong and *which* runner it was about.
     ///
-    /// `uninstallRunner`'s `except` (`bridge.py:775-782`) is where this line
+    /// `uninstallRunner`'s `except` (`bridge.py:775-777`) is where this line
     /// comes from, and the runner id is the half that says which build is still
     /// on disk. The `contains` is a second, deliberately different claim from
     /// the `assert_eq!`: it is the one that survives a line that keeps its shape
