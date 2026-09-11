@@ -819,6 +819,15 @@ JSON
     fi
 
     # --- cli-launch-unknown ---
+    #
+    # **The unknown arm, and on its own it gates nothing.** Through T-08 this was
+    # the stage's *only* `--launch` assertion, and the id it launches is not in
+    # the library: that is the arm the pre-T-07 stub already got right, so
+    # deleting `launch_failure`'s unknown-id path would have left this check
+    # green. The stage's own description ("the headless CLI
+    # --list/--launch/--version, against a library it must read") was true and
+    # vacuous for `--launch`, which never read a game. `cli-launch-known` below
+    # is the missing half; this one stays because the refusal is still contract.
     rc=0; cli_run "$two" --launch this-id-is-not-in-the-library >"$out" 2>"$err" || rc=$?
     if [ "$rc" -ne 0 ] && grep -q "no game with id" "$err"; then
         echo "ok   cli-launch-unknown (exit $rc, reason on stderr)"
@@ -826,6 +835,81 @@ JSON
         echo "FAIL cli-launch-unknown: an unknown id must exit non-zero with the reason on"
         echo "     stderr; got exit $rc, stderr: $(head -n1 "$err")"
         failures=$((failures + 1))
+    fi
+
+    # --- cli-launch-known ---
+    #
+    # The check #31 left to a unit test. A **known** id, in a library the binary
+    # really reads, whose game is a native title pointing at `/bin/true` — the
+    # same fixture Architecture's `a_real_launch_records_the_game_as_played`
+    # (`main.rs:3350`) drives in process, which is why the shape is known to work
+    # rather than hoped to. Three properties, and the third is the one that is
+    # not free:
+    #
+    #   1. the id resolves (a lookup, not a refusal);
+    #   2. it exits **0** — `/bin/true` terminates successfully inside the grace
+    #      period, and `LaunchedGame::failure` returns `None` for exit 0 exactly
+    #      as Python's does, so this is the `Ok(None)` arm and the only arm
+    #      `launch_report` gives a zero;
+    #   3. **`last_played` moved, read back from the file.** This is the
+    #      assertion the rc cannot make. `mark_played` is the line between the
+    #      launch and the watch, and **deleting the whole call left the suite
+    #      green at 298 passed** — Architecture found that mutation surviving,
+    #      and the seam `launch_game_at` exists because of it. rc 0 alone passes
+    #      on a binary that launches the game and records nothing, so a check
+    #      written for #31 with only the exit code would have re-opened T-07.
+    #
+    # The value is read from `games.json` and not from anything the binary
+    # printed, and it is compared before/after on the same file. A state where
+    # those two assertions disagree is reachable with the real binary and no
+    # rebuild at all: with the config directory unwritable, the launch succeeds
+    # and exits 0 while the save fails, stderr carries
+    # `could not record “…” as played: Permission denied`, and this check must
+    # go red on it. That was the DoD, and it is the reason (3) is here.
+    local known="$tmp/known" library played_before played_after
+    mkdir -p "$known/gamehandler" || { rm -rf "$tmp"; return 1; }
+    cat >"$known/gamehandler/games.json" <<'JSON'
+[{"id": "33333333333333333333333333333333", "name": "Native Probe", "kind": "linux", "exe_path": "/bin/true", "last_played": 0.0}]
+JSON
+    library="$known/gamehandler/games.json"
+
+    # last_played_value <file> — the number, or `absent` when the key is gone.
+    # One definition for both reads, so the before and the after cannot be
+    # extracted by two spellings that disagree.
+    last_played_value() {
+        local value
+        value="$(grep -oE '"last_played": *-?[0-9][0-9.eE+-]*' "$1" 2>/dev/null \
+            | head -n1 | sed 's/.*: *//')"
+        printf '%s\n' "${value:-absent}"
+    }
+
+    if [ ! -x /bin/true ]; then
+        echo "FAIL cli-launch-known: /bin/true is not executable, so a native title"
+        echo "     cannot be launched without a runner. This check needs it, and"
+        echo "     says so rather than skipping: a check that skips is a check that"
+        echo "     reports the library as reachable without reading it."
+        failures=$((failures + 1))
+    else
+        played_before="$(last_played_value "$library")"
+        rc=0; cli_run "$known" --launch 33333333333333333333333333333333 >"$out" 2>"$err" || rc=$?
+        played_after="$(last_played_value "$library")"
+        if [ "$rc" -eq 0 ] && [ "$played_after" != "$played_before" ] \
+            && [ "$played_after" != "absent" ] && [ "$played_after" != "0.0" ]; then
+            echo "ok   cli-launch-known (exit 0, last_played $played_before -> $played_after)"
+        else
+            echo "FAIL cli-launch-known: a known native title (/bin/true) in a library"
+            echo "     at \$XDG_CONFIG_HOME/gamehandler/games.json must exit 0 AND move"
+            echo "     last_played in that file; got exit $rc, last_played"
+            echo "     $played_before -> $played_after and:"
+            echo "     --- stdout ---"; sed 's/^/     | /' "$out"
+            if [ -s "$err" ]; then echo "     --- stderr ---"; sed 's/^/     | /' "$err"; fi
+            if [ "$rc" -eq 0 ] && [ "$played_after" = "$played_before" ]; then
+                echo "     the exit code is right and the record did not move: the game"
+                echo "     launched and nothing wrote it down, so a shortcut reports"
+                echo "     success and the library never learns the title was played."
+            fi
+            failures=$((failures + 1))
+        fi
     fi
 
     rm -rf "$tmp"
