@@ -103,13 +103,16 @@ const HANDLED_ELSEWHERE: [(&str, &str); 1] = [(
 /// Adding an entry is a decision, not housekeeping: it is the statement that a
 /// user-reachable control may sit inert. Prefer fixing the arm.
 ///
-/// **That reject branch has been observed, not just written.** No test below
-/// covers it — it is an inline `assert!` that holds on a clean tree — so it was
-/// run by hand: with a `("NavigateTo", "Library", …)` entry added, both guard
-/// tests failed with
+/// **That reject branch has fired in anger, which is better evidence than the
+/// hand-run that was here before.** It was first demonstrated by hand — a
+/// `("NavigateTo", "Library", …)` entry added, both guard tests failing with the
+/// message below, green restored on removal. Then it fired on real work: UX
+/// landed #65's handler, `OpenNewGameForm` stopped being dead, and this list
+/// went stale and failed the suite naming that entry. The deferral did its job
+/// in both directions, and the message is the one quoted here:
 ///
 /// ```text
-/// these KNOWN_DEAD entries no longer describe a dead emission: [("NavigateTo",
+/// these KNOWN_DEAD entries no longer describe a dead emission: [("OpenNewGameForm",
 /// "Library", "…")]. Either the arm was handled — in which case delete the
 /// entry, and thank you, this list is supposed to shrink — or the page stopped
 /// emitting the message, or the page moved back behind `pending_page`. An entry
@@ -117,17 +120,16 @@ const HANDLED_ELSEWHERE: [(&str, &str); 1] = [(
 /// forgotten.
 /// ```
 ///
-/// and removing the entry restored green. Recorded here because when #65 is
-/// fixed and this list has to shrink, the reader meeting that failure should
-/// know it is the list working rather than the guard regressing.
-const KNOWN_DEAD: [(&str, &str, &str); 1] = [(
+/// That is why this list is empty now: the entry was deleted, not the check.
+const KNOWN_DEAD: [(&str, &str, &str); 0] = [
     // variant, page, why — the task that owns it
-    "OpenNewGameForm",
-    "Library",
-    "#65 / T-09. The Library's empty state draws `Add your first game` \
-     (view/library.rs:309) and `Shell::update`'s arm is `{}` (main.rs:1043); no view renders the \
-     form the button asks for. Reachable the moment the library is empty, and it does nothing.",
-)];
+    //
+    // Empty, and it should stay that way. The one entry this carried was
+    // `OpenNewGameForm` on `Library` — #65's dead "Add your first game" button —
+    // and UX landing that handler is what emptied it. Adding an entry is the
+    // statement that a user-reachable control may sit inert; prefer fixing the
+    // arm.
+];
 
 /// The repository root, derived rather than hardcoded.
 fn repo_root() -> PathBuf {
