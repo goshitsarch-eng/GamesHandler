@@ -935,10 +935,13 @@ impl Shell {
                 };
                 view::plugins::view(page)
             }
-            // TODO(T-06 + T-13): about and credits. Same blocker: five sections
-            // and 25 entries out of `credits.py` (413 lines, `bridge.py:1036-1069`),
-            // and the regenerable README section (P-65) depends on the same data.
-            Page::Credits => pending_page(Page::Credits, "T-13"),
+            // T-13. `view::credits::view` takes no `&State`: the page is a
+            // reading surface over `core::credits`, and its argument is a marker
+            // rather than a borrow so that the dispatch arm reads as the others
+            // do without pretending the page has something to read. The
+            // catalogue itself is reached through that module's accessors, never
+            // transcribed here.
+            Page::Credits => view::credits::view(view::credits::CreditsPage),
             Page::Settings => {
                 let page = view::settings::SettingsPage {
                     settings: &self.state.settings,
@@ -1339,7 +1342,6 @@ impl Shell {
 #[cfg(test)]
 const PENDING_PAGES: &[(Page, &str)] = &[
     (Page::Installers, "T-12"),
-    (Page::Credits, "T-13"),
 ];
 
 /// The task that will build `page`, or `None` once its body has landed.
@@ -2826,6 +2828,66 @@ mod tests {
                 drawn.iter().any(|text| text == row.name),
                 "{} is in the catalogue but not drawn; drawn: {drawn:?}",
                 row.name
+            );
+        }
+
+        assert!(
+            !drawn.iter().any(|text| text.contains("has not been ported yet")),
+            "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
+        );
+    }
+
+    /// **The About & Credits page draws the reference and not the placeholder.**
+    ///
+    /// The counterpart of the Plugins test above and the reason landing T-13's
+    /// page is a claim rather than a hope. `view::credits`'s own thirteen tests
+    /// pin the catalogue, the copy and the links, but nothing inside that module
+    /// can see whether [`Shell::view_body`] ever calls it — finding #61 one layer
+    /// up, where every unit test passes and no user reaches the code.
+    ///
+    /// The page takes no `State`, so there is no fixture to prime: what it draws
+    /// is the reference data, which is exactly what is asserted. The section
+    /// headings are required to be *present* rather than only the placeholder
+    /// required to be absent, because an empty body would satisfy the negative
+    /// alone.
+    ///
+    /// `PAGE_TITLE` is deliberately **not** in the list below, and the first
+    /// draft of this test had it there and failed. It is the drawer row's label
+    /// (`Page::Credits::label()`, `CreditsPage.qml:10`, `Main.qml:94`) and not a
+    /// string the body draws: the body opens on `LEAD_HEADING`. `view::credits`
+    /// pins that separation from its side — `the_title_is_the_drawers_label_and_
+    /// the_qmls` holds the label and the two QML files together, and asserts
+    /// `Page::Credits.label() == PAGE_TITLE` — so the fact is checked where it
+    /// belongs and is recorded here only so the next reader does not repeat the
+    /// mistake.
+    #[test]
+    fn the_credits_page_draws_the_reference_and_not_the_placeholder() {
+        let mut shell = Shell::new();
+        let _ = shell.show_page(Page::Credits);
+        let drawn = drawn_strings(shell.view_body());
+
+        for expected in [
+            crate::view::credits::LEAD_HEADING,
+            crate::view::credits::MAKER_LINE,
+            crate::view::credits::WHY_HEADING,
+            crate::view::credits::GITHUB_LABEL,
+        ] {
+            assert!(
+                drawn.iter().any(|text| text == expected),
+                "the Credits page should draw {expected:?}; drawn: {drawn:?}"
+            );
+        }
+
+        // Every section title, from the data layer rather than from a literal
+        // here — so a page that drew the five headings above and stopped would
+        // fail on the first section it dropped.
+        let sections = crate::view::credits::credit_sections();
+        assert!(!sections.is_empty(), "the catalogue is empty; this checks nothing");
+        for section in sections {
+            assert!(
+                drawn.iter().any(|text| text == section.title),
+                "section {} is in the catalogue but not drawn; drawn: {drawn:?}",
+                section.id
             );
         }
 
