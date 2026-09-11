@@ -276,7 +276,7 @@ same file (D-05).
 |---|---|---|---|
 | T-01 | Workspace scaffold: `Cargo.toml`, `crates/core`, `crates/app`, minimal libcosmic app that compiles and runs | Arch + UX | **DONE** (`f76cedd`). Proves F-1/F-3 in-tree. Core has **no** GUI deps — verified with `cargo tree -p gamehandler-core`. |
 | T-01a | Compatibility oracle: run the Python impl, freeze its JSON behaviour | Lead | **DONE** (`docs/migration/oracle/`). Blocking input for T-02. |
-| T-02 | `core::paths` + `core::models` + `core::settings` | Arch | Must satisfy the oracle fixtures — see §4a. |
+| T-02 | `core::paths` + `core::models` + `core::settings` | Arch | Must satisfy the oracle fixtures — see §6a. **Struct field order must match the Python dataclasses** (31 `Game` fields, 18 `Settings` fields) or byte equality fails. |
 | T-03 | `core::runners` — families, archive extraction, env/launch, desktop shortcuts | Arch | Largest port. Security tests are the gate. |
 | T-04 | `core::installers` | Arch | Wizard/poll state machine with injectable clock. |
 | T-05 | `core::covers` + `exe_icons` + `netpaths` | Arch | PE parser + GVFS mapping. |
