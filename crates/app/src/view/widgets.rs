@@ -522,6 +522,9 @@ mod tests {
     use cosmic::iced::advanced::layout::{Limits, Node};
     use cosmic::iced::advanced::widget::{Operation, Tree};
     use cosmic::iced::advanced::Layout;
+    // The trait, not a value: `measure_image` is `Renderer`'s method and is not
+    // in scope without it.
+    use cosmic::iced::advanced::image::Renderer as _;
     use cosmic::iced::{Font, Pixels, Radius, Rectangle, Size};
     use cosmic::widget::Id;
     use gamehandler_core::models::Game;
@@ -774,6 +777,28 @@ mod tests {
     ///
     /// Read from the laid-out tree, since an `Image` has no id and no
     /// `operate` — the leaf box is where its size actually lands.
+    ///
+    /// # What the photograph half can and cannot show (#46)
+    ///
+    /// That a photograph's box is the full 188x218 and not the inset one. What
+    /// it **cannot** show is that a picture is there at all: [`framed`] pins the
+    /// container with `width(Fixed(..))`/`height(Fixed(..))`,
+    /// `Limits::width(Length::Fixed(x))` sets `min == max == x`
+    /// (`iced/core/src/layout/limits.rs:60-66`), and `Image::layout` resolves
+    /// `intrinsic.min(max).max(min)` (`iced/widget/src/image.rs:257-268`) — so
+    /// the leaf is 188x218 for *any* intrinsic, including the `Size::ZERO` a
+    /// failed decode produces. Measured, all three in this binary:
+    ///
+    /// | cover | `measure_image` | `leaves` |
+    /// |---|---|---|
+    /// | `WEBP_COVER` | `Some(24x16)` | 188x218 |
+    /// | twelve bytes of PNG header | `None` | 188x218 |
+    /// | a path that does not exist | `None` | differs (it is a plate) |
+    ///
+    /// The third row is why this test is not worthless — it does separate a
+    /// plate from a photograph. The first two are why it needed
+    /// [`a_webp_cover_is_decoded`] beside it: before that, the photograph here
+    /// could not decode at all and this assertion still passed.
     #[test]
     fn an_icons_picture_is_inset_inside_the_plate_by_the_icon_inset() {
         let spec = card_cover_spec();
@@ -790,11 +815,60 @@ mod tests {
 
         // A photograph is cropped to the box instead, so its inset is zero.
         let with_photo_game = with_photo("Half-Life 2");
+        assert_decodes(&with_photo_game, "the photograph this branch draws");
         let mut photo: Element<'_, ()> = cover_box(&with_photo_game, spec);
         assert_eq!(
             leaves(&mut photo),
             [Size::new(188.0, 218.0)],
             "a photograph fills the box rather than being inset into it"
+        );
+    }
+
+    /// **A `.webp` cover is decoded, not merely classified.**
+    ///
+    /// `CoverSource::classify` reads content, not suffixes — it is an ICO-magic
+    /// check — so it answers `Photo` for these bytes exactly as it answered
+    /// `Photo` for the twelve bytes of PNG header that used to stand in for a
+    /// photograph. Classifying is not decoding, and D-29 exists for the decoder:
+    /// `animated-image` is the only feature that turns on `image/webp`, and
+    /// without it a user's own `.webp` cover — which `covers` stores verbatim
+    /// under that suffix, including files the Python application already wrote
+    /// to the shared data directory — fails to open.
+    ///
+    /// # The assertion is on `measure_image`, and it has to be
+    ///
+    /// It is the only observable that moves. See the table on
+    /// `an_icons_picture_is_inset_inside_the_plate_by_the_icon_inset`: the
+    /// laid-out box is the pinned 188x218 for a decoded image and for an
+    /// undecodable one alike, so a `.webp` assertion written the way the
+    /// photograph tests are written would pass with the decoder switched off —
+    /// which is the defect (#46) this test was written to close.
+    ///
+    /// Being a check rather than a claim: removing `"animated-image"` from
+    /// `crates/app/Cargo.toml`'s `libcosmic` features makes this fail with
+    /// `left: None`, while every other test in the binary stays green. Measured
+    /// both ways.
+    #[test]
+    fn a_webp_cover_is_decoded() {
+        let game = with_photo("Half-Life 2");
+        assert_decodes(&game, "the .webp fixture");
+    }
+
+    /// The rendered size of `game`'s cover, which is `None` when it cannot be
+    /// decoded.
+    ///
+    /// The one reading that separates a picture from bytes that merely look
+    /// like one, so it is factored out rather than spelled twice.
+    fn assert_decodes(game: &Game, what: &str) {
+        let measured = renderer().measure_image(&image::Handle::from_path(&game.cover_path));
+        assert_eq!(
+            measured,
+            Some(Size::new(WEBP_COVER_SIZE.0, WEBP_COVER_SIZE.1)),
+            "{what} should decode as a {0}x{1} image; `None` means the decoder \
+             could not read it, which is what a build without `image/webp` does \
+             to a user's .webp cover — and `leaves` cannot tell the difference",
+            WEBP_COVER_SIZE.0,
+            WEBP_COVER_SIZE.1
         );
     }
 
@@ -1042,10 +1116,49 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
-    /// A game whose cover is a photograph: real bytes that are not an ICO.
+    /// A real `.webp`: 24x16, lossless VP8L, 118 bytes, from libwebp.
+    ///
+    /// Embedded rather than generated at test time, and shipped without the
+    /// generator, because generating one would need a webp *encoder* and the
+    /// point is the *decoder*: `image/webp` is the only thing that reads these
+    /// bytes, and it arrives through libcosmic's `animated-image` feature
+    /// (D-29), which is the single reason that feature is on. Nothing at test
+    /// time needs libwebp or a C toolchain.
+    ///
+    /// Generated once, off-tree, by a 30-line program against libwebp 1.6.0: a
+    /// 24x16 RGBA buffer — four quadrants plus a per-pixel ramp on the blue
+    /// channel, so it is a picture rather than a flat block — through
+    /// `WebPEncodeLosslessRGBA(px, 24, 16, 24 * 4, &out)`, the output written
+    /// verbatim. That is the whole recipe; these bytes are the whole fixture.
+    const WEBP_COVER: [u8; 118] = [
+        0x52, 0x49, 0x46, 0x46, 0x6e, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+        0x56, 0x50, 0x38, 0x4c, 0x62, 0x00, 0x00, 0x00, 0x2f, 0x17, 0xc0, 0x03,
+        0x00, 0xcd, 0x95, 0x21, 0xa2, 0xff, 0xb1, 0x2b, 0x78, 0x14, 0xbc, 0xff,
+        0x01, 0x26, 0x91, 0x24, 0x49, 0x4a, 0xbc, 0x4a, 0x56, 0xd3, 0xfa, 0x77,
+        0xf2, 0x5d, 0xa1, 0xc3, 0x8a, 0x1a, 0x49, 0x8a, 0x6a, 0x2f, 0xc0, 0xff,
+        0x0b, 0x11, 0x48, 0x42, 0x8c, 0xa2, 0xb6, 0x91, 0x1c, 0xbf, 0x76, 0xaf,
+        0xf1, 0x87, 0x70, 0x20, 0x7b, 0x4c, 0xc0, 0xfc, 0xe8, 0xaf, 0xee, 0x70,
+        0xfa, 0xa3, 0x33, 0x06, 0x00, 0x58, 0x04, 0xc2, 0x0d, 0x6c, 0xb2, 0x02,
+        0x87, 0x52, 0x81, 0x4b, 0xad, 0xc0, 0xa3, 0x55, 0xe0, 0xd3, 0xab, 0xcf,
+        0x8b, 0x07, 0x26, 0x3c, 0x27, 0x3a, 0x00, 0x03, 0xbf, 0x19,
+    ];
+
+    /// The size [`WEBP_COVER`] declares: 24x16, as encoded.
+    const WEBP_COVER_SIZE: (u32, u32) = (24, 16);
+
+    /// A game whose cover is a photograph: a real `.webp` that decodes.
+    ///
+    /// **It used to be twelve bytes of PNG header** — `\x89PNG\r\n\x1a\n` and
+    /// the start of an `IHDR` — which `CoverSource::classify` reads as a
+    /// photograph, because classification is an ICO-magic check and not a
+    /// suffix check. The trouble was that nothing noticed the difference: a
+    /// failed decode is invisible in the laid-out tree (#46), so every
+    /// assertion these fixtures fed was satisfied whether or not a picture was
+    /// ever drawn. Pointing the fixture at bytes that really decode is what
+    /// makes "a photograph" mean a photograph.
     fn with_photo(name: &str) -> Game {
         let mut game = Game::new_named(name);
-        game.cover_path = cover_fixture("photo", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR");
+        game.cover_path = cover_fixture("photo", &WEBP_COVER);
         game
     }
 
