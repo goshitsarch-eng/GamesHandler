@@ -446,8 +446,12 @@ pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
 
     if let Some(family) = selected.and_then(|index| families().get(index)) {
         body = body.push(text::body(family_note(family)));
-        // Disabled for the same reason as the guide's link button below.
-        body = body.push(button::link(family.homepage()));
+        // The reference's `Kirigami.UrlButton` (`RunnersPage.qml:144-150`) opens
+        // the maintainer's page itself; `button::link` carries no href, so the
+        // URL travels as the press message — built by [`family_press`], which
+        // the test below reads because a built button cannot be.
+        let url = family.homepage();
+        body = body.push(button::link(url.clone()).on_press(family_press(family)));
     }
 
     // ---- Available versions ------------------------------------------------
@@ -574,11 +578,14 @@ fn guide_card(guide: &GuideRow) -> Element<'static, Message> {
         .push(Space::new().width(Length::Fill))
         .width(Length::Fill);
 
-    if !guide.homepage.is_empty() {
-        // TODO(T-11): a `Button` with no `on_press` renders **disabled**, which is
-        // the honest state until a `Message::OpenUrl` exists — the affordance
-        // is where the reference puts it, and it is visibly not wired.
-        heading = heading.push(button::link("Visit project".to_string()));
+    // The reference's `Kirigami.UrlButton` (`RunnersPage.qml:233-237`)
+    // carries `url:` and opens it on click; `button::link` carries only a
+    // label, so the URL travels as the press message — built by
+    // [`guide_press`], which the test below reads because a built button
+    // cannot be. P-33. The `if let` is also the `visible: homepage !== ""`
+    // gate: no homepage, no button.
+    if let Some(press) = guide_press(guide) {
+        heading = heading.push(button::link("Visit project".to_string()).on_press(press));
     }
 
     card(
@@ -590,6 +597,35 @@ fn guide_card(guide: &GuideRow) -> Element<'static, Message> {
             .width(Length::Fill)
             .into(),
     )
+}
+
+/// The message the family selector's project link sends. P-33.
+///
+/// A named function rather than an inline `Message::OpenUrl(family.homepage())`
+/// for the same reason `credits.rs`'s [`credit_press`](super::credits::credit_press)
+/// is one: the message a `button::link` holds cannot be read back out of the
+/// built widget (no downcast; the sources are cited at [`installed_card`]), so
+/// the press is produced here and the view merely calls this. A call site that
+/// routed around it — or a `button::link` that lost its `on_press` — would render
+/// disabled (`libcosmic/src/widget/button/link.rs` → `button/widget.rs:148`),
+/// which no string assertion can see.
+pub fn family_press(family: &RunnerFamily) -> Message {
+    Message::OpenUrl(family.homepage())
+}
+
+/// The message a guide row's "Visit project" link sends, or `None` when the row
+/// has no homepage. P-33.
+///
+/// `None` and not a fallback for the same reason as
+/// [`credit_press`](super::credits::credit_press)'s: the reference draws no
+/// button at all on an empty url (`RunnersPage.qml:234`), so there is no message
+/// to send and inventing one would be a control the QML does not have.
+pub fn guide_press(guide: &GuideRow) -> Option<Message> {
+    if guide.homepage.is_empty() {
+        None
+    } else {
+        Some(Message::OpenUrl(guide.homepage.clone()))
+    }
 }
 
 /// The card surface, matching `super::widgets`' `card_style`.
@@ -1351,8 +1387,15 @@ mod tests {
 
     /// `System Wine`'s homepage is set, so its "Visit project" button is
     /// drawn; the reference hides the button only on an empty url.
+    ///
+    /// Named for exactly what it measures, because the previous name —
+    /// `every_guide_row_that_has_a_homepage_names_one_a_button_can_open` —
+    /// was the defect class: it asserted only the `https://` prefix while its
+    /// own name claimed the button could open it, and the two dead links stayed
+    /// green behind it. The press clause below is what closes the name's claim:
+    /// every non-empty homepage must also be the URL the row's link sends.
     #[test]
-    fn every_guide_row_that_has_a_homepage_names_one_a_button_can_open() {
+    fn every_guide_row_that_has_a_homepage_names_one() {
         for row in guide_rows() {
             assert!(
                 row.homepage.starts_with("https://"),
@@ -1361,6 +1404,371 @@ mod tests {
                 row.homepage
             );
         }
+    }
+
+    /// Every drawn "Visit project" button carries its own row's URL. P-33.
+    ///
+    /// Read from [`guide_press`], which is the same function the view calls to
+    /// build the link's `on_press` — not a copy of its logic. A button whose
+    /// press is dropped renders disabled, which no string assertion can see;
+    /// producing the message in a named function is what leaves the view with
+    /// nothing to get wrong except calling it. The empty-homepage arm is
+    /// covered by the `None` case below rather than by fixture luck: no row in
+    /// the catalogue has an empty homepage, so a test that only iterated the
+    /// catalogue would pass without ever exercising the arm the reference's
+    /// `visible: homepage !== ""` names.
+    #[test]
+    fn every_guide_links_press_opens_its_own_homepage() {
+        for row in guide_rows() {
+            assert!(
+                !row.homepage.is_empty(),
+                "{} has no homepage, so its press is untestable here: {:?}",
+                row.title,
+                row.homepage
+            );
+            match guide_press(&row) {
+                Some(Message::OpenUrl(url)) => {
+                    assert_eq!(
+                        url, row.homepage,
+                        "the press carries the wrong URL for {}",
+                        row.title
+                    );
+                }
+                other => panic!(
+                    "a guide row's press must be `OpenUrl`, got {other:?} for {}",
+                    row.title
+                ),
+            }
+        }
+
+        // `Message` is `Clone + Debug` without `PartialEq` (see `main.rs`'s
+        // `every_message` on why), so the `None` arm is matched rather than
+        // compared — the same route `credits.rs` takes for its presses.
+        let mut no_home = guide_rows()[0].clone();
+        no_home.homepage.clear();
+        match guide_press(&no_home) {
+            None => {}
+            Some(press) => panic!(
+                "an empty homepage draws no button, so there is no press to send — got {press:?}"
+            ),
+        }
+    }
+
+    /// The family selector's project link carries the selected family's URL.
+    /// P-33.
+    ///
+    /// Same named-function route as the guide rows: [`family_press`] is what
+    /// the view's `on_press` calls, and a link that lost it would render
+    /// disabled rather than wrong.
+    #[test]
+    fn the_family_links_press_opens_the_familys_homepage() {
+        for family in families() {
+            match family_press(family) {
+                Message::OpenUrl(url) => {
+                    assert_eq!(
+                        url,
+                        family.homepage(),
+                        "the press carries the wrong URL for {}",
+                        family.name
+                    );
+                    assert!(
+                        url.starts_with("https://"),
+                        "{} has no usable homepage: {url:?}",
+                        family.name
+                    );
+                }
+                other => panic!(
+                    "a family link's press must be `OpenUrl`, got {other:?} for {}",
+                    family.name
+                ),
+            }
+        }
+    }
+
+    // ---- link wiring ------------------------------------------------------
+
+    /// Every `button::link` the app draws must carry an `on_press`. P-33.
+    ///
+    /// A link without one renders **disabled**
+    /// (`libcosmic/src/widget/button/link.rs` → `button/widget.rs:148`), and
+    /// nothing can read the press back out of the built widget — `Operation`'s
+    /// seven arms carry no message, `Button::operate` reports only `container`
+    /// and `focusable`, and `on_press` is a private opaque closure (`widget.rs`)
+    /// — so a dropped press is invisible to every render-level test. This is
+    /// the tripwire on the call site that the value-level tests above cannot
+    /// see: it scans the production sources for `button::link(` without a
+    /// `.on_press(` before the statement ends, the same device `form.rs` uses
+    /// for the dropdown index rule (`no_dropdown_callback_turns_its_index_into_the_payload`).
+    ///
+    /// What it cannot see is a press that names the *wrong* message — a link
+    /// wired to `Message::CloseDialog` compiles and passes here, and that
+    /// mutation was run and survives. That half is pinned by the value tests
+    /// above reading [`guide_press`] and [`family_press`] directly: the scanner
+    /// proves a press exists, the value tests prove it is the right one, and
+    /// neither claim stands without the other.
+    #[test]
+    fn no_link_button_is_drawn_without_a_press() {
+        let sources = link_button_sources();
+        let mut findings = Vec::new();
+        let mut links = 0usize;
+        for (name, source) in &sources {
+            let found = link_without_press_findings(source);
+            links += link_button_count(source);
+            findings.extend(found.into_iter().map(|finding| format!("{name}: {finding}")));
+        }
+
+        assert!(
+            findings.is_empty(),
+            "a `button::link` without `.on_press` renders disabled — the P-33 \
+             defect:\n  {}",
+            findings.join("\n  ")
+        );
+        assert!(
+            links >= 3,
+            "the scan found only {links} `button::link` calls over {} files, so \
+             its silence above is not evidence",
+            sources.len()
+        );
+    }
+
+    /// The instrument, driven on the defect it was written for and on the fix.
+    ///
+    /// A guard that reports nothing on the real tree is only worth anything if
+    /// it reports something on the tree it was written to reject, so both the
+    /// P-33 defect and the fixed shape are run through the same entry point the
+    /// scan uses.
+    #[test]
+    fn the_link_guard_reports_a_pressless_link() {
+        // The P-33 defect, verbatim: a label and no press.
+        let defect = "heading = heading.push(button::link(\"Visit project\".to_string()));";
+        assert_eq!(
+            link_without_press_findings(defect).len(),
+            1,
+            "the instrument is silent on the defect it was written for"
+        );
+
+        // Every shape that is right, and must not be reported.
+        for correct in [
+            "heading = heading.push(button::link(\"Visit project\".to_string()).on_press(press));",
+            "row = row.push(button::link(VISIT_LABEL.to_string()).on_press(press));",
+            "body = body.push(button::link(url.clone()).on_press(family_press(family)));",
+        ] {
+            assert!(
+                link_without_press_findings(correct).is_empty(),
+                "the instrument reported a finding in the fixed shape `{correct}` \
+                 — a guard that fires on the fix is a guard somebody deletes"
+            );
+        }
+    }
+
+    /// Every `.rs` file the view directory holds, plus `main.rs`, with comments
+    /// blanked and the `#[cfg(test)]` modules cut — because this module's own
+    /// defect sample is a string that contains a pressless link, and a scanner
+    /// that read it would report itself. The same cut `form.rs` makes for its
+    /// dropdown rule.
+    fn link_button_sources() -> Vec<(String, String)> {
+        let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(crate_dir.join("src/view"))
+            .expect("`src/view` is where this crate keeps its pages")
+            .map(|entry| entry.expect("a readable directory entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .collect();
+        paths.push(crate_dir.join("src/main.rs"));
+        paths.sort();
+
+        paths
+            .into_iter()
+            .map(|path| {
+                let text = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{} is unreadable: {error}", path.display()));
+                let name = path
+                    .strip_prefix(crate_dir)
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string();
+                (name, link_button_production_source(&text))
+            })
+            .collect()
+    }
+
+    /// One file's production source: everything from the first `#[cfg(test)]`
+    /// to the end of the file is cut (test modules live at the end of every
+    /// file in this tree, and this module's own defect sample is a string that
+    /// contains a pressless link), and `//`/`/* */` comments are blanked with
+    /// offsets kept so a finding can name a line. String literals are kept:
+    /// the rule matches on the call shape, not on their contents.
+    ///
+    /// Cutting at the first `#[cfg(test)]` rather than brace-matching each
+    /// test module is what keeps a brace inside a doc comment from ending the
+    /// cut early — the failure mode that blanked this file's own view code
+    /// during development and left the guard green on the defect it was
+    /// written for. Nothing production lives below a test module here, so the
+    /// coarser cut loses nothing.
+    fn link_button_production_source(text: &str) -> String {
+        let cut_at = text.find("#[cfg(test)]").unwrap_or(text.len());
+        let (production, _) = text.split_at(cut_at);
+        let chars: Vec<char> = production.chars().collect();
+        let mut out = chars.clone();
+        let mut index = 0;
+        while index < chars.len() {
+            if chars[index] == '/' && chars.get(index + 1) == Some(&'/') {
+                while index < chars.len() && chars[index] != '\n' {
+                    out[index] = ' ';
+                    index += 1;
+                }
+            } else if chars[index] == '/' && chars.get(index + 1) == Some(&'*') {
+                out[index] = ' ';
+                out[index + 1] = ' ';
+                index += 2;
+                while index < chars.len()
+                    && !(chars[index] == '*' && chars.get(index + 1) == Some(&'/'))
+                {
+                    if chars[index] != '\n' {
+                        out[index] = ' ';
+                    }
+                    index += 1;
+                }
+                for _ in 0..2 {
+                    if index < chars.len() {
+                        out[index] = ' ';
+                        index += 1;
+                    }
+                }
+            } else {
+                index += 1;
+            }
+        }
+        out.into_iter().collect()
+    }
+
+    /// The `button::link(` sites in `src` whose statement carries no
+    /// `.on_press(`.
+    ///
+    /// A "statement" is the text from the call to the first `;` — string
+    /// literals blanked first, so a `;` inside `"Visit project"` cannot end it
+    /// early, and parens tracked so one inside an argument cannot either. A
+    /// link whose press arrives in a later statement (bound first, pressed
+    /// after) would be reported, and that is deliberate: every link in this
+    /// tree presses in the same statement, and a second spelling is a thing
+    /// the scan should be taught rather than silently accept.
+    fn link_without_press_findings(src: &str) -> Vec<String> {
+        // Blank string and char literals: their contents (labels, `"…"`) are
+        // not code, and a `;` or paren inside one must not move the scan.
+        let chars: Vec<char> = src.chars().collect();
+        let mut code = chars.clone();
+        let mut index = 0;
+        while index < chars.len() {
+            if chars[index] == '"' {
+                code[index] = ' ';
+                index += 1;
+                while index < chars.len() && chars[index] != '"' {
+                    if chars[index] == '\\' {
+                        code[index] = ' ';
+                        index += 1;
+                    }
+                    if index < chars.len() {
+                        if chars[index] != '\n' {
+                            code[index] = ' ';
+                        }
+                        index += 1;
+                    }
+                }
+                if index < chars.len() {
+                    code[index] = ' ';
+                    index += 1;
+                }
+            } else if chars[index] == '\''
+                && chars.get(index + 2) == Some(&'\'')
+                || chars[index] == '\''
+                    && chars.get(index + 1) == Some(&'\\')
+                    && chars.get(index + 3) == Some(&'\'')
+            {
+                let width = if chars.get(index + 1) == Some(&'\\') { 4 } else { 3 };
+                for offset in 0..width {
+                    if index + offset < code.len() && chars[index + offset] != '\n' {
+                        code[index + offset] = ' ';
+                    }
+                }
+                index += width;
+            } else {
+                index += 1;
+            }
+        }
+
+        let needle: Vec<char> = "button::link(".chars().collect();
+        let mut findings = Vec::new();
+        let mut from = 0;
+        while from + needle.len() <= code.len() {
+            let Some(found) = find_chars(&code[from..], &needle) else {
+                break;
+            };
+            let call = from + found;
+            let line = 1 + code[..call].iter().filter(|c| **c == '\n').count();
+            // The statement runs to the first `;` after the call's own `(` has
+            // closed — i.e. depth has returned to 0 *and* at least one paren
+            // has been seen. Depth going negative (a `)` that closes an outer
+            // expression the call sits inside) must not end the scan early,
+            // and a `;` before the call's parens close is inside an argument.
+            let mut depth = 0i32;
+            let mut seen_open = false;
+            let mut end = None;
+            for (offset, character) in code[call..].iter().enumerate() {
+                match character {
+                    '(' => {
+                        depth += 1;
+                        seen_open = true;
+                    }
+                    ')' => depth -= 1,
+                    ';' if seen_open && depth <= 0 => {
+                        end = Some(call + offset);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(stop) = end else {
+                break;
+            };
+            let stmt: String = code[call..stop].iter().collect();
+            if !stmt.contains(".on_press(") {
+                let snippet: String = stmt
+                    .chars()
+                    .take(120)
+                    .collect::<String>()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                findings.push(format!(
+                    "line {line}: `{snippet}…` — no `.on_press` before the statement ends"
+                ));
+            }
+            from = stop + 1;
+        }
+        findings
+    }
+
+    /// How many `button::link(` calls `src` holds — the non-vacuity count.
+    fn link_button_count(src: &str) -> usize {
+        let chars: Vec<char> = src.chars().collect();
+        let needle: Vec<char> = "button::link(".chars().collect();
+        let mut count = 0;
+        let mut from = 0;
+        while from + needle.len() <= chars.len() {
+            let Some(found) = find_chars(&chars[from..], &needle) else {
+                break;
+            };
+            count += 1;
+            from += found + needle.len();
+        }
+        count
+    }
+
+    /// `needle` in `haystack`, as an offset — `str::find` on char slices.
+    fn find_chars(haystack: &[char], needle: &[char]) -> Option<usize> {
+        if needle.is_empty() || haystack.len() < needle.len() {
+            return None;
+        }
+        (0..=haystack.len() - needle.len()).find(|at| haystack[*at..].starts_with(needle))
     }
 
     // ---- progress_fraction ------------------------------------------------
