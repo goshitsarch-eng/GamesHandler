@@ -57,6 +57,8 @@ and a general claim about a build flag is made from one measured mechanism
 | 33 | `update()` had no coverage: all five real handlers, `NavigateTo` included, could be no-oped under a green suite | Deleting each arm and re-running | Open (UX) — #38/#39/#40 qualify the fix | — |
 | 36 | Five DLL-override constants pinned only against themselves in both scopes; the oracle corpus could not catch it | Mutation: flipping a literal survived the whole suite | `e16dd5f` — parses `runners.py` call sites at test time | Lead reproduced in the **narrow** scope: clean passes, dropping `dxgi` fails |
 | 37 | `canonicalise_object_keys`'s object-in-object path unpinned in both scopes | Mutation | `e16dd5f` — array path pinned; object path documented as *behaviourally equivalent* narrow, with the honest bound stated | Reproduced by Architecture; the honest bound is the right answer (D-33) |
+| 41 | `verify.sh`: a run that *finishes* with stages in `STAGES` never reached exits **0**, while printing that nothing was verified about them. `summary` computes the list at `:308` and discards it (a `local`); the exit tail checks only `FAILED` and `SKIPPED_UNREQUESTED` | Advocate, reviewing the gate at `ed59974` | Open (Packaging) | — |
+| 42 | `verify.sh:517` asserts the `cli` stage "is RED until #31 lands. That is intended". The line was **born false** — `e9ecf5e` (#31's fix) is an ancestor of `398a7c0`, the commit that wrote it | `git log -S` + `git merge-base --is-ancestor` | Open (Packaging) | — |
 
 ## 3. The hazard: stale test binaries
 
@@ -95,6 +97,11 @@ bin-only crate like `crates/app`. The answerable form names the mechanism:
 *matters for what?*
 
 ## 4. Open at the time of writing
+
+- **#41 and #42** — the two `verify.sh` residuals above. Both non-blocking, both
+  require editing the script itself, neither is reachable from a tree change.
+  #41 is the residual of D-34 and the script's own comment at `:1362-1386`
+  already argues for the fix.
 
 - **#32's before/after pair.** Both halves exist but neither is committed, and
   neither has been observed going red. A check that has never failed is not known
