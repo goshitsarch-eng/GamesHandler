@@ -11,7 +11,7 @@ Source documents:
 
 | Doc | Owner | Contents |
 |---|---|---|
-| `ux.md` | UX | 101-item UI inventory, per-item libcosmic mapping, COSMIC conventions, a11y/i18n |
+| `ux.md` | UX | 84-row UI inventory (several rows cover ID ranges), per-item libcosmic mapping, COSMIC conventions, a11y/i18n |
 | `architecture.md` | Architecture | Module mapping, workspace layout, `Message`/`State`/`update`, async, persistence, CLI |
 | `packaging.md` | Packaging/QA | Flatpak design, vendoring, finish-args, portals, test plan, `verify.sh` |
 | `review-phase1.md` | Devil's advocate | Premise audit, independent 78-item checklist, risk register, kill criteria |
@@ -108,8 +108,8 @@ is enforced mechanically (D-03).
 
 ## 4. Feature parity checklist
 
-Combines the UX inventory (`ux.md`, 101 items) with the advocate's independent
-list (`review-phase1.md`, P-01…P-78) and the packaging plan. The advocate's
+Combines the UX inventory (`ux.md`) with the advocate's independent list
+(`review-phase1.md`, P-01…P-78) and the packaging plan. The advocate's
 numbering is kept as the acceptance standard. `ux.md` item IDs are cited where
 they add detail.
 
@@ -243,6 +243,7 @@ Legend: **☐** not started · **~** in progress · **☑** done+verified
 | **R-8** | Rust ≠ Python divergences: **`serde_json` rejects `NaN`/`Infinity` that Python accepts** (D-06); byte-compatible JSON output; no locale collation on either side (keep it that way); `f64` precision; URL percent-decoding and SMB mount-name ordering in `as_local_path`. | **High** | Lenient parse + normalization table; round-trip fixtures written by the Python build. |
 | **R-9** | Feature-loss candidates: network-share file dialogs (portal returns mounted paths), the Locate-exe fallback dialog (P-57), toast actions, `.ico` letterboxing, global shortcuts, right-click menus, Breeze icon-name mapping onto COSMIC icons. | **Medium** | Each has a P-item; none may be silently dropped. |
 | **R-10** | Build time regresses sharply (iced+libcosmic from source). | **Low** | Accept; document. |
+| **R-11** | **`.webp` covers will not decode.** Verified at the pinned rev: libcosmic depends on `image` with `features = ["ico", "jpeg", "png"]` only. But `covers.py:300` stores custom covers as `.png`/`.jpg`/`.jpeg`/**`.webp`**. Cosmos's own `animated-image` feature turns on `webp`; if we do not, a user's imported `.webp` cover silently fails to render. | **Medium** | Enable `webp` at T-14, or transcode `.webp` to PNG on import in `core::covers`. Either is fine; silently dropping support is not. |
 
 ---
 
@@ -268,7 +269,7 @@ same file (D-05).
 | T-11 | `app`: Runners page | UX | P-32…P-39. |
 | T-12 | `app`: Installers page | UX | P-51…P-59. Depends on the file chooser (P-57). |
 | T-13 | `app`: Settings + Plugins + Credits pages | UX | P-64…P-68. |
-| T-14 | `app`: cover tiles, pills, async images, theming | UX | P-60…P-63, P-67. |
+| T-14 | `app`: cover tiles, pills, async images, theming | UX | P-60…P-63, P-67. **Enable libcosmic's `image`/`webp` support first — see R-11.** |
 | T-15 | File chooser via portal; wire P-21/P-24/P-57 | UX + Pkg | ashpd `xdg-portal`. |
 | T-16 | Flatpak: new manifest, `cargo-sources.json`, `build.sh` | Pkg | Removes PySide6/llvm21/PYTHONPATH. Keeps Wine base, osslsigncode, DXVK. |
 | T-17 | `scripts/verify.sh` + headless smoke test | Pkg | 7 stages per `packaging.md` §6. |
