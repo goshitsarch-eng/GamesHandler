@@ -398,7 +398,11 @@ fn run_gui() -> ExitCode {
     ExitCode::from(outcome.exit_status())
 }
 
-/// Messages handled by [`App::update`].
+/// Messages handled by `App::update`.
+///
+/// Not an intra-doc link: `update` is `cosmic::Application`'s method, not an
+/// inherent one, and `[`App::update`]` does not resolve. Its inherent half is
+/// [`Shell::update`], which does.
 ///
 /// This is the interface's contract, and it is fixed before its handlers exist
 /// on purpose. Every slot and every settable property in `bridge.py` appears
@@ -622,7 +626,7 @@ fn page_icon(page: Page) -> &'static str {
 ///
 /// One row per page, in that list's order, each carrying its own [`Page`] as row
 /// data — which is what lets a click be turned back into a page in
-/// [`App::on_nav_select`] by reading the row rather than by counting positions.
+/// `App::on_nav_select` by reading the row rather than by counting positions.
 ///
 /// The reference starts on the Library page (`Main.qml:56`,
 /// `pageStack.initialPage: libraryPage`), so the first row is active.
@@ -648,7 +652,8 @@ fn build_nav_model() -> nav_bar::Model {
 
 /// Point the sidebar at `page`.
 ///
-/// Split out of [`App::go_to`] so the page-to-row mapping can be tested without
+/// Split out of [`Shell::show_page`] so the page-to-row mapping can be tested
+/// without
 /// a `Core`, which needs a display to construct. The position is looked up in
 /// [`Page::ALL`] rather than written as a literal, so the two orders cannot
 /// disagree.
@@ -678,7 +683,7 @@ pub struct App {
 /// can only be built by the framework (it owns the window, and
 /// [`cosmic::Core::default`] leaves `main_window` as `None`), so an `App` cannot
 /// be constructed in a test — and a handler that only touches these two fields
-/// does not need one. [`App::update`] is a delegation to [`Shell::update`], so
+/// does not need one. `App::update` is a delegation to [`Shell::update`], so
 /// the handlers a test calls are the same ones the running app calls, down to
 /// the match arms.
 pub struct Shell {
@@ -844,9 +849,9 @@ impl Shell {
     /// reports through, and quitting.
     ///
     /// That count is not a comment. `only_the_written_handlers_change_anything`
-    /// drives every message in [`Message::ALL`] through this function and
+    /// drives every message in `every_message` through this function and
     /// requires the set that has any effect to be exactly those four (plus
-    /// `Quit`, which needs the window and so is [`App::update`]'s one arm). A
+    /// `Quit`, which needs the window and so is `App::update`'s one arm). A
     /// handler that regresses to `{}` shrinks that set and fails; a sixth
     /// handler landing grows it and fails until it is added deliberately. The
     /// earlier version of this paragraph said "three" and named three, omitting
@@ -1072,7 +1077,8 @@ fn pending_task(page: Page) -> Option<&'static str> {
 
 /// The body of a page that has not been ported yet.
 ///
-/// The task is named on screen as well as in the code. See [`PENDING_PAGES`].
+/// The task is named on screen as well as in the code. See `PENDING_PAGES`,
+/// which is `cfg(test)`-gated and so cannot be linked from here.
 fn pending_page(page: Page, task: &str) -> cosmic::Element<'_, Message> {
     container(
         cosmic::widget::column::with_capacity(2)
@@ -1859,169 +1865,227 @@ mod tests {
     ///
     /// The order is the enum's own declaration order, so the two are read side
     /// by side.
-    fn every_message() -> Vec<Message> {
-        vec![
-            Message::NavigateTo(Page::Settings),
-            Message::OpenNewGameForm,
-            Message::OpenEditGameForm("g".to_string()),
-            Message::CloseDialog,
-            Message::ConfirmDeleteGame("g".to_string()),
-            Message::DeleteGameConfirmed("g".to_string()),
-            Message::PickExeFile { field: ExeField::Exe },
-            Message::ExeFileChosen {
-                field: ExeField::Prefix,
-                path: Some("/tmp/g.exe".to_string()),
-            },
-            Message::PickCoverFile,
-            Message::CoverFileChosen(Some("/tmp/c.png".to_string())),
-            Message::DismissToast(cosmic::widget::toaster::ToastId::default()),
-            Message::Quit,
-            Message::SetColorScheme("dark".to_string()),
-            Message::SetViewMode("grid".to_string()),
-            Message::SetSortMode("name".to_string()),
-            Message::SetDefaultRunner("proton-ge".to_string()),
-            Message::SetCloseOnLaunch(true),
-            Message::SetDefaultToggle {
-                name: "mangohud".to_string(),
-                value: true,
-            },
-            Message::SetSearchText("half".to_string()),
-            Message::SetCategoryFilter("Action".to_string()),
-            Message::SaveGameForm(GameForm::default()),
-            Message::LaunchGame("g".to_string()),
-            Message::LaunchWatchFinished {
-                game_id: "g".to_string(),
-                reason: None,
-            },
-            Message::RunPrefixTool {
-                game_id: "g".to_string(),
-                tool: PrefixTool::WineCfg,
-            },
-            Message::OpenPrefixFolder("g".to_string()),
-            Message::CreateDesktopShortcut("g".to_string()),
-            Message::FetchCover("g".to_string()),
-            Message::CoverFetchFinished {
-                game_id: "g".to_string(),
-                result: Ok(CoverHit::from_steam(
-                    0,
-                    "Half-Life 2".to_string(),
-                    "Action".to_string(),
-                    PathBuf::from("/tmp/cover.png"),
-                    "https://example.invalid/cover.png".to_string(),
-                )),
-            },
-            Message::FetchCoverForForm {
-                token: 1,
-                game_id: "g".to_string(),
-                name: "Half-Life 2".to_string(),
-                exe: "/tmp/g.exe".to_string(),
-            },
-            Message::FormCoverFetchFinished {
-                token: 1,
-                result: Err("lookup failed".to_string()),
-            },
-            Message::FetchReleases {
-                family: "proton-ge".to_string(),
-            },
-            Message::ReleasesFetchFinished {
-                family: "proton-ge".to_string(),
-                result: Ok(vec![ReleaseInfo::new("v1.0", "GE-Proton", "https://x/y", 1)]),
-            },
-            Message::InstallRunner {
-                tag: "v1.0".to_string(),
-            },
-            Message::RunnerProgress(0.5),
-            Message::RunnerInstallFinished(Ok("v1.0".to_string())),
-            Message::UninstallRunner("v1.0".to_string()),
-            Message::SetInstallerSearch("steam".to_string()),
-            Message::SetInstallerCategory("launchers".to_string()),
-            Message::StartEasyInstall {
-                installer_id: "steam".to_string(),
-                runner_id: "proton-ge".to_string(),
-            },
-            Message::EasyInstallProgress(0.5),
-            Message::EasyInstallWizardFinished {
-                found: Some(PathBuf::from("/tmp/g.exe")),
-                returncode: 0,
-            },
-            Message::CompleteEasyInstall {
-                token: "t".to_string(),
-                path: Some("/tmp/g.exe".to_string()),
-            },
-            Message::CancelEasyInstall("t".to_string()),
-            Message::EasyInstallFinished {
-                game_id: "g".to_string(),
-                message: "installed".to_string(),
-            },
-            Message::RefreshPlugins,
-            Message::InstallPlugin("p".to_string()),
-            Message::PluginInstallFinished {
-                plugin_id: "p".to_string(),
-                result: Ok(true),
-            },
-            Message::Notify("something happened".to_string()),
-            Message::LaunchWatchTick,
-        ]
+    /// Declare the sample list and the variant names together, from one input.
+    ///
+    /// # Why this is a macro and not two lists
+    ///
+    /// `every_message` and `variant_name` were two hand-maintained lists of the
+    /// same 49 variants, and the previous version of this comment claimed that
+    /// pinning `every_message`'s *length* kept them in step. **That claim was
+    /// false, and it was measured false**: adding a variant to the enum, adding
+    /// arms to `Shell::update` *and* `variant_name`, and omitting the
+    /// `every_message` line left `cargo test` green at 94 passed. The pin was
+    /// `assert_eq!(every_message().len(), 49)` against the hand-written list, so
+    /// a *missing* entry keeps the count at 49 and only a superfluous one moves
+    /// it. It could not see the case its own comment named, and it was inverted
+    /// besides: it fired when the list was correctly updated and stayed silent
+    /// when the list was stale.
+    ///
+    /// The failure that hid is the one this whole set of tests exists for. A
+    /// variant added to `Message` and left out of `every_message` is a variant
+    /// no test drives, and `only_the_written_handlers_change_anything` cannot
+    /// notice, because it iterates that same list — the variant is outside its
+    /// universe entirely. T-09 to T-15 add variants, so this was about to happen
+    /// repeatedly and silently.
+    ///
+    /// # How the class is removed
+    ///
+    /// One input, two outputs, both generated. Adding a variant to `Message`
+    /// breaks the compile in two places, and the only way to fix either is the
+    /// edit that supplies the sample:
+    ///
+    /// - `Shell::update`'s match is exhaustive with no wildcard arm;
+    /// - the match this macro generates is exhaustive with no wildcard arm, so
+    ///   it fails against the widened enum, and the line that fixes it is here.
+    ///
+    /// There is no edit that adds the variant to the enum and leaves the list
+    /// stale, because the list is not a separate text. The other direction — a
+    /// line here for a variant that does not exist, or the same variant twice —
+    /// is an unreachable pattern, which `-D warnings` turns into a failure.
+    ///
+    /// What that removes with it: `every_variant_of_message_is_in_the_list`, the
+    /// length pin. It is deleted rather than repaired, because both of its
+    /// checks (nothing missing, nothing doubled) are now compile errors.
+    macro_rules! message_variants {
+        ($( $variant:pat => ($name:literal, $sample:expr) ),* $(,)?) => {
+            /// Every message the application can receive, once each.
+            ///
+            /// Generated from the same input as [`variant_name`], so the two
+            /// cannot drift; see the macro's own doc for why that matters. A
+            /// function rather than a `const` because some payloads have no
+            /// literal form.
+            fn every_message() -> Vec<Message> {
+                vec![ $( $sample ),* ]
+            }
+
+            /// A message's variant name, without its payload.
+            ///
+            /// The match is exhaustive and has no wildcard arm, which is what
+            /// makes adding a variant to [`Message`] a compile error until a line
+            /// is added to the invocation below — the line that also adds the
+            /// sample every test in this module iterates.
+            fn variant_name(message: &Message) -> &'static str {
+                match message {
+                    $( $variant => $name ),*
+                }
+            }
+
+            /// Every sample is the variant its own name says, and no two
+            /// entries share a name.
+            ///
+            /// **The sample is the one field the macro cannot tie down.** The
+            /// pattern and the name are structural — the match arm pairs them —
+            /// but `$sample` is a free expression, so
+            /// `Message::LaunchWatchTick => ("LaunchWatchTick", Message::Quit)`
+            /// compiles, covers the right arm, and makes `every_message` drive
+            /// `Quit` twice and `LaunchWatchTick` never. Measured: that mutation
+            /// survived everything else here, including the assertion below it,
+            /// because nothing tied the sample to the line it sits on.
+            ///
+            /// So this is the tie, and it is generated from the same input
+            /// rather than written by hand. It has two halves and both are
+            /// load-bearing:
+            ///
+            /// - each sample's own variant name must be the name recorded beside
+            ///   it, which is what a swapped sample fails;
+            /// - the names must be distinct, because `changed` and `expected` in
+            ///   `only_the_written_handlers_change_anything` are compared as
+            ///   *names*: two variants sharing one would let that comparison pass
+            ///   while naming a different handler.
+            #[test]
+            fn every_sample_is_the_variant_its_name_says() {
+                let pairs: Vec<(&str, Message)> = vec![ $( ($name, $sample) ),* ];
+
+                for (name, sample) in &pairs {
+                    assert_eq!(
+                        variant_name(sample),
+                        *name,
+                        "`every_message` carries a sample whose variant is not \
+                         the one this list names beside it"
+                    );
+                }
+
+                let mut names: Vec<&str> = pairs.iter().map(|(name, _)| *name).collect();
+                names.sort_unstable();
+                let listed = names.len();
+                names.dedup();
+                assert_eq!(
+                    names.len(),
+                    listed,
+                    "two entries share a name, so `changed` and `expected` can \
+                     compare equal while naming different handlers: {names:?}"
+                );
+            }
+        };
     }
 
-    /// A message's variant name, without its payload.
-    ///
-    /// The exhaustive match is the point: it is the second place (with
-    /// `Shell::update`) where adding a variant to [`Message`] is a compile
-    /// error, and it is what makes [`every_message`] a list somebody has to
-    /// revisit rather than a list that silently goes stale.
-    fn variant_name(message: &Message) -> &'static str {
-        match message {
-            Message::NavigateTo(_) => "NavigateTo",
-            Message::OpenNewGameForm => "OpenNewGameForm",
-            Message::OpenEditGameForm(_) => "OpenEditGameForm",
-            Message::CloseDialog => "CloseDialog",
-            Message::ConfirmDeleteGame(_) => "ConfirmDeleteGame",
-            Message::DeleteGameConfirmed(_) => "DeleteGameConfirmed",
-            Message::PickExeFile { .. } => "PickExeFile",
-            Message::ExeFileChosen { .. } => "ExeFileChosen",
-            Message::PickCoverFile => "PickCoverFile",
-            Message::CoverFileChosen(_) => "CoverFileChosen",
-            Message::DismissToast(_) => "DismissToast",
-            Message::Quit => "Quit",
-            Message::SetColorScheme(_) => "SetColorScheme",
-            Message::SetViewMode(_) => "SetViewMode",
-            Message::SetSortMode(_) => "SetSortMode",
-            Message::SetDefaultRunner(_) => "SetDefaultRunner",
-            Message::SetCloseOnLaunch(_) => "SetCloseOnLaunch",
-            Message::SetDefaultToggle { .. } => "SetDefaultToggle",
-            Message::SetSearchText(_) => "SetSearchText",
-            Message::SetCategoryFilter(_) => "SetCategoryFilter",
-            Message::SaveGameForm(_) => "SaveGameForm",
-            Message::LaunchGame(_) => "LaunchGame",
-            Message::LaunchWatchFinished { .. } => "LaunchWatchFinished",
-            Message::RunPrefixTool { .. } => "RunPrefixTool",
-            Message::OpenPrefixFolder(_) => "OpenPrefixFolder",
-            Message::CreateDesktopShortcut(_) => "CreateDesktopShortcut",
-            Message::FetchCover(_) => "FetchCover",
-            Message::CoverFetchFinished { .. } => "CoverFetchFinished",
-            Message::FetchCoverForForm { .. } => "FetchCoverForForm",
-            Message::FormCoverFetchFinished { .. } => "FormCoverFetchFinished",
-            Message::FetchReleases { .. } => "FetchReleases",
-            Message::ReleasesFetchFinished { .. } => "ReleasesFetchFinished",
-            Message::InstallRunner { .. } => "InstallRunner",
-            Message::RunnerProgress(_) => "RunnerProgress",
-            Message::RunnerInstallFinished(_) => "RunnerInstallFinished",
-            Message::UninstallRunner(_) => "UninstallRunner",
-            Message::SetInstallerSearch(_) => "SetInstallerSearch",
-            Message::SetInstallerCategory(_) => "SetInstallerCategory",
-            Message::StartEasyInstall { .. } => "StartEasyInstall",
-            Message::EasyInstallProgress(_) => "EasyInstallProgress",
-            Message::EasyInstallWizardFinished { .. } => "EasyInstallWizardFinished",
-            Message::CompleteEasyInstall { .. } => "CompleteEasyInstall",
-            Message::CancelEasyInstall(_) => "CancelEasyInstall",
-            Message::EasyInstallFinished { .. } => "EasyInstallFinished",
-            Message::RefreshPlugins => "RefreshPlugins",
-            Message::InstallPlugin(_) => "InstallPlugin",
-            Message::PluginInstallFinished { .. } => "PluginInstallFinished",
-            Message::Notify(_) => "Notify",
-            Message::LaunchWatchTick => "LaunchWatchTick",
-        }
+    // The one list: a pattern per variant, its name, and a sample value.
+    //
+    // In `Message`'s declaration order, so this and the enum are read side by
+    // side. Each sample is a value the variant could really carry, because
+    // several of these messages are classified by what the handler does with
+    // the payload.
+    message_variants! {
+        Message::NavigateTo(_) => ("NavigateTo", Message::NavigateTo(Page::Settings)),
+        Message::OpenNewGameForm => ("OpenNewGameForm", Message::OpenNewGameForm),
+        Message::OpenEditGameForm(_) => ("OpenEditGameForm", Message::OpenEditGameForm("g".to_string())),
+        Message::CloseDialog => ("CloseDialog", Message::CloseDialog),
+        Message::ConfirmDeleteGame(_) => ("ConfirmDeleteGame", Message::ConfirmDeleteGame("g".to_string())),
+        Message::DeleteGameConfirmed(_) => ("DeleteGameConfirmed", Message::DeleteGameConfirmed("g".to_string())),
+        Message::PickExeFile { .. } => ("PickExeFile", Message::PickExeFile { field: ExeField::Exe }),
+        Message::ExeFileChosen { .. } => ("ExeFileChosen", Message::ExeFileChosen {
+                            field: ExeField::Prefix,
+                            path: Some("/tmp/g.exe".to_string()),
+                        }),
+        Message::PickCoverFile => ("PickCoverFile", Message::PickCoverFile),
+        Message::CoverFileChosen(_) => ("CoverFileChosen", Message::CoverFileChosen(Some("/tmp/c.png".to_string()))),
+        Message::DismissToast(_) => ("DismissToast", Message::DismissToast(cosmic::widget::toaster::ToastId::default())),
+        Message::Quit => ("Quit", Message::Quit),
+        Message::SetColorScheme(_) => ("SetColorScheme", Message::SetColorScheme("dark".to_string())),
+        Message::SetViewMode(_) => ("SetViewMode", Message::SetViewMode("grid".to_string())),
+        Message::SetSortMode(_) => ("SetSortMode", Message::SetSortMode("name".to_string())),
+        Message::SetDefaultRunner(_) => ("SetDefaultRunner", Message::SetDefaultRunner("proton-ge".to_string())),
+        Message::SetCloseOnLaunch(_) => ("SetCloseOnLaunch", Message::SetCloseOnLaunch(true)),
+        Message::SetDefaultToggle { .. } => ("SetDefaultToggle", Message::SetDefaultToggle {
+                            name: "mangohud".to_string(),
+                            value: true,
+                        }),
+        Message::SetSearchText(_) => ("SetSearchText", Message::SetSearchText("half".to_string())),
+        Message::SetCategoryFilter(_) => ("SetCategoryFilter", Message::SetCategoryFilter("Action".to_string())),
+        Message::SaveGameForm(_) => ("SaveGameForm", Message::SaveGameForm(GameForm::default())),
+        Message::LaunchGame(_) => ("LaunchGame", Message::LaunchGame("g".to_string())),
+        Message::LaunchWatchFinished { .. } => ("LaunchWatchFinished", Message::LaunchWatchFinished {
+                            game_id: "g".to_string(),
+                            reason: None,
+                        }),
+        Message::RunPrefixTool { .. } => ("RunPrefixTool", Message::RunPrefixTool {
+                            game_id: "g".to_string(),
+                            tool: PrefixTool::WineCfg,
+                        }),
+        Message::OpenPrefixFolder(_) => ("OpenPrefixFolder", Message::OpenPrefixFolder("g".to_string())),
+        Message::CreateDesktopShortcut(_) => ("CreateDesktopShortcut", Message::CreateDesktopShortcut("g".to_string())),
+        Message::FetchCover(_) => ("FetchCover", Message::FetchCover("g".to_string())),
+        Message::CoverFetchFinished { .. } => ("CoverFetchFinished", Message::CoverFetchFinished {
+                            game_id: "g".to_string(),
+                            result: Ok(CoverHit::from_steam(
+                                0,
+                                "Half-Life 2".to_string(),
+                                "Action".to_string(),
+                                PathBuf::from("/tmp/cover.png"),
+                                "https://example.invalid/cover.png".to_string(),
+                            )),
+                        }),
+        Message::FetchCoverForForm { .. } => ("FetchCoverForForm", Message::FetchCoverForForm {
+                            token: 1,
+                            game_id: "g".to_string(),
+                            name: "Half-Life 2".to_string(),
+                            exe: "/tmp/g.exe".to_string(),
+                        }),
+        Message::FormCoverFetchFinished { .. } => ("FormCoverFetchFinished", Message::FormCoverFetchFinished {
+                            token: 1,
+                            result: Err("lookup failed".to_string()),
+                        }),
+        Message::FetchReleases { .. } => ("FetchReleases", Message::FetchReleases {
+                            family: "proton-ge".to_string(),
+                        }),
+        Message::ReleasesFetchFinished { .. } => ("ReleasesFetchFinished", Message::ReleasesFetchFinished {
+                            family: "proton-ge".to_string(),
+                            result: Ok(vec![ReleaseInfo::new("v1.0", "GE-Proton", "https://x/y", 1)]),
+                        }),
+        Message::InstallRunner { .. } => ("InstallRunner", Message::InstallRunner {
+                            tag: "v1.0".to_string(),
+                        }),
+        Message::RunnerProgress(_) => ("RunnerProgress", Message::RunnerProgress(0.5)),
+        Message::RunnerInstallFinished(_) => ("RunnerInstallFinished", Message::RunnerInstallFinished(Ok("v1.0".to_string()))),
+        Message::UninstallRunner(_) => ("UninstallRunner", Message::UninstallRunner("v1.0".to_string())),
+        Message::SetInstallerSearch(_) => ("SetInstallerSearch", Message::SetInstallerSearch("steam".to_string())),
+        Message::SetInstallerCategory(_) => ("SetInstallerCategory", Message::SetInstallerCategory("launchers".to_string())),
+        Message::StartEasyInstall { .. } => ("StartEasyInstall", Message::StartEasyInstall {
+                            installer_id: "steam".to_string(),
+                            runner_id: "proton-ge".to_string(),
+                        }),
+        Message::EasyInstallProgress(_) => ("EasyInstallProgress", Message::EasyInstallProgress(0.5)),
+        Message::EasyInstallWizardFinished { .. } => ("EasyInstallWizardFinished", Message::EasyInstallWizardFinished {
+                            found: Some(PathBuf::from("/tmp/g.exe")),
+                            returncode: 0,
+                        }),
+        Message::CompleteEasyInstall { .. } => ("CompleteEasyInstall", Message::CompleteEasyInstall {
+                            token: "t".to_string(),
+                            path: Some("/tmp/g.exe".to_string()),
+                        }),
+        Message::CancelEasyInstall(_) => ("CancelEasyInstall", Message::CancelEasyInstall("t".to_string())),
+        Message::EasyInstallFinished { .. } => ("EasyInstallFinished", Message::EasyInstallFinished {
+                            game_id: "g".to_string(),
+                            message: "installed".to_string(),
+                        }),
+        Message::RefreshPlugins => ("RefreshPlugins", Message::RefreshPlugins),
+        Message::InstallPlugin(_) => ("InstallPlugin", Message::InstallPlugin("p".to_string())),
+        Message::PluginInstallFinished { .. } => ("PluginInstallFinished", Message::PluginInstallFinished {
+                            plugin_id: "p".to_string(),
+                            result: Ok(true),
+                        }),
+        Message::Notify(_) => ("Notify", Message::Notify("something happened".to_string())),
+        Message::LaunchWatchTick => ("LaunchWatchTick", Message::LaunchWatchTick),
     }
 
     /// A shell with something for each of the written handlers to act on.
@@ -2136,35 +2200,6 @@ mod tests {
             "if this ever fails, a `ToastId` a test can construct now names a \
              live toast — which means `Toasts` grew the accessor this test was \
              written without, and `DismissToast` can be covered for real"
-        );
-    }
-
-    /// Every variant of [`Message`] is in [`every_message`].
-    ///
-    /// [`variant_name`] matches every variant exhaustively, so adding a variant
-    /// breaks the compile there **and** in `Shell::update`. This is the third
-    /// edit: the length is pinned, so once the enum compiles again this fails
-    /// until the new variant is also driven through the dispatcher. That is the
-    /// instrument that keeps "a variant that exists is a variant that is
-    /// driven" true by construction rather than by upkeep.
-    #[test]
-    fn every_variant_of_message_is_in_the_list() {
-        assert_eq!(
-            every_message().len(),
-            49,
-            "`Message` has 49 variants. If you added one, add it to \
-             `every_message` too — otherwise the handler tests stop covering it \
-             and nothing else says so"
-        );
-        let names: Vec<&str> = every_message().iter().map(variant_name).collect();
-        let mut unique = names.clone();
-        unique.sort_unstable();
-        unique.dedup();
-        assert_eq!(
-            unique.len(),
-            names.len(),
-            "`every_message` lists a variant twice, so some other variant is \
-             missing: {names:?}"
         );
     }
 
