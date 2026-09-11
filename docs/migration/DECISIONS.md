@@ -2201,3 +2201,103 @@ nothing here was ever established by a story that fit.
 Related: #51 / D-46 (a repair you cannot see fire is a catch on unreachable
 code), D-40 (a green check whose assertion another mechanism satisfies), D-45 (a
 count needs its build), [[verification-defect-class]].
+
+## D-48. The fetch path: a blocking client, the tokio backend, and the guard the reference already had
+
+**Context.** T-11/T-12 were blocked on two questions. The first turned out to be
+already answered (D-26); the second was real. Both are settled here by
+measurement, and the measurement **reversed the lead's own working assumption**.
+
+### The executor: measured, not assumed
+
+The lead reasoned from `cargo tree` that `futures-executor`'s only dependent was
+`futures` (via `futures/std`), concluded `iced_futures`' own `thread-pool`
+feature was therefore off, and was about to rule that `Task::perform` would run
+on the **UI thread**. **That was wrong, and `cargo tree -e features` settled it
+in one line:**
+
+```
+iced_futures feature "tokio"
+iced_futures feature "thread-pool"
+```
+
+The cascade in `iced/futures/src/backend/default.rs` is **`tokio` → `smol` →
+`thread-pool` → `null`**, first match wins, so with both enabled the backend is
+**tokio** — `tokio::runtime::Runtime::new()` (`backend/native/tokio.rs`), the
+**multi-thread** runtime, whose `spawn` puts the future on a worker thread. Had
+neither been enabled the backend would have been `null::Executor`, whose `spawn`
+**drops the future** and whose `block_on` is `unimplemented!()` — worth knowing
+exists, because a feature resolution change would break every `Task::perform` in
+the app silently.
+
+**Ruling.** A **blocking** client called inside `Task::perform` is correct here:
+the closure runs on a tokio worker, not the UI thread, and this app's
+concurrency is bounded (at most one release fetch and one install). No extra
+blocking hop is required. The residual hygiene point stands — blocking a tokio
+worker is discouraged and would matter under many concurrent calls — so **the
+non-blocking property must be demonstrated rather than asserted**, which is
+T-15's subject. Architecture's caution was directionally right and its stated
+mechanism ("needs a blocking hop so it cannot stall the executor") is not what
+the sources say.
+
+### The client: `ureq` + rustls, in `crates/app` only
+
+**Decision.** A blocking client — `ureq` with `rustls` and the **system** root
+store — as a **direct dependency of `crates/app` only**, implementing
+`core::runners::proton::HttpClient` (`proton.rs:151`).
+
+**Why.** The trait is `get(url, headers, timeout, on_head, sink)` — blocking,
+with a head callback before the body so the size cap can abort before a byte is
+kept. A blocking client matches that shape **with no async adaptation**;
+threading an async client through it would need a runtime hop at every callback
+for no benefit. It keeps `core` free of networking by construction, so D-26
+holds structurally rather than by discipline, and the 92 offline runner tests
+stay offline. The system root store is chosen over a bundled one deliberately:
+the Flatpak installs a CA (T-23) and a user's own trust configuration should be
+honoured.
+
+**Cost, stated rather than discovered later.** A TLS stack and a root-store
+story enter the tree, and `cargo-sources.json` must be regenerated — **that file
+is Packaging's**, and the manifest change must be theirs. The transport half
+costs nothing: the manifest already carries `--share=network`, verified.
+
+### The trigger: `show_page` compares before it assigns
+
+The reference fetches on `Component.onCompleted` and on an explicit family
+change (`RunnersPage.qml:19,26,122`). The shell has a single funnel —
+`Shell::show_page` (`main.rs:759`), the only writer of `state.page` (`:760`),
+reached by both the sidebar (`:1271`) and every programmatic route
+(`Message::NavigateTo`, `:891`). What it lacks is an **emission**, not a
+concept: it returns `()`.
+
+**Decision.** `show_page` compares the incoming page against `state.page`
+**before** assigning, and returns the page-entry `Task` when they differ.
+Compare-first is load-bearing: Python's `Component.onCompleted` fires **once per
+page instance**, so navigating to the page you are already on must not refetch.
+A `show_page` that emitted unconditionally would turn every re-navigation into a
+network request, which is a parity break that would look like a performance
+quirk.
+
+### The staleness guard the reference already had, and we nearly missed
+
+`fetchReleases` (`bridge.py:695`) carries this in **both** of its callbacks:
+
+```python
+if family_id != self._releases_family:
+    return
+```
+
+A fetch that resolves for a family the user has since left **must not write
+state**. `state.rs` already carries the field — `releases_family` (`:354`) —
+with the doc comment "which family [`Self::releases`] describes", so the
+structure is there; the guard is the part that has to be ported with it. Without
+it, a slow response landing after a family change writes releases for the
+abandoned family while the UI shows the new one. **This is a parity item, not an
+enhancement**, and it belongs in the fetch handler's acceptance criteria
+alongside the loading/ready/error transitions.
+
+Related: D-26 (the injected client), D-03 (core stays dependency-free), T-15
+(the non-blocking guard), [[json-compat-oracle]] — and the method note this
+entry is an instance of: **the lead reasoned through four layers of inference to
+the wrong answer, and one `cargo tree -e features` settled it.** D-47's clause
+applied to a decision rather than a bug.
