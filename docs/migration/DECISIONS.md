@@ -1591,6 +1591,31 @@ statement of the passthrough rule, and T-11 needs that rule intact. The fix is
 to *feed* it, not to change it. Read the assertion as a contract, not as
 sign-off — the distinction this entry exists to make.
 
+**Measured magnitude — larger than "no runner hint", and the record said too
+little.** This entry first described the symptom as "renders with no runner".
+That understates it in two directions, both found by the audit's second pass and
+verified by the lead at `widgets.rs:387-390`:
+
+```rust
+fn subtitle_of(game: &Game) -> String {
+    let label = meta::runner_label(game.is_linux(), "");
+    meta::subtitle(game.display_category(), &label)
+}
+```
+
+1. The hardcoded `""` reaches `subtitle` as the *runner* argument, so for an
+   uncategorised Windows game the port renders **`""`** — an empty subtitle,
+   where Python renders `"System Wine"`. Not a missing hint: nothing at all.
+2. It hits **every** Windows game, not only uncategorised ones. For a
+   categorised Windows game Python gives `"Action · System Wine"` against the
+   port's `"Action"` — so the runner is absent from the subtitle in the common
+   case too.
+
+The conclusion is unchanged and the fix is unchanged; only the size of the gap
+was wrong. Recorded because "no runner hint" reads as cosmetic and "empty
+subtitle on every Windows row" does not — and the difference is what makes this
+worth a required step rather than a note.
+
 ---
 
 ## D-37. The blank-category fold is not a divergence — measured, and why the reading that said it was
