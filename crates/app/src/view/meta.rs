@@ -46,15 +46,38 @@ pub fn runner_label(is_linux: bool, manager_label: &str) -> String {
 /// input the reference can actually produce, and one fewer way to get a stray
 /// separator.
 ///
-/// The same argument applies to an empty `runner_label`, and it is the case
-/// that actually bites this port: `bridge.py` resolves the runner label before
-/// it gets here and so can never pass an empty one, whereas the Rust view has
-/// no runner manager in its contract yet (T-07) and passes `""`. Without the
-/// guard a Windows game reads `"Shooter · "` — a trailing separator with
-/// nothing after it, which is precisely the bug the category branch above
-/// exists to prevent, one argument over. Found by a test, not by reading.
+/// The same argument applies to an empty `runner_label`, and that branch is
+/// **history rather than a live defect** — which is worth stating, because the
+/// reason it was written is no longer true and a reader who checks the old
+/// reason would conclude the branch is dead and delete it.
+///
+/// It was written as the fix for **#30**. At that point `subtitle_of`
+/// (`widgets.rs`) passed the literal `""` as every game's runner label — the
+/// view had no runner manager anywhere in it — so without the guard a Windows
+/// game read `"Shooter · "`, a trailing separator with nothing after it:
+/// precisely the bug the category branch above exists to prevent, one argument
+/// over. `#30` was closed in `13e9806`, and the caller that could pass `""` is
+/// gone. The label now arrives from
+/// [`resolved_runner_label`](super::widgets::resolved_runner_label), which is
+/// [`RunnerManager::label`], and that function cannot return an empty string
+/// for **any** input: an empty or unknown `runner_id` folds to `"System Wine"`
+/// (`runners/mod.rs:1099-1116`). So no game the application can draw reaches
+/// this branch.
+///
+/// It stays because the branch is a property of *this function's contract*, not
+/// a workaround for one caller's bug. `subtitle` is public and pure over two
+/// strings it does not validate, and the rule it states — an empty half is
+/// omitted, never left as a dangling separator — is the rule the category
+/// branch already implements. Guarding one half and not the other is an
+/// accident of which bug was reported first, and the next caller to hand this
+/// function a label from somewhere other than the manager should not have to
+/// rediscover why the separator appears.
+///
+/// The test below therefore pins the **contract**, not a reproduction: it is
+/// the reason the branch may not be deleted as unreachable code.
 ///
 /// [`Game::display_category`]: gamehandler_core::models::Game::display_category
+/// [`RunnerManager::label`]: gamehandler_core::runners::RunnerManager::label
 pub fn subtitle(display_category: &str, runner_label: &str) -> String {
     let category = display_category.trim();
     let runner = runner_label.trim();
@@ -143,10 +166,16 @@ mod tests {
         );
     }
 
-    /// **The regression a test caught.** A categorised game with no runner
-    /// label must not render a trailing separator: this port passes `""` for
-    /// every Windows game until the runner manager is in the view's contract,
-    /// so `"Shooter · "` was what a row actually showed.
+    /// **The regression a test caught**, now guarding the contract rather than
+    /// reproducing a live bug. When it was written this port passed `""` for
+    /// every Windows game — there was no runner manager in the view at all — so
+    /// `"Shooter · "` was what a row actually showed; `#30` fixed that caller
+    /// (`13e9806`) and the label now arrives non-empty from
+    /// `RunnerManager::label`, which folds an empty id to `"System Wine"`.
+    ///
+    /// This test is therefore what keeps the branch undeletable: it asserts the
+    /// function's rule, which is the only thing still holding it up. See
+    /// `subtitle`'s doc for that argument in full.
     ///
     /// The assertion checks the tail explicitly as well as the whole string,
     /// because "no trailing dot" is the claim and a `trim()` at the call site

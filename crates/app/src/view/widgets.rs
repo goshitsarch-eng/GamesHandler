@@ -394,7 +394,7 @@ fn name_and_subtitle<'a, M: Clone + 'static>(game: &'a Game, label: &str) -> Ele
 ///
 /// # Why this is not called from a widget
 ///
-/// [`RunnerManager::label`] is **uncached** (`mod.rs:1041`): it joins the
+/// [`RunnerManager::label`] is **uncached** (`runners/mod.rs:1099`): it joins the
 /// runners directory, tests `exists()`, and constructs a `ProtonRunner` to ask
 /// for its family label — on every call, for every game. A builder runs every
 /// frame, so resolving this inside [`card`] or [`row`] would put a filesystem
@@ -410,6 +410,22 @@ fn name_and_subtitle<'a, M: Clone + 'static>(game: &'a Game, label: &str) -> Ele
 /// Resolving here rather than threading a `&RunnerManager` through the
 /// builders also keeps them free functions over the game: their `Element`
 /// borrows the game alone, so no caller's lifetime is welded to the manager's.
+///
+/// # The line number, and why it is not the authority
+///
+/// `runners/mod.rs:1099` is a **point-in-time** fact about a file that grows.
+/// This citation was `mod.rs:1041` when it was written (`13e9806`), which was
+/// correct then; `runners/mod.rs` has since gained 58 lines above `label`, and
+/// every citation of that function's body moved with them — this one and the
+/// one in the test below, both corrected together. The same drift hit
+/// `view/settings.rs`'s citation of `RunnerManager::choices` (`mod.rs:1061` →
+/// `runners/mod.rs:1119`), and the +58 accounts for both.
+///
+/// So the number is a convenience and [`RunnerManager::label`] is the
+/// authority: when this citation and the symbol disagree, the symbol is right
+/// and the number is stale. `view/meta.rs`'s `subtitle` doc reached the same
+/// conclusion about a *prose* citation that had gone false (#69) — a pointer
+/// that no longer lands is worse than no pointer, because it is trusted.
 pub fn resolved_runner_label(manager: &RunnerManager, game: &Game) -> String {
     meta::runner_label(game.is_linux(), &manager.label(&game.runner))
 }
@@ -623,9 +639,10 @@ mod tests {
     /// than hypothetical. `bridge.py:300-302` resolves the label *before* the
     /// row is built, so Python can never hand `subtitle_of` an empty string;
     /// [`resolved_runner_label`] is that resolution, and `runner.label("")`
-    /// returning `"System Wine"` (`runners.py:759-761`, `mod.rs:1041`) is the
-    /// fact that closes the gap. The manager is constructed at a path with no
-    /// runners in it, so this also pins the fallback rather than a lookup.
+    /// returning `"System Wine"` (`runners.py:759-761`, `runners/mod.rs:1099`)
+    /// is the fact that closes the gap. The manager is constructed at a path
+    /// with no runners in it, so this also pins the fallback rather than a
+    /// lookup.
     #[test]
     fn a_windows_game_resolves_to_a_real_label_and_never_to_the_empty_string() {
         let manager = RunnerManager::at("/nonexistent");
