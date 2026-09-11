@@ -17,6 +17,7 @@
 //! guide_subtitle   → "proton · maintained by GloriousEggroll"
 //! release_detail   → "Proton-GE · GE-Proton9-5.tar.gz · 412 MB"
 //! progress_fraction → whether the bar is drawn, and how full
+//! uninstall_line   → what a removal's toast says, either way
 //! ```
 //!
 //! Every one of those is asserted without a renderer.
@@ -707,6 +708,91 @@ mod tests {
         assert!(rows[0].available);
         assert_eq!(rows[0].detail, "wine-9.0");
         assert_ne!(rows[0].detail, "Not installed on this system");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- release_rows -----------------------------------------------------
+
+    /// `installed` is true exactly when the release's own directory is on disk,
+    /// and the rest of the row comes from the release rather than from the disk.
+    ///
+    /// This is the one decision in the module's table that had nothing asserting
+    /// it, which is worth stating because the header claimed otherwise. It is
+    /// also the field that decides whether a card offers Install or shows the
+    /// "Installed" badge, so a `bool` that was inverted or answered about the
+    /// wrong release is a wrong button on every card — and would pass a render
+    /// review, since a plausible mix of the two states is exactly what the
+    /// reference shows.
+    ///
+    /// The fixture's directory name comes from `families::install_id_for`, the
+    /// same helper `is_installed` uses. That is deliberate rather than circular:
+    /// what is under test is the *mapping* — that the question is asked about
+    /// this release's tag and family, that `tag` and `detail` survive it, and
+    /// that the rows keep the list's order. The name itself is `proton.rs`'s
+    /// claim and is asserted there.
+    #[test]
+    fn a_release_is_installed_exactly_when_its_own_directory_is_on_disk() {
+        use gamehandler_core::runners::families::install_id_for;
+
+        let root = std::env::temp_dir().join(format!("gh-releases-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let here = released("GE-Proton9-5", "GE-Proton9-5.tar.gz", 1024 * 1024);
+        let absent = released("GE-Proton9-4", "GE-Proton9-4.tar.gz", 1024 * 1024);
+
+        // `proton_entry_exists` follows a symlink and is true for a plain file,
+        // so a file is enough — nothing here needs the entry to be executable.
+        let dir = root.join(install_id_for(&here.tag, &here.family_id).unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("proton"), "#!/bin/sh\n").unwrap();
+
+        let rows = release_rows(&[here.clone(), absent.clone()], &root);
+
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows[0].installed,
+            "{} carries a proton entry, so this build is here",
+            dir.display()
+        );
+        assert!(
+            !rows[1].installed,
+            "no directory was made for {}, so it is offered",
+            absent.tag
+        );
+        // The row's own fields are the release's, not the disk's, and the order
+        // is the list's — a `sorted` or a set here would reorder the cards.
+        assert_eq!(rows[0].tag, "GE-Proton9-5");
+        assert_eq!(rows[1].tag, "GE-Proton9-4");
+        assert_eq!(rows[0].detail, release_detail(&here));
+        assert_eq!(rows[1].detail, release_detail(&absent));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An empty directory is not an installed build. The difference between
+    /// "the directory exists" and "the directory holds a runner" is what
+    /// `proton_entry_exists` exists to draw, and a port that asked
+    /// `Path::exists` about the directory itself would call every half-removed
+    /// install present.
+    #[test]
+    fn a_directory_without_a_proton_entry_is_not_an_installed_build() {
+        use gamehandler_core::runners::families::install_id_for;
+
+        let root = std::env::temp_dir().join(format!("gh-releases-bare-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let release = released("GE-Proton9-5", "a.tar.gz", 1024 * 1024);
+        std::fs::create_dir_all(root.join(install_id_for(&release.tag, &release.family_id).unwrap()))
+            .unwrap();
+
+        let rows = release_rows(&[release], &root);
+        assert!(
+            !rows[0].installed,
+            "the directory is there and the runner is not, which is not installed"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -6,11 +6,21 @@
 //!
 //! ```text
 //! installer_categories → the filter's options, "All" first
-//! filtered             → which cards the catalog shows, and why
-//! card_subtitle        → the description, plus the notes when there are any
 //! runner_choices       → the runner selector's labels
 //! runner_index         → which one is selected
+//! card_subtitle        → the description, plus the notes when there are any
+//! card_category        → the badge's text, folding a blank into "Uncategorized"
+//! install_tooltip      → what the Install button says it will do
+//! installing           → whether an install may start at all
+//! install_press        → the message a card's button carries, or none while busy
+//! progress_fraction    → whether the bar is drawn, and how full
 //! ```
+//!
+//! Which cards are *shown* is deliberately not on that list. The filtering is
+//! `search_installers` (`installers.py:241-255`), which is T-04's
+//! `core::installers` and belongs in the crate that owns the catalog — the
+//! page draws the list it is handed. (An earlier revision of this table named a
+//! `filtered` function here; there was never one in this file.)
 //!
 //! # What this page needs that does not exist yet, all of it named
 //!

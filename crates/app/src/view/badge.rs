@@ -29,7 +29,7 @@
 //! that a test can hold them and a second caller cannot quietly disagree.
 
 use cosmic::Element;
-use cosmic::iced::{Background, Border, Color, Length};
+use cosmic::iced::{Background, Border, Color};
 use cosmic::widget::{container, text};
 
 use super::metrics;
@@ -68,6 +68,11 @@ fn badge_style(theme: &cosmic::Theme) -> container::Style {
         background: Some(Background::Color(
             cosmic.background(false).component.base.into(),
         )),
+        // Set rather than left to the default, because the pill's surface is
+        // `component.base` — a raised colour — and a label drawn in the
+        // *container* default would be the one combination the theme does not
+        // guarantee. See [`badge_text_color`].
+        text_color: Some(badge_text_color(theme)),
         border: Border {
             radius: BADGE_RADIUS.into(),
             ..Default::default()
@@ -76,19 +81,17 @@ fn badge_style(theme: &cosmic::Theme) -> container::Style {
     }
 }
 
-/// The colour a badge's text is drawn in, for a caller that needs to match it.
+/// The colour a badge's text is drawn in.
 ///
-/// Kept beside [`badge_style`] so the two cannot drift: a badge whose label was
-/// left at the default colour would be unreadable on a dark theme, and no test
-/// of the widget tree can see a colour.
+/// Kept beside [`badge_style`] — which is its only caller — so the two cannot
+/// drift: a badge whose label was left at the container default would be
+/// unreadable on some themes, and no test of the widget tree can see a colour.
+/// It is a function rather than a literal inside the style so that the one
+/// claim involved ("the label is the theme's on-background colour") is a claim
+/// a test can make with a real [`cosmic::Theme`].
 pub fn badge_text_color(theme: &cosmic::Theme) -> Color {
     theme.cosmic().background(false).on.into()
 }
-
-/// `Length::Shrink` for a caller that wants to say so explicitly beside a
-/// `Fill` sibling — a row of a badge and a stretched label is the common case,
-/// and writing it here keeps the intent legible at the call site.
-pub const BADGE_WIDTH: Length = Length::Shrink;
 
 #[cfg(test)]
 mod tests {
@@ -114,5 +117,43 @@ mod tests {
     fn the_padding_is_the_reference_s_grid_unit_fractions() {
         assert_eq!(BADGE_PADDING_X, metrics::GRID_UNIT / 2.0);
         assert_eq!(BADGE_PADDING_Y, metrics::GRID_UNIT / 8.0);
+    }
+
+    /// The style the renderer is handed carries the pill's radius, its surface
+    /// and a text colour that is the theme's on-background one.
+    ///
+    /// A `Container`'s style is never exposed on the widget — the same wall
+    /// `widgets.rs`'s card-radius test runs into — so calling the style function
+    /// the widget uses is the last readable point. What this proves is that the
+    /// style a badge hands the renderer is the pill; what it cannot prove is
+    /// anything about a style that reaches no widget at all.
+    #[test]
+    fn the_style_is_the_pill_on_the_component_surface() {
+        let theme = cosmic::Theme::dark();
+        let style = badge_style(&theme);
+
+        assert_eq!(style.border.radius, BADGE_RADIUS.into());
+        assert_eq!(
+            style.background,
+            Some(Background::Color(
+                theme.cosmic().background(false).component.base.into()
+            )),
+            "a badge on a card's own surface colour would be invisible"
+        );
+
+        // The label is drawn in the theme's on-background colour, and — the
+        // claim worth making — not in the surface it sits on. A `text_color`
+        // that repeated `component.base` is the plausible copy-paste mistake,
+        // and it renders a pill with an invisible word in it.
+        assert_eq!(style.text_color, Some(badge_text_color(&theme)));
+        assert_eq!(
+            style.text_color,
+            Some(theme.cosmic().background(false).on.into())
+        );
+        assert_ne!(
+            style.text_color,
+            Some(theme.cosmic().background(false).component.base.into()),
+            "the label's colour must differ from the pill's own fill"
+        );
     }
 }
