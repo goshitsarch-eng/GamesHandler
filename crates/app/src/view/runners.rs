@@ -42,15 +42,20 @@
 //! that contract is settled, and it is the honest shape regardless: it is what
 //! makes [`view`] callable from a test with no `State` at all.
 //!
-//! # Not implemented, and named rather than stubbed
+//! # What is handled, and what is declined
 //!
-//! [`update`] handles every message whose whole effect is local state. It
-//! returns `None` — *this page does not handle that* — for `FetchReleases` and
-//! `InstallRunner`, whose real work is a blocking network call. Those need a
-//! concrete [`HttpClient`] injected from this crate (DECISIONS D-26), and
-//! `crates/app` has no networking dependency at all. An arm that set
-//! `ReleasesStatus::Loading` and returned `Task::none()` would leave the page
-//! loading forever *and* look implemented to
+//! [`update`] handles every message whose whole effect is local state, **and**
+//! `FetchReleases`, which is the one handler on this page that reaches the
+//! network. Its task runs `core`'s fetch through the concrete [`HttpClient`]
+//! this crate injects (DECISIONS D-26) — `crate::http` is that client, and it
+//! is the reason this arm can return a task rather than a promise of one.
+//!
+//! `InstallRunner` is still declined — `update` returns `None`, *this page does
+//! not handle that* — and for a reason that is now about scope rather than
+//! about a missing dependency. The client exists, but the work behind that
+//! message is the archive download and install, which is T-12's other half on
+//! this page. An arm that set `runner_busy` and returned `Task::none()` would
+//! leave the page busy forever *and* look implemented to
 //! `only_the_written_handlers_change_anything`, which is the defect class this
 //! project keeps finding.
 //!
@@ -65,8 +70,10 @@ use gamehandler_core::runners::families::{
     ReleaseInfo, RunnerFamily, RunnerGuide, families, runner_guide_details,
 };
 use gamehandler_core::runners::proton;
-use gamehandler_core::runners::{ProtonRunner, Runner, SYSTEM_WINE};
+use gamehandler_core::runners::proton::HttpClient;
+use gamehandler_core::runners::{ProtonRunner, Runner, RunnerError, SYSTEM_WINE};
 use std::path::Path;
+use std::time::Duration;
 
 use crate::state::{ReleasesStatus, State};
 use crate::Message;
@@ -597,6 +604,62 @@ fn remove_press(row: &InstalledRow) -> Message {
 ///
 /// Each arm below is one of `bridge.py`'s async `done`/`fail` closures, ported
 /// as the state transition they are.
+/// Python's `limit=12` (`bridge.py:701`), applied after parsing by
+/// [`proton::fetch_available`], so these are twelve *usable* releases.
+const RELEASES_LIMIT: usize = 12;
+
+/// The fetch's ceiling.
+///
+/// Python passes no timeout and inherits `requests`' — which is none at all, so
+/// a stalled connection leaves its worker thread parked forever. The thread is
+/// a daemon and the page still recovers when the next fetch starts, which is
+/// why this was never a visible bug there. Here it would be visible: the task
+/// owns no cancel handle, so `Loading` would be the page's last word. 30s is
+/// this port's bound, not Python's, and it is generous enough that a slow
+/// GitHub response is not mistaken for a failure.
+const RELEASES_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Fetch one family's releases through the injected client (D-26).
+///
+/// Split out from the task below so it can be tested with a fake client: the
+/// limit, the family that reaches the client, and the error that comes back are
+/// all decisions, and none of them is observable through a `Task`.
+pub fn fetch_releases(
+    client: &dyn HttpClient,
+    family: &str,
+) -> Result<Vec<ReleaseInfo>, RunnerError> {
+    proton::fetch_available(client, Some(family), RELEASES_LIMIT, RELEASES_TIMEOUT)
+}
+
+/// The task half of [`Message::FetchReleases`].
+///
+/// `Task::perform` runs this off the UI thread, so the blocking client inside
+/// [`fetch_releases`] needs no async adaptation and no second hop — iced's
+/// native executor is the tokio runtime, which spawns onto a worker
+/// (`iced/futures/src/backend/native/tokio.rs`). That is the same shape as the
+/// reference, which runs the work on a `threading.Thread` and dispatches the
+/// result back (`bridge.py:152-166`).
+fn fetch_releases_task(family: String) -> Task<Message> {
+    Task::perform(
+        async move {
+            // `str(exc)` — `_async` turns whatever the work raised into a
+            // string and hands it to `fail` (`bridge.py:157`), so the variant
+            // carries the rendered message rather than the error type. The
+            // status line prefixes the sentence for display; Python keeps the
+            // `"error: "` prefix on the wire and strips seven characters in the
+            // QML (`RunnersPage.qml:164`), which [`status_line`] does not need
+            // to reproduce.
+            let result =
+                fetch_releases(&crate::http::UreqClient, &family).map_err(|error| error.to_string());
+            Message::ReleasesFetchFinished { family, result }
+        },
+        // `cosmic::app::Task<Message>` is `iced::Task<Action<Message>>`, so a
+        // task built here must wrap its output in `Action::App` to reach the
+        // shell's `update`. This is the idiomatic libcosmic mapping.
+        cosmic::Action::App,
+    )
+}
+
 pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
     match message {
         // `fetchReleases` clears the list and marks the fetch in flight before
@@ -606,7 +669,7 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             state.releases_family = family.clone();
             state.releases_status = ReleasesStatus::Loading;
             state.releases.clear();
-            Some(Task::none())
+            Some(fetch_releases_task(family.clone()))
         }
         // `done`/`fail` in one arm, because the guard is the same for both:
         // a reply for a family the user has navigated away from is dropped
@@ -684,7 +747,9 @@ fn push_toast(state: &mut State, line: String) -> Task<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gamehandler_core::runners::proton::ResponseHead;
     use gamehandler_core::runners::{RunnerManager, WineRunner};
+    use std::cell::RefCell;
 
     fn released(tag: &str, name: &str, size: i64) -> ReleaseInfo {
         ReleaseInfo::new(tag, name, "https://example.invalid/a.tar.gz", size)
@@ -1074,6 +1139,102 @@ mod tests {
         assert_eq!(family_index(""), None, "the initial state is empty, not a family");
     }
 
+    // ---- fetch_releases ---------------------------------------------------
+
+    /// Records the URL it was asked for and answers with one canned body.
+    ///
+    /// The trait's failure is a message rather than a distinct type, so a body
+    /// that cannot be parsed *is* the failure case and no second double is
+    /// needed — which is the shape `core`'s own doubles have too.
+    struct FakeClient {
+        body: String,
+        seen: RefCell<Vec<String>>,
+    }
+
+    impl FakeClient {
+        fn body(body: String) -> Self {
+            Self {
+                body,
+                seen: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl HttpClient for FakeClient {
+        fn get(
+            &self,
+            url: &str,
+            _headers: &[(&str, &str)],
+            _timeout: Duration,
+            on_head: &mut dyn FnMut(&ResponseHead) -> Result<(), RunnerError>,
+            sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
+        ) -> Result<(), RunnerError> {
+            self.seen.borrow_mut().push(url.to_string());
+            on_head(&ResponseHead {
+                content_length: None,
+            })?;
+            sink(self.body.as_bytes())
+        }
+    }
+
+    /// A GitHub releases payload of `count` *usable* releases — each with an
+    /// asset `pick_asset` accepts for `proton-ge`.
+    ///
+    /// Written with `format!` rather than `serde_json`, because `crates/app`
+    /// has no JSON dependency and adding one for a fixture would be the tail
+    /// wagging the dog.
+    fn payload(count: usize) -> String {
+        let releases: Vec<String> = (0..count)
+            .map(|i| {
+                format!(
+                    "{{\"tag_name\":\"GE-Proton9-{i}\",\"assets\":[\
+                     {{\"name\":\"GE-Proton9-{i}.tar.gz\",\
+                     \"browser_download_url\":\"https://example.invalid/{i}.tar.gz\",\
+                     \"size\":1024}}]}}"
+                )
+            })
+            .collect();
+        format!("[{}]", releases.join(","))
+    }
+
+    /// The family reaches the client and becomes *its* URL — not a constant,
+    /// and not the first family in the list.
+    #[test]
+    fn a_fetch_asks_for_the_family_it_was_given() {
+        let client = FakeClient::body(payload(0));
+        fetch_releases(&client, "proton-cachyos").unwrap();
+        let seen = client.seen.borrow();
+        assert_eq!(seen.len(), 1, "one fetch is one request");
+        assert!(
+            seen[0].contains("cachyos"),
+            "the URL must be the given family's, got {}",
+            seen[0]
+        );
+    }
+
+    /// Python's `limit=12` (`bridge.py:701`), applied after parsing. Twenty
+    /// usable releases in, twelve out: a port that passed a different limit, or
+    /// none at all, is caught here rather than by a user reading a longer list
+    /// than the reference shows.
+    #[test]
+    fn a_fetch_returns_at_most_pythons_twelve_releases() {
+        let client = FakeClient::body(payload(20));
+        let found = fetch_releases(&client, "proton-ge").unwrap();
+        assert_eq!(found.len(), RELEASES_LIMIT);
+        assert_eq!(found.len(), 12, "and the limit is Python's twelve");
+    }
+
+    /// A payload that is not a JSON array is an error rather than an empty
+    /// list, so the failure reaches the status line. Returning `Ok(vec![])`
+    /// here is the plausible wrong version, and it renders "No builds found for
+    /// this family." — a negative result the app never obtained.
+    #[test]
+    fn a_fetch_that_cannot_be_parsed_is_an_error_not_an_empty_list() {
+        let client = FakeClient::body("{\"message\":\"Not Found\"}".to_string());
+        let error = fetch_releases(&client, "proton-ge").unwrap_err();
+        assert_eq!(error.to_string(), "Unexpected GitHub releases response");
+    }
+
     // ---- update -----------------------------------------------------------
 
     /// A fetch request clears the previous family's list *and* marks the fetch
@@ -1206,24 +1367,27 @@ mod tests {
         }
     }
 
-    /// The two network-bound messages are **declined, not half-written**.
+    /// `InstallRunner` is **declined, not half-written**.
     ///
-    /// This is the guard on the module's own honesty: if someone later writes
-    /// the `Loading` transition for `FetchReleases` without writing the fetch,
-    /// this test goes red rather than the page looking implemented. The
-    /// `InstallRunner` busy guard is the same shape.
+    /// This is the guard on the module's own honesty: the archive download and
+    /// install is T-12's other half on this page, and an arm that set
+    /// `runner_busy` without doing the work would render as a busy page that
+    /// never finishes *and* look implemented. Writing that transition is the
+    /// plausible next mistake, so this goes red when someone writes it alone.
     ///
-    /// `FetchReleases` **is** handled (as the state transition above); it is the
-    /// *task* that is missing, and that is recorded in the module header rather
-    /// than by declining the message — declining it would drop the transition
-    /// that is already correct.
+    /// `FetchReleases` is **not** in this test, and its absence is the point:
+    /// it is fully handled — the transition *and* the task — since the client
+    /// landed in `crate::http`. Asserting it were declined, as this test did
+    /// while the task was missing, would now be asserting the opposite of the
+    /// truth.
     #[test]
-    fn installing_is_declined_because_the_download_is_not_implemented() {
+    fn installing_is_declined_because_the_install_is_not_wired() {
         let mut state = state();
         assert!(
             update(&mut state, &Message::InstallRunner { tag: "t".to_string() }).is_none(),
-            "InstallRunner needs the injected HttpClient, and returning a state \
-             change without it would render as a busy page that never finishes"
+            "InstallRunner's download and install is T-12's half of this page, \
+             and returning a state change without it would render as a busy \
+             page that never finishes"
         );
         assert!(!state.runner_busy);
     }

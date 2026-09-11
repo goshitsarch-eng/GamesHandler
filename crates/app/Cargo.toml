@@ -38,3 +38,4 @@ clap = { version = "4", features = ["derive"] }
 # fails to decode. The extra cost is `dep:async-fs` plus GIF support, neither
 # of which the app uses; the feature name is a misnomer here.
 libcosmic = { git = "https://github.com/pop-os/libcosmic.git", rev = "a401af8b1c54a8abd393b8c5b7c8809402f83850", default-features = false, features = ["winit", "tokio", "wayland", "x11", "a11y", "xdg-portal", "animated-image"] }
+ureq = { version = "3", features = ["platform-verifier"] }
