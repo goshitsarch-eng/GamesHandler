@@ -2147,3 +2147,57 @@ count needs its build), D-32 (the `mod view` allow and T-09),
 [[verification-defect-class]] — and the standing method: **every one of these
 was found by running something, and the detector in this case was the call
 graph, because the compiler's was switched off.**
+
+## D-47. A mechanism needs a control arm, and a repair must be shown to engage
+
+**Decision.** Two clauses, both established on #49 (`847ec89`) and both now
+required of repairs and mechanism-claims in this project.
+
+**Clause 1 — establish the mechanism with a control arm, not with an
+explanation that fits.** A hypothesis that *fits* the observations is not a
+mechanism. #49's standing hypothesis (a write-then-`chmod` window) explained the
+failure completely and was **false**. What settled it was not a better
+explanation but a **negative control**: an arm constructed to differ in exactly
+one respect and predicted to show **zero** failures.
+
+| arm | refusals |
+|---|---|
+| 1 writer, no forking thread | 0 |
+| 2 writers, no forking thread | 79 |
+| 4 writers, no forking thread | 893 |
+| **4 writers + forker, decoy inode** | **0** |
+| **8 writers + forker, decoy inode** | **0** |
+
+The dose-response (0 → 79 → 893, scaling with concurrent writers) establishes
+that *something* about concurrency matters. Only the decoy arm establishes
+**what**: same load, same forker, same writer count, but the exec'd script
+created before any thread existed — and zero refusals. The effect is
+**inode-specific**, not process-wide. That single control is what made the
+textbook fix's failure visible: temp-then-`rename` looked correct until the
+control showed the inherited descriptor follows the *inode* to the new name
+(1568 refusals under load that gives the decoy 0). **Correlation scaling with
+load is not mechanism; the arm that should not fire is.**
+
+**Clause 2 — a repair that never engages is unverified.** A retry that never
+fires, a guard that never trips, a fallback never taken: each is
+indistinguishable from code that does not run, which is #51's shape. So a
+repair on a flaky path must be shown to *fire*, not merely to make the flake
+stop. Here the retry was instrumented — logging to a file, because `eprintln!`
+is captured and discarded by the harness — and logged **4 firings in 30 runs,
+each at `attempt=1`**: every one a would-be failure turned into a pass. Absent
+that log, "the flake is gone" and "the retry is dead code" are the same
+observation, and the second would have been filed as #51.
+
+Note the author did this **proactively, before being asked** — the first
+instance in this migration of the #51 lesson being applied to a repair rather
+than discovered in one.
+
+**The rule.** When a hazard is hypothesized, build the arm that should **not**
+exhibit it and measure that it doesn't. When a hazard is repaired, instrument
+the repair and show it engaging at least once. Both are cheap; both convert a
+plausible story into a measurement, and the project's whole method is that
+nothing here was ever established by a story that fit.
+
+Related: #51 / D-46 (a repair you cannot see fire is a catch on unreachable
+code), D-40 (a green check whose assertion another mechanism satisfies), D-45 (a
+count needs its build), [[verification-defect-class]].
