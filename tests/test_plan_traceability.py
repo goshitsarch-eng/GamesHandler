@@ -118,19 +118,31 @@ tree it had just made clean.
 
 **The other half of #84, and the reason this check does not print "clean" over
 these documents.** Counting cells against a header presupposes there is a
-header. Measured by rendering both documents with two independent GFM
-renderers, there is not, for four runs of 56 lines: `PLAN.md` has 16 pipe-runs
-and renders **15** tables (the rows T-12…T-39, the second half of the task
-list, were cut off from their table by prose inserted at `:355`), and
-`VERIFY-FINDINGS.md` has 5 runs and renders **2** (findings 61–80 and 83–88,
-among others, are orphans of the same kind). Those lines still look like table
-rows in the source, so reading the file satisfies the reader while rendering
-flattens them to paragraphs — and a run with no delimiter row is skipped by
-[`tables`], which is how a header-comparison check comes to report nothing about
-them. [`headerless_runs`] and `test_every_table_block_is_actually_a_table`
-close that hole. Four runs are deferred in [`MALFORMED_RUNS`] on the same terms
-as the malformed row: named in the output, checked for staleness, and left for
-their owner because both documents are the lead's (D-05).
+header. Measured three ways — the structural rule in [`tables`] (a table is a
+run whose second line is a `|---|` delimiter row), `markdown-it`'s `gfm-like`
+preset, and Python-Markdown's `tables` extension — there is no header, for four
+runs of 56 lines. The three agree on every one of those four: `PLAN.md` has 16
+pipe-runs and 15 tables (the rows T-12…T-39, the second half of the task list,
+were cut off from their table by prose inserted at `:355`), and
+`VERIFY-FINDINGS.md` has 5 runs and 2 tables (findings 61–80, 81–82 and 83–88
+are orphans of the same kind).
+
+The two renderers are not quoted as agreeing with each other in general: they
+differ by one table in `PLAN.md` — Python-Markdown reports 14, merging the two
+tables at `:225` and `:243` that a heading separates with no blank line between
+them — which is that extension's limit rather than a GFM behaviour, and it does
+not touch any of the four runs here, which it declines to render as a table
+either way. Said precisely because "two renderers agree" is a stronger claim
+than two renderers agreeing about the runs being counted.
+
+Those lines still look like table rows in the source, so reading the file
+satisfies the reader while rendering flattens them to paragraphs — and a run
+with no delimiter row is skipped by [`tables`], which is how a
+header-comparison check comes to report nothing about them. [`headerless_runs`]
+and `test_every_table_block_is_actually_a_table` close that hole. Four runs are
+deferred in [`MALFORMED_RUNS`] on the same terms as the malformed row: named in
+the output, checked for staleness, and left for their owner because both
+documents are the lead's (D-05).
 """
 
 import re
@@ -530,13 +542,16 @@ def headerless_runs(doc, text):
     The rows still *look* like table rows in the source, which is why this is
     the same reading-satisfies-the-author defect as a dropped cell.
 
-    Measured at this sha by rendering both documents with two independent GFM
-    renderers: `PLAN.md` has 16 pipe-runs and renders **15** tables — the run at
+    Measured three ways, which agree on these four runs: the structural rule
+    above, `markdown-it`'s `gfm-like` preset, and Python-Markdown's `tables`
+    extension. `PLAN.md` has 16 pipe-runs and 15 tables — the run at
     `:361`–`:388` (T-12…T-39, 28 lines, the second half of the task table, split
     off from `:341` by prose inserted in the middle) is a paragraph.
-    `VERIFY-FINDINGS.md` has 5 runs and renders **2**: `:79`–`:98`, `:432`–`:433`
+    `VERIFY-FINDINGS.md` has 5 runs and 2 tables: `:79`–`:98`, `:432`–`:433`
     and `:479`–`:484` are orphans of the same kind. This function is what keeps
-    the check below from reporting "clean" over them.
+    the check below from reporting "clean" over them. (The renderers are not
+    quoted as agreeing in general; see the module docstring for the one table
+    where they differ.)
     """
     return [
         (doc, run[0][0], len(run), cells(run[0][1])[0].strip())
