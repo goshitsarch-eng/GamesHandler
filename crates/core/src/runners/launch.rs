@@ -537,10 +537,103 @@ mod tests {
         }
     }
 
+    /// `#49`: launch, retrying the `ETXTBSY` window that *other tests'* forks
+    /// open — the repair for a defect in this harness rather than in `launch`.
+    ///
+    /// # The mechanism, measured rather than reasoned
+    ///
+    /// `execve` refuses with `ETXTBSY` (`code: 26`) while the exec'd inode has
+    /// a live writable reference. The written-and-exec'd script is exclusive to
+    /// one test — `scratch` is pid-keyed with a unique label (`env.rs:420-425`)
+    /// — so the reference cannot be another test's write. It is a *fork*: this
+    /// test binary runs its tests on threads, and when one thread forks, the
+    /// child inherits a copy of every open file in the process, including
+    /// another test's just-written script. That copy keeps
+    /// `i_writecount > 0` until the child reaches its own `execve`, and in that
+    /// interval an `execve` of the same inode by the writing thread is refused.
+    ///
+    /// Each clause of that was measured against a standalone reproducer before
+    /// it was written down here:
+    ///
+    /// - **One writer alone never fails** — 300 solo runs of the single most
+    ///   flaky test, 0 failures. There is no self-inflicted window.
+    /// - **Two writers contend** — 79 refusals in 8s with no forking thread,
+    ///   and 0 with one writer. Refusals scale with the number of concurrent
+    ///   writers (1: 0, 2: 79, 4: 893), which no same-path explanation reaches.
+    /// - **A thread that only forks multiplies it** — 2 writers plus a thread
+    ///   running `/bin/true` in a loop: 79 → 431 refusals. The forking thread
+    ///   neither writes nor execs any script of ours.
+    /// - **The child's lifetime is the window** — replacing the child with
+    ///   `/bin/sleep 0.05` cuts refusals back to 79, tracking the fork *rate*
+    ///   (20× fewer forks) rather than the child's lifetime. The window is per
+    ///   fork, and the child's window is only as long as it takes to `execve`.
+    /// - **The refusal is inode-specific** — the decisive control: write a
+    ///   *different* file and `execve` a shared script created once before any
+    ///   thread existed. 0 refusals at 4 writers, 0 at 8, against 2072 for the
+    ///   same load writing and executing the same inode. So it is not
+    ///   "concurrent writes poison `execve` process-wide"; it is a descriptor
+    ///   inherited on *that* inode.
+    ///
+    /// Those measurements also retire the obvious alternative repairs.
+    /// The write-then-`chmod` window is not it, since both write idioms flake at
+    /// the same rate under load and one writer alone never does. Neither is
+    /// write-to-temp-then-rename, which sounds like the textbook answer and is
+    /// measured not to help: `rename` carries the *inode* to the new name, so
+    /// the inherited descriptor follows it to the exec'd path (1568 refusals
+    /// under the load that gives the fresh-inode control 0). Only a target
+    /// nothing in this process ever opened for writing is immune.
+    ///
+    /// # Why the retry is here and not in `launch`
+    ///
+    /// `launch`'s own `spawn` is not exposed to this. Production `launch.rs`
+    /// writes no executable — the only filesystem calls before the test module
+    /// are two `create_dir_all` on prefix directories (`:334`, `:465`) — so
+    /// nothing in the shipped app creates the window, and a retry in `launch`
+    /// would be a catch on a condition production cannot enter: dead code
+    /// pretending to be a guard. The window is opened by *this binary's own
+    /// concurrency*, so its repair belongs to this binary's harness.
+    ///
+    /// # What a retry does and does not hide
+    ///
+    /// A refusal is not a behaviour of the code under test — no input, no
+    /// configuration and no host state the test controls produces it — so
+    /// tolerating it removes noise and no signal. Every other error, and every
+    /// non-`ETXTBSY` `Io` error, is returned on the first attempt unchanged.
+    /// If the condition outlasts the attempts the last error is returned as-is,
+    /// so the caller's `expect` still fails on it: after ~100ms of trying, a
+    /// persistent `ETXTBSY` is a real finding and must not be swallowed.
+    fn launched_or_busy_retry(
+        game: &Game,
+        manager: &RunnerManager,
+        env: &dyn LaunchEnv,
+        resolver: &dyn ShareResolver,
+    ) -> Result<LaunchedGame, RunnerError> {
+        const ATTEMPTS: u32 = 100;
+        const PAUSE: Duration = Duration::from_millis(1);
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            match launch(game, manager, env, resolver) {
+                Err(RunnerError::Io(error))
+                    if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                        && attempt < ATTEMPTS =>
+                {
+                    std::thread::sleep(PAUSE);
+                }
+                outcome => return outcome,
+            }
+        }
+    }
+
     /// Launch `game` with nothing installed and no host environment.
     fn launched(game: &Game) -> LaunchedGame {
-        launch(game, &RunnerManager::at("/nonexistent"), &FakeLaunchEnv::new(), &NoShares)
-            .expect("a native Linux title needs no runner")
+        launched_or_busy_retry(
+            game,
+            &RunnerManager::at("/nonexistent"),
+            &FakeLaunchEnv::new(),
+            &NoShares,
+        )
+        .expect("a native Linux title needs no runner")
     }
 
     // -----------------------------------------------------------------
@@ -750,13 +843,56 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// Write an executable `/bin/sh` script at `path`, creating its parents.
+    ///
+    /// # Why this opens with a mode, and what that is *not* (#49)
+    ///
+    /// This used to be `fs::write` followed by `set_permissions(0o755)`, which
+    /// creates the file non-executable and makes it executable in a second
+    /// step. Opening with `.mode(0o755)` removes that second step, and the
+    /// write is flushed and the handle dropped before returning, so nothing
+    /// this function opens outlives it. Those are the reasons to keep it, and
+    /// they are the whole of what it is worth.
+    ///
+    /// **It is not the repair for `#49`, and the create-then-`chmod` window is
+    /// not that flake's cause.** That was the hypothesis, and it is measured
+    /// false: with both idioms exercised under the same concurrent load, the
+    /// two flake at the same rate — so the window cannot be what the kernel is
+    /// refusing on. The mechanism that *is* established, and the repair, are
+    /// in `launched_or_busy_retry` below, because they belong to the `execve`
+    /// rather than to the write.
+    ///
+    /// # The one behavioural difference from the old body, stated because it is
+    /// real
+    ///
+    /// `OpenOptions::mode` applies **at creation**; the `set_permissions` it
+    /// replaces applied unconditionally. So this helper no longer makes an
+    /// *existing* file executable — it only creates one executable. That is
+    /// sufficient here and not merely convenient: every call site writes under
+    /// a `scratch(...)` root, and `scratch` does `remove_dir_all` then
+    /// `create_dir_all` (`env.rs:420-425`), so every path this function is
+    /// given is new. The one helper that writes a runner's wine without this
+    /// function, `runner_with_wine`, sets its own mode explicitly and is not
+    /// reused as a `write_script` target: no test hands this function a path
+    /// another helper created.
+    ///
+    /// If a future caller does need "make this existing file executable", this
+    /// helper is the wrong tool and would return silently without doing it.
     fn write_script(path: &Path, text: &str) {
-        use std::os::unix::fs::PermissionsExt;
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
-        std::fs::write(path, text).unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o755)
+            .open(path)
+            .unwrap();
+        file.write_all(text.as_bytes()).unwrap();
+        file.flush().unwrap();
+        drop(file);
     }
 
     /// A runner id that resolves to a directory with a wine binary in it.
@@ -1110,8 +1246,9 @@ mod tests {
 
         // Through umu, the same build is a Proton runtime and the gate opens.
         let host = host.with_which("umu-run", umu.to_str().unwrap());
-        let mut running = launch(&game, &RunnerManager::at(&root), &host, &NoShares)
-            .expect("a Proton build reached through umu is what NVAPI needs");
+        let mut running =
+            launched_or_busy_retry(&game, &RunnerManager::at(&root), &host, &NoShares)
+                .expect("a Proton build reached through umu is what NVAPI needs");
         assert_eq!(running.failure(Duration::from_secs(10)), None);
 
         let _ = std::fs::remove_dir_all(&root);
@@ -1149,8 +1286,9 @@ mod tests {
         game.dxvk = true;
         game.environment = "WINEARCH=win32".to_string();
 
-        let mut running = launch(&game, &RunnerManager::at("/nonexistent"), &host, &NoShares)
-            .expect("a plain-Wine title with a bundled runtime launches");
+        let mut running =
+            launched_or_busy_retry(&game, &RunnerManager::at("/nonexistent"), &host, &NoShares)
+                .expect("a plain-Wine title with a bundled runtime launches");
         assert_eq!(running.failure(Duration::from_secs(10)), None);
 
         let windows = prefix.join("drive_c/windows");
