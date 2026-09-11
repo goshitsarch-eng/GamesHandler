@@ -60,7 +60,13 @@ use cosmic::iced::ContentFit;
 pub const NO_COVER_LABEL: &str = "No cover yet";
 
 /// How many placeholder shades there are. `covers.py:95` (`COVER_ACCENTS`).
-pub const COVER_ACCENTS: usize = 8;
+///
+/// Re-exported from `core` rather than declared here, so the count and
+/// [`accent_index`]'s bucketing cannot drift apart — they are two halves of one
+/// rule, and a second copy of the number is a second place to change it.
+///
+/// [`accent_index`]: gamehandler_core::covers::accent_index
+pub use gamehandler_core::covers::COVER_ACCENTS;
 
 /// The eight tile gradients, as `CoverArt.qml`'s `gradients` array lists them.
 ///
@@ -181,22 +187,16 @@ pub fn initials(name: &str) -> String {
 
 /// The plate shade index for a game.
 ///
-/// **Not the reference's value yet, and deliberately obvious about it.**
-/// `accent_index` (`covers.py:107-110`) is
-/// `sha256(seed.encode("utf-8")).digest()[0] % COVER_ACCENTS`, and this crate
-/// cannot compute it: `gamehandler-core` keeps its hashing private
-/// (`crates/core/src/hash.rs:20` is `pub(crate) fn sha256_hex`, and `mod hash;`
-/// is not `pub`), while `crates/app` has no hashing dependency of its own.
+/// `covers.py:107-110`, reached through
+/// [`gamehandler_core::covers::accent_index`] — where the rule lives, because
+/// it is a compatibility surface: a game's tile has a colour that must not
+/// change between the Python app and this one. The hash stays private to
+/// `core`, so a caller here cannot re-derive the bucketing and drift.
 ///
-/// So every plate currently takes shade 0 and every tile is the same blue —
-/// a visible difference from the Python app, which is why it is a constant
-/// here and not a plausible-looking local hash. A stand-in that produced
-/// *different* shades would look right and be wrong, and nothing on screen
-/// would say so.
-///
-/// The fix is one line once core exposes the index; see the report.
-pub fn accent_of(_seed: &str) -> usize {
-    0
+/// The seed is the game's id in every current caller, which is what makes a
+/// tile keep its shade across sessions *and* across a rename.
+pub fn accent_of(seed: &str) -> usize {
+    gamehandler_core::covers::accent_index(seed)
 }
 
 /// Does this file begin with the ICO magic?
@@ -425,29 +425,48 @@ mod tests {
         assert_eq!(initials("A Plague Tale"), "AP");
     }
 
-    /// **This test pins a placeholder, and it is meant to fail one day.**
+    /// The placeholder is gone: `accent_of` now returns *Python's* bucket.
     ///
-    /// [`accent_of`] cannot hash yet, so every seed returns the same shade.
-    /// When core exposes `accent_index` and `accent_of` starts hashing, this
-    /// fails and should be deleted; keep the range check below, which stays
-    /// true either way.
+    /// This replaces `the_plate_shade_is_a_placeholder_until_core_hashes`,
+    /// which pinned the stand-in and was written to fail on the day the hash
+    /// landed. It failed, as intended, and this is what it became.
     ///
-    /// The seeds are chosen to be pairwise different in *length as well as
-    /// content*, because the first version of this test used `"game-a"` and
-    /// `"game-b"` — both six characters — and so passed against an
-    /// implementation of `seed.len() % COVER_ACCENTS`. It was found by
-    /// mutation-testing `accent_of`, not by reading the test. Any stand-in
-    /// that keys off anything about the string has to fail here.
+    /// The values are CPython's, and the seeds are deliberately different in
+    /// *length as well as content* — the original version of this test used
+    /// `"game-a"` and `"game-b"`, both six characters, and so passed against a
+    /// `seed.len() % COVER_ACCENTS` implementation. Any stand-in that keys off
+    /// the shape of the string has to fail here.
+    ///
+    /// `""` is the interesting one: it is 3, not 0, because Python hashes the
+    /// empty string rather than short-circuiting — so the *first* shade is not
+    /// where nameless games land.
     #[test]
-    fn the_plate_shade_is_a_placeholder_until_core_hashes() {
-        let seeds = ["", "a", "bb", "ccc", "game-a", "a-very-long-id", "\u{1f600}"];
-        for seed in seeds {
+    fn the_plate_shade_is_pythons_hash_bucket() {
+        for (seed, expected) in [
+            ("", 3),
+            ("a", 2),
+            ("bb", 3),
+            ("ccc", 4),
+            ("game-a", 7),
+            ("a-very-long-id", 3),
+            ("\u{1f600}", 0),
+        ] {
+            assert_eq!(accent_of(seed), expected, "for {seed:?}");
+        }
+    }
+
+    /// The view's index is core's index, with no local reinterpretation.
+    ///
+    /// A tautology today, and kept anyway: it fails if `accent_of` ever grows a
+    /// transformation of its own — a modulo against this module's own count, a
+    /// clamp, a fallback — which is exactly how the two would drift apart a
+    /// second time.
+    #[test]
+    fn the_plate_shade_defers_to_core() {
+        for seed in ["", "Half-Life", "game-a", "\u{1f600}"] {
             assert_eq!(
                 accent_of(seed),
-                accent_of(""),
-                "accent_of returned {seed:?} a shade different from the empty \
-                 seed's — it started hashing, so delete this test and keep \
-                 the_plate_shade_is_always_in_range"
+                gamehandler_core::covers::accent_index(seed)
             );
         }
     }

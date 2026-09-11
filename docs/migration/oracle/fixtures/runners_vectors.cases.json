@@ -4690,6 +4690,528 @@
     "exit_code": 3,
     "capture": false
    }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": ""
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "b"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "bb"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "ccc"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a-very-long-id"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "Half-Life"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "00000000000000000000000000000000"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "ffffffffffffffffffffffffffffffff"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "e3"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "\u0000"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": " "
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "\n"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "  spaced  "
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "é"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "über"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "你好"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "-"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": ".."
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "../.."
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a/b"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "\\"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "'"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "\""
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "%s"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "{0}"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "GE-Proton9-5"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "com.goshapps.GameHandler"
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 0
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 0
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 0
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 0
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 1
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 1
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 1
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 1
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 2
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 2
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 2
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 2
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 3
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 3
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 3
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 3
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 5
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 5
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 5
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 5
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 7
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 7
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 7
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 7
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 8
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 8
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 8
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 8
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 13
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 13
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 13
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 13
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 64
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 64
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 64
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 64
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 255
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 255
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 255
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 255
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 256
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 256
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 256
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 256
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "",
+    "buckets": 1000000
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "a",
+    "buckets": 1000000
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "game-a",
+    "buckets": 1000000
+   }
+  },
+  {
+   "op": "accent_index",
+   "args": {
+    "seed": "😀",
+    "buckets": 1000000
+   }
   }
  ]
 }

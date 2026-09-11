@@ -1646,7 +1646,7 @@ fn save_replaces_a_symlink_rather_than_writing_through_it() {
 /// that quietly *disappears* from the suite fails too. That second case is the
 /// degenerate version of "a fixture that only ever checks what it already
 /// covers": a corpus that shrank to nothing would otherwise stay green.
-const PORTED_VECTOR_OPS: [&str; 12] = [
+const PORTED_VECTOR_OPS: [&str; 13] = [
     "asset_matches",
     "asset_name",
     "install_id_from_parts",
@@ -1655,6 +1655,7 @@ const PORTED_VECTOR_OPS: [&str; 12] = [
     "pure_posix_name",
     "safe_archive_name",
     "safe_install_id",
+    "accent_index",
     "launch_failure_text",
     "readable_error",
     "sanitise_release_tag",
@@ -1716,6 +1717,12 @@ fn rust_vector_answer(op: &str, args: &Value) -> Result<Value, String> {
     };
 
     match op {
+        "accent_index" => Ok(json!(match args.get("buckets").and_then(Value::as_u64) {
+            // The explicit-count form, which is the only way to reach the
+            // `max(1, buckets)` clamp.
+            Some(buckets) => crate::covers::accent_index_in(&text("seed"), buckets as usize),
+            None => crate::covers::accent_index(&text("seed")),
+        })),
         "readable_error" => Ok(json!(crate::runners::readable_error(&text("text")))),
         "launch_failure_text" => {
             // B-07. The Python op builds a real child, drains its stderr on a

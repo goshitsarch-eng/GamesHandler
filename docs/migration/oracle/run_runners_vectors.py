@@ -60,7 +60,7 @@ _time.time = lambda: FROZEN_NOW
 REPO = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO))
 
-from gamehandler import runners
+from gamehandler import covers, runners
 from gamehandler.models import Game
 
 assert _time.time() == FROZEN_NOW, "clock freeze failed; results would be nondeterministic"
@@ -257,6 +257,18 @@ def op_install_id_from_parts(args):
     ).install_id
 
 
+def op_accent_index(args):
+    """`covers.accent_index` — the placeholder-shade bucket.
+
+    `buckets` is optional and defaults to `COVER_ACCENTS`, because that default
+    is part of the signature and the clamp (`max(1, buckets)`) is only
+    reachable through an explicit value.
+    """
+    if "buckets" in args:
+        return covers.accent_index(_need(args, "seed"), _need(args, "buckets"))
+    return covers.accent_index(_need(args, "seed"))
+
+
 def op_wine_prefix_root(args):
     return runners.wine_prefix_root(_need(args, "prefix"))
 
@@ -356,6 +368,7 @@ OPS = {
     "install_id_from_parts": op_install_id_from_parts,
     "readable_error": op_readable_error,
     "launch_failure_text": op_launch_failure_text,
+    "accent_index": op_accent_index,
 }
 
 
@@ -649,6 +662,36 @@ def _readable_error_cases():
     return cases
 
 
+def _accent_index_cases():
+    """The placeholder-shade bucket, where a plausible re-derivation diverges.
+
+    The trap this group exists for: `digest[0]` is the first *byte* of the
+    digest, and reading the hex digest as text takes the first *character*
+    instead. Those coincide mod 8 only sometimes, so a single happy case cannot
+    tell them apart — the cases below include seeds whose first hex digit and
+    first byte are incongruent mod 8, which is where the two answers differ.
+    """
+    cases = []
+    seeds = [
+        "", "a", "b", "bb", "ccc", "game-a", "a-very-long-id", "Half-Life",
+        "0" * 32, "f" * 32, "e3", "\u0000", " ", "\n", "  spaced  ",
+        "\u00e9", "\u00fcber", "\u4f60\u597d", "\U0001f600",
+        "x" * 500, "-", "..", "../..", "a/b", "\\", "'", '"', "%s", "{0}",
+        "GE-Proton9-5", "com.goshapps.GameHandler",
+    ]
+    for seed in seeds:
+        cases.append({"op": "accent_index", "args": {"seed": seed}})
+    # The clamp and the non-default counts. `buckets=0` is the division-by-zero
+    # case in a naive port; `1` makes every seed agree; a large count is where
+    # an off-by-one in the modulo shows.
+    for buckets in [0, 1, 2, 3, 5, 7, 8, 13, 64, 255, 256, 1_000_000]:
+        for seed in ["", "a", "game-a", "\U0001f600"]:
+            cases.append(
+                {"op": "accent_index", "args": {"seed": seed, "buckets": buckets}}
+            )
+    return cases
+
+
 def _launch_failure_cases():
     """B-07: the ordering, not the message.
 
@@ -696,6 +739,7 @@ def build_suite():
     cases += _launch_option_cases()
     cases += _readable_error_cases()
     cases += _launch_failure_cases()
+    cases += _accent_index_cases()
     return cases
 
 

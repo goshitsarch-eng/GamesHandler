@@ -26,6 +26,15 @@ use gamehandler_core::settings::Settings;
 use gamehandler_core::{APP_ID, APP_NAME, VERSION};
 
 mod state;
+// TODO(T-09): remove once the pages call these components. See D-32.
+//
+// The module is declared now, rather than when the pages land, because a
+// declaration is what makes its tests run: without this line `cargo test`
+// reports success 44 assertions short of the truth, which is the same defect
+// as a check that never executes. The allow covers everything nested inside
+// `view`, and it is deleted as part of T-09's definition of done.
+#[allow(dead_code)]
+mod view;
 
 pub use state::{
     CoverHit, ExeField, FormToken, GameForm, GameId, Page, PendingInstall, PrefixTool,

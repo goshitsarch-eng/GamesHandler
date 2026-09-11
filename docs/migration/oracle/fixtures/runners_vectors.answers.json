@@ -6161,5 +6161,685 @@
   },
   "ok": true,
   "result": "the runner exited with status 3"
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": ""
+  },
+  "ok": true,
+  "result": 3
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a"
+  },
+  "ok": true,
+  "result": 2
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "b"
+  },
+  "ok": true,
+  "result": 6
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "bb"
+  },
+  "ok": true,
+  "result": 3
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "ccc"
+  },
+  "ok": true,
+  "result": 4
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a"
+  },
+  "ok": true,
+  "result": 7
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a-very-long-id"
+  },
+  "ok": true,
+  "result": 3
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "Half-Life"
+  },
+  "ok": true,
+  "result": 5
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "00000000000000000000000000000000"
+  },
+  "ok": true,
+  "result": 4
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "ffffffffffffffffffffffffffffffff"
+  },
+  "ok": true,
+  "result": 5
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "e3"
+  },
+  "ok": true,
+  "result": 6
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "\u0000"
+  },
+  "ok": true,
+  "result": 6
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": " "
+  },
+  "ok": true,
+  "result": 6
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "\n"
+  },
+  "ok": true,
+  "result": 1
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "  spaced  "
+  },
+  "ok": true,
+  "result": 5
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "é"
+  },
+  "ok": true,
+  "result": 2
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "über"
+  },
+  "ok": true,
+  "result": 5
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "你好"
+  },
+  "ok": true,
+  "result": 7
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀"
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "ok": true,
+  "result": 3
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "-"
+  },
+  "ok": true,
+  "result": 1
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": ".."
+  },
+  "ok": true,
+  "result": 6
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "../.."
+  },
+  "ok": true,
+  "result": 4
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a/b"
+  },
+  "ok": true,
+  "result": 1
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "\\"
+  },
+  "ok": true,
+  "result": 1
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "'"
+  },
+  "ok": true,
+  "result": 6
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "\""
+  },
+  "ok": true,
+  "result": 2
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "%s"
+  },
+  "ok": true,
+  "result": 6
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "{0}"
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "GE-Proton9-5"
+  },
+  "ok": true,
+  "result": 7
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "com.goshapps.GameHandler"
+  },
+  "ok": true,
+  "result": 7
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 0
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 0
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 0
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 0
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 1
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 1
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 1
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 1
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 2
+  },
+  "ok": true,
+  "result": 1
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 2
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 2
+  },
+  "ok": true,
+  "result": 1
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 2
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 3
+  },
+  "ok": true,
+  "result": 2
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 3
+  },
+  "ok": true,
+  "result": 1
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 3
+  },
+  "ok": true,
+  "result": 1
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 3
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 5
+  },
+  "ok": true,
+  "result": 2
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 5
+  },
+  "ok": true,
+  "result": 2
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 5
+  },
+  "ok": true,
+  "result": 2
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 5
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 7
+  },
+  "ok": true,
+  "result": 3
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 7
+  },
+  "ok": true,
+  "result": 6
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 7
+  },
+  "ok": true,
+  "result": 2
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 7
+  },
+  "ok": true,
+  "result": 2
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 8
+  },
+  "ok": true,
+  "result": 3
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 8
+  },
+  "ok": true,
+  "result": 2
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 8
+  },
+  "ok": true,
+  "result": 7
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 8
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 13
+  },
+  "ok": true,
+  "result": 6
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 13
+  },
+  "ok": true,
+  "result": 7
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 13
+  },
+  "ok": true,
+  "result": 0
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 13
+  },
+  "ok": true,
+  "result": 6
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 64
+  },
+  "ok": true,
+  "result": 35
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 64
+  },
+  "ok": true,
+  "result": 10
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 64
+  },
+  "ok": true,
+  "result": 55
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 64
+  },
+  "ok": true,
+  "result": 48
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 255
+  },
+  "ok": true,
+  "result": 227
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 255
+  },
+  "ok": true,
+  "result": 202
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 255
+  },
+  "ok": true,
+  "result": 247
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 255
+  },
+  "ok": true,
+  "result": 240
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 256
+  },
+  "ok": true,
+  "result": 227
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 256
+  },
+  "ok": true,
+  "result": 202
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 256
+  },
+  "ok": true,
+  "result": 247
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 256
+  },
+  "ok": true,
+  "result": 240
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "",
+   "buckets": 1000000
+  },
+  "ok": true,
+  "result": 227
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "a",
+   "buckets": 1000000
+  },
+  "ok": true,
+  "result": 202
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "game-a",
+   "buckets": 1000000
+  },
+  "ok": true,
+  "result": 247
+ },
+ {
+  "op": "accent_index",
+  "args": {
+   "seed": "😀",
+   "buckets": 1000000
+  },
+  "ok": true,
+  "result": 240
  }
 ]
