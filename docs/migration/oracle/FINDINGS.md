@@ -120,43 +120,87 @@ that errors.
 Verified by running both against the pinned `serde_json` (1.0.151 — it renders
 floats via `zmij`; there is **no `ryu` in `Cargo.lock` at all**, an attribution
 an earlier version of this finding got wrong). Python uses shortest-repr with
-**C-style `printf("%g")` exponent rules**. They agree on 13 of the 14 probe
-cases — **exactly one** differs:
+**C-style `printf("%g")` exponent rules**. There are **two** divergence classes,
+and the second was found only after the first had been written up.
+
+**(a) Exponent padding.** Python pads the exponent to at least two digits.
 
 | f64 | Python `json.dumps` | `serde_json` |
 |---|---|---|
-| `1e-7` | `1e-07` | **`1e-7`** ← only difference |
-| `1e7` | `10000000.0` | `10000000.0` |
+| `1e-7` | `1e-07` | **`1e-7`** |
 | `1e-10` | `1e-10` | `1e-10` |
 | `1e23` | `1e+23` | `1e+23` |
 | `1e16` | `1e+16` | `1e+16` |
 | `0.1+0.2` | `0.30000000000000004` | `0.30000000000000004` |
 | `1700000000.5` | `1700000000.5` | `1700000000.5` |
 | `5e-324` | `5e-324` | `5e-324` |
+| `1e7` | `10000000.0` | `10000000.0` |
 
-Python pads the exponent to at least two digits, so `1e-7` prints as `1e-07`.
+**(b) Notation switch.** `%g` selects exponent notation when the decimal
+exponent is below −4; `serde_json` does not switch until much lower. So the
+whole band `1e-5 ≤ |x| < 1e-4` differs by **notation** — a different rendering
+of the number, not a respelling of the same digits:
+
+| f64 | Python `json.dumps` | `serde_json` |
+|---|---|---|
+| `1e-5` | `1e-05` | **`0.00001`** |
+| `2.5e-5` | `2.5e-05` | **`0.000025`** |
+| `1.2345e-5` | `1.2345e-05` | **`0.000012345`** |
+| `9.9e-5` | `9.9e-05` | **`0.000099`** |
+| `1e-4` | `0.0001` | `0.0001` |
+| `1e-6` | `1e-06` | `1e-6` |
+
+**How (b) was missed, recorded because it is the defect §5 exists to correct.**
+The original probe set was 14 hand-picked values and **contained no value in the
+`1e-5` band**, so the finding generalised "exactly one differs" from a sample
+that could not have shown otherwise. The claim was true of the 14 cases and
+false as a statement about the contract. Every row above is from a direct probe
+of the pinned version (`serde_json = "=1.0.151"`, `float_roundtrip`).
 
 **Correction (found in review of this section).** This table previously claimed
 `1e7` printed as `1e7` in Rust — that is false for the pinned version, where
-both sides write `10000000.0`. So the real divergence is narrower than stated:
-only the *negative* single-digit exponent is spelled differently. The same wrong
-claim had been copied into `rust_divergences` in `oracle.json`, where it was
-worse than a prose error — it told a test author to expect a spelling the port
-never produces. Both are fixed; this was the third instance of the defect §5
-below exists to correct, and the first to reach machine-readable data.
+both sides write `10000000.0`. The same wrong claim had been copied into
+`rust_divergences` in `oracle.json`, where it was worse than a prose error — it
+told a test author to expect a spelling the port never produces. Both are fixed;
+this was the third instance of the defect §5 below exists to correct, and the
+first to reach machine-readable data.
+
+**Correction 2 (found when (b) was added).** That first correction then drew the
+wrong conclusion from its own fix: it concluded "the real divergence is
+**narrower** than stated: only the negative single-digit exponent is spelled
+differently". It is not narrower — it is **wider**, in a direction the 14-case
+probe could not reveal. The corrected test comment in `oracle_tests.rs` went
+further and asserted "That is the whole of it", stating the narrower claim with
+*more* confidence than the version it replaced. Both the comment and any
+`rust_divergences` text derived from it need to say (a) **and** (b).
 
 **Impact.** Timestamps are the only floats in the format, and `time.time()`
 values (~1.7e9) round-trip identically — so in practice this bites only on
 hand-edited or synthetic values. It does, however, **break the strict
 byte-equality test** that D-15 relies on, so the port cannot simply call
-`serde_json::to_string` and compare.
+`serde_json::to_string` and compare. Class (b) widens that: the port cannot
+byte-round-trip a file holding a value in `[1e-5, 1e-4)`, and unlike (a) the
+difference is a change of notation rather than of padding.
 
 **Decision (folds into D-15):** byte-equality is a **goal for realistic data,
 not an invariant**, and the test is written to say so — the fixture
 `floats.out.json` is compared against Python's output, and where a value
-legitimately differs only in exponent spelling, the test asserts
+legitimately differs in exponent spelling *or* notation, the test asserts
 **numeric equality after reparse** rather than byte equality. Do not contort
 the writer to emulate `%g`. Recorded in DECISIONS D-16.
+
+**Test consequence.** The predicate currently in `oracle_tests.rs:868` —
+
+```rust
+assert!(ours_value.contains("e-") && !ours_value.contains("e-0"), …)
+```
+
+— encodes class (a) only: it demands the Rust side be in exponent form and not
+zero-padded. For `0.00001` that is **false**, so the guard rejects a divergence
+the writer legitimately produces. It must become "this line is a float field and
+the two sides are numerically equal after reparse", and the fixture should gain
+an `exp_notation_boundary` case so the class is covered rather than latent.
+Assigned to the Architecture owner.
 
 ### F-G. `1e400` is fatal to a naive `serde_json` port
 
@@ -492,3 +536,28 @@ silently edited.
 Neither correction changes a decision. They are recorded because the first
 finding in this document rests on an example that did not demonstrate it, and a
 contract that cites its own fixtures as evidence has to cite them accurately.
+
+- **F-F's "exactly one differs" was true of the sample and false of the
+  contract.** The 14 probe cases contained **no value in the `1e-5` band**, so
+  the claim could not have been falsified by them — and the corrected version
+  then concluded the divergence was *narrower* than first stated, when in fact
+  it was wider. Found in review and fixed above by adding class (b). This is the
+  **fourth** instance of the defect class this section exists to correct, and
+  the second where the fix introduced a fresh error of the same kind by
+  generalising past its evidence. The pattern worth naming: *a correction that
+  states a conclusion the corrected evidence cannot support is the same defect
+  wearing the fix's clothes.*
+
+- **D-19 cited a section name that is a fixture filename.** Corrected in
+  DECISIONS.md; noted here only because this document is the navigation aid for
+  the oracle, and a wrong pointer between the two documents is exactly what a
+  reader would use to check the other.
+
+The float contract is also, as of this review, the only place in this document
+where the evidence was generated by a probe of **my own construction** rather
+than by running `gen_oracle.py` against the real app. The probe answers "what
+does `serde_json` do", which is the right question, but it is not the oracle and
+does not have the oracle's protection against a hand-picked sample — which is
+precisely how the `1e-5` band was missed. The durable fix is the
+`exp_notation_boundary` case in `gen_oracle.py` so the class is covered by
+generated rather than hand-picked evidence.

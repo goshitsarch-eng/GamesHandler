@@ -373,14 +373,24 @@ small, and paid once.
 **Verification.** T-02 asserts the exact fixture bytes from
 `docs/migration/oracle/fixtures/*.out.json`.
 
-**Bounded (added after F-F).** Byte-equality is a goal for realistic data, not
-an invariant. Python renders floats with C `%g` exponent rules and `serde_json`
-uses Ryu, so they disagree on a minority of values — Python writes `1e-07` and
-`10000000.0` where Rust writes `1e-7` and `1e7`. Real timestamps (~1.7e9)
-round-trip identically, and the escaping part of this decision (the actual
-motivation) is unaffected. The round-trip test therefore asserts byte equality
-**and**, for values differing only in exponent spelling, numeric equality after
-reparse. We do not contort the writer to emulate `printf`. See FINDINGS §F-F.
+**Bounded (added after F-F; corrected after review).** Byte-equality is a goal
+for realistic data, not an invariant. Python renders floats with C `%g` exponent
+rules and the pinned `serde_json` 1.0.151 renders them via **`zmij`** (an earlier
+version of this paragraph said Ryu; there is no `ryu` in `Cargo.lock` at all,
+and the same paragraph also repeated a retracted claim that Rust writes `1e7`
+where Python writes `10000000.0` — both sides write `10000000.0`). They disagree
+on two classes:
+
+- **padding** — Python writes `1e-07` where Rust writes `1e-7`;
+- **notation** — across `1e-5 ≤ |x| < 1e-4`, Python uses exponent form and Rust
+  positional: Python `1e-05`, Rust `0.00001`.
+
+Real timestamps (~1.7e9) round-trip identically, and the escaping part of this
+decision (the actual motivation) is unaffected. The round-trip test therefore
+asserts byte equality **and**, for float fields whose spellings legitimately
+differ, numeric equality after reparse. We do not contort the writer to emulate
+`printf`. See FINDINGS §F-F, including the note on why the divergence was
+mistakenly reported as narrower than it is.
 
 ---
 
@@ -561,9 +571,12 @@ This was found by adversarial review, not by the port author, and after the
 fixtures had been written. It is recorded as a decision rather than a footnote
 because it is the single highest-value change to come out of the review.
 
-**Implementation note.** Pinned by oracle section `floats_roundtrip`: 300 seeded
-realistic timestamps with their IEEE-754 bit patterns, asserting the re-saved
-bytes are identical. **The pin was mutation-verified:** removing the feature
+**Implementation note.** Pinned by the oracle section **`float_roundtrip`**
+(`fixtures/oracle.json`) and the fixture pair **`floats_roundtrip.in.json` /
+`floats_roundtrip.out.json`** — an earlier version of this note gave the section
+as `floats_roundtrip`, which is the *fixture* stem, not the section key: 300
+seeded realistic timestamps with their IEEE-754 bit patterns, asserting the
+re-saved bytes are identical. **The pin was mutation-verified:** removing the feature
 fails three tests — `realistic_timestamps_round_trip_bit_for_bit` (431/2000),
 `realistic_timestamps_survive_a_load_and_save_with_their_bits_intact` (58/300),
 and `a_value_the_default_reader_gets_wrong_is_read_correctly`, which names a
