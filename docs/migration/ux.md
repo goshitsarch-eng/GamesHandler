@@ -439,6 +439,7 @@ Reported rather than fixed, because the files are not this task's to edit:
 | README credits "Platform" | credits / T-06 | The README's credit sections are rendered from `credits.py:377` and pinned verbatim by `tests/test_credits.py:101-110`, so the Qt/Kirigami/PySide6 platform entries cannot be updated in the README alone; they must change in `credits.py` (and the README regenerated) when `core::credits` lands. |
 | Dark-by-default (R4) | lead, D-13 | Untouched here: the README still advertises dark by default. Whatever D-13 decides, the README sentence changes with it. |
 | GUI panics instead of diagnosing, with no display | app | Surfaced once `flatpak-build` started passing and the smoke test could run against a real binary. `no-display-diagnostic` (D-12a/N-01) fails: with neither `WAYLAND_DISPLAY` nor `DISPLAY` set the binary panics — `thread 'main' panicked at …/iced_winit/src/lib.rs:92:39: Create event loop: NotSupported(… "neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set.")` — where the contract is a diagnostic message and a clean exit. `cli-version` (`GameHandler 0.8.0`) and `cli-list` pass, and `gui-stays-up` passes over an ambient Wayland session, so this is specific to the headless GUI path. Not a metadata item; recorded here because T-18's work is what made the build green enough to see it. |
+| `LaunchedGame.failure()` races the stderr drain — and `python-tests` is flaky because of it | runners / T-03 | Found because `python-tests` failed once in a full `verify.sh` run and then passed on re-runs. It is not noise and not specific to that stage: `failure()` (`gamehandler/runners.py:1360-1374`) calls `process.wait(timeout)` and *then* reads `self.errors.text()`, but the stderr is collected by a daemon drain thread started in `_ErrorTail.__init__` (`:1327-1331`). `wait()` returns on process exit, which can beat the drain thread's final `read()`, so the text is empty and the method falls back to `"the runner exited with status {code}"` — the exact value the test rejected (`tests/test_runners.py:761`). Reproduced against the real `_ErrorTail` in isolation from the test framework: **12 of 300** fast-exiting runs lost the race. Load-sensitive, which is why it surfaced while a `flatpak-builder` was compiling on the same machine. It matters beyond the flake: this is the parity reference, and T-03 is porting `failure()` now — a Rust port that mirrors the same *order* (await the child, then read the collected output) inherits the race and will flake the same way. The fix on the Python side is to join the drain before reading; the finding is for the port, not for me to apply. |
 
 Two rows that stood here — *GPL text missing from the Flatpak* and *Authenticode trust
 root* — were closed by T-23 (§12.9) rather than handed on. Both were things the manifest
@@ -492,13 +493,32 @@ destination only, so an install line pointing at the *wrong source file* passed.
 requires the source path too — and is honest that it is a string match on a command, not
 an execution of it.
 
-**Two things this stage cannot be shown to do here**, and neither is a pass:
-`flatpak-build` and `smoke-test` are skipped/failing on the pre-existing `bzip2`
-vendoring gap, so half 2 has never run against a tree produced by a *successful* real
-build — only against trees built by the manifest's own install commands (cases 6-8) and
-hand-made ones (2-3). And the tree's timestamps are useless for staleness: flatpak-builder
-normalises them, so `build-flatpak/files/` and everything below it are dated 1970. The
-completion marker is `files/bin/gamehandler` instead.
+**Half 2 against a genuine build.** Once the packaging owner regenerated
+`cargo-sources.json` (the `bzip2` gap that had blocked `flatpak-build`), a real
+`flatpak-builder` run completed, and the stage was run against the tree it produced —
+not a hand-made one. It passed, and the tree is the evidence the install lines do what
+they claim:
+
+```
+ok   installed, byte-identical to LICENSE:
+       share/licenses/com.goshapps.GameHandler/LICENSE (35149 bytes)
+ok   installed, byte-identical to
+       data/microsoft-identity-verification-root-ca-2020.pem:
+       share/gamehandler/microsoft-identity-verification-root-ca-2020.pem (2069 bytes)
+```
+
+with `build-flatpak/files/bin/gamehandler` (23923152 bytes) present as the completion
+marker. So cases 1-8 above are no longer the only evidence: half 2 has now been exercised
+end to end against a real build, and the licence file it checks for is one that the
+pre-T-23 manifest genuinely did not produce.
+
+The tree's timestamps are useless for staleness, which is why the marker is a file and not
+a date: flatpak-builder normalises them, so `build-flatpak/files/` and everything below it
+— the 1970 timestamp on the binary included — is dated 1970.
+
+**What is still not demonstrated.** `smoke-test` now runs (against that same real binary)
+and fails on the app-side `no-display-diagnostic` item in §12.8; the stage is unrelated to
+these installs, but it means a fully green `verify.sh` has not been observed.
 
 ---
 
