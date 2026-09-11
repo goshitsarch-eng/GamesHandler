@@ -1032,7 +1032,11 @@ impl Shell {
     ///
     /// This is the page dispatch: one arm per [`Page`], and **every arm now
     /// draws the real page** — T-38 wired the last one, `Page::Installers`, and
-    /// [`PENDING_PAGES`] went with it. Two things about the shape are
+    /// the `PENDING_PAGES` list went with it. (Code spans rather than links for
+    /// that list and for `pending_page`: both are `#[cfg(test)]`, so rustdoc
+    /// does not build them and a link to either is a broken link — which is how
+    /// this comment was written the first time, and the doc gate said so.)
+    /// Two things about the shape are
     /// load-bearing and neither is cosmetic.
     ///
     /// # It is a method on `Shell`, not a free function and not a method on `App`
@@ -1255,8 +1259,9 @@ impl Shell {
     ///
     /// # The three arms that are empty on purpose
     ///
-    /// `Quit` and [`Message::SetWindowHidden`] are answered by [`App::update`],
-    /// which holds the window — and their arms here must stay empty, because an
+    /// `Quit` and [`Message::SetWindowHidden`] are answered by
+    /// [`Application::update`](cosmic::Application::update), which holds the
+    /// window — and their arms here must stay empty, because an
     /// arm that moved the window would need the `Core` this type deliberately
     /// has none of. They are *excluded by name* from the guard below, exactly as
     /// `Quit` already was.
@@ -1971,8 +1976,8 @@ impl State {
 /// `bridge.py`'s `requestHide`/`requestShow` signals (`:159-160`), answered by
 /// the view with `visible = false` and `visible = true` + `raise()` +
 /// `requestActivate()` (`Main.qml:170-177`). The port's three calls map
-/// one-for-one — see [`App::update`], which is where they are issued, because
-/// only `App` holds the window id.
+/// one-for-one — see [`Application::update`](cosmic::Application::update),
+/// which is where they are issued, because only `App` holds the window id.
 fn hide_window(hidden: bool) -> cosmic::app::Task<Message> {
     cosmic::app::Task::done(cosmic::Action::App(Message::SetWindowHidden(hidden)))
 }
