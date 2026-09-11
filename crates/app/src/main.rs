@@ -3519,9 +3519,60 @@ mod tests {
     /// **The length of the grace period.** [`launch_grace`] is a one-line
     /// wrapper over `LAUNCH_GRACE_SECONDS`, and both fixtures here exit within
     /// microseconds of the spawn, so a shortened timeout would still observe
-    /// them. Its value is pinned by `core`'s own tests, against
-    /// `runners.py:1360`; what this file pins is that both callers read it
-    /// through the same function.
+    /// them. Its value is pinned by
+    /// [`the_grace_period_is_the_references`] rather than by anything below;
+    /// what *this* pair pins is that both callers read it through the same
+    /// function.
+    ///
+    /// This paragraph said the value "is pinned by `core`'s own tests" until
+    /// `P-46`'s walk measured that claim false — `grep -rn grace
+    /// crates/core/src/` finds the constant's definition and its two uses in
+    /// `launch.rs` and no test asserting its value. A doc comment resting on a
+    /// test that does not exist is the defect class this project keeps writing
+    /// about, so it is corrected here and the test it named now exists, one
+    /// function below.
+    /// **The grace period is the reference's own number.**
+    ///
+    /// `LAUNCH_GRACE_SECONDS = 6.0` (`runners.py:1295`) is the default
+    /// `LaunchedGame.failure` is called with (`:1360`), and the port carries it
+    /// as a `core` constant that this file reads through [`launch_grace`]. Two
+    /// things could go wrong and neither is visible from a launch test — both
+    /// fixtures in this module exit in microseconds, so a shortened grace would
+    /// still observe them: the constant could drift from the reference's value,
+    /// and [`launch_grace`] could stop being a faithful conversion of it.
+    ///
+    /// The reference is read off disk rather than transcribed, so this fails on
+    /// a Python-side change to the number as well as a Rust-side one. That is
+    /// the point: the value is the *reference's*, and the port's job is to
+    /// follow it.
+    #[test]
+    fn the_grace_period_is_the_references() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../gamehandler/runners.py");
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{} is unreadable: {error}", path.display()));
+        let line = source
+            .lines()
+            .find(|line| line.starts_with("LAUNCH_GRACE_SECONDS"))
+            .unwrap_or_else(|| panic!("{} no longer declares LAUNCH_GRACE_SECONDS", path.display()));
+        let value = line
+            .split('=')
+            .nth(1)
+            .and_then(|value| value.trim().trim_end_matches(';').parse::<f64>().ok())
+            .unwrap_or_else(|| panic!("`{line}` is not a float assignment"));
+        assert_eq!(
+            LAUNCH_GRACE_SECONDS, value,
+            "the port's grace period has drifted from `{}`",
+            path.display()
+        );
+        assert_eq!(
+            launch_grace(),
+            Duration::from_secs_f64(value),
+            "`launch_grace` must be that constant and nothing else, or the two \
+             callers are not watching for the length the reference does"
+        );
+    }
+
     #[test]
     fn a_launch_that_stops_right_away_exits_non_zero_and_still_records_it() {
         let (root, mut library, runners) = native_game_library("launch-fail", "/bin/false");
