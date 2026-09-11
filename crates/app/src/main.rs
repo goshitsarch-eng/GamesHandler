@@ -33,10 +33,10 @@ use gamehandler_core::netpaths::NetpathsShares;
 use gamehandler_core::paths::{self, SystemEnv};
 use gamehandler_core::plugins::{PluginEnv, SystemPluginEnv};
 use gamehandler_core::runners::families::ReleaseInfo;
+use gamehandler_core::runners::launch::{LaunchedGame, tool_command};
 use gamehandler_core::runners::{
-    LAUNCH_GRACE_SECONDS, RunnerManager, SystemLaunchEnv, prefix_drive_c,
+    LAUNCH_GRACE_SECONDS, RunnerError, RunnerManager, SystemLaunchEnv, prefix_drive_c,
 };
-use gamehandler_core::runners::launch::tool_command;
 use gamehandler_core::runners::{desktop, launch};
 use gamehandler_core::settings::{COLOR_SCHEMES, Settings, VIEW_MODES};
 use gamehandler_core::{APP_ID, APP_NAME, VERSION};
@@ -135,8 +135,14 @@ fn main() -> ExitCode {
 /// identity is only the second question. For a stub the two pull in opposite
 /// directions: the closer the fabricated text is to the truth, the more
 /// convincing the lie. Nothing here is fabricated now — every line is computed
-/// from the library that was actually loaded — and the rule for anything that
-/// has to stay stubbed is in [`launch_failure`].
+/// from the library that was actually loaded.
+///
+/// A function named `launch_failure` used to be cited here as the rule for
+/// anything that had to stay stubbed. It is deleted rather than re-pointed:
+/// **there is no stub left in this file.** `--launch` stopped being one in
+/// T-07, and the two halves of #31 are now both real, so that sentence has no
+/// subject. The criterion above still governs, and the way to satisfy it is to
+/// compute the answer rather than to phrase the excuse well.
 fn list_lines(library: &Library) -> Vec<String> {
     let games = library.all("name");
     if games.is_empty() {
@@ -170,76 +176,164 @@ fn list_games() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Why `--launch` cannot start this game, and the code to exit with.
+/// `main.py:31-34`: the library lookup and the sentence a miss prints.
 ///
-/// Returns `(stderr text, exit code)`. Every path is currently a failure,
-/// because this caller is not ported yet — see [`launch_game`] for what "yet"
-/// means precisely now that `runners::launch` *is* reachable.
+/// Pure over `(&Library, &str)`, which is the property that makes the miss
+/// sentence assertable without opening a library the test process does not own
+/// — and it is the same property the deleted `launch_failure` had, kept because
+/// the tests that pin Python's unknown-id message still need a pure function to
+/// call. [`launch_game`] is the only caller that reads the real library.
 ///
-/// # Why an unported launch is an error and not a silent success
+/// The message is Python's verbatim, `APP_NAME` included, because a shortcut
+/// wrapper or a script may match on it.
+fn library_lookup<'a>(library: &'a Library, game_id: &str) -> Result<&'a Game, String> {
+    library
+        .get(game_id)
+        .ok_or_else(|| format!("{APP_NAME}: no game with id {game_id}"))
+}
+
+/// What `--launch` prints and what it exits with, given how the attempt went.
 ///
-/// A stub for this command has three options and only one of them is honest:
-/// print a plausible success (a lie — `.desktop` shortcuts invoke this, so the
-/// user gets a menu entry that opens nothing and reports nothing), print
-/// Python's unknown-id message for a game that *does* exist (also a lie, and
-/// the one an earlier version of this file told), or say what is actually true.
-/// The load and the lookup are real, so the only thing left to admit is that
-/// the launch is not: that is what the second arm does, with a non-zero code so
-/// a script cannot mistake it for a launched game.
+/// This is the whole of the reference's `_launch_from_cli` below the launch
+/// itself (`main.py:35-46`) — three `f`-strings and two `return`s, in the same
+/// order and with the same wording. Keeping it pure is what lets the tests
+/// below pin every sentence a real `--launch` can print, which is not true of a
+/// function that spawns a game: the honest-error criterion this file is built
+/// around ("a shortcut that opens nothing must not report success") is
+/// otherwise checkable only by running one.
 ///
-/// The lookup is not incidental to that. It is the part of
-/// `main.py:_launch_from_cli` that needs no launch machinery, and doing it for
-/// real is what makes the unknown-id message mean what it says — the same
-/// message for an id that is in the library was the inverted criterion again.
-fn launch_failure(library: &Library, game_id: &str) -> (String, u8) {
-    let Some(game) = library.get(game_id) else {
-        return (format!("{APP_NAME}: no game with id {game_id}"), 1);
-    };
-    (
-        format!(
-            "{APP_NAME}: could not launch {}: the --launch command is not \
-             implemented in this build",
-            game.name
+/// `attempt` is `launch::launch`'s result fused with the grace watch:
+///
+/// - `Err(text)` — `launch()` raised; `text` is `str(exc)`. Nothing was
+///   started, so there is no grace to watch.
+/// - `Ok(None)` — `started.failure()` was `None`: the title was still running
+///   when the grace period expired. This is the **only** arm that exits 0.
+/// - `Ok(Some(reason))` — it started and then stopped, and `reason` says why.
+///
+/// # The wording is the CLI's, not the GUI's
+///
+/// `Could not launch “{name}”: {exc}` (`bridge.py:468`, on
+/// [`Message::LaunchStarted`]) and this function's `could not launch {name}:
+/// {exc}` are two different strings in the reference itself: the GUI's is
+/// capitalised with typographic quotes and the CLI's is lowercase with a plain
+/// colon (`main.py:38`). They are not unified here, because the CLI's copy is
+/// what a `.desktop` shortcut's stderr shows and the tests pin it as such. What
+/// the two *do* share is the `{exc}` text, which is why both are built from the
+/// error's `Display` rather than from a second rendering of the failure.
+fn launch_report(name: &str, attempt: Result<Option<String>, String>) -> (Option<String>, u8) {
+    match attempt {
+        Err(error) => (
+            Some(format!("{APP_NAME}: could not launch {name}: {error}")),
+            1,
         ),
-        1,
-    )
+        Ok(None) => (None, 0),
+        Ok(Some(reason)) => (
+            Some(format!("{APP_NAME}: {name} stopped right away: {reason}")),
+            1,
+        ),
+    }
 }
 
 /// `--launch <GAME_ID>`: start a game and report whether it stayed up.
 ///
-/// Ported from `main.py:_launch_from_cli` as far as the library allows: the
-/// lookup and its message are Python's, and the launch itself is
-/// [`launch_failure`]'s second arm.
+/// The port of `main.py:_launch_from_cli` (P-70), and the verb every `.desktop`
+/// shortcut this app writes invokes — [`shortcut_command`] builds
+/// `gamehandler --launch <id>`. It runs **before** anything GUI-shaped, per
+/// D-12, because those shortcuts are already on users' disks and must work on a
+/// headless or remote session.
 ///
-/// # What the remaining gap is, measured against the tree rather than the row
+/// # There is no display check here, and that is the reference's decision
 ///
-/// This function's doc used to say the launch "is not ported yet —
-/// `runners::launch`". **That sentence is now false and is replaced rather than
-/// left standing:** as of T-29 `launch::launch` has a real caller —
-/// [`launch_and_watch`], on the worker [`Message::LaunchGame`] spawns — and
-/// `CreateDesktopShortcut` writes `gamehandler --launch <id>` into a `.desktop`
-/// file. So the unported part is no longer the launch; it is *this* caller, and
-/// the work left is small and specific: the reference's
-/// `main.py:_launch_from_cli` is the lookup sentence (already here), the
-/// `Could not launch “{name}”: {exc}` sentence (the same one `LaunchStarted`
-/// carries), `mark_played`, and `started.failure(LAUNCH_GRACE_SECONDS)` with
-/// the `“{name}” stopped right away: {reason}` sentence.
+/// [`display_refusal`] guards [`run_gui`] and nothing else. Three reasons, in
+/// increasing order of weight:
 ///
-/// It is left undone deliberately, not overlooked. **It is not T-29's:** the
-/// `--launch` verb is **T-07's**, whose row owns **P-70** and records it as
-/// `NOT DONE: #31 — both CLI verbs are still stubs`. Whoever takes #31 should
-/// take both halves of it, and one of the two (`--list`) has since landed —
-/// so this stub and [`list_lines`]' comment above are the two ends of the same
-/// finding, and fixing this half under T-29's name would have closed T-07's gap
-/// silently inside another task's commit, which is what D-52 exists to stop.
+/// 1. `_launch_from_cli` has no such check.
+/// 2. The *launch* needs no display. Wine is what might, and its own failure
+///    comes back through `started.failure()` as `stopped right away: …` — a
+///    sentence from the runner that names the real cause, where a pre-emptive
+///    refusal here would name a variable and guess.
+/// 3. A guard that was stricter than the reference would refuse a launch that
+///    would have worked, from exactly the environment (a `.desktop` file, a
+///    thin session) the verb exists to serve.
 ///
-/// One more property worth recording, because it is what makes the honesty
-/// claim checkable: `launch_failure` is *pure* over `(&Library, &str)`. That is
-/// why the tests below can pin the exact sentences a real `--launch` prints,
-/// which is not true of a function that spawns.
+/// # The one divergence, and it is the GUI's precedent rather than a new one
+///
+/// The reference's `library.mark_played(game.id)` (`:40`) raises on a failed
+/// save, which in `_launch_from_cli` is an uncaught traceback: the exit code is
+/// 1 and the grace watch never runs, so a title that *did* start is reported as
+/// a failed shortcut and its real failure reason is never collected. Here the
+/// save error is printed and the watch still runs, which is
+/// [`Message::LaunchStarted`]'s arm making the same call for the same reason
+/// ("every other store write in this shell reports instead"). The exit code
+/// stays the launch's, because the game did launch.
+///
+/// `config.ensure_dirs()`, the reference's first line (`:29`), is not called —
+/// the same omission [`list_games`] records, for a different reason. It is
+/// unobservable here rather than merely unobjectionable: the config directory
+/// is created by the `mark_played` save that needs it
+/// (`json::write_python_file` creates parents) and the runners directory is
+/// read by `RunnerManager`, whose missing-directory arm yields the same
+/// "runner is not available" error the reference gets from listing an empty
+/// one. Both paths end at the same sentence, which is the part that is
+/// contract.
+///
+/// The body is [`launch_game_at`], which is this function with the two global
+/// reads turned into parameters — see its doc for why that seam exists.
 fn launch_game(game_id: &str) -> ExitCode {
-    let (message, code) = launch_failure(&Library::new(None), game_id);
-    eprintln!("{message}");
+    launch_game_at(
+        &mut Library::new(None),
+        &RunnerManager::new(&SystemLaunchEnv),
+        game_id,
+    )
+}
+
+/// [`launch_game`] with its two global reads passed in.
+///
+/// The same seam, and the same reason, as [`display_refusal`]'s `out` parameter
+/// and [`display_present`]'s `env`: the reference reads `Library()` and
+/// `RunnerManager()` as globals, and a function that reads them itself can only
+/// be tested by running it against the developer's real library. That is not a
+/// hypothetical — **the mutation that found this seam deleted the whole
+/// `mark_played` call and left the suite green** (298 passed), because nothing
+/// could reach the line. With the seam,
+/// `a_real_launch_records_the_game_as_played` drives the real `launch::launch`,
+/// the real `started.failure()`, the real `mark_played` and the real exit code
+/// against a native title in a temp library, and the deletion goes red.
+///
+/// The name ends `_at` rather than `_with` to match [`Library::new_at`] and
+/// [`RunnerManager::at`], which are what a caller of this function builds.
+fn launch_game_at(library: &mut Library, runners: &RunnerManager, game_id: &str) -> ExitCode {
+    let game = match library_lookup(library, game_id) {
+        Ok(game) => game.clone(),
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::from(1);
+        }
+    };
+    // `launch(game, RunnerManager())` (`main.py:36`), inside the `try`: a
+    // missing runner, a runner that cannot build a command and a missing game
+    // executable all arrive here as `Err`.
+    let attempt = match launch_process(&game, runners) {
+        Err(error) => Err(error.to_string()),
+        Ok(mut started) => {
+            // `library.mark_played(game.id)` (`:40`) — after the launch and
+            // *before* `started.failure()` (`:42`), which is the reference's
+            // own order and not incidental: the grace period is up to
+            // `LAUNCH_GRACE_SECONDS`, and the "played" record must be durable
+            // by the time the process exits either way.
+            if let Err(error) = library.mark_played(&game.id) {
+                eprintln!(
+                    "{APP_NAME}: could not record “{}” as played: {error}",
+                    game.name
+                );
+            }
+            Ok(started.failure(launch_grace()))
+        }
+    };
+    let (message, code) = launch_report(&game.name, attempt);
+    if let Some(message) = message {
+        eprintln!("{message}");
+    }
     ExitCode::from(code)
 }
 
@@ -1982,6 +2076,31 @@ fn hide_window(hidden: bool) -> cosmic::app::Task<Message> {
     cosmic::app::Task::done(cosmic::Action::App(Message::SetWindowHidden(hidden)))
 }
 
+/// `launch(game, RunnerManager())` (`main.py:36`) — the reference's own call.
+///
+/// Shared by both callers rather than restated in each. The four arguments are
+/// the port's substitutions for the modules the reference reads as globals
+/// (`SystemLaunchEnv` stands in for `os.environ`, a real `NetpathsShares` for
+/// the share map `netpaths` builds at import), and a second spelling of them is
+/// a second chance to hand `launch` a different environment — the class of
+/// divergence that produces a command that is right in the GUI and wrong from a
+/// shortcut.
+fn launch_process(game: &Game, runners: &RunnerManager) -> Result<LaunchedGame, RunnerError> {
+    launch::launch(game, runners, &SystemLaunchEnv, &NetpathsShares::new(&SystemEnv))
+}
+
+/// The grace period `started.failure()` is given, as a `Duration`.
+///
+/// `LaunchedGame.failure`'s own default (`runners.py:1360`), and the single
+/// timeout §3.3 chose over a poll — the same reason [`Message::LaunchWatchTick`]
+/// has no producer. Two callers read the constant through this function so that
+/// the CLI and the GUI cannot end up watching for different lengths of time,
+/// which is the one thing about the grace a user could notice as an
+/// inconsistency between a shortcut and the Play button.
+fn launch_grace() -> Duration {
+    Duration::from_secs_f64(LAUNCH_GRACE_SECONDS)
+}
+
 /// `launch()` and then the grace watch, on one worker, reporting both.
 ///
 /// This is `playGame`'s body from `launch(game, self.runner_manager)` down
@@ -1994,13 +2113,21 @@ fn hide_window(hidden: bool) -> cosmic::app::Task<Message> {
 /// suite that would have caught a *behavioural* difference is the core module's
 /// own, which drives real children.
 ///
+/// # Why this does not call [`launch_report`]
+///
+/// The CLI's [`launch_game`] and this function drive the same two steps and
+/// deliberately do not share the *shape*: the GUI reports between them. It must
+/// `mark_played` and say "Launching…" — and may hide the window — the moment
+/// the process exists, which is why [`Message::LaunchStarted`] and
+/// [`Message::LaunchWatchFinished`] are two messages. The CLI has nobody to
+/// report to until it exits, so it fuses them. What the two must not restate is
+/// [`launch_process`] and [`launch_grace`], and neither does.
+///
 /// The two sends are ordered and both are best-effort: a send fails only when
 /// the receiver is gone, i.e. the task was dropped, and there is then nobody to
 /// report to.
 fn launch_and_watch(game: &Game, runners: &RunnerManager, sender: &UnboundedSender<Message>) {
-    let env = SystemLaunchEnv;
-    let resolver = NetpathsShares::new(&SystemEnv);
-    let mut started = match launch::launch(game, runners, &env, &resolver) {
+    let mut started = match launch_process(game, runners) {
         Err(error) => {
             // `f"Could not launch “{game.name}”: {exc}"` (`bridge.py:468`).
             let _ = sender.unbounded_send(Message::LaunchStarted {
@@ -2015,10 +2142,9 @@ fn launch_and_watch(game: &Game, runners: &RunnerManager, sender: &UnboundedSend
         game_id: game.id.clone(),
         result: Ok(()),
     });
-    // `started.failure()` with `LaunchedGame.failure`'s own default, which is
-    // `LAUNCH_GRACE_SECONDS` (`runners.py:1360`) — the single timeout §3.3
-    // chose over a poll, and the reason `LaunchWatchTick` has no producer.
-    let reason = started.failure(Duration::from_secs_f64(LAUNCH_GRACE_SECONDS));
+    // `started.failure()` with `LaunchedGame.failure`'s own default — see
+    // [`launch_grace`].
+    let reason = started.failure(launch_grace());
     let _ = sender.unbounded_send(Message::LaunchWatchFinished {
         game_id: game.id.clone(),
         reason,
@@ -2980,48 +3106,330 @@ mod tests {
     #[test]
     fn launching_an_unknown_id_is_refused_with_pythons_message() {
         let (_root, library) = library_with("unknown", &[("a", "Alpha")]);
-        let (message, code) = launch_failure(&library, "nope");
-        assert_eq!(message, "GameHandler: no game with id nope");
-        assert_eq!(code, 1);
+        assert_eq!(
+            library_lookup(&library, "nope"),
+            Err("GameHandler: no game with id nope".to_string())
+        );
     }
 
     /// A game that **is** in the library is not reported as missing.
     ///
     /// This is the inverted-criterion bug again, one level down: the old stub
     /// printed the unknown-id message for every id, including real ones, which
-    /// is a fabricated fact about the user's library. The message must say the
-    /// launch is unavailable, not that the game does not exist.
+    /// is a fabricated fact about the user's library. A real id must resolve,
+    /// and the message a real launch can print must never be the miss sentence.
     #[test]
     fn launching_a_known_id_does_not_claim_the_game_is_missing() {
         let (_root, library) = library_with("known", &[("a", "Alpha")]);
-        let (message, code) = launch_failure(&library, "a");
-        assert_eq!(code, 1, "an unported launch must not exit 0");
-        assert!(
-            !message.contains("no game with id"),
-            "a real game was reported as missing: {message}"
+        let game = library_lookup(&library, "a").expect("a real id must resolve");
+        assert_eq!(game.name, "Alpha");
+        // And no arm of the report can produce the miss sentence for it.
+        for attempt in [
+            Err("the runner produced no command".to_string()),
+            Ok(Some("exit status 2".to_string())),
+            Ok(None),
+        ] {
+            let (message, _) = launch_report(&game.name, attempt);
+            let message = message.unwrap_or_default();
+            assert!(
+                !message.contains("no game with id"),
+                "a real game was reported as missing: {message}"
+            );
+        }
+    }
+
+    /// **Only a title that was still running when the grace expired exits 0.**
+    ///
+    /// This is the property that replaced `no_unported_launch_path_reports_success`
+    /// when the stub went away, and it is the stronger form of the same
+    /// criterion: the old test could only require that *every* path failed,
+    /// because every path did. The failure it guards now is the sharper one a
+    /// real launch makes possible — an arm that returns `ExitCode::SUCCESS` for
+    /// a launch that did not happen, which is `#31`'s original defect (a stub
+    /// that printed a plausible success) one layer down, in `.desktop`
+    /// shortcuts whose whole job is to open something.
+    ///
+    /// `Err` is `launch()` raising and `Ok(Some(_))` is `started.failure()`
+    /// finding a reason; neither is a running game, and both must be non-zero
+    /// **and** say something on stderr, because a shortcut that exits 1 in
+    /// silence is the other half of the same complaint.
+    #[test]
+    fn only_a_title_that_stayed_up_reports_success() {
+        let failures = [
+            Err("no Proton runner is configured".to_string()),
+            Ok(Some("exit status 1".to_string())),
+        ];
+        for attempt in failures {
+            let (message, code) = launch_report("Alpha", attempt);
+            assert_ne!(code, 0, "a launch that did not stay up reported success");
+            assert!(
+                message.is_some_and(|text| !text.is_empty()),
+                "a non-zero exit said nothing on stderr"
+            );
+        }
+        // The control arm: the one case that *is* a running game. Without it
+        // the assertions above would pass on a function that failed everything,
+        // which is the stub this task deleted.
+        assert_eq!(launch_report("Alpha", Ok(None)), (None, 0));
+    }
+
+    /// The three sentences are the reference's, verbatim.
+    ///
+    /// Pinned as whole strings rather than as substrings, and that is the point
+    /// of [`launch_report`] being pure: a shortcut's stderr is what a user
+    /// pastes into a bug report, and `{name}` appearing in the right place is
+    /// not checkable by `contains`.
+    ///
+    /// The `_` in the second case is deliberate and is not a typographic quote:
+    /// the CLI's sentence is lowercase with a plain colon (`main.py:38`) where
+    /// the GUI's is capitalised with `“…”` (`bridge.py:468`). A port that
+    /// unified them would change what this verb prints, so the difference is
+    /// asserted rather than smoothed over.
+    #[test]
+    fn the_three_cli_sentences_are_pythons() {
+        assert_eq!(
+            launch_report("Alpha", Err("no Proton runner is configured".to_string())),
+            (
+                Some("GameHandler: could not launch Alpha: no Proton runner is configured".to_string()),
+                1
+            )
         );
-        assert!(
-            message.contains("Alpha"),
-            "the message should name the game: {message}"
+        assert_eq!(
+            launch_report("Alpha", Ok(Some("exit status 1".to_string()))),
+            (
+                Some("GameHandler: Alpha stopped right away: exit status 1".to_string()),
+                1
+            )
         );
+        assert_eq!(launch_report("Alpha", Ok(None)), (None, 0));
+    }
+
+    /// **A shortcut's `Exec=` line parses back into `--launch <id>`, through
+    /// this binary's own argument parser.**
+    ///
+    /// #90b: nothing pinned this, and the gap was measured. Deleting
+    /// `--launch` from [`shortcut_command`] left the whole app suite green
+    /// (280 passed), because the core tests pin the `.desktop` **format** while
+    /// taking the `Exec` string as a literal parameter — the one string that
+    /// has to be right is the one those tests take on trust.
+    /// `CreateDesktopShortcut` is the only writer of that string, so nothing
+    /// downstream could catch it: the `.desktop` file is written,
+    /// `desktop-file-validate` passes, and the menu entry opens the *window*
+    /// instead of the game. That is P-71 unmet, in the one place a user is
+    /// guaranteed to look.
+    ///
+    /// # Why the assertion is a parse rather than a `contains`
+    ///
+    /// `command.contains("--launch")` passes on a command that named the verb
+    /// twice, named it with no id, or named the *name* where the id belongs —
+    /// and the third of those is a real bug class here, because
+    /// [`library_lookup`] takes an id, so a shortcut carrying a name would exit
+    /// 1 with "no game with id Steam". Feeding the arguments through [`Cli`] is
+    /// the same check a `.desktop` file performs, and it is the parser the
+    /// shortcut's command is *for*: a renamed verb in the `Cli` definition goes
+    /// red here rather than six months later on a user's desktop.
+    ///
+    /// `argv[0]` is dropped and replaced, and that is deliberate rather than
+    /// sloppy: [`launcher_command`] may return a `shlex.quote`d path containing
+    /// a space, which no whitespace split can recover — a defect the reference
+    /// has too, recorded on that function. The launcher is asserted separately,
+    /// as a prefix, so nothing is left unchecked; what is parsed here is the
+    /// argument list, which is what clap reads.
+    #[test]
+    fn a_shortcut_parses_back_into_the_launch_verb_and_the_games_id() {
+        let mut game = Game::new_named("Alpha");
+        game.id = "11111111111111111111111111111111".to_string();
+        let command = shortcut_command(&game);
+
         assert!(
-            message.contains("not implemented"),
-            "the message must admit the launch did not happen: {message}"
+            command.starts_with(&launcher_command()),
+            "the shortcut must name the launcher first: {command:?}"
+        );
+
+        let args: Vec<&str> = command.split_whitespace().skip(1).collect();
+        assert!(
+            !args.is_empty(),
+            "the shortcut passes no arguments: {command:?}"
+        );
+        let cli = Cli::try_parse_from(std::iter::once("gamehandler").chain(args.iter().copied()))
+            .unwrap_or_else(|error| {
+                panic!("{command:?} is not a command this binary accepts: {error}")
+            });
+
+        assert!(!cli.list, "a shortcut must not ask for the listing");
+        assert_eq!(
+            cli.launch.as_deref(),
+            Some(game.id.as_str()),
+            "the shortcut's arguments parsed as launch={:?}; a `.desktop` file \
+             with this Exec opens the window instead of the game",
+            cli.launch
         );
     }
 
-    /// Every path out of `--launch` is non-zero while the launch is unported.
+    /// The shortcut names the game by **id**, not by name — the discriminating
+    /// case, since two games can share a name.
     ///
-    /// Stated as a property over both branches rather than per-branch, because
-    /// the failure mode this guards is a later change adding a `return
-    /// ExitCode::SUCCESS` for a game it did not start.
+    /// Two identical names with different ids is the only pair that tells the
+    /// two implementations apart: a shortcut built from `game.name` produces
+    /// the *same* string for both, so equality of the two commands is the
+    /// observation. (The parse test above would also catch it, by a different
+    /// route; this one is here because its failure names the cause.)
     #[test]
-    fn no_unported_launch_path_reports_success() {
-        let (_root, library) = library_with("status", &[("a", "Alpha"), ("b", "Beta")]);
-        for game_id in ["a", "b", "missing"] {
-            let (_, code) = launch_failure(&library, game_id);
-            assert_ne!(code, 0, "{game_id} reported success without launching");
-        }
+    fn two_games_with_one_name_get_two_shortcuts() {
+        let mut first = Game::new_named("Alpha");
+        first.id = "11111111111111111111111111111111".to_string();
+        let mut second = Game::new_named("Alpha");
+        second.id = "22222222222222222222222222222222".to_string();
+
+        assert_ne!(
+            shortcut_command(&first),
+            shortcut_command(&second),
+            "both shortcuts are identical, so the command names something the \
+             two games share — the name, which no lookup accepts"
+        );
+    }
+
+    /// A `kind: linux` game whose executable is a real binary, in its own temp
+    /// library, with a runner manager pointed at an empty directory.
+    ///
+    /// A native title is what makes a launch drivable **in process**:
+    /// `build_linux_command` (`launch_opts.rs:781`) is `argv = [exe_path]` plus
+    /// the inherited environment, so there is no Wine, no runner lookup and no
+    /// prefix — the two things that would otherwise make this a test that needs
+    /// a machine set up a particular way. A Windows title would need a Proton
+    /// runner and a `pfx`, which is exactly what a unit test must not assume.
+    ///
+    /// `exe` is a parameter rather than a hard-coded `/bin/true` so the two arms
+    /// below (`it exits 0` / `it exits non-zero`) are the same fixture with one
+    /// value changed, which is what makes the pair a control for each other.
+    ///
+    /// The runner manager points at a directory that does not exist, and that is
+    /// deliberate: a native title must never consult it, so if a future change
+    /// routes `kind: linux` through the runner lookup, this fixture's launch
+    /// fails loudly instead of silently finding the developer's own Proton.
+    fn native_game_library(label: &str, exe: &str) -> (std::path::PathBuf, Library, RunnerManager) {
+        let (_root, mut library) = library_with(label, &[("native", "Alpha")]);
+        let game = library.get("native").expect("the fixture just added it");
+        let mut game = game.clone();
+        game.kind = "linux".to_string();
+        game.exe_path = exe.to_string();
+        library.update(game).unwrap();
+        let runners = RunnerManager::at(
+            std::env::temp_dir().join(format!("gh-no-runners-{}", std::process::id())),
+        );
+        // `library_with` returns the root that owns the temp directory, and it
+        // is moved out here as the caller's handle rather than dropped: dropping
+        // it would delete the directory `library` still points at.
+        let root = library.path().parent().unwrap().to_path_buf();
+        (root, library, runners)
+    }
+
+    /// **`--launch` on a title that stays up exits 0, and records the game as
+    /// played.**
+    ///
+    /// This is the end-to-end half of T-07, and it exists because of a mutation
+    /// that survived: **deleting the whole `mark_played` call left the suite
+    /// green**, 298 passed, because every test of this verb stopped at
+    /// [`launch_report`] and nothing reached the line between the launch and the
+    /// watch. That is the "a symbol nobody reaches can be perfect and dead"
+    /// shape, so the seam [`launch_game_at`] exists to make the line reachable
+    /// rather than to make the test easier to write.
+    ///
+    /// It really launches: `/bin/true` is exec'd, `started.failure(6s)` observes
+    /// it exit 0, the library is saved, and `ExitCode::SUCCESS` comes back. The
+    /// two assertions that matter are the return code — `#31`'s whole subject is
+    /// a `--launch` that reported the wrong one — and `last_played`, which is
+    /// read back **from the file**, not from the in-memory library, so the
+    /// `save()` inside `mark_played` is covered too and not just the field
+    /// write.
+    ///
+    /// `/bin/true` is coreutils and present on every Linux; if it were not, the
+    /// spawn would fail and this test would fail loudly with the runner's own
+    /// message rather than passing vacuously.
+    #[test]
+    fn a_real_launch_records_the_game_as_played() {
+        let (root, mut library, runners) = native_game_library("launch-ok", "/bin/true");
+        let before = library.get("native").unwrap().last_played;
+        assert_eq!(before, 0.0, "the fixture should start unplayed");
+
+        let code = launch_game_at(&mut library, &runners, "native");
+        assert_eq!(code, ExitCode::SUCCESS, "a title that stayed up exited non-zero");
+
+        // Read back through a **fresh** Library over the same file: an
+        // in-memory read would pass on a handler that set the field and never
+        // saved, which is the whole of `mark_played`.
+        let reread = Library::new_at(Some(root.join("games.json")), 0.0);
+        let played = reread.get("native").expect("the game should still be there");
+        assert_ne!(
+            played.last_played, before,
+            "the game was launched and never marked as played"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **A title that stops right away exits non-zero, and the record of the
+    /// attempt survives it.**
+    ///
+    /// The control for the test above with one value changed (`/bin/false`
+    /// instead of `/bin/true`), so the pair cannot both pass on a function that
+    /// ignores the child. It also pins the reference's *effect*: `mark_played`
+    /// (`main.py:40`) runs before `started.failure()` (`:42`), so a title that
+    /// dies still counts as having been played — the launch did happen.
+    ///
+    /// # What this pair does *not* catch, stated rather than implied
+    ///
+    /// **The order itself.** Both arms record the game, so moving the
+    /// `mark_played` call to *after* the watch leaves these two green. The
+    /// order matters only for a title that takes longer to die than
+    /// `LAUNCH_GRACE_SECONDS` costs to expire, and no deterministic test can
+    /// produce that without sleeping for six seconds. The order is therefore
+    /// recorded from the reference rather than asserted, and this paragraph is
+    /// the record — a reader who needs it proved should reach for
+    /// `started.child_mut()`, which the port exposes for exactly that kind of
+    /// caller.
+    ///
+    /// **The length of the grace period.** [`launch_grace`] is a one-line
+    /// wrapper over `LAUNCH_GRACE_SECONDS`, and both fixtures here exit within
+    /// microseconds of the spawn, so a shortened timeout would still observe
+    /// them. Its value is pinned by `core`'s own tests, against
+    /// `runners.py:1360`; what this file pins is that both callers read it
+    /// through the same function.
+    #[test]
+    fn a_launch_that_stops_right_away_exits_non_zero_and_still_records_it() {
+        let (root, mut library, runners) = native_game_library("launch-fail", "/bin/false");
+
+        let code = launch_game_at(&mut library, &runners, "native");
+        assert_ne!(
+            code,
+            ExitCode::SUCCESS,
+            "a title that exited 1 was reported as a successful launch"
+        );
+        let reread = Library::new_at(Some(root.join("games.json")), 0.0);
+        assert_ne!(
+            reread.get("native").unwrap().last_played,
+            0.0,
+            "`mark_played` runs before the grace watch in the reference; a title \
+             that died was still launched"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An id the library does not hold exits 1 **before** any launch is
+    /// attempted, driven through the same entry point the binary uses.
+    ///
+    /// The pure [`library_lookup`] test above pins the sentence; this pins that
+    /// `launch_game_at` calls it first and does not fall through to a launch.
+    #[test]
+    fn an_unknown_id_exits_before_launching() {
+        let (root, mut library, runners) = native_game_library("launch-missing", "/bin/true");
+        let code = launch_game_at(&mut library, &runners, "not-in-this-library");
+        assert_ne!(code, ExitCode::SUCCESS);
+        assert_eq!(
+            library.get("native").unwrap().last_played,
+            0.0,
+            "an unknown id must not touch the library"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// With nothing set, there is no display — the case N-01 exists for.
@@ -4079,15 +4487,64 @@ mod tests {
             "FormFieldChanged",
             "FormToggleChanged",
             "SetFormLinux",
-            // T-29's nine. The four entry points, each of which is live the
-            // moment a Play button exists — `view/widgets.rs`'s card and row
-            // take the `on_press` that produces `LaunchGame`, and the game
-            // form's three buttons produce the rest — plus the five replies
-            // their deferred halves come back on. Every one of the four is here
-            // for the *lookup* and the guards alone: what they return is a task
-            // no test drives, so the fork, the `xdg-open` and the `.desktop`
-            // write stay out of the test process while the arm that asks for
-            // them is still measured.
+            // T-29's nine: the four entry points and the five replies their
+            // deferred halves come back on. Every one of the four is here for
+            // the *lookup* and the guards alone — what they return is a task no
+            // test drives, so the fork, the `xdg-open` and the `.desktop` write
+            // stay out of the test process while the arm that asks for them is
+            // still measured.
+            //
+            // # Three of the four have no producer, and this comment used to
+            // # say otherwise (#89)
+            //
+            // It read "the game form's three buttons produce the rest", and
+            // that is false in both of the ways it could be: the wrong
+            // *control* and the wrong *file*. Measured against the tree, in the
+            // production code only — `view/form.rs` (before its `#[cfg(test)]`
+            // module at `:822`, comments stripped) constructs **six** messages
+            // (`CloseDialog`, `FetchCoverForForm`, `FormFieldChanged`,
+            // `FormToggleChanged`, `SaveGameForm`, `SetFormLinux`) and none of
+            // these three; its three buttons are Find cover, Cancel and Save.
+            // `view/library.rs` (before its test module at `:455`) constructs
+            // **eight** (`ClearFilters`, `LaunchGame`, `NavigateTo`,
+            // `OpenNewGameForm`, `SetCategoryFilter`, `SetSearchText`,
+            // `SetSortMode`, `SetViewMode`) and none of these three either. A
+            // reader sent to `view/form.rs` to find the button would find
+            // nothing, so the sentence is corrected rather than kept.
+            //
+            // Both counts are *constructions*, not mentions, and the difference
+            // is measured rather than asserted: a plain `grep Message::` over
+            // `form.rs`'s production region returns **eight**, because
+            // `PickExeFile` and `PickCoverFile` occur in the module doc's
+            // "controls that are not drawn" list (`form.rs:36-37`). Counting a
+            // doc link as a producer is the same defect this paragraph is
+            // about, one layer down — and it is the trap `dispatch_coverage.rs`
+            // names in its own header ("comments and string literals are
+            // stripped before any scan"), which is why the count here is taken
+            // the way that guard takes it.
+            //
+            // Where the producer goes is `LibraryPage.qml:320-336`, the
+            // reference's **only** call sites for these three: a context menu on
+            // a Library row, whose `onTriggered` handlers are `runPrefixTool`,
+            // `openPrefix` and `createShortcut`. `view/library.rs` has no menu,
+            // so the correct file currently draws no control that emits any of
+            // them. **That file is UX's under D-51**, and the menu is T-09's.
+            //
+            // The three arms are listed anyway, and that is deliberate: a menu
+            // item is a button like any other, so each is reachable in exactly
+            // the sense this guard asks about, and landing the arm first means
+            // the producer arrives to a handler that already works rather than
+            // to an `{}` — finding #65's shape. **Nothing else in the suite can
+            // see this gap:** `dispatch_coverage.rs` polices the opposite
+            // direction (a control that *emits* into an empty arm) and says so
+            // in its own header, so a handled-but-unemitted variant is invisible
+            // to it. This paragraph is the record; if the menu lands and these
+            // lines are still needed, they are stale.
+            //
+            // `LaunchGame` is the one of the four with a live producer today:
+            // `view/widgets.rs`'s card and row take the `on_press` that emits
+            // it, and the guard prints that closure — `covered: view/widgets.rs
+            // — called from view/library.rs`.
             //
             // `LaunchWatchTick` is deliberately absent: it has an empty arm and
             // does nothing, so it has nothing to be listed for. The doc above
