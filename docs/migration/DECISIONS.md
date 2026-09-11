@@ -806,13 +806,31 @@ implementations for their formats; the pure-Rust equivalents are younger and
 less exercised on hostile input. Simplicity also favours them — they are thin
 wrappers, not reimplementations.
 
-**Consequence, and the thing to verify.** This links C libraries, so
-`org.freedesktop.Platform` must actually provide liblzma, libbz2 and zlib. All
-three are in the base runtime (liblzma is a systemd dependency), so this is
-expected to be a non-issue — but it is a **build-time fact, not a design
-assumption**, and T-17's `flatpak-build` stage is where it gets proven. If one
-is missing, the fix is a manifest module, not a redesign. Each format needs a
-round-trip test; `test_supported_xz_and_bzip2_streams_extract` is the gate.
+**Consequence — measured, not assumed.** This links C libraries, so the
+Flatpak must provide them. Checked against the installed 25.08 runtime and SDK
+rather than assuming, and the answer is **mostly yes, with one gap**:
+
+| | `libz` | `liblzma` | `libbz2` |
+|---|---|---|---|
+| runtime `.so` | `libz.so.1` | `liblzma.so.5` | `libbz2.so.1` |
+| SDK header | `zlib.h` | `lzma.h` | `bzlib.h` |
+| SDK `pkg-config` | `zlib.pc` ✓ | `liblzma.pc` ✓ | **`bzip2.pc` MISSING** |
+
+So the libraries and headers are all present, and two of three advertise
+themselves to `pkg-config`. Bzip2 does not: `libbz2.so` and `bzlib.h` exist but
+there is no `bzip2.pc`.
+
+**This is a build-time risk for T-17, not a design problem.** Rust's `bzip2-sys`
+tries `pkg-config` first and falls back to compiling the bzip2 C sources it
+vendors — which should succeed here, since the SDK has a C compiler and the
+sources come from `cargo-sources.json`. But it means the bzip2 path may take a
+vendored-source build (slower) or fail outright, and **that has not been
+proven**. T-17's `flatpak-build` stage is where it becomes a fact; if it fails,
+the fix is a small manifest module adding a `.pc` file or configuring
+`BZIP2_SYS_USE_PKG_CONFIG=0`, not a redesign.
+
+Each format needs a round-trip test regardless; `test_supported_xz_and_bzip2_streams_extract`
+is the gate, and it is now a *build* gate as well as a behavioural one.
 
 **Also decided here.** No `unsafe` in our own code, in this path or any other —
 see D-25.
@@ -872,3 +890,45 @@ force those tests to become network tests or to be dropped.
 **Note.** This supersedes §1.1's allowance rather than contradicting it: §1.1
 *permitted* a client; it did not require one, and the trait is the better fit
 for the reason above.
+
+---
+
+## D-27. `LaunchEnv` is injected into `launch_opts`, for the same reason as `Env` and `HttpClient`
+
+**Question.** `apply_launch_options` (`runners.py:1172`) reads three impure
+sources **from inside its own body**: `shutil.which` for `mangohud` /
+`gamemoderun` / `gamescope` (which decides argv-wrapping vs. env-fallback, and
+*raises* when gamescope is enabled but absent), `find_anticheat_runtime` for
+BattlEye/EAC (a filesystem probe), and the DXVK root from
+`GAMEHANDLER_DXVK_ROOT` or `/app/share/gamehandler/dxvk`.
+
+The Python tests prove the dependency rather than leaving it to be inferred:
+`test_gamescope_wraps_command_and_hdr_flag`, `test_gamescope_missing_fails_*` and
+`test_additional_app_uses_runner_before_gamescope_wrapping` all
+`mock.patch("gamehandler.runners.shutil.which")`. Python can replace a module
+global; Rust cannot. So without a seam, roughly a dozen toggle cases become
+untestable unless a real `gamescope` happens to be installed on the build box —
+which is precisely the hermeticity D-24 and D-26 exist to protect.
+
+**Options considered.** (1) Call `which` directly and accept that those tests
+need the binaries present, or drop them. (2) Inject a trait covering the impure
+lookups, as `paths.rs` does with `Env` and `core` does with `HttpClient`.
+
+**Choice.** Option 2 — an injected `LaunchEnv`.
+
+**Why.** Same reasoning as D-26, and the same evidence: the mechanism the
+*original tests* use to be hermetic is module mocking, so the port must provide
+an equivalent seam or it loses the tests. The alternative is worse than it
+sounds — a dozen toggle cases dropped, or made conditional on the build host,
+which is how a suite starts passing for reasons unrelated to the code. Keeping
+`virtual_desktop_argv` and `normalize_desktop_size` pure and un-injected matters
+too: they need no seam, and adding one would make their vectors harder to read
+for no gain.
+
+**Shape.** `which(&self, name) -> Option<PathBuf>` and
+`anticheat_runtime(&self, kind, roots) -> Option<String>`, real implementation in
+`core`, table-driven fake in tests, each vector case carrying its own `which`
+spec. This is the third seam of the same kind, so it is the point at which the
+pattern should be treated as the crate's convention rather than a series of
+one-off decisions: **anything `core` needs from outside the process is injected,
+so `cargo test -p gamehandler-core` stays instant, headless and offline.**
