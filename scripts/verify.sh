@@ -58,6 +58,12 @@
 # inserting the `cli` stage moved every number after it — the same drift the
 # STAGES array exists to stop. Names do not move.
 #
+# The banner comment above each stage function is a name for the same reason,
+# and it was a number for exactly as long as it took to insert `cli`: every
+# banner from `oracle-freshness` down then said one less than it meant, and
+# two of them both said "Stage 4". A name that is wrong is at least a name that
+# disagrees with STAGES out loud.
+#
 # Output contract (packaging.md §6): one machine-greppable line per stage on
 # stdout — `ok <stage>`, `FAIL <stage>`, `SKIP <stage>` — and every stage is
 # preceded by `### <stage>`. Full tool output goes to
@@ -151,6 +157,35 @@ STAGES=(
     "desktop-metainfo|desktop-file-validate + appstreamcli validate"
     "flatpak-contents|the built Flatpak carries the files no validator looks at"
 )
+
+# The banner comment above each stage function names the stage, and this asserts
+# it names the *right* one. Until `cli` was inserted those banners were
+# numbered, and nothing compared them with STAGES: every banner from
+# `oracle-freshness` down then said one less than it meant, and two of them both
+# said "Stage 4". That is task #22's defect class one layer out — an assertion in
+# a comment that stopped being true, read by everyone and checked by nobody —
+# and the cost of catching it by eye is that you have to already suspect it.
+#
+# Names do not drift the way numbers do, and this makes even a wrong name a hard
+# error rather than a plausible-looking one. Exit 2, like `begin()`'s
+# out-of-order refusal: it is a bug in this script, not a property of the tree,
+# so it is not a stage result and must not be reported as one.
+banner_check() {
+    local -a declared=() banners=()
+    local entry
+    for entry in "${STAGES[@]}"; do
+        declared+=("${entry%%|*}")
+    done
+    mapfile -t banners < <(sed -n 's/^# Stage: \([^ ]*\).*/\1/p' "${BASH_SOURCE[0]}")
+    if [ "${declared[*]}" != "${banners[*]}" ]; then
+        printf 'verify.sh: the "# Stage:" banners disagree with STAGES\n' >&2
+        printf '  STAGES:  %s\n' "${declared[*]}" >&2
+        printf '  banners: %s\n' "${banners[*]}" >&2
+        printf '  both are in %s, in the order they must appear\n' "${BASH_SOURCE[0]}" >&2
+        exit 2
+    fi
+}
+banner_check
 
 usage() {
     cat <<'EOF'
@@ -379,21 +414,21 @@ require_tool() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage 1 — build
+# Stage: build
 # ---------------------------------------------------------------------------
 stage_build() {
     cargo build
 }
 
 # ---------------------------------------------------------------------------
-# Stage 2 — clippy, at our workspace root only (DECISIONS D-08)
+# Stage: clippy — at our workspace root only (DECISIONS D-08)
 # ---------------------------------------------------------------------------
 stage_clippy() {
     cargo clippy --all-targets -- -D warnings
 }
 
 # ---------------------------------------------------------------------------
-# Stage 3 — tests, with no display, to prove the logic suite is headless
+# Stage: test — with no display, to prove the logic suite is headless
 #
 # TWO configurations, because they are not the same gate. `cargo test` with no
 # -p unifies features across every workspace member; `-p gamehandler-core` builds
@@ -440,7 +475,7 @@ stage_test() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage 4 — the headless CLI, against a library it has to actually read
+# Stage: cli — the headless CLI, against a library it has to actually read
 #
 # `--list`, `--launch` and `--version` are what the app's own desktop shortcuts
 # invoke, and D-12 makes them a hard requirement: no display, no GPU, no
@@ -454,7 +489,7 @@ stage_test() {
 # only exercises the empty case passes on a program that never reads the file.**
 #
 # So this stage owns its library and asserts the non-empty case. It uses the
-# binary stage 1 just built — the artifact `cargo test` tested — not the
+# binary the build stage just built — the artifact `cargo test` tested — not the
 # Flatpak's release binary, so it needs no build tree and no lock; the Flatpak's
 # own copy is the smoke test's business.
 #
@@ -482,7 +517,7 @@ stage_test() {
 stage_cli() {
     local bin="$ROOT/target/debug/gamehandler"
     if [ ! -x "$bin" ]; then
-        echo "no binary at ${bin#"$ROOT"/}, which is what stage 1 (cargo build) produces"
+        echo "no binary at ${bin#"$ROOT"/}, which is what the build stage produces"
         return 1
     fi
 
@@ -509,9 +544,12 @@ JSON
     local rc=0 failures=0
 
     # cli_run <config-home> <args...> — the binary, with no display and with
-    # every base directory inside $tmp. Defined here rather than at the top
-    # level so it cannot be reached by another stage; the stage runs in this
-    # shell, so it does not outlive the call.
+    # every base directory inside $tmp.
+    #
+    # Defined here rather than with the other helpers at the top because it is
+    # inseparable from `tmp`: a top-level definition would have to take the
+    # directory as an argument and would then be callable from a stage that has
+    # no temp dir of its own, which is a chance to get it wrong for no gain.
     cli_run() {
         local config="$1"; shift
         env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
@@ -580,7 +618,7 @@ JSON
 }
 
 # ---------------------------------------------------------------------------
-# Stage 4 — oracle freshness
+# Stage: oracle-freshness — the fixtures on disk equal what the generators produce
 #
 # TWO generators write into one fixture directory, and this stage must run both:
 #
@@ -685,7 +723,7 @@ stage_oracle() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage 5 — the Python suite stays green (DECISIONS D-17)
+# Stage: python-tests — the Python suite stays green (DECISIONS D-17)
 # ---------------------------------------------------------------------------
 stage_python() {
     env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
@@ -693,7 +731,7 @@ stage_python() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage 6 — cargo-sources.json freshness + git coverage
+# Stage: cargo-sources — cargo-sources.json freshness + git coverage
 #
 # The generator is not part of this repository (it is flatpak/flatpak-builder-
 # tools' cargo/flatpak-cargo-generator.py). Look for it where it is normally
@@ -829,7 +867,7 @@ stage_cargo_sources() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage 7 — flatpak-builder
+# Stage: flatpak-build — flatpak-builder builds the manifest
 # ---------------------------------------------------------------------------
 stage_flatpak() {
     local -a flags=(
@@ -848,7 +886,7 @@ stage_flatpak() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage 8 — headless smoke test (scripts/smoke-test.sh)
+# Stage: smoke-test — headless smoke test (scripts/smoke-test.sh)
 # ---------------------------------------------------------------------------
 stage_smoke() {
     local -a args=(--build-dir "$BUILD_DIR")
@@ -862,7 +900,7 @@ stage_smoke() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage 9 — desktop entry and AppStream metadata
+# Stage: desktop-metainfo — desktop entry and AppStream metadata
 # ---------------------------------------------------------------------------
 stage_desktop_metainfo() {
     local share="$BUILD_DIR/files/share"
@@ -893,15 +931,16 @@ stage_desktop_metainfo() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage 10 — what the build installs that no validator looks at
+# Stage: flatpak-contents — what the build installs that no validator looks at
 #
-# Stage 9 loads the desktop entry and the metainfo and asks whether they are
-# *well-formed*. Nothing before this stage asks whether the Flatpak contains
-# or the application's own licence, or the Authenticode trust root, or the icon
-# — because none of those files is an input to a validator. That gap is not
-# hypothetical: T-16 moved the build from meson (which ran data/meson.build's
-# install_data) to cargo, dropped the licence install with it, and every stage
-# stayed green while the Flatpak shipped a GPL-3 binary with no licence. T-23.
+# The desktop-metainfo stage loads the desktop entry and the metainfo and asks
+# whether they are *well-formed*. Nothing before this stage asks whether the
+# Flatpak contains the application's own licence, the Authenticode trust root,
+# or the icon at all — none of those files is an input to a validator. That gap
+# is not hypothetical: T-16 moved the build from meson (which ran
+# data/meson.build's install_data) to cargo, dropped the licence install with
+# it, and every stage stayed green while the Flatpak shipped a GPL-3 binary with
+# no licence. T-23.
 #
 # The list is every file the gamehandler module installs *except the binary*,
 # and what covers each one before this stage gets to it:
