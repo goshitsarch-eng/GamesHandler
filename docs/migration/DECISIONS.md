@@ -1393,3 +1393,290 @@ minutes of a teammate's time. A swallowed finding ships a defect, and this
 particular mechanism is invisible to every intuition we have: the code is
 correct in one build and wrong in the other, and the *narrower* invocation — the
 one that looks more targeted, more careful — is the one that hides it.
+
+---
+
+## D-34. A report of what passed is not a report of what ran
+
+**Question.** `verify.sh` aborts at the first failing stage unless `--keep-going`
+is passed, and the summary printed on that path is built from `PASSED`,
+`FAILED` and `SKIPPED` alone. Stages the run never reached appear in none of
+those three, so they appear nowhere: a failure at stage 4 printed
+
+```
+passed:  build clippy test
+failed:  oracle-freshness
+skipped: none
+```
+
+with `flatpak-build`, `smoke-test`, `desktop-metainfo` and `flatpak-contents`
+absent entirely — not listed, not skipped, not mentioned. The lead hit this
+himself and read `failed: oracle-freshness` as "only the oracle is broken"; the
+Flatpak build and the smoke test had not run at all. What should the report say
+about work that was never attempted?
+
+**Options considered.**
+
+1. Leave it. The abort is deliberate and the reader can infer the rest.
+2. Print the stages that were not reached as their own category, derived from a
+   single ordered list of stages that the script also uses for its usage text and
+   for ordering.
+3. Print only a banner ("this run is incomplete") without naming them.
+
+**Choice.** Option 2, plus deriving `usage()` from the same array and having
+`begin()` refuse a stage that is not next in it.
+
+**Why.** The output was not merely incomplete, it was *misleading*, and it is the
+instance that hides every other one: a reader who believes three stages ran and
+one failed has been told something false about six stages, and the false part is
+the reassuring direction. Option 1 relies on the reader reconstructing the stage
+list from the header — which is exactly what the lead, who wrote the header, did
+not do. Option 3 names the problem without locating it; "some stages did not run"
+sends the reader back to the top of a 200-line scrollback to work out which.
+
+Naming them is cheap because the information already exists: the list was
+authoritative at the top of the script and **nothing consumed it**. That is the
+same defect as #20, #22 and #29 — *a check that does not inspect what it claims*
+— one level up, in the script that exists to catch it. A list nothing reads has
+the shape of a check and the behaviour of a comment, so it drifts: the usage text
+was restated by hand and the run order was implied by the sequence of `run_stage`
+calls, with no comparison between them. `STAGES` is now the one copy, and
+`begin()` compares each announcement against it, which turns "somebody edited one
+of the three" from a silent inconsistency into exit 2 on the run that introduces
+it.
+
+**Why exit 2, and not 1 or 3.** A stage whose `name` is not next in `STAGES` is a
+bug in this script, not a stage result. Reporting it as 1 would say "a stage
+failed" (there is a defect in the tree); as 3, "the run was incomplete" (a
+toolchain is missing). Both are false statements about the tree, and both would
+send the reader to the wrong place. 2 already means "the invocation or the script
+is wrong" — the unknown-option error uses it, and this is the same class.
+
+**What is deliberately unchanged.** The abort policy. `--keep-going` is
+documented and fail-fast on a broken build is correct: the later stages are not
+merely slower without it, they are meaningless (the Flatpak build would compile
+the tree that just failed to compile). Aborting remains the default; the change
+is that the report now says what the abort cost.
+
+**Consequence.** `summary()` prints `did not run (<reason>): <stages>` whenever
+`ATTEMPTED` is shorter than `STAGES`, with the reason supplied by the path that
+stopped the run — an earlier failure, or an unacquirable Flatpak build lock.
+Measured on the two live early-exit paths rather than assumed: the fail-fast
+summary above, and the lock path, both name the unattempted stages; a run that
+reaches the end prints no such line. The same treatment covers the second way a
+stage can be invisible, which is a `STAGES` entry with no `run_stage` call: that
+is caught by `run_stage` refusing a function that does not exist (2) instead of
+reporting `command not found` as a failing stage, and by `begin()` rejecting the
+out-of-order announcements that follow a missing call.
+
+---
+
+## D-35. The CLI is a gate, not a smoke check
+
+**Question.** `gamehandler --list`, `--launch <id>` and `--version` are the
+headless surface D-12 requires (the app's own `.desktop` shortcuts invoke
+`--launch <GAME_ID>`, and those shortcuts are already on users' disks). Nothing
+in `verify.sh` mentioned any of the three flags — the smoke test ran
+`--version` and `--list`, but only asserted that they *exited 0*. Where should
+the CLI be gated, and against what?
+
+**Context — the defect that made this a question.** Built from HEAD, against a
+real two-game library at `$XDG_CONFIG_HOME/gamehandler/games.json`:
+
+```
+$ gamehandler --list
+GameHandler: the library is empty      <- the library was there, unread
+rc=0                                    <- and it claims success
+```
+
+`--list` was a stub that printed the empty-library line unconditionally and
+never opened the file (task #31; T-07 owns the port). It passed every check that
+existed, because the only `--list` check asserted an exit code. That is the
+defect class this repository keeps rediscovering — *a check that passes without
+inspecting what it claims* — in its purest form: **the stub's output and the
+correct output are identical on every input the check used.**
+
+**Options considered.**
+
+1. Add the non-empty assertions to `scripts/smoke-test.sh`, where the other CLI
+   checks live.
+2. A new `verify.sh` stage that owns its library and asserts the non-empty case.
+3. Leave it to the Rust test suite once T-07 lands `list_games`'s own tests.
+
+**Choice.** Option 2.
+
+**Why not 1.** The smoke test's whole design is to exercise the *shipped* app —
+it prefers `build-flatpak/`'s `/app/bin/gamehandler` and runs the GUI, which is
+why it sits inside the Flatpak lock. A stage that needs a real library and a
+temp `$XDG_CONFIG_HOME` has nothing to do with that, and putting it there would
+make it contingent on a Flatpak build, which is precisely backwards for a check
+whose value is that it runs everywhere. The two are complements and they stay
+separate: the smoke test says the packaged binary starts, the `cli` stage says
+the verbs behave.
+
+**Why not 3.** A crate's own tests cannot catch a *missing dispatch*. If
+`main()` never calls into the library at all — which is the state #31 describes
+— there is nothing for a unit test of `list_games` to fail on, because the
+function that is wrong is `main`'s, and it is wrong by not being connected. Only
+a check that runs the built binary can see that.
+
+**The two assertion choices, both deliberate.**
+
+- **The non-empty case is mandatory, and is compared byte for byte.** This is
+  the assertion that would have caught #31, and the empty case cannot substitute
+  for it: on an empty library the stub and the implementation print the same
+  line, which is why "both cases look identical" was not noticed. The fixture's
+  names (`apple`, `Banana`) also make it a sorting trap — `Library::all`'s
+  default order is by the *lowercased* name (`gamehandler/models.py:156-163`), so
+  a byte-wise comparison of the names would put `Banana` first and fail.
+- **`--launch <unknown id>` is asserted on the exit code**, with the reason
+  required on stderr. The stub printed the correct reason and returned `1`; the
+  asserted property is the status, because a check that only matched the text
+  would pass a future implementation that printed the right words and returned
+  success — the exact shape of #31 with the sign flipped. A *known* id is never
+  launched: that would start a real game through Wine, and a verification gate
+  must not have side effects of that kind.
+
+**Consequence.** The stage is red until #31 lands, on purpose. A gate that
+passes while the thing it gates is broken is not a gate, and this one is worth
+more red than green: the failure names the fixture, the expected bytes and what
+was actually printed, so the reader gets the diagnosis rather than the news.
+
+**What this does not cover.** `--launch` on a *valid* id, and the
+immediate-failure grace check (P-46) behind it, remain ungated — that path starts
+a game and cannot be exercised in a gate. It is named here so the gap is visible
+rather than implied by a green run.
+
+---
+
+## D-36. The Windows runner label is a tracked gap, not a resting state
+
+**Question.** `view::meta::runner_label(is_linux, manager_label)` is a pure
+passthrough — `"Linux native"` for a Linux game, `manager_label` otherwise — and
+`a_windows_game_gets_the_managers_label_verbatim` (`view/meta.rs:126-129`) pins
+it, including `runner_label(false, "") == ""`. The manager label reaching it is
+`""`, because nothing supplies a `RunnerManager` to the view yet. So **every
+Windows game currently renders with no runner**, where Python renders
+`"System Wine"`. Is that a defect, and whose?
+
+**Not a defect in the function, and not a stale test.** The passthrough is
+correct and the assertion is correct: the function's whole contract is "hand the
+manager's label through unchanged", and a unit test of a passthrough *has* to
+assert that the input arrives unmodified. Verified against Python rather than
+read: `RunnerManager.label` (`runners.py:759-761`) returns `"System Wine"` for a
+falsy `runner_id`, and `bridge.py:300-302` resolves the label *before* the row
+is built, so Python can never hand this function an empty string.
+
+**The defect is that the empty string is what ships, and no check can see it.**
+The test passes in both the fixed and unfixed states, because `""` is a legal
+input either way. That is the same shape as D-34's summary: a green result that
+does not distinguish the state you want from the state you have.
+
+**Choice — three things, because a note alone has already proven insufficient.**
+
+1. **Closing it is a required step of T-11** (the Runners page), not an optional
+   improvement. T-11 is the task that owns the runner catalogue in the view, so
+   it is the task that can supply a real label. It is *not* done until a Windows
+   row shows its runner.
+2. **T-19 confirms it in the running Flatpak** — a real Windows game showing its
+   actual runner label, observed, not a unit test asserting a string. This is
+   the P-item rule applied to the one place it was most tempting to accept a
+   test in its place.
+3. **This entry**, so the gap cannot quietly become permanent by being
+   locally reasonable on every individual review.
+
+**Why the test stays.** Deleting or weakening
+`a_windows_game_gets_the_managers_label_verbatim` would remove the only
+statement of the passthrough rule, and T-11 needs that rule intact. The fix is
+to *feed* it, not to change it. Read the assertion as a contract, not as
+sign-off — the distinction this entry exists to make.
+
+---
+
+## D-37. The blank-category fold is not a divergence — measured, and why the reading that said it was
+
+**Question.** An audit reported that `view::meta::subtitle` is *stronger* than
+the reference: that it folds a blank category to nothing, where `bridge.py`
+compares the **raw** `row["category"]` against `"Uncategorized"` and so renders
+`"    · System Wine"` for a whitespace-only category — a reachable input,
+because `from_dict` does not strip `category`. Should the port keep its own
+better answer, and how should that be recorded?
+
+**The premise is wrong: there is no divergence, and the port already matches.**
+Measured rather than re-read, because the claim turned on which value reaches
+the comparison:
+
+* `bridge.py:309` sets `"category": game.display_category` — and
+  `display_category` is a **`@property`** (`models.py:60-62`) that already folds:
+  `(self.category or "").strip() or UNCATEGORIZED`.
+* So `row["category"]` at the comparison on `bridge.py:319` is the *folded*
+  value, never the raw one. A whitespace-only category has already become
+  `"Uncategorized"`, the comparison is false, and the f-string is not entered.
+
+Running Python's exact expression over the full input set:
+
+| stored `category` | `display_category` | Python's subtitle |
+|---|---|---|
+| `""`, `"   "`, `"\t"` | `"Uncategorized"` | `"System Wine"` |
+| `"Uncategorized"` | `"Uncategorized"` | `"System Wine"` |
+| `"Action"` | `"Action"` | `"Action · System Wine"` |
+| `"  roguelike  "` | `"roguelike"` | `"roguelike · System Wine"` |
+
+Every blank renders `"System Wine"` — which is what
+`subtitle(display_category(), runner_label)` produces, since
+`Game::display_category` (`models.rs:174-181`) folds the same way and
+`subtitle`'s `has_category` test then excludes it. The raw value *is*
+unstripped in storage, as the audit said; it is simply never the value compared.
+
+**Choice — record the negative result, and keep the code unchanged.** The port
+keeps its `.trim()` and its `category != UNCATEGORIZED` guard. They are not a
+divergence and not a strengthening: they are one more way to reach the same
+answer, and `subtitle` is also reachable from callers that pass a category not
+routed through `Game::display_category`, so the guard is doing real work against
+a *stray separator* — the `"Shooter · "` case named in its doc comment — rather
+than against Python.
+
+**Why an entry for something that did not happen.** This is not an isolated
+case this session, and not only the audit's: the lead's own blanket rule that an
+impossible test failure is "probably a stale artifact" was retracted the same day
+(D-33), and so was the lead's "`verify.sh` matches `--list|--launch|--version`
+zero times", which was accurate when grepped and false within the hour because
+Packaging had already written the stage. The cost of not recording it is that the
+same plausible reading is re-derived, and the next reader is asked to choose
+between "preserve our better behaviour" and "match the reference" on a case where
+the two never differed. A wrong premise written down is not harmless: it invites a
+change to correct code. The measurement is the deliverable.
+
+---
+
+## D-38. A doubled separator in the subtitle is the reference's output, not a defect
+
+**Question.** `subtitle("Action", "Proton-GE · Proton")` yields
+`"Action · Proton-GE · Proton"` — two middle dots. It reads like a composition
+bug, and it is exactly the kind of thing a later reader "fixes". Is it?
+
+**Yes — it is correct, and it is faithful.** The doubling is produced on the
+Python side by two independent `·`-joining steps that both fire:
+
+* `RunnerManager.label` (`runners.py:763-765`) returns
+  `f"{runner.name} · {family}"` when a `ProtonRunner`'s family label differs
+  from its name — so **one** separator is already inside the runner label.
+* `bridge.py:319-321` then composes `f"{row['category']} · {meta}"` around that
+  same label — **the second**.
+
+Neither step knows about the other, and the user-visible string is their
+composition. The port reproduces it by keeping the separator in the label and
+joining again in `subtitle`, so from `("Action", "Proton-GE · Proton")` it
+produces the same two dots.
+
+**Choice — keep it, and say so here.** Collapsing the two into one would be a
+visible divergence for exactly the Proton runners that have a distinct family,
+which is the common case, and it would show up as a subtitle that differs from
+Python's on a screenshot comparison rather than in any test.
+
+**The general rule this is an instance of.** A composed display string may
+contain a separator contributed by a *component* as well as one contributed by
+the *composition*. Faithfulness means reproducing both, so the right question
+about a strange-looking delimiter is not "is this tidy?" but "which stage put it
+there, and does Python's stage do the same?" — and the answer here is that both
+stages do.
