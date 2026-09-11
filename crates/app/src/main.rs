@@ -29,6 +29,7 @@ use gamehandler_core::{APP_ID, APP_NAME, VERSION};
 
 mod http;
 mod state;
+mod theme;
 // TODO(T-09): remove once the pages call these components. See D-32.
 //
 // The module is declared now, rather than when the pages land, because a
@@ -1147,23 +1148,35 @@ impl Shell {
             Message::Quit => {}
 
             // ---- Settings --------------------------------------------------
-            // `_set_color_scheme` (`bridge.py:197-203`) ignores a value outside
-            // `COLOR_SCHEMES` rather than storing it, and the load path already
-            // folds one (`settings.rs:89-91`) — so the message path was the
-            // missing half, exactly as for the two below.
+            // `_set_color_scheme` (`bridge.py:197-203`) does two things and this
+            // port did only the first: it ignores a value outside
+            // `COLOR_SCHEMES` (the load path already folds one,
+            // `settings.rs:89-91`) **and then applies it**. Storing is the guard;
+            // `theme::apply` is the second half, which the reference spells
+            // `self._theme.apply(value)` (`bridge.py:201-202`).
             //
-            // **What this does not do is the other half of that setter**: the
-            // reference then calls `self._theme.apply(value)`, and this port has
-            // no theme to apply it to (`Shell` has no `theme()` override, so
-            // `cosmic::Theme` follows the system and nothing reads
-            // `settings.color_scheme`). Storing the choice is the whole of the
-            // behaviour here, and it is stored so the setting survives a restart
-            // and so the page's selector round-trips. See D-13 (`PLAN.md:479`),
-            // which names T-13 as where the default is decided; the decision is
-            // recorded in DECISIONS rather than closed silently here.
+            // The comment here used to say this port had "no theme to apply it
+            // to ... because `Shell` has no `theme()` override". Both halves of
+            // that were wrong and the correction is in `theme.rs`'s module doc:
+            // there is no `theme()` hook on `cosmic::Application` at all, and
+            // libcosmic's `app::Settings` default is already
+            // `system_preference()` — so the app followed the system and the
+            // selector changed nothing. `theme::apply` is the mechanism
+            // libcosmic actually provides (`command::set_theme`).
+            //
+            // Note that the task is returned even when the value is **stored
+            // unchanged**: applying it is idempotent, and a guard that skipped
+            // the task for a repeated value would be the reference's own
+            // `if value == ...: return` (`bridge.py:198`) with nothing to
+            // observe — the app's theme is a global in libcosmic, not a field
+            // this handler could compare.
             Message::SetColorScheme(value) => {
                 if COLOR_SCHEMES.contains(&value.as_str()) {
                     self.state.settings.color_scheme = value;
+                    // Applies the value **stored**, not the one received: they
+                    // are equal here (the guard just checked), and reading it
+                    // back is what keeps the two from being able to diverge.
+                    return theme::apply(&self.state.settings.color_scheme);
                 }
             }
             // `_set_view_mode` (`bridge.py:210-214`) and `_set_sort_mode`
@@ -1655,7 +1668,17 @@ impl cosmic::Application for App {
             None => cosmic::task::none(),
         };
 
-        (app, title)
+        // `main.py:106`'s `theme.apply(backend.settings.color_scheme)` — the
+        // startup half of P-67, and the same `theme::apply` the change handler
+        // calls. It is a task here rather than a field on
+        // `cosmic::app::Settings` because that field is `pub(crate)` with no
+        // builder; `theme.rs`'s module doc records the measurement.
+        //
+        // Batched with the title rather than returned instead of it: both are
+        // one-shot startup work and neither depends on the other.
+        let startup_theme = theme::apply(&app.shell.state.settings.color_scheme);
+
+        (app, cosmic::app::Task::batch([title, startup_theme]))
     }
 
     /// The sidebar.
