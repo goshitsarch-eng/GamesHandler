@@ -148,7 +148,33 @@ of the number, not a respelling of the same digits:
 | `1.2345e-5` | `1.2345e-05` | **`0.000012345`** |
 | `9.9e-5` | `9.9e-05` | **`0.000099`** |
 | `1e-4` | `0.0001` | `0.0001` |
-| `1e-6` | `1e-06` | `1e-6` |
+
+(`1e-6` is **not** in this table: at `exp = -6` both sides already write exponent
+form, so the difference there is zero-padding — class (a), not (b). It appeared
+here in an earlier revision, which is how a notation claim came to be
+illustrated by a padding case.)
+
+**The complete divergence set — both bands, and nothing else.** The tables above
+mix diverging rows with agreeing ones, which leaves the actual rule implicit. It
+was measured directly on the pinned writer, and it is exactly two bands:
+
+| Band on `|x|` | Class | Python | Rust | Example |
+|---|---|---|---|---|---|
+| `[1e-5, 1e-4)` | (b) notation | exponent | decimal | `1e-05` vs `0.00001` |
+| `[1e-9, 1e-5)` | (a) padding | `e-0N` | `e-N` | `1e-07` vs `1e-7` |
+| everything else | — | identical | identical | `1e-4`, `1e-10`, `1e14`, `1e16`, `1e23` |
+
+Both lower edges are exact and both were probed: at `1e-10` the two agree
+(`exp = -10` needs no padding), and at `1e-4` they agree (both decimal). The
+band is closed below and open above at each boundary — `9.9e-6` diverges,
+`1e-10` does not; `9.9e-5` diverges, `1e-4` does not. There is no third band
+anywhere in the `f64` range: positive exponents are single-digit only for
+`|x| < 1e10`, where neither side uses exponent form at all.
+
+The practical upshot is the load-bearing part: **both bands are confined to
+`|x| < 1e-4`, and both are numerically lossless** — `0.00001` and `1e-05`
+reparse to the same `f64`. Every timestamp (`~1.7e9`) is far outside the bands,
+so no realistic game library can reach either one.
 
 **How (b) was missed, recorded because it is the defect §5 exists to correct.**
 The original probe set was 14 hand-picked values and **contained no value in the
