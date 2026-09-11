@@ -2659,3 +2659,70 @@ knowable only from a sha that has landed; an agent that says it is nearly done
 has not freed the file. This is why the writer is asked for the sha its commit
 prints — the same reason D-49 exists. Until then the file stays held.
 
+
+## D-52. A task may not be marked LANDED while an id in its own declared scope is unmet
+
+**The incident, and it was invisible to every guard in the repository.** `T-09`
+is marked LANDED. Its declared scope is **P-01…P-17**. Within that scope, `P-02`
+is **half met** — the last-played subtitle renders in the reference
+(`LibraryPage.qml:269`) from data `bridge.py:311` supplies, and neither reaches
+the port — and **P-10…P-16** (double-click play, the nine-item context menu,
+Play/Edit/Find-cover, Winecfg/Winetricks/Open-prefix, create-shortcut,
+remove-with-confirm) **do not exist at all**: `view/widgets.rs` constructs
+**zero** `Message`s. Every check in the tree was green throughout.
+
+**Why three separate audits missed it, which is the actual finding.** Finding
+`#66` audited the parity matrix for P-items named by **no** task. `T-09`
+**names** P-01…P-17, so all seventeen read as covered. Findings `#55` and `#65`
+had already recorded the same shape twice — a page leaves `PINNED_PENDING` or a
+task is marked done because the page *renders a real body*, while an item under
+it is unmet. Stated once, the mechanism is:
+
+> every guard in this repository asks **"does this page render a real body?"** —
+> `PENDING_PAGES` is keyed on the placeholder string, `dispatch_coverage` on the
+> handler, the label tests on the text — and **none asks "are this page's
+> P-items met?"**
+
+Parity is the only axis with no check. That is why this recurred three times:
+the guards are all correct and all aimed elsewhere.
+
+### The rule
+
+A task row may not be marked LANDED while an id in its own declared scope is
+unmet. The remainder is **written into the row**, the way `T-09`'s own row
+already does for `#34`/`#33`/`#35` — so that "LANDED" means *the scope is met or
+the gap is named in the same place a reader looks for the scope*, and never
+*the main body of work is finished*.
+
+An unmet id is not a reason to withhold the task. Blocked work is normal and
+`T-09`'s row already carries three such notes. What is forbidden is the silence:
+a reader who takes "LANDED" at face value must not be able to conclude that a
+P-item in that scope is done.
+
+### Why a rule and not a check
+
+The obvious mechanical version — a per-page P-matrix asserting every id in a
+task's declared range is either met or explicitly deferred — was **rejected**,
+and the reason is this repository's own history. That matrix would be a second
+hand-copied list, and this file has now recorded **three separate instances of a
+hand-copied fact that nothing reads**: `#43`, `PINNED_PENDING`'s own header, and
+`T-09`'s row itself. Adding a fourth list to police the third is the wrong
+direction, and it would inherit exactly the failure mode it was built to catch:
+the matrix would be maintained by the same hand that writes "LANDED", and
+nothing would compare them.
+
+The rule is not mechanised, and that is stated plainly rather than dressed up:
+**it rests on the author of the task row, and on a reviewer who reads the row
+against the scope.** Its value is that it is cheap, it is checkable by eye in
+one place, and it names the axis the guards cannot see. Where a mechanical check
+genuinely is available it should be preferred — `#71` (every `T-nn` in a commit
+subject has a PLAN row) is a good one, because the fact it compares is not
+hand-copied at either end.
+
+**Consequence, applied in the same commit:** `T-09`'s row gains its remainder —
+`P-02`/`P-16` as `T-30`, `P-10`…`P-16` naming `T-10` and `T-29` as their owners
+— so the row now says what it does not yet cover.
+
+Related: `#55`, `#65`, `#66`, `#68`, `#71`, `D-50` (a dependency stated only in
+a commit message is invisible to every gate — this is the same invisibility
+applied to a *task's own scope*), [[verification-defect-class]].
