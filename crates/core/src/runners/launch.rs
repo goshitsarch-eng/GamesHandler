@@ -585,13 +585,20 @@ mod tests {
     ///
     /// # Why the retry is here and not in `launch`
     ///
-    /// `launch`'s own `spawn` is not exposed to this. Production `launch.rs`
-    /// writes no executable — the only filesystem calls before the test module
-    /// are two `create_dir_all` on prefix directories (`:334`, `:465`) — so
-    /// nothing in the shipped app creates the window, and a retry in `launch`
-    /// would be a catch on a condition production cannot enter: dead code
-    /// pretending to be a guard. The window is opened by *this binary's own
-    /// concurrency*, so its repair belongs to this binary's harness.
+    /// `launch`'s own `spawn` is not exposed to this. Nothing on the **launch
+    /// path** writes an executable — the only filesystem calls in production
+    /// `launch.rs` before the test module are two `create_dir_all` on prefix
+    /// directories (`:334`, `:465`) — so no code that path runs opens the
+    /// window, and a retry in `launch` would be a catch on a condition its own
+    /// path cannot enter: dead code pretending to be a guard.
+    ///
+    /// That claim is about the launch path, which is the scope it is checkable
+    /// at, and not about the app: the app does write executables elsewhere —
+    /// `extract_members` (`archive.rs:684-688`) does `File::create` then
+    /// `set_permissions(mode)` — but that is a different path, and the window
+    /// needs write-then-immediately-exec of the *same inode*, so it is not this
+    /// one. The window here is opened by *this binary's own concurrency*, so
+    /// its repair belongs to this binary's harness.
     ///
     /// # What a retry does and does not hide
     ///
@@ -602,6 +609,25 @@ mod tests {
     /// If the condition outlasts the attempts the last error is returned as-is,
     /// so the caller's `expect` still fails on it: after ~100ms of trying, a
     /// persistent `ETXTBSY` is a real finding and must not be swallowed.
+    ///
+    /// The ~100ms is `ATTEMPTS × PAUSE`, and it was sized from the *median*
+    /// window: the instrumented runs saw the retry fire at `attempt = 1`
+    /// (sub-millisecond) in all 30 runs, and nothing here measures the tail. So
+    /// a window that outlasts the budget surfaces the raw `ETXTBSY`, which is
+    /// the intended behaviour — and it reads exactly like a launch failure.
+    /// When that happens, the first thing to check is whether the window has
+    /// grown past the budget, not whether the launch path broke.
+    ///
+    /// # The tests that pin this
+    ///
+    /// `the_retry_recovers_when_the_write_window_closes` constructs the window
+    /// instead of waiting for it — an `O_WRONLY` descriptor on the script's
+    /// inode, released from another thread — and shows the recovery;
+    /// `the_retry_gives_up_when_the_window_outlasts_the_budget` shows the loop
+    /// really iterating; and `an_error_that_is_not_the_window_is_not_retried`
+    /// takes the same guard from the other side. The construction is the
+    /// advocate's (`/tmp/etxtbsy-repro.py`), whose step 6 measured this shape
+    /// recovering after 41 attempts in 52 ms.
     fn launched_or_busy_retry(
         game: &Game,
         manager: &RunnerManager,
@@ -634,6 +660,169 @@ mod tests {
             &NoShares,
         )
         .expect("a native Linux title needs no runner")
+    }
+
+    // -----------------------------------------------------------------
+    // #49 — the retry, with the window constructed rather than waited for
+    // -----------------------------------------------------------------
+
+    /// A `Game` that execs `script` itself, as a native Linux title.
+    ///
+    /// The window these tests hold belongs to the *executed inode*, so the
+    /// script has to be the executable — not an argument to `/bin/sh`, which is
+    /// what [`scripted`] builds and which would exec the shell instead.
+    fn execs(script: &Path) -> Game {
+        let mut game = Game::new_named("Test Title");
+        game.kind = "linux".to_string();
+        game.exe_path = script.to_string_lossy().into_owned();
+        game
+    }
+
+    /// Hold `path` open for writing, and hand back the closure that closes it.
+    ///
+    /// This *is* the `ETXTBSY` window, and the shape is the point: `execve`
+    /// refuses an inode that has any live writable reference, the descriptor
+    /// need not be written through, and it need not be in another process. A
+    /// window nothing ever closes would prove only the refusal, so the release
+    /// comes back to the caller to schedule.
+    fn hold_open_for_writing(path: &Path) -> impl FnOnce() + Send + 'static {
+        let window = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        move || drop(window)
+    }
+
+    /// `#49`: the retry retries, and recovers as soon as the window closes.
+    ///
+    /// The descriptor is held by *this* process and released from another
+    /// thread half-way through the call, so the first attempt is refused by the
+    /// kernel and a later one is not. That makes the refusal a property of the
+    /// world rather than of the code under test: the observable is that
+    /// [`launch`], unmodified, reports `ExecutableFileBusy` for as long as the
+    /// descriptor lives.
+    ///
+    /// `elapsed` is a vacuity guard, not the proof: a call returning in
+    /// microseconds would mean the release won the race and the retry was never
+    /// exercised. What shows the loop iterating is its companion,
+    /// `the_retry_gives_up_when_the_window_outlasts_the_budget`, where the same
+    /// window is held for the whole call.
+    #[test]
+    fn the_retry_recovers_when_the_write_window_closes() {
+        let root = scratch("launch-busy-retry");
+        let script = root.join("run.sh");
+        write_script(&script, "#!/bin/sh\nexit 0\n");
+        let release = hold_open_for_writing(&script);
+
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            release();
+        });
+
+        let started = Instant::now();
+        let mut running = launched_or_busy_retry(
+            &execs(&script),
+            &RunnerManager::at("/nonexistent"),
+            &FakeLaunchEnv::new(),
+            &NoShares,
+        )
+        .expect("the retry should outlast a 50ms window");
+        let elapsed = started.elapsed();
+        releaser.join().unwrap();
+
+        assert!(
+            elapsed >= Duration::from_millis(40),
+            "the window closed before the first attempt, so nothing was retried: {elapsed:?}"
+        );
+        assert_eq!(running.failure(Duration::from_secs(10)), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The budget from the other side: a window that outlasts it is returned as
+    /// the error rather than swallowed.
+    ///
+    /// This is also what shows the loop iterates. One attempt costs
+    /// microseconds and a hundred of them cost at least `(ATTEMPTS - 1) × PAUSE`,
+    /// so the elapsed time separates "retried to the budget" from "called once"
+    /// by two orders of magnitude — the assertion cannot pass for a helper that
+    /// had stopped retrying, which is the failure mode the recovery test's
+    /// timing guard tolerates.
+    #[test]
+    fn the_retry_gives_up_when_the_window_outlasts_the_budget() {
+        let root = scratch("launch-busy-budget");
+        let script = root.join("run.sh");
+        write_script(&script, "#!/bin/sh\nexit 0\n");
+        let release = hold_open_for_writing(&script);
+
+        let started = Instant::now();
+        let error = launched_or_busy_retry(
+            &execs(&script),
+            &RunnerManager::at("/nonexistent"),
+            &FakeLaunchEnv::new(),
+            &NoShares,
+        )
+        .err()
+        .expect("a window held for the whole call must surface as an error");
+        let elapsed = started.elapsed();
+        release();
+
+        match error {
+            RunnerError::Io(io) => assert_eq!(
+                io.kind(),
+                std::io::ErrorKind::ExecutableFileBusy,
+                "the caller's `expect` has to see the raw refusal"
+            ),
+            other => panic!("expected the refusal as an `Io` error, got {other:?}"),
+        }
+        assert!(
+            elapsed >= Duration::from_millis(80),
+            "the loop did not iterate: {elapsed:?} is one attempt, not ~100"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The same guard from the other side: an `Io` error that is *not* the
+    /// window is returned on the first attempt and never looked for again.
+    ///
+    /// A thread creates the executable 50ms in, well inside the budget, so an
+    /// implementation that retried every `Io` error would find it and launch —
+    /// and then the assertion is "it returned the error anyway". A correct one
+    /// never looks a second time, and returns before the file exists at all,
+    /// which is what the elapsed bound states.
+    #[test]
+    fn an_error_that_is_not_the_window_is_not_retried() {
+        let root = scratch("launch-not-busy");
+        let script = root.join("late.sh");
+        let creator = {
+            let script = script.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(50));
+                write_script(&script, "#!/bin/sh\nexit 0\n");
+            })
+        };
+
+        let started = Instant::now();
+        let error = launched_or_busy_retry(
+            &execs(&script),
+            &RunnerManager::at("/nonexistent"),
+            &FakeLaunchEnv::new(),
+            &NoShares,
+        )
+        .err()
+        .expect("a missing executable is a real error, not the ETXTBSY window");
+        let elapsed = started.elapsed();
+        creator.join().unwrap();
+
+        match error {
+            RunnerError::Io(io) => assert_eq!(
+                io.kind(),
+                std::io::ErrorKind::NotFound,
+                "the executable did not exist, so the error is about that"
+            ),
+            other => panic!("expected an `Io` error, got {other:?}"),
+        }
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "the call outlived the file's arrival, so it was looking again: {elapsed:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // -----------------------------------------------------------------
