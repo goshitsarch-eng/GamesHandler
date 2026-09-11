@@ -2083,3 +2083,67 @@ and the instrument is usually the last place anyone looks.
 
 Related: D-33 (build scope), D-41 (per-mechanism answers), D-44 (a count is a
 property of a commit, not of a repository), [[verification-defect-class]].
+
+## D-46. A catch on unreachable code is a vacuous catch — and a review names a commit
+
+**Decision, clause 1.** A mutation result carries an implicit **reachability**
+precondition. A mutant **caught** by a test is evidence that the test observes
+the mutated code **only if that code is executed in production**. Where it is
+not, the red is real and proves nothing about the product: it proves the test
+reads the function, not that anything calls it.
+
+**Why this is not D-44 restated.** D-44 is mutation's blind spot — a mutation
+*caught* by a different mechanism than the one under test, so the catch is not
+evidence about the intended mechanism. This is the near-inverse: the catch is
+about the right mechanism, correctly, and is still vacuous, because the
+mechanism is not in the production path at all. D-44 asks *what produced this
+red?*; D-46 asks **is this code reachable?** Both must be asked of every catch,
+and neither question implies the other.
+
+**The measurement (#51).** `remove_press` was extracted in `runners.rs` so a
+mutation to its body (`"system"` for the row's own id) would be caught — and it
+**is** caught. But the site it was extracted from still builds the message
+inline at `:431`, so the helper has no production caller: mutating it changes no
+production behaviour, and the test that catches the mutation is pinning dead
+code. The advocate's decisive mutant is the deletion: **the helper and its
+44-line test can both be removed and the suite stays green** — 66 lines that
+contribute nothing, described by three comments that assert a consumer, a
+benefit, and a call that did not exist.
+
+**Why this shape is easy to produce and hard to see.** Extraction is the
+project's standard repair for unreadable values (D-44's second guise), and the
+repair *feels* finished the moment its test goes red-then-green. Nothing in
+that loop asks whether the extracted function is called. The compiler would
+have: `dead_code` fires on exactly this. It was silent because
+`#[allow(dead_code)]` sits on the enclosing `mod view` (`main.rs:38-39`) and is
+not removed until T-09 — **so the lint that detects this class is switched off
+for the entire window in which the class is generated.** This is the second
+instance in two commits (`BADGE_WIDTH`, `6823ff5`), which makes it a habit
+rather than an accident.
+
+**The rule.**
+
+* On every extraction, ask **who calls this?** — and treat "the test calls it"
+  as answering a different question. The call graph is the detector while the
+  `dead_code` allow stands.
+* When a mutation is caught, ask **both** D-44's question and this one: what
+  produced the red, *and* is the mutated code reachable from production?
+* Wire before you extract, where the wiring is the smaller diff. Wiring a dead
+  helper makes its catch non-vacuous and turns its deletion into a compile
+  error, which is the strongest catch available.
+
+**Clause 2 — a review names a commit, so amending under it voids it.** The
+`remove_press` review was written against `382f431`, which was then amended to
+`13e9806`. Here `git diff 382f431 HEAD` is **empty**, so the tree is identical
+and the review stands — verified, not assumed. The general rule: **an amend
+under a review invalidates that review by default**, because the review's
+subject is a commit, not a topic. Check with `git diff <reviewed> HEAD`; if it
+is non-empty, the review must be re-taken against the new commit or the change
+must be reverted out of the amend. Amend *before* a review or add a commit
+*after* it — never between.
+
+Related: D-44 (a catch is not evidence about the mechanism you meant), D-45 (a
+count needs its build), D-32 (the `mod view` allow and T-09),
+[[verification-defect-class]] — and the standing method: **every one of these
+was found by running something, and the detector in this case was the call
+graph, because the compiler's was switched off.**
