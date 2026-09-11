@@ -34,12 +34,21 @@ use serde_json::Value;
 
 /// The deepest value this parser will materialise (DECISIONS D-21).
 ///
-/// `serde_json`'s own limit is 128, well below what CPython accepts: Python
-/// parses a 1,000-deep document without complaint, and the oracle pins that in
-/// its `encoding_and_shape` section. Being stricter than Python is not a
-/// cosmetic difference — a parse failure empties the library and the *next*
-/// save writes that emptiness back over the user's file, so it means silently
-/// destroying a library over a nested value the app never reads.
+/// `serde_json`'s own limit is 128, well below what CPython accepts: the oracle
+/// pins a 1,000-deep document parsing in Python, and F-L measured the real
+/// ceiling at **50,000**. Being stricter than Python is not a cosmetic
+/// difference — a parse failure empties the library and the *next* save writes
+/// that emptiness back over the user's file, so it means silently destroying a
+/// library over a nested value the app never reads.
+///
+/// This bound is therefore far below Python's, and that is a deliberate trade
+/// rather than an oversight. Values between 65 and 50,000 levels are read as
+/// `null` where Python would materialise them, which is unobservable because of
+/// what a value at that depth can be: all 31 `Game` fields are scalars, so a
+/// field holding a 100-deep array is invalid to Python's own validators and to
+/// D-18's coercion alike — both discard it, by different routes. A deep value
+/// can otherwise only sit under an unknown key, which `from_dict` drops (F-D).
+/// The depth at which a *legitimate* value lives is 3.
 ///
 /// The obvious fix is to raise serde_json's limit, and that is the wrong one.
 /// A recursive-descent parser uses stack proportional to nesting, so raising
