@@ -34,7 +34,8 @@ prefixes, downloaded runners). **Do not rename.**
 
 Why Freedesktop 25.08:
 
-- libcosmic is a pure Rust GUI stack (winit + wgpu + iced). It needs no KDE
+- libcosmic is a pure Rust GUI stack (winit + iced; wgpu is opt-in and we do
+  not enable it — D-11). It needs no KDE
   or GNOME platform libraries, so the Freedesktop runtime is the correct,
   smallest base. (The `flatpak-cargo-generator` reference manifest itself
   targets `org.freedesktop.Platform`; see section 2.)
@@ -230,16 +231,23 @@ Rules for the code phase:
 
 ### 2.3 libcosmic features we enable
 
-Per the verified spec: `winit`, `tokio`, `wayland`, `a11y`, `xdg-portal`
-(`default-features = false`). Meaning for packaging:
+As shipped in `crates/app/Cargo.toml` (`default-features = false`):
+`winit`, `tokio`, `wayland`, **`x11`**, `a11y`, `xdg-portal`. Meaning for
+packaging:
 
 - `xdg-portal` = `ashpd` (libcosmic `Cargo.toml`: `xdg-portal = ["ashpd"]`).
   This is what makes file dialogs and notifications go through
   `xdg-desktop-portal` instead of direct filesystem access (section 4).
   `wayland` pulls `ashpd?/wayland` integration automatically.
-- `x11` is **not** enabled: the app is Wayland-first; X11 users get
-  `socket=fallback-x11` + XWayland from the compositor side (unchanged from
-  today, manifest `:16`). Revisit only if X11-native testing demands it.
+- **`x11` IS enabled** (corrected during T-16; this section previously said
+  the opposite). The app is Wayland-first, but enabling the winit X11 backend
+  costs nothing in the sandbox — `--socket=fallback-x11` is kept regardless —
+  and buys two concrete things: the app runs natively on X11 sessions rather
+  than only via XWayland, and it makes **smoke-test fallback #2 (Xvfb) in
+  section 6 available**, which the old text had ruled out on the grounds that
+  we did not enable `x11`. A prior worry that this pulls GPU/X11 baggage does
+  not apply: `--device=all` already covers it and rendering is software (D-11).
+- `wgpu` is deliberately **absent**: D-11 ships `iced_tiny_skia`.
 - Provisional **[to-verify]** in the code phase: whether our crate must also
   enable libcosmic's `rfd` feature (`dep:rfd`, rfd 0.16 with `xdg-portal`)
   for portal file dialogs, or whether libcosmic's own dialog helpers already
@@ -256,19 +264,19 @@ Disposition for the Rust build:
 | finish-arg | Verdict | Reason |
 | --- | --- | --- |
 | `--share=network` | **KEEP** | Runner/installer downloads, Steam artwork lookup, release-page fetches are core function (README.md:12-16). |
-| `--share=ipc` | **KEEP** | Required for GPU buffers / SHM with the compositor; standard for any GUI Flatpak, wgpu included. |
-| `--socket=fallback-x11` | **KEEP** | XWayland fallback on X11 sessions. libcosmic/winit talks X11 via XWayland; unchanged need. |
+| `--share=ipc` | **KEEP** | Shared memory for the compositor; standard for any GUI Flatpak. (The old rationale cited GPU buffers via wgpu; that no longer applies under D-11, but the flag is still wanted for SHM.) |
+| `--socket=fallback-x11` | **KEEP** | XWayland fallback on X11 sessions, and now also the native path for X11 sessions since `x11` is enabled (§2.3). |
 | `--socket=wayland` | **KEEP** | Primary display path for winit. |
 | `--socket=pulseaudio` | **KEEP** | Game audio (Wine/PulseAudio socket passthrough). Unrelated to toolkit. |
 | `--allow=multiarch` | **KEEP** | 32-bit Windows games and downloaded Wine/Proton builds (README.md:127-128). Non-negotiable for a Wine launcher. |
-| `--device=all` | **KEEP, flagged** | Reviewed launcher exception (README.md:139-145): controllers and game hardware passthrough to launched games, which inherit the sandbox. Minimization candidate is `--device=dri` (all wgpu needs is render nodes), but gamepads classically need the full device set. Plan: ship `--device=dri` first, test controller hotplug through a launched game, and restore `--device=all` with a test note if controllers regress. Do not silently keep `all` without that test. |
+| `--device=all` | **KEEP, flagged** | Reviewed launcher exception (README.md:139-145): controllers and game hardware passthrough to **launched games**, which inherit the sandbox. Note the rationale changed at T-16: the *app* no longer needs any device, because D-11 renders in software. Only the games it launches do. The minimization candidate is still `--device=dri`, but gamepads classically need the full device set — ship `all` until a real controller hotplug test through a launched game justifies narrowing it (PLAN.md Q-2). Do not silently keep `all` without that test. |
 | `--filesystem=home` | **KEEP** | Reviewed exception (README.md:141-145): libraries live in arbitrary user locations. Portal file *choosers* (section 4) do not replace this — the app must *execute* games from those locations afterwards. |
 | `--filesystem=xdg-run/gvfs` | **KEEP** | Network-share games resolve via mounted GVFS paths (README.md:129-130, `gamehandler/netpaths.py`). Unrelated to toolkit. |
 | `--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro` | **KEEP** | Read-only Steam library/artwork access. Unrelated to toolkit. |
 | `--env=PATH=…gamescope…` | **KEEP, conditionally** | Only while Gamescope integration is retained. Path prefix must be re-checked against the Freedesktop runtime layout (current value targets the KDE-runtime gamescope extension path; the Freedesktop gamescope Vulkan-layer extension is `org.freedesktop.Platform.VulkanLayer.gamescope//25.08`, README.md:46-50). Drop if Gamescope support is deferred. |
 | `--env=PYTHONPATH=…` | **DELETE** | Python is gone. |
 | `--talk-name=org.freedesktop.Notifications` | **DELETE, replaced by portal** | Direct notification-bus access is unnecessary once notifications go through the `org.freedesktop.portal.Notification` (ashpd) API, which needs no explicit bus permission (portals are brokered by `xdg-desktop-portal` — see section 4). Code-phase dependency: keep this line until the notification call site is ported to ashpd, then remove. |
-| *(new)* `--device=dri` | **ADD** | wgpu renders via Vulkan/GL on render nodes. Without DRI access the app either fails to create a surface or falls back to CPU rasterization. (If the `--device=all` minimization test above restores `all`, `dri` is subsumed and listed only as documentation.) |
+| *(new)* `--device=dri` | **NOT ADDED** | Reversed at T-16. Someone here assumed the app renders via wgpu; under D-11 it renders in software and needs no device node at all. `--device=dri` is also strictly subsumed by the `--device=all` we keep (`flatpak-metadata(5)`: "All device nodes in `/dev`"). Adding it would be a no-op that implies a GPU requirement the app does not have. Revisit only if the Q-2 test narrows `--device=all`. |
 | *(new)* `--socket=pulseaudio` etc. | — | Already present; no new sockets needed. Portal access (`OpenFile`, `Notification`, `Settings` for dark-mode) requires **no** finish-args — that is the point of portals. Do not add `--talk-name=org.freedesktop.portal.*`. |
 
 `inherit-extensions` (`GL32`, `Compat.i386`, manifest `:28-31`) is **unchanged**:
@@ -490,65 +498,96 @@ Output contract: one line per stage to stdout, machine-greppable
 
 ---
 
-## 7. Headless smoke test verdict (wgpu, not Qt)
+## 7. Headless smoke test verdict (software rendering, not Qt)
 
 ### 7.1 What the spike proved **[spike]**
 
 The prebuilt libcosmic `application` example **launched and stayed alive**
-on this host (killed by timeout; exit 124 = still running, no crash),
-rendering via **wgpu** with no Qt involved. Environment: `DISPLAY=:1`,
-`WAYLAND_DISPLAY=wayland-1`, lavapipe software-Vulkan ICD present
-(`/usr/share/vulkan/icd.d/lvp_icd.x86_64.json`). Sole warning: the benign
-`xdg_toplevel_icon_manager_v1 is not supported` (no icon manager on that
-compositor; cf. section 4.4).
+on this host (killed by timeout; exit 124 = still running, no crash) with no
+Qt involved. Environment: `DISPLAY=:1`, `WAYLAND_DISPLAY=wayland-1`. Sole
+warning: the benign `xdg_toplevel_icon_manager_v1 is not supported` (no icon
+manager on that compositor; cf. section 4.4).
+
+**Correction at T-16.** This section originally attributed the successful
+launch to **wgpu** over lavapipe. That was wrong on two counts, both settled
+afterwards: the spike was run with libcosmic's *default* feature set, which
+does **not** include `wgpu` (it is opt-in), so the renderer in that run was
+`iced_tiny_skia` — and D-11 then decided the port ships exactly that. The
+lavapipe/Vulkan loader discussion below was therefore scaffolding for a
+requirement we do not have.
+
+Concretely, verified with `cargo tree -e features` on our own crate:
+`iced_renderer feature "tiny-skia"` present, `iced_renderer feature "wgpu"`
+**absent**. (`libcosmic feature "iced_wgpu"` *is* present, because libcosmic's
+`wayland` feature enables `iced_wgpu/wayland` unconditionally — that compiles
+the crate but never initialises a device. See PLAN.md §2.1.)
 
 **Verdict: a headless smoke test is viable — it was demonstrated working.**
 This is not a Qt-offscreen situation (`QT_QPA_PLATFORM=offscreen`,
-test_qml_smoke.py:47) and must not be built as one. The correct stack:
+test_qml_smoke.py:47) and must not be built as one. What the stack needs:
 
 - **Compositor**: headless Wayland compositor holding `WAYLAND_DISPLAY`
   (e.g. `weston --backend=headless` **[to-verify]** availability in CI;
-  alternatively the host's existing compositor socket). winit connects over
-  Wayland exactly as on a real desktop.
-- **GPU**: software Vulkan via lavapipe (`VK_ICD_FILENAMES` pointed at the
-  lavapipe ICD, `LIBGL_ALWAYS_SOFTWARE`-style CPU rasterization for any GL
-  fallback). wgpu needs a Vulkan (or GL) device; lavapipe provides one with
-  no hardware.
-- **Caveat [spike]**: the host's ICD JSONs exist but `vulkaninfo` is absent
-  and the `libvulkan` loader presence was not conclusively confirmed
-  (`ldconfig` shows Mesa driver libs like `libvulkan_radeon`, but the loader
-  itself must be checked). The smoke test must therefore **assert loader +
-  ICD explicitly** (`test -n "$(ldconfig -p | grep libvulkan.so)"`-style
-  probe, or a tiny `vkEnumerateInstanceVersion` check) and fail with "no
-  Vulkan loader" rather than a cryptic wgpu panic. Inside the Flatpak,
-  Vulkan comes from the `GL.default` extension — present on this host
-  (26.1.6, section 1.2).
+  alternatively the host's existing compositor socket, or `Xvfb` via the
+  enabled `x11` backend — §7.2). winit connects over Wayland exactly as on a
+  real desktop.
+- **GPU: nothing.** No Vulkan loader, no ICD, no lavapipe, no `/dev/dri`.
+  The app rasterizes on the CPU. Removing this requirement is the single
+  biggest simplification D-11 bought, and it is why the flatpak smoke test
+  can run on an ordinary CI box.
+- **No `vulkaninfo`/loader probes are needed.** The old text required the
+  smoke test to assert loader and ICD presence and fail with "no Vulkan
+  loader" rather than a cryptic wgpu panic. That whole failure mode is gone.
+  Inside the Flatpak, Vulkan still arrives via `GL.default` (26.1.6, §1.2) —
+  it just is not used for rendering, only available to launched games.
 
-### 7.2 What to do if wgpu cannot start in some CI environment
+### 7.2 What the smoke test needs (revised after D-11)
 
-Ranked fallbacks (strongest first); the smoke stage tries each in order and
-reports which level passed:
+**This section previously opened with "what to do if wgpu cannot start". That
+premise is gone** (D-11): the app ships `iced_tiny_skia`, so it rasterizes on
+the CPU and never initialises a GPU device. Lavapipe, the Vulkan loader, and
+`/dev/dri` are therefore **not** smoke-test requirements — the spike proved the
+binary starts and stays running with no GPU at all.
 
-1. Headless compositor + lavapipe, full launch, page walk (target state).
-2. `Xvfb` + lavapipe over winit's X11 backend (libcosmic keeps an `x11`
-   feature we do not enable — this fallback would need it; weigh before
-   paying that cost).
-3. CLI-only assertions: `gamehandler --version`, `--list`, and a
-   build-and-launch assertion (process starts, creates its window object,
-   exits 0 on `--quit-after-init`-style flag if we add one). Honest floor:
-   this proves packaging + startup linkage, not rendering.
+What is still required is a **display server**: winit needs a
+`WAYLAND_DISPLAY` or `DISPLAY` to create its event loop, and with neither it
+panics (N-01). Note this is a *display* dependency, not a *rendering* one, so
+the cheap options get much cheaper:
 
-If even level 3 cannot run (no display server at all can be provided), say so
-in the CI log and gate releases on a maintainer-run level-1 pass. Do not
-fake a green smoke test.
+1. **Headless Wayland compositor** (target state) — e.g. `cosmic-comp`,
+   `weston --backend=headless`, or `sway` under `WLR_BACKENDS=headless`. Full
+   launch and page walk; no GPU or lavapipe needed.
+2. **`Xvfb`** over winit's X11 backend. Available because `x11` *is* enabled in
+   `crates/app/Cargo.toml` (§2.3) — the old text ruled this out on the belief
+   that we had not enabled it. Xvfb needs no GPU either.
+3. **CLI-only assertions:** `gamehandler --version`, `--list`, `--launch <id>`,
+   plus a build-and-launch assertion (process starts and stays alive for a
+   fixed interval, then exits cleanly). Honest floor: proves packaging and
+   startup linkage, not rendering.
 
-### 7.3 Why this is still a top risk
+If even level 3 cannot run, say so in the CI log and gate releases on a
+maintainer-run level-1 pass. Do not fake a green smoke test.
 
-wgpu initialization depends on loader + ICD + compositor socket agreeing —
-three moving parts outside our code, multiplied by Flatpak's GL extension
-layer. The spike de-risks the toolkit itself (it runs); what remains is
-pinning the CI recipe so it runs *repeatably*. Budget for one round of
-CI-environment wrangling in the code phase.
+**One thing to port from the Qt app rather than drop:** `main.py:run_gui()`
+prints an actionable hint when no display is available. iced panics instead
+(N-01/N-02, task T-08), which would make level 3 fail by crashing rather than
+by reporting. Fix N-01 before relying on level 3.
+
+### 7.3 Why this is now a much smaller risk
+
+This was written expecting "loader + ICD + compositor socket agreeing — three
+moving parts outside our code, multiplied by Flatpak's GL extension layer".
+Under D-11 there is **one** moving part: a compositor socket. No loader, no
+ICD, no GL extension layer in the rendering path, and no GPU. The spike
+de-risked the toolkit itself (it runs); what remains is pinning the CI recipe
+so it runs *repeatably* — realistically a `weston --backend=headless` (or
+`Xvfb`) invocation. Budget a short round of CI-environment wrangling, not a
+long one.
+
+The risk that *does* stay live is unrelated to rendering: **N-01**, the
+no-display panic. A smoke test asserts "starts and stays running without
+errors", and a panic is neither — so N-01 must be fixed (T-08) before the
+smoke test can be trusted at any level.
 
 ---
 
