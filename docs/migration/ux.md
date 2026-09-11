@@ -310,7 +310,8 @@ manifest, not hand-committed PNGs.
 
 **Question.** libcosmic's `image` dependency is pinned to `features = ["ico","jpeg","png"]`
 (`libcosmic/Cargo.toml:139-143`), but `copy_custom_cover` stores a user's `.webp`
-verbatim (`covers.py:296-307`). Which fix — libcosmic's `animated-image` feature, or
+verbatim — the suffix is kept when it is one of the four accepted image types
+(`covers.py:300-301`). Which fix — libcosmic's `animated-image` feature, or
 transcoding `.webp` to PNG on import in `core::covers`?
 
 **Observed (measured, not read).** A standalone probe against `image` 0.25.10 at exactly
@@ -330,7 +331,7 @@ The last two rows are the two facts that are easy to get wrong:
   No fix is needed there, and R-11 should not be read as implicating it.
 - Decoding **sniffs content, not the extension**, so PNG-in-a-`.jpg`-named file works.
   That matters because it is a normal outcome, not an edge case: `save_cover_from_urls`
-  writes to a hardcoded `<id>.jpg` (`covers.py:283`) while the candidate list includes
+  writes to a hardcoded `<id>.jpg` (`covers.py:284`) while the candidate list includes
   `portrait.png` (`covers.py:40`) — so a game whose only available asset is the PNG gets
   **PNG bytes in a `.jpg` file** whenever Steam's CDN serves it.
 
@@ -389,7 +390,7 @@ vendored-source regeneration is `build-aux/flatpak/` (packaging owner).
 The cover tile must never branch on a file's **extension** to decide whether or how to
 render it, and must not treat `<id>.jpg` as a promise of JPEG bytes:
 
-- `<id>.jpg` may hold PNG bytes (12.4, `covers.py:40,283`) — a normal outcome, not a
+- `<id>.jpg` may hold PNG bytes (12.4, `covers.py:40`, `:284`) — a normal outcome, not a
   corner case.
 - `<id>.ico` holds icon bytes from exe extraction, and letterboxes rather than fills
   (V1's plate).
