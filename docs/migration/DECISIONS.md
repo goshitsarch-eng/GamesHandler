@@ -2772,6 +2772,8 @@ the control to fit the seam is how a security property becomes a TODO nobody
 re-opened — and `ResponseHead` looked sufficient until a caller needed the one
 field it lacked.
 
+**Landed at `5e1485b`**, as decided and with both conditions met: `ResponseHead` gained `final_url` as a `String` rather than an `Option<String>`, deliberately, so that a client which cannot report a final URL fails closed on `""` instead of validating nothing — read at `crates/app/src/http.rs:97` and consumed at `installers.rs:1717` by `validate_download_origin`, and the ported test is `an_untrusted_redirect_is_rejected_before_a_single_byte` (`installers.rs:3118`). Condition 2 held: the test landed with the code, in the same commit. One divergence the port carries: a bounded `spawn_retrying` (`installers.rs:1469`, 5 × 10 ms, keyed on `ETXTBSY`) that the reference does not have — a measured flake, recorded at the function and exercised by its own test. See T-34 in `PLAN.md`.
+
 Related: D-26 (the seam), T-34, [[verification-defect-class]].
 
 ## D-54. The `.desktop` writer deliberately diverges from the reference on `id_prefix` — a path traversal is not "parity"
