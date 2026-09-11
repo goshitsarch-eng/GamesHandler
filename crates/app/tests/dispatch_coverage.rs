@@ -1,4 +1,4 @@
-//! A page that draws a control must have somewhere for that control to land.
+//! A view that draws a control must have somewhere for that control to land.
 //!
 //! Finding #65: `view/library.rs` emits `Message::OpenNewGameForm` from the
 //! Library's empty state, `Shell::update` handled it with `{}`, and no view
@@ -8,24 +8,34 @@
 //! page finished?"*. A placeholder is visible; a wired-looking control that
 //! emits into an empty arm is not.
 //!
-//! So this test asks the second question directly, for each page `main.rs`
-//! **dispatches to a real body**:
+//! So this test asks the second question directly, for every view module
+//! `main.rs` renders:
 //!
-//! > every `Message` variant that page's view module constructs has a non-empty
-//! > handler in `Shell::update`.
+//! > every `Message` variant that module's production code constructs has a
+//! > non-empty handler in `Shell::update`.
+//!
+//! "Every view module `main.rs` renders" is computed, not listed. The roots are
+//! the view modules `main.rs`'s own production code names — the pages
+//! `view_body` dispatches to a real body, and the overlay
+//! `view_with_overlays` composes — and the closure adds every view module those
+//! call, transitively. That is what puts the shared components (`widgets`,
+//! `badge`, `cover`, `meta`, `metrics`) in scope: `main.rs` never names them,
+//! but the Library's cards and the Runners' rows are built from them, so a
+//! control there is as reachable as one drawn by the page. **#80**: before
+//! this, the covered set was the dispatch roots alone, and `view/form.rs`'s
+//! `Message::FetchCoverForForm` sat behind an empty arm at `main.rs:1339` that
+//! the guard could not see.
 //!
 //! # Why dispatch, and not module existence
 //!
-//! The guard keys on the page dispatch, not on which view modules exist. A page
-//! still routed through `pending_page` is *correctly* deferred — it says so on
-//! screen — so the guard does not fire on the messages its view module builds.
-//! When such an arm changes to a real `view::<module>::view` body the guard
-//! starts covering that page with no edit here; a per-page list would need
-//! remembering, and this does not.
-//!
-//! That is also the guard's escape hatch: a page that is not finished should go
-//! back behind `pending_page`, which is visible to a user, rather than ship an
-//! inert control.
+//! A page still routed through `pending_page` is *correctly* deferred — it says
+//! so on screen — so the guard does not fire on the messages its view module
+//! builds, and no covered module calls it. When such an arm changes to a real
+//! `view::<module>::view` body the guard starts covering that page with no edit
+//! here; a per-page list would need remembering, and this does not. Reverting a
+//! page to `pending_page` is therefore the escape hatch: a page that is not
+//! finished should go back behind the placeholder, which is visible to a user,
+//! rather than ship an inert control.
 //!
 //! # What it cannot see, stated rather than implied
 //!
@@ -69,12 +79,39 @@
 //!     appears in the files this parses at the time of writing; a `'{'` in one
 //!     would skew the depth counter. If that happens the counts stop matching
 //!     and the guard fails loudly rather than quietly.
+//!   * **A module the guard does not cover is invisible**, and this is the
+//!     limit #80 was about. Coverage is
+//!     computed ([`Guard::parse`]), not listed: the roots are the view modules
+//!     `main.rs`'s production code names, and the closure adds every view module
+//!     those call, transitively. A module no covered module calls — and that
+//!     `main.rs` does not name — is not scanned at all. `view/installers.rs` is
+//!     the live example, and it is *correct* that it is out of scope: its page
+//!     is still behind `pending_page`, which is the deferral this guard's design
+//!     is built around. The point is the mechanism, not that instance: the same
+//!     reachability rule that correctly excludes a placeholder would equally
+//!     exclude a finished module nothing happened to call yet. **#80.**
+//!   * **An emission constructed in `main.rs` is not scanned.** Emissions are
+//!     read from view modules; `main.rs` is read for arms. A `Message::`
+//!     constructed in a rendered position in `main.rs` — a button built inline
+//!     rather than in a view module — is checked by nothing here.
 //!
-//! None of those limits can make this pass when it should fail: every one makes
-//! it *more* likely to report a problem. The two tests here pin it from both
-//! sides — the first must find nothing on the real tree, the second must find
-//! exactly one more thing when an arm is re-emptied — so a parser that has
-//! stopped matching, or one that reports everything, fails one of them.
+//! So the limits above do not include the claim that none of them can make this
+//! pass when it should fail — that sentence is deliberately not here. **Three of
+//! the nine can**: a module outside the covered set (bullet 8), an emission
+//! constructed in `main.rs` (bullet 9), and a `#[cfg(test)]` cut that removes
+//! more than it should (bullet 2, and it is pinned for `runners` alone, not for
+//! every module). The other six err toward reporting a *non*-defect, which is
+//! the safe direction. The first two are the scope of the guard rather than
+//! defects in it, and they are stated where a reader meets them.
+//!
+//! What the tests here establish is therefore narrower, and stated rather than
+//! implied: the guard finds nothing on the real tree; it finds exactly one more
+//! thing when an arm is re-emptied, both for a message a dispatched page emits
+//! and for one a covered-only-by-call module emits; and the deferral machinery
+//! matches on the value it claims to, with a bad key reported. A parser that has
+//! stopped matching, a coverage set that has collapsed back to the dispatch
+//! roots, a cut that has stopped cutting, and a guard that reports everything
+//! each fail one of those.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -103,33 +140,74 @@ const HANDLED_ELSEWHERE: [(&str, &str); 1] = [(
 /// Adding an entry is a decision, not housekeeping: it is the statement that a
 /// user-reachable control may sit inert. Prefer fixing the arm.
 ///
-/// **That reject branch has fired in anger, which is better evidence than the
-/// hand-run that was here before.** It was first demonstrated by hand — a
-/// `("NavigateTo", "Library", …)` entry added, both guard tests failing with the
+/// # The key is `(variant, module)`, and the module is checked
+///
+/// It used to be `(variant, page)`, and that was correct — but it made the two
+/// halves of the key different kinds of thing, one a `Message` variant and one a
+/// **page** (`"Library"`) in a file where everything else is keyed by **module**
+/// (`"library"`). Two reviewers read `p == page` as a module-to-page comparison
+/// and concluded the list was inert; it was not — measured at `9940f07`, the
+/// last revision carrying the entry, this guard printed `1 dead emissions
+/// (1 deferred by KNOWN_DEAD)` and passed 3/3 by compiling that revision's own
+/// copy of this file against that revision's sources. Had the comparison really
+/// never matched, the `stale` assertion below would have fired, because an entry
+/// that matches nothing in `dead` is exactly what it reports.
+///
+/// So the mechanism was never broken and the fix offered for it was wrong — but
+/// the misreading was *available*, and that is a defect in the key. The module
+/// is what identifies an emission ([`Guarded::module`] is what locates the file
+/// and the call site); the page is a display name. Keying on the module makes
+/// the component checkable, so [`Guard::uncovered`] now asserts every entry's
+/// module is one the guard actually scans: a typo, or a module that has dropped
+/// out of scope, fails loudly instead of becoming an entry that can never match.
+/// That is the property the reviewers thought was missing, in the form that can
+/// be held.
+///
+/// **That reject branch has fired in anger.** It was first demonstrated by hand
+/// — a `("NavigateTo", "…", …)` entry added, both guard tests failing with the
 /// message below, green restored on removal. Then it fired on real work: UX
 /// landed #65's handler, `OpenNewGameForm` stopped being dead, and this list
-/// went stale and failed the suite naming that entry. The deferral did its job
-/// in both directions, and the message is the one quoted here:
+/// went stale and failed the suite naming that entry. The message is the one
+/// quoted here:
 ///
 /// ```text
 /// these KNOWN_DEAD entries no longer describe a dead emission: [("OpenNewGameForm",
-/// "Library", "…")]. Either the arm was handled — in which case delete the
+/// "…")]. Either the arm was handled — in which case delete the
 /// entry, and thank you, this list is supposed to shrink — or the page stopped
 /// emitting the message, or the page moved back behind `pending_page`. An entry
 /// nothing checks is how a deferral list turns into a place where problems are
 /// forgotten.
 /// ```
 ///
-/// That is why this list is empty now: the entry was deleted, not the check.
-const KNOWN_DEAD: [(&str, &str, &str); 0] = [
-    // variant, page, why — the task that owns it
-    //
-    // Empty, and it should stay that way. The one entry this carried was
-    // `OpenNewGameForm` on `Library` — #65's dead "Add your first game" button —
-    // and UX landing that handler is what emptied it. Adding an entry is the
-    // statement that a user-reachable control may sit inert; prefer fixing the
-    // arm.
-];
+/// # What that run does not establish, and why `35e8085` is red
+///
+/// **A green run of this guard is evidence about the sources on disk, never
+/// about the commit.** `35e8085` deleted the `OpenNewGameForm` entry on the
+/// strength of a green run — and it was green, in a working tree that already
+/// held the handler. The handler is not in that commit; it lands four commits
+/// later at `2ce15e9`. So at its own sha the arm was still `{}`, the emission
+/// was still dead, and the guard **failed**, naming it. Measured by compiling
+/// that revision's own copy of this file against that revision's sources:
+/// `2 passed; 1 failed`, `1 dead emissions (0 deferred by KNOWN_DEAD)`. The
+/// guard was right and the commit message was wrong, which is D-45 applied to a
+/// message: a commit message reporting a run is a claim about a sha, and only
+/// the sha can confirm it. `32f5601`, `ce1cd7a` and `e27c4ea` are red for the
+/// same reason; `2ce15e9` is green because it is the repair. Nothing was
+/// reverted — the current tree is green and the entry is correctly gone.
+const KNOWN_DEAD: [(&str, &str, &str); 1] = [(
+    // variant, module, why — the task that owns it
+    "FetchCoverForForm",
+    "form",
+    "#80 / T-11. **Not debt: a false positive the guard cannot model, with a \
+     structural disclosure elsewhere.** `view/form.rs:731` constructs it, but only inside \
+     `if !COVER_FETCH_MISSING` — the flag is `true`, so the FIND COVER button is not drawn and \
+     nothing is reachable. This guard reads source as text and cannot see the flag, so it \
+     reports the emission. The coupling is enforced rather than promised: \
+     `main.rs:3355` asserts `button_on_screen == !COVER_FETCH_MISSING`, so the button cannot \
+     reappear without the arm being handled, and the arm cannot be handled while the button is \
+     hidden. Delete this entry when `COVER_FETCH_MISSING` becomes `false` and \
+     `main.rs:1339` stops being `{}`.",
+)];
 
 /// The repository root, derived rather than hardcoded.
 fn repo_root() -> PathBuf {
@@ -488,10 +566,106 @@ fn emissions(src: &str) -> BTreeSet<String> {
     scan(&production_src(src).0)
 }
 
-/// A page that `view_body` dispatches to a real `view::<module>::view` body.
-struct CoveredPage {
-    page: String,
+/// Every view module declared by `crates/app/src/view/mod.rs`.
+///
+/// The closure that builds [`Guard::covered`] must not follow a name out of the
+/// view layer: `super::runners::RunnerManager` inside `form.rs` is
+/// `gamehandler_core::runners`, a different crate's module with the same name,
+/// and treating it as a view module would put a core file through the emission
+/// scanner. Intersecting with this list is what bounds the closure to the view
+/// layer — measured: without it, `settings.rs` "reaches" `runners` because of
+/// `use gamehandler_core::runners::RunnerManager` on line 31.
+fn view_modules(src: &str) -> BTreeSet<String> {
+    let mods: BTreeSet<String> = src
+        .lines()
+        .filter_map(|l| {
+            l.trim()
+                .strip_prefix("pub mod ")
+                .and_then(|rest| rest.strip_suffix(';'))
+                .map(|name| name.trim().to_string())
+        })
+        .collect();
+    assert!(
+        mods.len() >= 10,
+        "parsed only {} view modules out of crates/app/src/view/mod.rs: {mods:?}. That file \
+         declares the view layer, and the coverage closure is bounded by it; a short list means \
+         the parser has stopped matching and modules would silently drop out of scope.",
+        mods.len()
+    );
+    mods
+}
+
+/// A view module the guard checks, and how it came to be in scope.
+struct Covered {
+    /// The page, when `view_body` dispatches one to this module. `None` for a
+    /// module rendered without being a page: an overlay, or a shared component.
+    page: Option<String>,
+    /// The module name, which is what locates both the file to scan and the
+    /// entry in [`KNOWN_DEAD`] that may defer its emissions.
     module: String,
+    /// How this module is reached, for the failure message. Three shapes:
+    /// a page dispatch, a name in `main.rs`, or a call from another module.
+    reached: String,
+}
+
+impl Covered {
+    /// How to name this module in a failure a reader has to act on: the page it
+    /// is, when it is one, and always the file. The file is not redundant for a
+    /// page — the page name and the module name are different strings, which is
+    /// the trap [`KNOWN_DEAD`]'s key fell into.
+    fn label(&self) -> String {
+        match &self.page {
+            Some(page) => format!("page {page} (view/{}.rs)", self.module),
+            None => format!("view/{}.rs", self.module),
+        }
+    }
+}
+
+/// The view modules `main.rs`'s own production code names, and how.
+///
+/// Anchored on `view::<name>::` so a bare `runners::` from the core crate does
+/// not count, and read through [`production_src`] so the test module's
+/// references (`crate::view::form::COVER_FETCH_MISSING` at `main.rs:3330`) do
+/// not make a module look rendered when only a test names it.
+fn rendered_in_main(main_src: &str, modules: &BTreeSet<String>) -> Vec<String> {
+    let (prod, _) = production_src(main_src);
+    let mut out = BTreeSet::new();
+    for line in prod.lines() {
+        let code = code(line);
+        let mut rest = code.as_str();
+        while let Some(at) = rest.find("view::") {
+            rest = &rest[at + "view::".len()..];
+            let name = leading_ident(rest);
+            if modules.contains(&name) {
+                out.insert(name);
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// The view modules `text`'s production code calls, bounded to `modules`.
+///
+/// Both spellings count: `crate::view::<m>::` from anywhere, and `super::<m>::`
+/// from inside a view module. `use super::cover::{self, CoverSource};` at the
+/// top of `widgets.rs` is a real dependency — every card in the Library is drawn
+/// through it.
+fn calls_in(text: &str, modules: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for line in text.lines() {
+        let code = code(line);
+        for anchor in ["crate::view::", "super::"] {
+            let mut rest = code.as_str();
+            while let Some(at) = rest.find(anchor) {
+                rest = &rest[at + anchor.len()..];
+                let name = leading_ident(rest);
+                if modules.contains(&name) {
+                    out.insert(name);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The parsed state the guard reasons over, so the red/green test below can run
@@ -499,7 +673,7 @@ struct CoveredPage {
 struct Guard {
     variants: BTreeSet<String>,
     handled: BTreeSet<String>,
-    covered: Vec<CoveredPage>,
+    covered: Vec<Covered>,
     /// Number of arms in `Shell::update`'s match. Fewer than `variants.len()`
     /// when an or-pattern binds several at once, which is exactly why it is
     /// recorded rather than recomputed by a reader.
@@ -565,20 +739,93 @@ impl Guard {
 
         // A page still routed through `pending_page` is correctly deferred and
         // is deliberately not covered; see the module header.
-        let covered: Vec<CoveredPage> = page_dispatch(main_src)
+        let modules = view_modules(&read("crates/app/src/view/mod.rs"));
+        let dispatched: Vec<(String, String)> = page_dispatch(main_src)
             .into_iter()
-            .filter_map(|d| {
-                d.module.map(|module| CoveredPage {
-                    page: d.page,
-                    module,
-                })
-            })
+            .filter_map(|d| d.module.map(|module| (d.page, module)))
             .collect();
         assert!(
-            !covered.is_empty(),
+            !dispatched.is_empty(),
             "no page in the dispatch renders a real body, so this guard would cover nothing and \
              pass trivially. Expected at least `view_body`'s non-`pending_page` arms."
         );
+
+        // The roots are the modules `main.rs` names, whether `view_body`
+        // dispatches to them as a page or `view_with_overlays` composes them.
+        // Computed from `main.rs` rather than hardcoded, so a module rendered
+        // without being a page is in scope the moment it is named.
+        let named = rendered_in_main(main_src, &modules);
+        let mut covered: Vec<Covered> = Vec::new();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for (page, module) in &dispatched {
+            if seen.insert(module.clone()) {
+                covered.push(Covered {
+                    page: Some(page.clone()),
+                    module: module.clone(),
+                    reached: "dispatched by `view_body`".to_string(),
+                });
+            }
+        }
+        for module in &named {
+            if seen.insert(module.clone()) {
+                covered.push(Covered {
+                    page: None,
+                    module: module.clone(),
+                    reached: "named in `main.rs`".to_string(),
+                });
+            }
+        }
+        assert!(
+            !named.is_empty(),
+            "found no `view::<module>::` reference in main.rs's production code, so no module \
+             could be covered and every page would read as clean. The scan anchor has stopped \
+             matching."
+        );
+
+        // The closure. A shared component is reached by being called, and
+        // `main.rs` never names `widgets` — the Library's cards do. Bounded to
+        // `modules` so a `super::runners::RunnerManager` (the core crate's, not
+        // the view layer's) cannot walk the scan into another crate.
+        let mut frontier: Vec<String> = covered.iter().map(|c| c.module.clone()).collect();
+        while let Some(from) = frontier.pop() {
+            let (src, _) = production_src(&read(&format!("crates/app/src/view/{from}.rs")));
+            for module in calls_in(&src, &modules) {
+                if seen.insert(module.clone()) {
+                    covered.push(Covered {
+                        page: None,
+                        module: module.clone(),
+                        reached: format!("called from `view/{from}.rs`"),
+                    });
+                    frontier.push(module);
+                }
+            }
+        }
+        covered.sort_by(|a, b| a.module.cmp(&b.module));
+
+        // Anti-vacuity for the closure, both halves. If it silently did nothing
+        // the guard would be back to the dispatch roots and would still pass --
+        // the exact hole #80 is about -- so the reach is asserted, not assumed.
+        let from_closure: Vec<&Covered> = covered
+            .iter()
+            .filter(|c| c.reached.starts_with("called from"))
+            .collect();
+        assert!(
+            !from_closure.is_empty(),
+            "the coverage closure added no module: every covered module is named directly by \
+             main.rs, so nothing reached through a call is in scope. That is the #80 hole \
+             restored, and it would pass every other assertion here. Covered: {:#?}",
+            covered.iter().map(|c| &c.module).collect::<Vec<_>>()
+        );
+        for must in ["widgets", "badge"] {
+            assert!(
+                covered.iter().any(|c| c.module == must),
+                "`view/{must}.rs` is not covered, but it is reached from a covered module and is \
+                 what the Library's cards and the Runners' rows are built from. A control there \
+                 is as reachable as one drawn by a page, which is the whole point of the \
+                 closure. Covered: {:#?}",
+                covered.iter().map(|c| &c.module).collect::<Vec<_>>()
+            );
+        }
 
         Guard {
             variants: variant_set,
@@ -594,21 +841,42 @@ impl Guard {
         self.dead_emissions().len()
     }
 
-    /// `(page, module, variant)` for every message a covered page emits that
-    /// nothing handles, minus the [`KNOWN_DEAD`] deferrals.
+    /// `(label, module, variant)` for every message a covered module emits that
+    /// nothing handles, minus the deferrals in `known_dead`.
     ///
-    /// The deferrals are checked in the same pass: an entry that no longer
-    /// describes a dead emission fails here. That is what keeps the list
-    /// honest, and it is the same rule the `PINNED_PENDING` header states — a
-    /// hand-copied fact that no assertion reads has nothing to keep it true.
-    fn uncovered(&self) -> Vec<(String, String, String)> {
+    /// The deferrals are checked here, in both directions:
+    ///
+    ///  * an entry whose module is not covered can never match, so it is inert
+    ///    and fails — that is the check the module key exists to make possible;
+    ///  * an entry that matches no dead emission has stopped describing one and
+    ///    fails, which is what keeps the list from rotting.
+    ///
+    /// `known_dead` is a parameter rather than a read of [`KNOWN_DEAD`] so that
+    /// both branches can be driven by a test over real parsed state. Until #78
+    /// neither could be: the deferral path was exercised by nothing, which is
+    /// how two reviewers came to believe it was inert while it was working.
+    fn uncovered(&self, known_dead: &[(&str, &str, &str)]) -> Vec<(String, String, String)> {
         let dead = self.dead_emissions();
-        let stale: Vec<&(&str, &str, &str)> = KNOWN_DEAD
+
+        let covered: BTreeSet<&str> = self.covered.iter().map(|c| c.module.as_str()).collect();
+        let out_of_scope: Vec<&(&str, &str, &str)> = known_dead
             .iter()
-            .filter(|(variant, page, _)| {
-                !dead
-                    .iter()
-                    .any(|(p, _, v)| v == variant && p == page)
+            .filter(|(_, module, _)| !covered.contains(*module))
+            .collect();
+        assert!(
+            out_of_scope.is_empty(),
+            "these KNOWN_DEAD entries name a module this guard does not cover, so they can never \
+             match and are deferring nothing: {out_of_scope:?}. Covered modules are {covered:?}. \
+             Either the module name is wrong — including a *page* name where a module belongs, \
+             which reads as plausible because both are capitalised the same way at the call \
+             site — or the module has dropped out of scope. Fix the name, or delete the entry if \
+             the emission is gone with it."
+        );
+
+        let stale: Vec<&(&str, &str, &str)> = known_dead
+            .iter()
+            .filter(|(variant, module, _)| {
+                !dead.iter().any(|(_, m, v)| v == variant && m == module)
             })
             .collect();
         assert!(
@@ -620,10 +888,10 @@ impl Guard {
              into a place where problems are forgotten."
         );
         dead.into_iter()
-            .filter(|(page, _, variant)| {
-                !KNOWN_DEAD
+            .filter(|(_, module, variant)| {
+                !known_dead
                     .iter()
-                    .any(|(v, p, _)| v == variant && p == page)
+                    .any(|(v, m, _)| v == variant && m == module)
             })
             .collect()
     }
@@ -646,16 +914,20 @@ impl Guard {
                 );
             }
             let found = emissions(&src);
-            // A page emitting nothing is *not* asserted against here, and that
-            // is a correction rather than an omission. The first version did
-            // assert it, on the reasoning that every covered page draws
+            // A module emitting nothing is *not* asserted against here, and that
+            // is a correction rather than an omission. The first version asserted
+            // it per page, on the reasoning that every covered page draws
             // controls — and it went red on `view/credits.rs` when Credits
             // landed: an about page whose only action is a URL link, rendered
             // disabled because the `Message` it would send does not exist yet.
-            // Zero emissions is the honest state of that page. What emptiness
-            // cannot be distinguished from is a scanner that stopped matching,
-            // so the check for that is global — see the floor below — where it
-            // is a claim the guard can actually support.
+            // Zero emissions is the honest state of that page. The widening to
+            // shared components added four more such modules — `widgets`,
+            // `badge`, `cover`, `meta` and `metrics` are layout helpers generic
+            // over `M` and construct no message at all, which is what
+            // `view/mod.rs` says the layer is for — so a per-module floor would
+            // be wrong for five of the eleven. What emptiness cannot be
+            // distinguished from is a scanner that stopped matching, so the
+            // check for that is global: the floor below.
             counts.push((page.module.clone(), found.len()));
             for variant in found {
                 if self.handled.contains(&variant) {
@@ -666,24 +938,25 @@ impl Guard {
                 if !self.variants.contains(&variant) {
                     continue;
                 }
-                out.push((page.page.clone(), page.module.clone(), variant));
+                out.push((page.label(), page.module.clone(), variant));
             }
         }
 
         // Anti-vacuity, global rather than per page (#32 / #43). A page may
         // legitimately emit nothing, so emptiness per page proves nothing; a
         // collapse across *all* of them means the scanner has stopped matching
-        // and every page below is being called clean. Measured on the revision
-        // this landed against: library 7, runners 7, settings 5, plugins 2,
-        // credits 0 — 21 in total, so the floor is well clear of both a passing
-        // and a collapsing scan.
+        // and every module below is being called clean. Measured on the revision
+        // the widening landed against — eleven modules, `#80` — library 7,
+        // runners 7, form 6, settings 5, plugins 2, credits 0, and 0 from each of
+        // `widgets`, `badge`, `cover`, `meta`, `metrics`: 27 in total, so the
+        // floor is well clear of both a passing and a collapsing scan.
         let total: usize = counts.iter().map(|(_, n)| n).sum();
         assert!(
             total >= 10,
             "the emission scan found only {total} `Message::` constructions across all {} \
-             covered pages (per page: {counts:?}). That is a scanner that has stopped matching, \
-             not a set of pages that emit nothing — a clean tree measures 21 here, and the \
-             guard would report every page as covered-and-clean off a scan this short.",
+             covered modules (per module: {counts:?}). That is a scanner that has stopped \
+             matching, not a set of modules that emit nothing — a clean tree measures 27 here, \
+             and the guard would report every module as covered-and-clean off a scan this short.",
             counts.len()
         );
         out
@@ -731,43 +1004,278 @@ fn empty_arm(src: &str, variant: &str) -> String {
 }
 
 #[test]
-fn every_message_a_dispatched_page_emits_has_a_handler() {
+fn every_message_a_covered_module_emits_has_a_handler() {
     let guard = Guard::parse(&read("crates/app/src/main.rs"));
     // Printed, not just asserted, because #65 was reported to the team as a
     // count ("N empty arms") and a count is only checkable if it is
     // reproducible. Run with `--nocapture` for the figures. They are measured
     // against whatever revision is checked out — the tree moves constantly
-    // here, so a count without its commit means nothing (D-45).
+    // here, so a count without its commit means nothing (D-45), and a green run
+    // here is evidence about the working tree and not about any commit.
     println!(
-        "dispatch coverage: {} Message variants, {} match arms, {} covered pages, \
-         {} dead emissions ({} deferred by KNOWN_DEAD), {} exemptions in HANDLED_ELSEWHERE",
+        "dispatch coverage: {} Message variants, {} match arms, {} covered modules \
+         ({} reached by call rather than named in main.rs), {} dead emissions \
+         ({} deferred by KNOWN_DEAD), {} exemptions in HANDLED_ELSEWHERE",
         guard.variants.len(),
         guard.arm_count,
         guard.covered.len(),
+        guard
+            .covered
+            .iter()
+            .filter(|c| c.reached.starts_with("called from"))
+            .count(),
         guard.dead_emissions_len(),
         KNOWN_DEAD.len(),
         HANDLED_ELSEWHERE.len(),
     );
-    let failures = guard.uncovered();
+    // The list, not just the count: a count is checkable only if the membership
+    // behind it is (D-45), and which modules are in scope is the whole subject
+    // of #80. Run with `--nocapture`.
+    for c in &guard.covered {
+        println!("  covered: view/{}.rs — {}", c.module, c.reached);
+    }
+    let failures = guard.uncovered(&KNOWN_DEAD);
     assert!(
         failures.is_empty(),
-        "{} message(s) a dispatched page emits have an empty `Shell::update` arm. The page is \
-         dispatched to a real body, so the control is reachable and does nothing:\n{}\n\n\
+        "{} message(s) a covered view module emits have an empty `Shell::update` arm. The \
+         module is rendered — either as a page `view_body` dispatches to a real body, or \
+         because a rendered module calls it — so the control is reachable and does \
+         nothing:\n{}\n\n\
          Fix by handling the variant, or — if the page is not finished — put it back behind \
          `pending_page` so it says so on screen. `Message::Quit` is exempt: it is handled in \
          `App::update`, the layer that owns the window. The full exemption list is \
          {HANDLED_ELSEWHERE:?}.\n\n\
-         This guard is not currently failing on {KNOWN_DEAD:?} — that is the standing debt, \
-         deferred in `KNOWN_DEAD` so the guard could land without blocking the tree. It is \
-         still dead.",
+         This guard is not currently failing on {KNOWN_DEAD:?} — deferred in `KNOWN_DEAD`, each \
+         with the task that owns it. It is still dead.",
         failures.len(),
         failures
             .iter()
-            .map(|(page, module, variant)| format!(
-                "  page {page}, view/{module}.rs: Message::{variant}"
-            ))
+            .map(|(label, _, variant)| format!("  {label}: Message::{variant}"))
             .collect::<Vec<_>>()
             .join("\n")
+    );
+}
+
+/// The guard's reason for existing in the form `#80` is about: a control whose
+/// message is constructed by a module that is **not** a page dispatch.
+///
+/// This is a second red run, and it is not redundant with the one below. That
+/// one stages on `NavigateTo`, which is emitted by the Library — a dispatched
+/// page. It would pass unchanged if the covered set were the dispatch roots
+/// alone, which is exactly the hole #80 names: `view/form.rs` is composed by
+/// `view_with_overlays`, not dispatched to, and `view/widgets.rs` is named by
+/// nothing in `main.rs` at all. T-29's Play control lands in `widgets.rs`, so
+/// the control that matters next is born in a module the old guard could not
+/// see.
+///
+/// The target is chosen by *shape* — a variant every emitting module of which
+/// is reached by call, not a dispatch root — so it keeps pointing at the hole
+/// after these modules are renamed or added to.
+#[test]
+fn the_guard_covers_a_control_outside_the_page_dispatch() {
+    let src = read("crates/app/src/main.rs");
+    let guard = Guard::parse(&src);
+
+    let roots: BTreeSet<&str> = guard
+        .covered
+        .iter()
+        .filter(|c| c.page.is_some())
+        .map(|c| c.module.as_str())
+        .collect();
+    assert!(
+        !roots.is_empty(),
+        "no covered module is a dispatched page, so this test cannot tell a root from a \
+         non-root and would pass for the wrong reason."
+    );
+    let non_roots: Vec<&Covered> = guard.covered.iter().filter(|c| c.page.is_none()).collect();
+    assert!(
+        !non_roots.is_empty(),
+        "every covered module is a dispatched page, so the closure over rendered modules is \
+         adding nothing. That is #80 unfixed: the guard is back to the dispatch roots and \
+         `view/form.rs` and the shared components are out of scope."
+    );
+
+    // Emit-from-non-root: a variant constructed by a covered module, where no
+    // emitting module is a dispatch root. Such a variant is invisible to a
+    // dispatch-only guard.
+    let mut target: Option<String> = None;
+    for module in &non_roots {
+        let (prod, _) = production_src(&read(&format!("crates/app/src/view/{}.rs", module.module)));
+        for variant in emissions(&prod) {
+            if !guard.handled.contains(&variant) || !guard.variants.contains(&variant) {
+                continue;
+            }
+            // Only if *nothing* that is a root emits it, or the dispatch-only
+            // guard would have seen it and this test would prove nothing.
+            let also_from_a_root = guard.covered.iter().filter(|c| c.page.is_some()).any(|c| {
+                let (p, _) =
+                    production_src(&read(&format!("crates/app/src/view/{}.rs", c.module)));
+                emissions(&p).contains(&variant)
+            });
+            if !also_from_a_root {
+                target = Some(variant);
+                break;
+            }
+        }
+        if target.is_some() {
+            break;
+        }
+    }
+    let target = target.unwrap_or_else(|| {
+        panic!(
+            "no `Message` variant is emitted exclusively by a non-dispatch covered module and \
+             handled. Either the coverage closure has stopped reaching those modules, or every \
+             such variant is unhandled — in which case the first test above is already red and \
+             this one has nothing to stage. Covered modules: {:#?}",
+            guard.covered.iter().map(|c| (&c.module, &c.reached)).collect::<Vec<_>>()
+        )
+    });
+
+    assert!(
+        !guard
+            .uncovered(&KNOWN_DEAD)
+            .iter()
+            .any(|(_, _, v)| *v == target),
+        "Message::{target} is already uncovered before any mutation, so this test cannot tell a \
+         red run from the standing state."
+    );
+
+    let mutated = empty_arm(&src, &target);
+    let after = Guard::parse(&mutated);
+    let found = after.uncovered(&KNOWN_DEAD);
+    let named: Vec<&(String, String, String)> =
+        found.iter().filter(|(_, _, v)| *v == target).collect();
+    assert!(
+        !named.is_empty(),
+        "Message::{target} is emitted by a view module that is not a page dispatch, its arm was \
+         emptied, and the guard did not report it. Everything it reported: {found:?}. That is \
+         #80: a control in `view/form.rs` or in a shared component can be dead and this guard \
+         says nothing."
+    );
+    // The module it names must be the module that actually emits it, and must
+    // not be a page root — otherwise the report is coming from somewhere else
+    // and the assertion above passed for the wrong reason.
+    for (label, module, _) in &named {
+        assert!(
+            non_roots.iter().any(|c| c.module == *module),
+            "the guard reported Message::{target} against {label} (view/{module}.rs), which is \
+             not one of the non-dispatch modules that emit it. Reported: {named:?}"
+        );
+    }
+    println!(
+        "closure red run: re-emptying Message::{target} was reported as {}",
+        named
+            .iter()
+            .map(|(label, _, v)| format!("{label} / Message::{v}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
+/// The deferral machinery, driven in both of its branches on real parsed state.
+///
+/// This is the test #78 says was missing. `uncovered`'s two assertions —
+/// "this entry names a module the guard scans" and "this entry still describes
+/// a dead emission" — were exercised by nothing, so a reader could conclude the
+/// list was inert and the suite would not contradict them. Two reviewers did.
+///
+/// The second case is the one that matters: it passes a **page** name where a
+/// module name belongs, which is the shape the old key invited, and requires the
+/// guard to say so rather than silently deferring nothing.
+#[test]
+fn the_deferral_key_is_a_module_and_a_bad_key_is_reported() {
+    let guard = Guard::parse(&read("crates/app/src/main.rs"));
+    let dead = guard.dead_emissions();
+    let covered: BTreeSet<&str> = guard.covered.iter().map(|c| c.module.as_str()).collect();
+
+    // A real dead emission to work from. It has to exist rather than be
+    // fabricated: the point is to drive the same code path the tree does.
+    let (_, module, variant) = dead
+        .first()
+        .unwrap_or_else(|| {
+            panic!(
+                "no dead emission on this tree, so this test cannot exercise the deferral. \
+                 Delete the test or point it at a call that takes the deferral list as a \
+                 parameter — asserting over an empty list is the vacuity #32 is about."
+            )
+        })
+        .clone();
+
+    // 1. The right key defers it.
+    let deferral = [(variant.as_str(), module.as_str(), "test")];
+    let left = guard.uncovered(&deferral);
+    assert!(
+        !left.iter().any(|(_, m, v)| *v == variant && *m == module),
+        "an entry keyed on the module that emits Message::{variant} did not defer it. The \
+         deferral list cannot do the one thing it exists for. Left uncovered: {left:?}"
+    );
+    assert_eq!(
+        left.len(),
+        dead.len() - 1,
+        "deferring one emission changed the report by more than one entry."
+    );
+
+    // 2. A page name where a module belongs — the old key's shape, and the
+    //    reading that made two reviewers call a working mechanism inert. It
+    //    must be reported as out of scope, not accepted and not silently
+    //    ignored.
+    //
+    //    The page name is read out of this tree's own dispatch rather than
+    //    written here, and the case is unconditional. The first version of this
+    //    test chose the module that owns the dead emission, found that `form` is
+    //    not a page, and *skipped* — while still printing that a page key had
+    //    been reported. A test whose message claims a thing it did not do is the
+    //    defect it was written to catch.
+    let root = guard
+        .covered
+        .iter()
+        .find(|c| c.page.is_some())
+        .expect("the dispatch roots are asserted non-empty by `Guard::parse`");
+    let page_name = root.page.clone().expect("filtered on `page.is_some()`");
+    assert_ne!(
+        page_name, root.module,
+        "the page name and the module name for `{}` are the same string, so the trap this case \
+         exists to exercise is not available here — a key on one would be a key on the other. \
+         Pick a root whose two names differ.",
+        root.module
+    );
+    let bad = [(variant.as_str(), page_name.as_str(), "test")];
+    let caught = std::panic::catch_unwind(|| guard.uncovered(&bad));
+    let message = caught
+        .err()
+        .and_then(|e| {
+            e.downcast_ref::<String>()
+                .cloned()
+                .or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_string()))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "a KNOWN_DEAD entry keyed on the page name `{page_name}` (for view/{}.rs) rather \
+                 than the module name was accepted. It can never match an emission, so it defers \
+                 nothing — and a deferral that defers nothing is how this list turns into a place \
+                 where problems are forgotten. The membership assertion is supposed to catch \
+                 this shape.",
+                root.module
+            )
+        });
+    assert!(
+        message.contains("can never match"),
+        "the page-name entry `{page_name}` was rejected, but not for being out of scope. \
+         Message: {message}"
+    );
+
+    // 3. And the module really is one the guard scans, so case 1 was not a
+    //    coincidence of `uncovered` accepting anything.
+    assert!(
+        covered.contains(module.as_str()),
+        "the module this test deferred from, `{module}`, is not in the covered set, yet case 1 \
+         passed. The membership assertion is not doing its job."
+    );
+
+    println!(
+        "deferral check: a module key on `{module}` defers Message::{variant}; a page key \
+         (`{page_name}`, for view/{}.rs) is reported as one that can never match",
+        root.module
     );
 }
 
@@ -869,7 +1377,7 @@ fn the_guard_notices_a_re_emptied_arm() {
     // variants get renamed (`NavigateToPage` became `NavigateTo` while this test
     // was being written) and a name-keyed test would quietly fall through to
     // something weaker.
-    let live = guard.uncovered();
+    let live = guard.uncovered(&KNOWN_DEAD);
     let mut button_emissions: BTreeSet<String> = BTreeSet::new();
     let mut any_emission: BTreeSet<String> = BTreeSet::new();
     for p in &guard.covered {
@@ -917,7 +1425,7 @@ fn the_guard_notices_a_re_emptied_arm() {
     assert_ne!(mutated, src, "empty_arm did not change the source");
 
     let after = Guard::parse(&mutated);
-    let found = after.uncovered();
+    let found = after.uncovered(&KNOWN_DEAD);
     let named: Vec<&(String, String, String)> =
         found.iter().filter(|(_, _, v)| v == target).collect();
     assert!(
@@ -957,7 +1465,7 @@ fn the_guard_notices_a_re_emptied_arm() {
         "red run: re-emptying Message::{target} was reported as {}",
         named
             .iter()
-            .map(|(page, module, v)| format!("page {page} / view/{module}.rs / Message::{v}"))
+            .map(|(label, _, v)| format!("{label} / Message::{v}"))
             .collect::<Vec<_>>()
             .join(", ")
     );
