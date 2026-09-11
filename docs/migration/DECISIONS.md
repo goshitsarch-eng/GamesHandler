@@ -820,14 +820,32 @@ So the libraries and headers are all present, and two of three advertise
 themselves to `pkg-config`. Bzip2 does not: `libbz2.so` and `bzlib.h` exist but
 there is no `bzip2.pc`.
 
-**This is a build-time risk for T-17, not a design problem.** Rust's `bzip2-sys`
-tries `pkg-config` first and falls back to compiling the bzip2 C sources it
-vendors — which should succeed here, since the SDK has a C compiler and the
-sources come from `cargo-sources.json`. But it means the bzip2 path may take a
-vendored-source build (slower) or fail outright, and **that has not been
-proven**. T-17's `flatpak-build` stage is where it becomes a fact; if it fails,
-the fix is a small manifest module adding a `.pc` file or configuring
-`BZIP2_SYS_USE_PKG_CONFIG=0`, not a redesign.
+**This is a build-time risk for T-17, not a design problem.** Read the vendored
+`bzip2-sys-0.1.13+1.0.8/build.rs` (corrected 2026-09-11; the previous version of
+this paragraph named a `BZIP2_SYS_USE_PKG_CONFIG` variable that **does not
+exist** in that crate — `build.rs` reads no environment variable at all). The
+actual logic is:
+
+```rust
+} else if !cfg!(feature = "static") {
+    if pkg_config::Config::new().cargo_metadata(true).probe("bzip2").is_ok() {
+        return;                     // system libbz2 — not taken, no bzip2.pc
+    }
+}
+// falls through: cc::Build over the vendored bzip2-1.0.8/*.c -> libbz2.a
+```
+
+Because the probe result is consumed by `.is_ok()`, a missing `bzip2.pc` is
+**not** a failure — it selects the vendored-source build. `lzma-sys` uses the
+same `.is_ok()` shape (`probe_library("liblzma")`), so it is equally safe. So
+the missing `.pc` costs a slower C compile, nothing more.
+
+What remains genuinely unproven is narrower than before: that the vendored
+`bzip2-1.0.8/*.c` **compiles inside the SDK**, which needs a C compiler in the
+build sandbox and the sources present in `cargo-sources.json`. T-17's
+`flatpak-build` stage is where that becomes a fact. If it fails, the fix is a
+small manifest module adding a `.pc` file — not a redesign, and not that
+environment variable.
 
 Each format needs a round-trip test regardless; `test_supported_xz_and_bzip2_streams_extract`
 is the gate, and it is now a *build* gate as well as a behavioural one.
