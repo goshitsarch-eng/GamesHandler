@@ -1,0 +1,20 @@
+{
+  "color_scheme": "light",
+  "view_mode": "grid",
+  "sort_mode": "name",
+  "default_runner": "wine-system",
+  "default_mangohud": false,
+  "default_gamemode": false,
+  "default_prefer_sdl": false,
+  "default_esync": true,
+  "default_fsync": true,
+  "default_dxvk": true,
+  "default_vkd3d": true,
+  "default_nvapi": false,
+  "default_fsr": false,
+  "default_battleye": true,
+  "default_eac": true,
+  "default_gamescope": false,
+  "default_virtual_desktop": false,
+  "close_on_launch": false
+}

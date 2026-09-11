@@ -318,3 +318,57 @@ catch.
 way that matters: the *feature* (three-way theme choice) is preserved exactly;
 only the out-of-the-box default changes. But it is user-visible, so it gets an
 explicit decision and a README update rather than a silent change.
+
+---
+
+## D-14. Do not replicate the `added: null` crash; fix it
+
+**Question.** The Python app crashes under `sort="recent"`/`"added"` when a game
+entry has an explicit `"added": null`. The port must be compatible with Python's
+JSON — but must it be compatible with its **bugs**?
+
+**Options considered.**
+1. Replicate exactly: accept `null` and carry `None` through, matching Python.
+2. Treat `null` as an invalid value and normalize it (regenerate `added` from
+   the clock; `last_played` → `0.0`).
+
+**Choice.** Option 2 — **fix it**.
+
+**Why.** Compatibility exists so users can move between versions without losing
+data, not so defects propagate. A `null` timestamp carries no information, so
+normalizing cannot lose anything a user typed; and `Game.from_dict` already does
+exactly this for every *other* invalid value (`NaN`, `Infinity`, `-1`, `"soon"`,
+`true`) — `null` slips through only because of an early `continue` that skips
+normalization without popping the key. Option 2 makes `null` behave like its
+siblings, so it is the *consistent* reading of the existing code, not a new
+policy. Under the resolution order, "working correctly" outranks bug-for-bug
+fidelity.
+
+**Consequence.** The Rust port never holds a nullable timestamp, so the crash
+class cannot occur. A unit test asserts `null` normalizes. Written up in
+`docs/migration/oracle/FINDINGS.md` §F-B, and worth reporting upstream to the
+Python project independently of this migration.
+
+---
+
+## D-15. Match Python's `ensure_ascii` escaping in saved JSON
+
+**Question.** Python's `json.dumps` defaults to `ensure_ascii=True` and escapes
+every non-ASCII character. `serde_json` writes raw UTF-8. Which do we emit?
+
+**Options considered.**
+1. Let `serde_json` write raw UTF-8 (the idiomatic Rust choice).
+2. Emit `\uXXXX` escapes to match Python byte-for-byte.
+
+**Choice.** Option 2 — **match Python**.
+
+**Why.** Discovered by running the Python implementation rather than reasoning
+about it (see FINDINGS §F-A). Both forms are valid JSON and round-trip
+identically, so this is purely about testing strength and user experience:
+matching makes the round-trip test a **strict byte equality** check instead of a
+semantic one, and it keeps a user's `games.json` byte-stable across a downgrade
+so `git diff` and file-sync tools stay quiet. The cost is a custom formatter —
+small, and paid once.
+
+**Verification.** T-02 asserts the exact fixture bytes from
+`docs/migration/oracle/fixtures/*.out.json`.

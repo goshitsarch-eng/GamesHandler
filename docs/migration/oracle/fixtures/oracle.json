@@ -1,0 +1,1015 @@
+{
+  "from_dict": {
+    "clean": {
+      "input": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "name": "Half-Life",
+        "added": "1700000000.5",
+        "last_played": "1700000001.25"
+      },
+      "added_regenerated": false,
+      "output": {
+        "name": "Half-Life",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "last_played": 1700000001.25
+      },
+      "added_value": 1700000000.5,
+      "added_is_recent": false,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "nan_added": {
+      "input": {
+        "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "name": "NaN added",
+        "added": "nan",
+        "last_played": "5.0"
+      },
+      "added_regenerated": true,
+      "output": {
+        "name": "NaN added",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "last_played": 5.0
+      },
+      "added_value": 1789092695.8395746,
+      "added_is_recent": true,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "inf_last": {
+      "input": {
+        "id": "cccccccccccccccccccccccccccccccc",
+        "name": "Inf last",
+        "added": "1.0",
+        "last_played": "inf"
+      },
+      "added_regenerated": true,
+      "output": {
+        "name": "Inf last",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "cccccccccccccccccccccccccccccccc",
+        "last_played": 0.0
+      },
+      "added_value": 1.0,
+      "added_is_recent": false,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "neg_inf_last": {
+      "input": {
+        "id": "dddddddddddddddddddddddddddddddd",
+        "name": "NegInf last",
+        "added": "1.0",
+        "last_played": "-inf"
+      },
+      "added_regenerated": true,
+      "output": {
+        "name": "NegInf last",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "dddddddddddddddddddddddddddddddd",
+        "last_played": 0.0
+      },
+      "added_value": 1.0,
+      "added_is_recent": false,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "bool_true": {
+      "input": {
+        "id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "name": "Bool true",
+        "added": true,
+        "last_played": true
+      },
+      "added_regenerated": true,
+      "output": {
+        "name": "Bool true",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "last_played": 0.0
+      },
+      "added_value": 1789092695.8396237,
+      "added_is_recent": true,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "bool_false": {
+      "input": {
+        "id": "ffffffffffffffffffffffffffffffff",
+        "name": "Bool false",
+        "added": false,
+        "last_played": false
+      },
+      "added_regenerated": true,
+      "output": {
+        "name": "Bool false",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "ffffffffffffffffffffffffffffffff",
+        "last_played": 0.0
+      },
+      "added_value": 1789092695.8396356,
+      "added_is_recent": true,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "str_ts": {
+      "input": {
+        "id": "gggggggggggggggggggggggggggggggg",
+        "name": "Str ts",
+        "added": "soon",
+        "last_played": "later"
+      },
+      "added_regenerated": true,
+      "output": {
+        "name": "Str ts",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "gggggggggggggggggggggggggggggggg",
+        "last_played": 0.0
+      },
+      "added_value": 1789092695.839647,
+      "added_is_recent": true,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "null_ts": {
+      "input": {
+        "id": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+        "name": "Null ts",
+        "added": null,
+        "last_played": null
+      },
+      "added_regenerated": false,
+      "output": {
+        "name": "Null ts",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+        "last_played": null
+      },
+      "added_value": null,
+      "added_is_recent": false,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "negative": {
+      "input": {
+        "id": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+        "name": "Negative",
+        "added": "-5.0",
+        "last_played": "-1.0"
+      },
+      "added_regenerated": true,
+      "output": {
+        "name": "Negative",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+        "last_played": 0.0
+      },
+      "added_value": 1789092695.8396688,
+      "added_is_recent": true,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "int_ts": {
+      "input": {
+        "id": "jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj",
+        "name": "Int ts",
+        "added": 42,
+        "last_played": 7
+      },
+      "added_regenerated": false,
+      "output": {
+        "name": "Int ts",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj",
+        "last_played": 7.0
+      },
+      "added_value": 42.0,
+      "added_is_recent": false,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "unknown_keys": {
+      "input": {
+        "id": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+        "name": "Unknown",
+        "legacy_field": 1,
+        "another": [
+          1,
+          2
+        ]
+      },
+      "added_regenerated": false,
+      "output": {
+        "name": "Unknown",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+        "last_played": 0.0
+      },
+      "added_value": 1789092695.8396902,
+      "added_is_recent": true,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "unicode": {
+      "input": {
+        "id": "llllllllllllllllllllllllllllllll",
+        "name": "Pok\u00e9mon \u2014 \u00dcn\u00efcode \u2713",
+        "category": "\u65e5\u672c\u8a9e"
+      },
+      "added_regenerated": false,
+      "output": {
+        "name": "Pok\u00e9mon \u2014 \u00dcn\u00efcode \u2713",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "\u65e5\u672c\u8a9e",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "llllllllllllllllllllllllllllllll",
+        "last_played": 0.0
+      },
+      "added_value": 1789092695.839701,
+      "added_is_recent": true,
+      "is_linux": false,
+      "display_category": "\u65e5\u672c\u8a9e"
+    },
+    "empty_category": {
+      "input": {
+        "id": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
+        "name": "Blank cat",
+        "category": "   "
+      },
+      "added_regenerated": false,
+      "output": {
+        "name": "Blank cat",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "   ",
+        "steam_appid": 0,
+        "kind": "windows",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
+        "last_played": 0.0
+      },
+      "added_value": 1789092695.8397129,
+      "added_is_recent": true,
+      "is_linux": false,
+      "display_category": "Uncategorized"
+    },
+    "linux_game": {
+      "input": {
+        "id": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "name": "Native",
+        "kind": "linux"
+      },
+      "added_regenerated": false,
+      "output": {
+        "name": "Native",
+        "exe_path": "",
+        "runner": "wine-system",
+        "prefix_path": "",
+        "arguments": "",
+        "cover_path": "",
+        "category": "Uncategorized",
+        "steam_appid": 0,
+        "kind": "linux",
+        "working_directory": "",
+        "additional_app": "",
+        "mangohud": false,
+        "gamemode": false,
+        "prefer_sdl": false,
+        "wayland": false,
+        "hdr": false,
+        "esync": true,
+        "fsync": true,
+        "dxvk": true,
+        "vkd3d": true,
+        "nvapi": false,
+        "fsr": false,
+        "battleye": true,
+        "eac": true,
+        "gamescope": false,
+        "virtual_desktop": false,
+        "virtual_desktop_size": "1920x1080",
+        "environment": "",
+        "id": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "last_played": 0.0
+      },
+      "added_value": 1789092695.839723,
+      "added_is_recent": true,
+      "is_linux": true,
+      "display_category": "Uncategorized"
+    }
+  },
+  "roundtrip": {
+    "empty_file": {
+      "input": "[]",
+      "count": 0,
+      "names": [],
+      "output_bytes": "[]"
+    },
+    "not_a_list": {
+      "input": "{\"name\": \"oops\"}",
+      "count": 0,
+      "names": [],
+      "output_bytes": "[]"
+    },
+    "malformed": {
+      "input": "{not json at all",
+      "count": 0,
+      "names": [],
+      "output_bytes": "[]"
+    },
+    "nan_values": {
+      "input": "[{\"id\": \"pppppppppppppppppppppppppppppppp\", \"name\": \"NaN game\", \"added\": NaN, \"last_played\": Infinity}]",
+      "count": 1,
+      "names": [
+        "NaN game"
+      ],
+      "output_bytes": "[\n  {\n    \"name\": \"NaN game\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"pppppppppppppppppppppppppppppppp\",\n    \"added\": 1789092695.840261,\n    \"last_played\": 0.0\n  }\n]"
+    },
+    "non_dict_entries": {
+      "input": "[\"a string\", 42, null, {\"id\": \"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\", \"name\": \"Real\"}]",
+      "count": 1,
+      "names": [
+        "Real"
+      ],
+      "output_bytes": "[\n  {\n    \"name\": \"Real\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\",\n    \"added\": 1789092695.8403847,\n    \"last_played\": 0.0\n  }\n]"
+    },
+    "empty_name": {
+      "input": "[{\"id\": \"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\", \"name\": \"\"}, {\"id\": \"ssssssssssssssssssssssssssssssss\", \"name\": \"Kept\"}]",
+      "count": 1,
+      "names": [
+        "Kept"
+      ],
+      "output_bytes": "[\n  {\n    \"name\": \"Kept\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"ssssssssssssssssssssssssssssssss\",\n    \"added\": 1789092695.8404956,\n    \"last_played\": 0.0\n  }\n]"
+    },
+    "duplicate_ids": {
+      "input": "[{\"id\": \"tttttttttttttttttttttttttttttttt\", \"name\": \"First\"}, {\"id\": \"tttttttttttttttttttttttttttttttt\", \"name\": \"Second\"}]",
+      "count": 1,
+      "names": [
+        "Second"
+      ],
+      "output_bytes": "[\n  {\n    \"name\": \"Second\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"tttttttttttttttttttttttttttttttt\",\n    \"added\": 1789092695.8406005,\n    \"last_played\": 0.0\n  }\n]"
+    },
+    "unicode_out": {
+      "input": "[{\"id\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\", \"name\": \"Pok\u00e9mon \u2014 \u2713\", \"category\": \"\u65e5\u672c\u8a9e\"}]",
+      "count": 1,
+      "names": [
+        "Pok\u00e9mon \u2014 \u2713"
+      ],
+      "output_bytes": "[\n  {\n    \"name\": \"Pok\\u00e9mon \\u2014 \\u2713\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"\\u65e5\\u672c\\u8a9e\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n    \"added\": 1789092695.840702,\n    \"last_played\": 0.0\n  }\n]"
+    },
+    "blank_category": {
+      "input": "[{\"id\": \"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\", \"name\": \"A\", \"category\": \"  \"}, {\"id\": \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\", \"name\": \"B\", \"category\": \"RPG\"}]",
+      "count": 2,
+      "names": [
+        "A",
+        "B"
+      ],
+      "output_bytes": "[\n  {\n    \"name\": \"A\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"  \",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\",\n    \"added\": 1789092695.840807,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"B\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"RPG\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\",\n    \"added\": 1789092695.840811,\n    \"last_played\": 0.0\n  }\n]"
+    },
+    "trailing_garbage": {
+      "input": "[{\"id\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\", \"name\": \"X\"}] trailing",
+      "count": 0,
+      "names": [],
+      "output_bytes": "[]"
+    }
+  },
+  "sorting": {
+    "name": [
+      "Alpha",
+      "Alpha",
+      "beta",
+      "zeta"
+    ],
+    "recent": [
+      "beta",
+      "zeta",
+      "Alpha",
+      "Alpha"
+    ],
+    "added": [
+      "Alpha",
+      "Alpha",
+      "beta",
+      "zeta"
+    ]
+  },
+  "search": {
+    "categories": [
+      "Puzzle",
+      "roguelike",
+      "Shooter",
+      "Uncategorized"
+    ],
+    "q_portal": [
+      "Portal 2"
+    ],
+    "q_puzzle": [
+      "Portal 2",
+      "Puzzle Quest"
+    ],
+    "q_blank": [
+      "Doom",
+      "Hades",
+      "Portal 2",
+      "Puzzle Quest"
+    ],
+    "cat_puzzle": [
+      "Portal 2"
+    ],
+    "cat_all": [
+      "Doom",
+      "Hades",
+      "Portal 2",
+      "Puzzle Quest"
+    ],
+    "cat_uncat": [
+      "Puzzle Quest"
+    ],
+    "q_case": [
+      "Doom"
+    ],
+    "q_trim": [
+      "Doom"
+    ]
+  },
+  "format_last_played": {
+    "now": 1700000000.0,
+    "cases": {
+      "never_zero": "Never played",
+      "never_falsy": "Never played",
+      "just_now_0": "Played just now",
+      "just_now_59s": "Played just now",
+      "min_boundary_119s": "Played just now",
+      "min_2": "Played 2 min ago",
+      "min_59": "Played 59 min ago",
+      "hour_1": "Played 1 hour ago",
+      "hour_2": "Played 2 hours ago",
+      "hour_23": "Played 23 hours ago",
+      "yesterday": "Played yesterday",
+      "days_2": "Played 2 days ago",
+      "days_29": "Played 29 days ago",
+      "month_1": "Played 1 month ago",
+      "month_2": "Played 2 months ago",
+      "month_11": "Played 11 months ago",
+      "year_1": "Played 1 year ago",
+      "year_2": "Played 2 years ago",
+      "future": "Played just now"
+    }
+  },
+  "settings": {
+    "clean": {
+      "input": {},
+      "to_dict": {
+        "color_scheme": "dark",
+        "view_mode": "grid",
+        "sort_mode": "name",
+        "default_runner": "wine-system",
+        "default_mangohud": false,
+        "default_gamemode": false,
+        "default_prefer_sdl": false,
+        "default_esync": true,
+        "default_fsync": true,
+        "default_dxvk": true,
+        "default_vkd3d": true,
+        "default_nvapi": false,
+        "default_fsr": false,
+        "default_battleye": true,
+        "default_eac": true,
+        "default_gamescope": false,
+        "default_virtual_desktop": false,
+        "close_on_launch": false
+      },
+      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+    },
+    "bad_scheme": {
+      "input": {
+        "color_scheme": "neon"
+      },
+      "to_dict": {
+        "color_scheme": "dark",
+        "view_mode": "grid",
+        "sort_mode": "name",
+        "default_runner": "wine-system",
+        "default_mangohud": false,
+        "default_gamemode": false,
+        "default_prefer_sdl": false,
+        "default_esync": true,
+        "default_fsync": true,
+        "default_dxvk": true,
+        "default_vkd3d": true,
+        "default_nvapi": false,
+        "default_fsr": false,
+        "default_battleye": true,
+        "default_eac": true,
+        "default_gamescope": false,
+        "default_virtual_desktop": false,
+        "close_on_launch": false
+      },
+      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+    },
+    "bad_view": {
+      "input": {
+        "view_mode": "carousel"
+      },
+      "to_dict": {
+        "color_scheme": "dark",
+        "view_mode": "grid",
+        "sort_mode": "name",
+        "default_runner": "wine-system",
+        "default_mangohud": false,
+        "default_gamemode": false,
+        "default_prefer_sdl": false,
+        "default_esync": true,
+        "default_fsync": true,
+        "default_dxvk": true,
+        "default_vkd3d": true,
+        "default_nvapi": false,
+        "default_fsr": false,
+        "default_battleye": true,
+        "default_eac": true,
+        "default_gamescope": false,
+        "default_virtual_desktop": false,
+        "close_on_launch": false
+      },
+      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+    },
+    "bad_sort": {
+      "input": {
+        "sort_mode": "chaos"
+      },
+      "to_dict": {
+        "color_scheme": "dark",
+        "view_mode": "grid",
+        "sort_mode": "name",
+        "default_runner": "wine-system",
+        "default_mangohud": false,
+        "default_gamemode": false,
+        "default_prefer_sdl": false,
+        "default_esync": true,
+        "default_fsync": true,
+        "default_dxvk": true,
+        "default_vkd3d": true,
+        "default_nvapi": false,
+        "default_fsr": false,
+        "default_battleye": true,
+        "default_eac": true,
+        "default_gamescope": false,
+        "default_virtual_desktop": false,
+        "close_on_launch": false
+      },
+      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+    },
+    "unknown_key": {
+      "input": {
+        "legacy": true,
+        "color_scheme": "light"
+      },
+      "to_dict": {
+        "color_scheme": "light",
+        "view_mode": "grid",
+        "sort_mode": "name",
+        "default_runner": "wine-system",
+        "default_mangohud": false,
+        "default_gamemode": false,
+        "default_prefer_sdl": false,
+        "default_esync": true,
+        "default_fsync": true,
+        "default_dxvk": true,
+        "default_vkd3d": true,
+        "default_nvapi": false,
+        "default_fsr": false,
+        "default_battleye": true,
+        "default_eac": true,
+        "default_gamescope": false,
+        "default_virtual_desktop": false,
+        "close_on_launch": false
+      },
+      "output_bytes": "{\n  \"color_scheme\": \"light\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+    },
+    "null_scheme": {
+      "input": {
+        "color_scheme": null
+      },
+      "to_dict": {
+        "color_scheme": "dark",
+        "view_mode": "grid",
+        "sort_mode": "name",
+        "default_runner": "wine-system",
+        "default_mangohud": false,
+        "default_gamemode": false,
+        "default_prefer_sdl": false,
+        "default_esync": true,
+        "default_fsync": true,
+        "default_dxvk": true,
+        "default_vkd3d": true,
+        "default_nvapi": false,
+        "default_fsr": false,
+        "default_battleye": true,
+        "default_eac": true,
+        "default_gamescope": false,
+        "default_virtual_desktop": false,
+        "close_on_launch": false
+      },
+      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+    },
+    "all_defaults": {
+      "input": {
+        "color_scheme": "dark"
+      },
+      "to_dict": {
+        "color_scheme": "dark",
+        "view_mode": "grid",
+        "sort_mode": "name",
+        "default_runner": "wine-system",
+        "default_mangohud": false,
+        "default_gamemode": false,
+        "default_prefer_sdl": false,
+        "default_esync": true,
+        "default_fsync": true,
+        "default_dxvk": true,
+        "default_vkd3d": true,
+        "default_nvapi": false,
+        "default_fsr": false,
+        "default_battleye": true,
+        "default_eac": true,
+        "default_gamescope": false,
+        "default_virtual_desktop": false,
+        "close_on_launch": false
+      },
+      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+    },
+    "not_a_dict": {
+      "to_dict": {
+        "color_scheme": "dark",
+        "view_mode": "grid",
+        "sort_mode": "name",
+        "default_runner": "wine-system",
+        "default_mangohud": false,
+        "default_gamemode": false,
+        "default_prefer_sdl": false,
+        "default_esync": true,
+        "default_fsync": true,
+        "default_dxvk": true,
+        "default_vkd3d": true,
+        "default_nvapi": false,
+        "default_fsr": false,
+        "default_battleye": true,
+        "default_eac": true,
+        "default_gamescope": false,
+        "default_virtual_desktop": false,
+        "close_on_launch": false
+      }
+    }
+  },
+  "constants": {
+    "COLOR_SCHEMES": [
+      "system",
+      "light",
+      "dark"
+    ],
+    "VIEW_MODES": [
+      "grid",
+      "list"
+    ],
+    "SORT_MODES": [
+      "name",
+      "recent",
+      "added"
+    ],
+    "UNCATEGORIZED": "Uncategorized",
+    "default_color_scheme": "dark"
+  }
+}
