@@ -1801,3 +1801,44 @@ defects in the tests. A survivor count alone would have conflated all four.
 Also required, and now present: a **no-op control mutation** in the battery that
 correctly survives, so the harness is shown to be measuring rather than merely
 reporting `caught`.
+
+## D-41. "Does the target directory matter?" has no single answer — it is per-mechanism
+
+**Qualifies the earlier correction.** The lead previously asserted, and then
+corrected, a claim about `verify.sh`'s `CARGO_TARGET_DIR="$ROOT/target/verify-narrow"`
+in the narrow-configuration stage: first that it was the load-bearing part of the
+feature gate, then — after testing — that it is **cache hygiene only**, because
+Cargo distinguishes feature sets by `-C metadata` rather than by target directory,
+so both configurations coexist in one directory. That correction stands, for
+feature unification.
+
+**It is not a general truth about target directories, and this entry exists so the
+correction is not over-read.** Found by UX while producing the before/after
+evidence for #32: `crates/app` has a `[[bin]]` and no library, so an integration
+test in `crates/app/tests/` **does not depend on `src/main.rs` and is not rebuilt
+when `main.rs` changes**. Share one `target/` between two checkouts — or point
+`CARGO_TARGET_DIR` at another checkout's — and cargo may run the test binary that
+was compiled in the *other* checkout, which then reads *that* tree's `main.rs` and
+reports on it. Observed, not hypothesised: the pending-pages test passed against a
+tree whose Library page had been ported, because it was reading the tree where it
+had not. A silent pass is the exact outcome that test exists to prevent.
+
+**So both statements are true and they do not conflict:**
+
+* for **feature unification**, the directory is irrelevant — Cargo encodes the
+  feature set in `-C metadata`, and two sets coexist in one directory. Hence
+  `verify.sh`'s separate directory really is cache hygiene.
+* for **test-binary staleness in a bin-only crate**, the directory is load-bearing:
+  the binary is keyed to the source cargo built it from, and nothing in the test
+  forces a rebuild from the tree being tested.
+
+**The rule.** "Does the target directory matter?" is not a question with an answer.
+The answerable form names the mechanism: *matters for what?* The same reasoning
+that produced the earlier over-claim — generalising from one measured mechanism to
+the whole behaviour of a build flag — produced this one.
+
+**Guard now in place.** `crates/app/tests/pending_pages.rs`'s `assert_right_tree`
+turns both cases into hard errors: a compiled-in `CARGO_MANIFEST_DIR` that does not
+match the working directory, and a root that is not a GameHandler checkout, each
+fail with the advice the case needs (the second is distinguished from "the tree is
+gone" by a three-path probe, as `app_id_lockstep.rs` does).
