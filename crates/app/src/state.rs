@@ -29,6 +29,7 @@ use std::path::PathBuf;
 
 use cosmic::widget::toaster::Toasts;
 use gamehandler_core::models::Library;
+use gamehandler_core::plugins::{self, PluginEnv, PluginRow};
 use gamehandler_core::runners::families::ReleaseInfo;
 use gamehandler_core::runners::RunnerManager;
 use gamehandler_core::settings::Settings;
@@ -376,6 +377,21 @@ pub struct State {
     pub toasts: Toasts<Message>,
     /// was the token passed to `coverFetched`; incremented per form lookup.
     pub form_cover_token: FormToken,
+    /// was the `plugins` Property (`bridge.py:982-984`) — one row per helper,
+    /// in the catalogue's order.
+    ///
+    /// Cached rather than computed at render, which is what the reference's
+    /// `notify=pluginsChanged` does and what keeps five `which` lookups off the
+    /// paint path. Starts empty and is filled by [`State::refresh_plugins`],
+    /// which the shell calls once at construction — a page that rendered before
+    /// that would show an empty list, so the two must not come apart.
+    pub plugins: Vec<PluginRow>,
+    /// was the `pluginsIntro` Property (`bridge.py:986-996`).
+    ///
+    /// `constant=True` in Python, so the reference computes it once. It is a
+    /// field beside the rows rather than a constant because it depends on
+    /// `detect_package_manager`, which reads the host.
+    pub plugins_intro: String,
     /// was `self._theme`. `None` means "follow the desktop", which is what the
     /// QML backend did when no theme manager was injected.
     pub theme_manager: Option<()>,
@@ -417,7 +433,23 @@ impl State {
             toasts: Toasts::new(Message::DismissToast),
             form_cover_token: 0,
             theme_manager: None,
+            plugins: Vec::new(),
+            plugins_intro: String::new(),
         }
+    }
+
+    /// `pluginsChanged` — recompute the Plugins page's rows and its intro.
+    ///
+    /// `refreshPlugins()` (`bridge.py:1002-1003`) is this method, and the
+    /// install's completion handler emits the same signal, so both paths reach
+    /// the page through one function. Taking the environment as an argument is
+    /// what keeps this testable without a display: a test drives it with a
+    /// fabricated host instead of whatever the build machine happens to have
+    /// installed, the same reason [`gamehandler_core::plugins::PluginEnv`]
+    /// exists at all.
+    pub fn refresh_plugins(&mut self, env: &dyn PluginEnv) {
+        self.plugins = plugins::plugin_rows(env);
+        self.plugins_intro = plugins::plugins_intro(env);
     }
 
     /// `bridge.py:719-720` — the spinner is on when either long job is.

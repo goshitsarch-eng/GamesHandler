@@ -714,12 +714,18 @@ impl Shell {
     /// [`App::init`] builds one — but with no window, so a test can have one.
     #[cfg(test)]
     fn new() -> Self {
+        let mut state = State::new(
+            Library::new(None),
+            Settings::load(None),
+            RunnerManager::new(&SystemLaunchEnv),
+        );
+        // The Plugins page reads rows that only `refreshPlugins` fills, so the
+        // shell primes them here rather than rendering an empty list first —
+        // `bridge.py` gets the same non-empty answer because its `plugins`
+        // Property is evaluated on first read.
+        state.refresh_plugins(&gamehandler_core::plugins::SystemPluginEnv);
         Self {
-            state: State::new(
-                Library::new(None),
-                Settings::load(None),
-                RunnerManager::new(&SystemLaunchEnv),
-            ),
+            state,
             nav_model: build_nav_model(),
         }
     }
@@ -816,14 +822,13 @@ impl Shell {
             Page::Installers => pending_page(Page::Installers, "T-12"),
             // TODO(T-11): the runner manager's page.
             Page::Runners => pending_page(Page::Runners, "T-11"),
-            // TODO(T-06 + T-13): the plugin list. **Blocked, and not on this
-            // task's own work.** `PluginsPage.qml` draws `backend.plugins`
-            // (`bridge.py:949-1031`), whose five helpers, three states and
-            // install commands are `plugins.py` (188 lines) — and `core::plugins`
-            // has not landed (T-06, `PLAN.md` §6). A page here could only invent
-            // the data or draw an empty list, and an empty plugin list is the
-            // "passes without inspecting what it claims" defect with a UI.
-            Page::Plugins => pending_page(Page::Plugins, "T-13"),
+            Page::Plugins => {
+                let page = view::plugins::PluginsPage {
+                    intro: &self.state.plugins_intro,
+                    rows: &self.state.plugins,
+                };
+                view::plugins::view(page)
+            }
             // TODO(T-06 + T-13): about and credits. Same blocker: five sections
             // and 25 entries out of `credits.py` (413 lines, `bridge.py:1036-1069`),
             // and the regenerable README section (P-65) depends on the same data.
@@ -887,7 +892,11 @@ impl Shell {
     /// - the Settings page, from T-13: [`Message::SetColorScheme`],
     ///   [`Message::SetDefaultRunner`], [`Message::SetCloseOnLaunch`] and
     ///   [`Message::SetDefaultToggle`] — the four controls the page's two
-    ///   selectors, two switches and thirteen default toggles write through.
+    ///   selectors, two switches and thirteen default toggles write through;
+    /// - the Plugins page, from T-26: [`Message::RefreshPlugins`],
+    ///   [`Message::InstallPlugin`] and [`Message::PluginInstallFinished`] —
+    ///   the refresh, the button that runs the reference's install command, and
+    ///   the outcome it reports back.
     ///
     /// `ClearFilters` is one of them rather than two writes at the call site so
     /// that the search box and the category can never be observed cleared one
@@ -905,13 +914,13 @@ impl Shell {
     ///
     /// That count is not a comment. `only_the_written_handlers_change_anything`
     /// drives every message in `every_message` through this function and
-    /// requires the set that has any effect to be exactly those twelve (plus
-    /// `Quit`, which needs the window and so is `App::update`'s one arm). A
-    /// handler that regresses to `{}` shrinks that set and fails; a sixth
-    /// handler landing grows it and fails until it is added deliberately. The
-    /// earlier version of this paragraph said "three" and named three, omitting
-    /// `CloseDialog` and `Notify` — in the sentence a reviewer trusts to know
-    /// what is live.
+    /// requires the set that has any effect to be exactly those fifteen (plus
+    /// `Quit`, which needs the window and so is `App::update`'s one arm, and
+    /// `DismissToast`, whose arm is real but unobservable). A handler that
+    /// regresses to `{}` shrinks that set and fails; a new handler landing grows
+    /// it and fails until it is added deliberately. The earlier version of this
+    /// paragraph said "three" and named three, omitting `CloseDialog` and
+    /// `Notify` — in the sentence a reviewer trusts to know what is live.
     fn update(&mut self, message: Message) -> cosmic::app::Task<Message> {
         match message {
             // ---- Navigation and dialogs -----------------------------------
@@ -1116,15 +1125,47 @@ impl Shell {
             } => {}
 
             // ---- Plugins ---------------------------------------------------
-            // TODO(T-13): recompute the plugin rows.
-            Message::RefreshPlugins => {}
-            // TODO(T-13): install, then report through
-            // `PluginInstallFinished`.
-            Message::InstallPlugin(_plugin_id) => {}
-            Message::PluginInstallFinished {
-                plugin_id: _plugin_id,
-                result: _result,
-            } => {}
+            // `refreshPlugins()` — re-read the host and rebuild the rows.
+            Message::RefreshPlugins => {
+                self.state
+                    .refresh_plugins(&gamehandler_core::plugins::SystemPluginEnv);
+            }
+            // `installPlugin()` (`bridge.py:1006-1020`). The notice is pushed
+            // before the work starts, as the reference does, so the user has
+            // something on screen while a package manager prompts for a
+            // password; an id that does not resolve is a silent no-op rather
+            // than a notice about a helper that does not exist.
+            Message::InstallPlugin(plugin_id) => {
+                if let Some((notice, task)) = view::plugins::install_plan(&plugin_id) {
+                    let toast = self
+                        .state
+                        .toasts
+                        .push(cosmic::widget::toaster::Toast::new(notice))
+                        .map(cosmic::Action::App);
+                    return cosmic::app::Task::batch([toast, task]);
+                }
+            }
+            // The install's `done`/`fail` half (`bridge.py:1012-1024`). The
+            // rows are rebuilt first because `pluginsChanged.emit()` is the
+            // signal the page redraws from — reporting before refreshing would
+            // toast an outcome beside a button that still said "Install".
+            Message::PluginInstallFinished { plugin_id, result } => {
+                self.state
+                    .refresh_plugins(&gamehandler_core::plugins::SystemPluginEnv);
+                let name = gamehandler_core::plugins::plugin_by_id(&plugin_id)
+                    .map(|plugin| plugin.name)
+                    .unwrap_or(plugin_id.as_str());
+                let text = match result {
+                    Ok(true) => view::plugins::installed_message(name),
+                    Ok(false) => view::plugins::not_installed_message(name),
+                    Err(error) => view::plugins::install_failed_message(name, &error),
+                };
+                return self
+                    .state
+                    .toasts
+                    .push(cosmic::widget::toaster::Toast::new(text))
+                    .map(cosmic::Action::App);
+            }
 
             // ---- Internal plumbing -----------------------------------------
             // The `notify` signal. Every failure path in `bridge.py` ends here,
@@ -1183,7 +1224,6 @@ impl Shell {
 const PENDING_PAGES: &[(Page, &str)] = &[
     (Page::Installers, "T-12"),
     (Page::Runners, "T-11"),
-    (Page::Plugins, "T-13"),
     (Page::Credits, "T-13"),
 ];
 
@@ -1292,10 +1332,14 @@ impl cosmic::Application for App {
         let settings = Settings::load(None);
         let library = Library::new(None);
         let runners = RunnerManager::new(&SystemLaunchEnv);
+        let mut state = State::new(library, settings, runners);
+        // Same priming as `Shell::new`: the Plugins page's rows are a cache the
+        // host refresh fills, not something the constructor can know.
+        state.refresh_plugins(&gamehandler_core::plugins::SystemPluginEnv);
         let mut app = App {
             core,
             shell: Shell {
-                state: State::new(library, settings, runners),
+                state,
                 nav_model: build_nav_model(),
             },
         };
@@ -2205,9 +2249,16 @@ mod tests {
                             message: "installed".to_string(),
                         }),
         Message::RefreshPlugins => ("RefreshPlugins", Message::RefreshPlugins),
-        Message::InstallPlugin(_) => ("InstallPlugin", Message::InstallPlugin("p".to_string())),
+        // `"mangohud"` rather than a placeholder string: the reference's
+        // `installPlugin` returns silently for an id that does not resolve
+        // (`except KeyError: return`, `bridge.py:1007-1008`), so a sample like
+        // `"p"` drives the empty branch and would report a working handler as an
+        // unwritten arm. Every sample here has to be a value its handler acts
+        // on, which is the same rule the search-text and category fixtures
+        // state above.
+        Message::InstallPlugin(_) => ("InstallPlugin", Message::InstallPlugin("mangohud".to_string())),
         Message::PluginInstallFinished { .. } => ("PluginInstallFinished", Message::PluginInstallFinished {
-                            plugin_id: "p".to_string(),
+                            plugin_id: "mangohud".to_string(),
                             result: Ok(true),
                         }),
         Message::Notify(_) => ("Notify", Message::Notify("something happened".to_string())),
@@ -2235,6 +2286,13 @@ mod tests {
         // from both the default and the sample for the change to be visible.
         shell.state.search_text = "portal".to_string();
         shell.state.category_filter = "Puzzle".to_string();
+        // The plugin rows are emptied for the same reason and by the same rule:
+        // `Shell::new` primes them, so a fixture that left them alone would make
+        // `RefreshPlugins` a write of what is already there and hide a working
+        // handler behind `observe`'s whole-state comparison. Emptying them is
+        // also the honest state for a shell nothing has refreshed yet.
+        shell.state.plugins.clear();
+        shell.state.plugins_intro.clear();
         shell
     }
 
@@ -2245,12 +2303,11 @@ mod tests {
     /// replaced with inert bodies and all five survived, because nothing ever
     /// called them: `App` cannot be built without a display, so no test could.
     /// Moving the dispatcher onto [`Shell`] is what makes the arms callable, and
-    /// this drives every one of the forty-nine messages through the real match
-    /// and requires the set that has an effect to be exactly the written
-    /// handlers.
+    /// this drives every one of the fifty messages through the real match and
+    /// requires the set that has an effect to be exactly the written handlers.
     ///
     /// Both directions are pinned. A handler that regresses to `{}` disappears
-    /// from this list; a sixth handler landing appears in it. Neither can pass
+    /// from this list; a new handler landing appears in it. Neither can pass
     /// unnoticed, which is what keeps the `T-0x` markers honest.
     ///
     /// # The one blind spot, and the one exclusion
@@ -2263,8 +2320,8 @@ mod tests {
     ///   real (`toasts.remove(id)`) and no test can build an id naming a live
     ///   toast, so it cannot be told apart from `{}` — see
     ///   [`a_test_cannot_observe_which_toast_was_dismissed`], which measures
-    ///   that rather than asserting it. The list below therefore names twelve
-    ///   handlers where thirteen bodies are written, and says which is which.
+    ///   that rather than asserting it. The list below therefore names fifteen
+    ///   handlers where sixteen bodies are written, and says which is which.
     ///
     /// [`observe`] counts a returned [`cosmic::Task`] as well as a state
     /// change, so the *other* class of invisible handler — one whose only
@@ -2302,6 +2359,11 @@ mod tests {
             "SetDefaultRunner",
             "SetCloseOnLaunch",
             "SetDefaultToggle",
+            // T-26's three. Live because the Plugins page draws the list and
+            // offers the install button that produces them.
+            "RefreshPlugins",
+            "InstallPlugin",
+            "PluginInstallFinished",
         ];
         // `DismissToast` is written and cannot be observed; see the doc above.
         expected.sort_unstable();
@@ -2546,6 +2608,56 @@ mod tests {
                 "the Settings page should draw {expected:?}; drawn: {drawn:?}"
             );
         }
+        assert!(
+            !drawn.iter().any(|text| text.contains("has not been ported yet")),
+            "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
+        );
+    }
+
+    /// **The Plugins page draws the live catalogue and not the placeholder.**
+    ///
+    /// The counterpart of the Settings test above, and the one that makes the
+    /// wiring a claim rather than a hope. `view::plugins`'s own tests pin the
+    /// labels, the button and the four notifications, but nothing in that module
+    /// can see whether `view_body` ever calls it — which is exactly finding #61
+    /// one layer up: a module whose tests all pass while nothing reaches it.
+    /// `Shell::new` primes the rows, so this is what a user sees on first open.
+    #[test]
+    fn the_plugins_page_draws_the_catalogue_and_not_the_placeholder() {
+        let mut shell = Shell::new();
+        shell.show_page(Page::Plugins);
+        let drawn = drawn_strings(shell.view_body());
+
+        assert!(
+            drawn
+                .iter()
+                .any(|text| text == crate::view::plugins::SECTION_HOST_PLUGINS),
+            "the page heading is not drawn; drawn: {drawn:?}"
+        );
+        // The intro is the sentence `detect_package_manager` decides, so this
+        // is also the check that the shell primed it: an unprimed `State` would
+        // draw an empty string here and the page would look like a bug.
+        assert!(
+            drawn.contains(&shell.state.plugins_intro),
+            "the intro is not drawn; drawn: {drawn:?}"
+        );
+
+        // Every helper in the catalogue, by name, with the button its state
+        // offers. A page that drew the heading and nothing else would pass the
+        // two assertions above.
+        assert_eq!(
+            shell.state.plugins.len(),
+            gamehandler_core::plugins::plugins().len(),
+            "the primed rows must be the whole catalogue"
+        );
+        for row in &shell.state.plugins {
+            assert!(
+                drawn.iter().any(|text| text == row.name),
+                "{} is in the catalogue but not drawn; drawn: {drawn:?}",
+                row.name
+            );
+        }
+
         assert!(
             !drawn.iter().any(|text| text.contains("has not been ported yet")),
             "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"

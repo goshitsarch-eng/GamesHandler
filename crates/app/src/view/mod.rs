@@ -44,6 +44,7 @@ pub mod installers;
 pub mod library;
 pub mod meta;
 pub mod metrics;
+pub mod plugins;
 pub mod runners;
 pub mod settings;
 pub mod widgets;
