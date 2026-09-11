@@ -340,8 +340,8 @@ same file (D-05).
 | T-04 | `core::installers` | Arch | Wizard/poll state machine with injectable clock. |
 | T-05 | `core::covers` + `exe_icons` + `netpaths` | Arch | PE parser + GVFS mapping. Cover paths are user-controlled strings — apply the D-18 typed-scalar rule to `cover_path` too. |
 | T-06 | `core::plugins` + `core::credits` | Arch | Small. |
-| T-07 | `app`: `State` + `Message` + `update()` + CLI (`--list`/`--launch`/`--version`) | Arch | **CLI works headless here** (D-12, N-01). State-model tests land with it. |
-| T-08 | `app`: shell — nav bar, page routing, toaster, no-display diagnostic | UX | N-01/N-02. |
+| T-07 | `app`: `State` + `Message` + `update()` + CLI (`--list`/`--launch`/`--version`) | Arch | **CLI works headless here** (D-12, N-01). State-model tests land with it. **NOT DONE: #31** — both CLI verbs are still stubs and both were falsified by the lead running the binary against a 2-game library: `--list` prints "the library is empty" and exits **0** without reading the file, and `--launch <known id>` reports the id unknown. Everything needed landed at T-02 (`Library::load`/`all`/`get`), so `--list` is ~10 lines; `all("name")` matches Python's default sort and both sorts are stable, so no byte-divergence. `verify.sh` matched `--list|--launch|--version` **zero times** — nothing in the DoD could see either stub, which is why this survived; a CLI stage is owed with #29. |
+| T-08 | `app`: shell — nav bar, page routing, toaster, no-display diagnostic | UX | **DONE** (`2694a5e`). N-01/N-02. Lead-verified by hand: all four no-display paths exit 1 with the documented hint and no panic (committed HEAD panics at `iced/winit/src/lib.rs:92:39`, exit 101). D-32's scoped allow survives untouched. Routing to the advocate for a first-look review, since T-09 builds on it. |
 | T-09 | `app`: Library page (grid/list, search, sort, filter, context menu, dialogs) | UX | P-01…P-17. Grid virtualization is the risky part (R-9). |
 | T-10 | `app`: Game form | UX | P-18…P-31. 15 toggles, 6 sections. |
 | T-11 | `app`: Runners page | UX | P-32…P-39. |
