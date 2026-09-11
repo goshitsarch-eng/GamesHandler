@@ -326,7 +326,68 @@ bin-only crate like `crates/app`. The answerable form names the mechanism:
   than the shipped code beyond this point, so a sporadic failure here affects
   the oracle's authority, not the product.
 
-## 5. Unmeasured numbers
+## 5. The fetch handlers' oracle, measured before the code lands
+
+Pre-measured by the advocate while T-11/T-12 was on hold, then **verified
+independently by the lead against the reference**. This is the acceptance
+criteria for the fetch path, and it exists because a mocked `HttpClient` cannot
+reach any of it — a mock never hangs, never 403s, and never raises an exception
+with an empty `str()`.
+
+**The reference does have a timeout.** `_async` (`bridge.py:152-165`) is a bare
+daemon `threading.Thread` with none of its own, but the request carries one:
+`urlopen(req, timeout=timeout)` (`runners.py:830`) with `fetch_available`'s
+default `timeout=30` (`runners.py:818`). The bridge passes only `limit=12`
+(`bridge.py:702`), so **30 s is the effective request timeout.** A port with an
+unbounded fetch diverges; so does a materially shorter one.
+
+**The error text is non-empty by construction, and the fallback fires on the
+commonest failures.** `bridge.py:157`:
+
+```python
+message = str(exc) or exc.__class__.__name__
+```
+
+The lead re-measured this rather than trusting the summary:
+
+```
+ConnectionResetError()            str()=''          -> "ConnectionResetError"
+TimeoutError()                    str()=''          -> "TimeoutError"
+http.client.RemoteDisconnected()  str()=''          -> "RemoteDisconnected"
+socket.timeout()                  str()=''          -> "TimeoutError"
+ValueError('bad json')            str()='bad json'  -> "bad json"
+```
+
+**Counting basis matters here, and the two counts differ because the words
+differ.** By **row**, four of the five have an empty `str()`. By **class**,
+three do — `socket.timeout()` *is* `TimeoutError` (an alias since 3.10), so it
+renders identically. The advocate said three and the lead's first pass said
+four; both are right about their own basis. The invariant is the same either
+way and is what a test should assert: **the rendered message is never empty.**
+A port that can render an empty string shows the user `"Could not fetch builds
+— "` with a dangling dash, and it will do so on exactly the failures that are
+most common in the field.
+
+**Three more, all invisible to a mock:**
+
+* `Accept: application/vnd.github+json` and `User-Agent: GameHandler`
+  (`runners.py:828`). GitHub's API **rejects a request with no User-Agent**; a
+  mock never 403s, so a port that dropped the header would pass every test and
+  fail in the field.
+* A non-list payload raises `RuntimeError("Unexpected GitHub releases
+  response")` (`runners.py:833`) — an explicit sentence to preserve, not a
+  parse error to let escape.
+* `limit` is **12** as called (`bridge.py:702`) against the function's own
+  default of **15** (`runners.py:817`). The port can pass either and look
+  right; the reference's behaviour is 12.
+
+**On the staleness guard, already stronger here than in the reference.** The
+guard is duplicated across both callbacks in Python (`bridge.py:705`, `:712`).
+The committed Rust arm hoists it **above** the `Ok`/`Err` match
+(`runners.rs:677-680`), so both halves are covered structurally rather than by
+repetition — one place, two outcomes, which is the shape #39 argued for.
+
+## 6. Unmeasured numbers
 
 Commit `09237d9` claims "165 core + 3 app integration tests pass". At that commit
 the workspace reports 142 + 3 = 145. **Recorded as an unmeasured number in a

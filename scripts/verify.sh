@@ -312,8 +312,30 @@ begin() {
     # this file — a result reported that was never produced — on the one path
     # that is supposed to report *no result*. Truncating rather than teaching
     # `finish_skip` not to read makes it unrepresentable at every call site.
+    #
+    # Checked, because that claim holds only if the write actually happened, and
+    # this script is `set -uo pipefail` with no `set -e` (#53): a failed
+    # truncation does not stop the run. Bash prints `Permission denied` on
+    # stderr — it is not literally silent — but nothing acts on it, the stage
+    # proceeds, and the run still exits 0, which restores exactly the state
+    # described above. Measured: `SKIP smoke-test` printed a read-only
+    # `smoke-test.log` from an earlier run and the run exited 0. The failure is
+    # not "no log" — it is "another run's log, printed as this one's".
+    #
+    # Stopping is right rather than continuing without a log: the write fails
+    # because the directory or the file is not writable, which would lose every
+    # later stage's log too, and a run that discards its own evidence and exits
+    # 0 is worse than one that does not start.
     STAGE_LOG="$LOGDIR/$1.log"
-    : > "$STAGE_LOG"
+    if ! : > "$STAGE_LOG"; then
+        printf 'verify.sh: begin %s — cannot empty %s\n' \
+            "$STAGE" "${STAGE_LOG#"$ROOT"/}" >&2
+        printf '  not writable, or its directory is not. It still holds whatever\n' >&2
+        printf '  the last run put there, and a skipped stage prints that log\n' >&2
+        printf '  verbatim (#52), so continuing would show the previous run as if\n' >&2
+        printf '  it were this one.\n' >&2
+        exit 2
+    fi
     STAGE_START="$SECONDS"
     printf '### %s\n' "$STAGE"
 }
