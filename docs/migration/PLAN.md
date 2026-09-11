@@ -354,6 +354,9 @@ same file (D-05).
 | T-18 | Metadata: desktop file, metainfo, README, version bump to 0.8.0 | Pkg + UX | Version-lockstep test. |
 | T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. Walk **B-01…B-08** — hand-edit the file named for each and confirm the real app survives it. "The port does not copy the bug" is a claim that needs demonstrating, not asserting. **B-08 is the exception to the hand-edit method**: its input is unreachable through the UI (see the B-08 row), so it is evidenced by the unit test, and T-19 should confirm the test exists and fails when `classify` is made suffix-aware rather than attempting a manual reproduction. |
 | T-20 | `docs/migration/REPORT.md` | Lead | Final deliverable. |
+| T-21 | `image`/`webp`: enable libcosmic's `animated-image`, regenerate `cargo-sources.json` | Pkg | **DONE** (`db9c7c3`, corrected `a449837`). D-29. |
+| T-22 | Verify a `.webp` cover actually **renders** through iced end-to-end | UX | **Owed at T-14.** D-29 proves the decoder is *reachable*; it explicitly does not prove a render succeeds, and says neither the crate-level probe nor `cargo tree` is evidence for it. Until this runs, "webp cover render" is unverified. |
+| T-23 | Install the app's GPL text and the Microsoft trust root; assert the Flatpak carries them | Pkg | **DONE** (`cad22b2`, corrected `4ddda6c`). Stage 10 (`flatpak-contents`). |
 
 Ordering rationale: logic (`T-02`–`T-06`) lands before UI, so the UI is built
 on tested foundations and R-1's control-flow redesign is validated by tests

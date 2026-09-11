@@ -994,8 +994,11 @@ occurrence is derived from the same literal:
 | `App::APP_ID` (Rust) | `com.goshapps.GameHandler` | winit → `WM_CLASS` + Wayland `app_id` | `cargo test` |
 | desktop file basename | `com.goshapps.GameHandler.desktop` | the shell's launcher | `desktop-file-validate` + Flatpak |
 | `StartupWMClass` | `com.goshapps.GameHandler` | window↔launcher association | `desktop-file-validate` (weakly) |
-| Flatpak manifest `id` | `com.goshapps.GameHandler` | `flatpak-builder`, the sandbox | `flatpak-builder` |
+| Flatpak manifest `app-id` | `com.goshapps.GameHandler` | `flatpak-builder`, the sandbox | `flatpak-builder` |
 | metainfo `<launchable>` | `com.goshapps.GameHandler.desktop` | AppStream | `appstreamcli validate` |
+
+The manifest key is `app-id`, not `id` — an earlier revision of this table
+said `id`, which is the key of the module list's entries, not of the manifest.
 
 **Why this needs writing down.** Each of the five is validated, and *none of the
 validators compares them to each other*. `desktop-file-validate` will accept a
@@ -1067,8 +1070,14 @@ So enabling this feature adds **two** crates, not one: `async-fs 2.2.0` and
 mirror image of the one this entry was meant to teach: "it is already in
 `Cargo.lock`" is not evidence that a feature costs nothing, because a
 *differently versioned* copy is a genuinely new crate. Only `image-webp 0.2.4`
-was already locked and vendored (via `resvg`, which `iced_tiny_skia` pulls in for
-SVG) and remains so.
+was already locked **and reused**. `gif 0.13.3` was locked and vendored too (via
+`resvg`, which `iced_tiny_skia` pulls in for SVG), but cargo will not reuse it
+across the version mismatch, so `gif 0.14.2` is a genuinely new crate. An earlier
+revision of this sentence said only `image-webp` "was already locked and
+vendored", which is false as written and conflates *vendored* with *reused* —
+the same conflation that produced the original error. (Corrected on the
+Packaging owner's report; both `gif` versions are in `Cargo.lock` and in
+`cargo-sources.json`.)
 
 The original prediction about `async-fs`'s transitive dependencies was sound —
 `blocking`, `futures-lite`, `async-lock`, `polling`, `fastrand`, `event-listener`,
