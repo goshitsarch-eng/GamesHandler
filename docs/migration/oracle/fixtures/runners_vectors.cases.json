@@ -4041,6 +4041,234 @@
    }
   },
   {
+   "op": "parse_env_block",
+   "args": {
+    "text": "D=a\\ b"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=B\\"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\"a\\\"b\""
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A='a\\ b'"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\\\\"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\"a\\\\b\""
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A='q\\\\'"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\"a\\ b\""
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=B\\;C=2"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\"unterminated;B=2"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A='unterminated;B=2"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\"a;b\";C=3"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "\"A\"=1"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\"  spaced  \""
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\"'x'\""
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A='\"x\"'"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\"a=b\""
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A='a=b'"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\"\";B="
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A='';B=''"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=1\tB=2"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=1\u000bB=2"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=1\fB=2"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "\u001cA=1\u001d"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=\u001c1"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=1 #comment"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": " #A=1"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": " A=1"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=​1"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=1\t;\tB=2"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A\t=\t1"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=١٢٣"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "KÉY=1"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=😀"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=1 B=2 C=3 D"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A==B"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=a=b c=d"
+   }
+  },
+  {
+   "op": "parse_env_block",
+   "args": {
+    "text": "A=1;B=C D"
+   }
+  },
+  {
    "op": "merge_dll_overrides",
    "args": {
     "env": {},
@@ -4118,6 +4346,57 @@
      "WINEDLLOVERRIDES": "a=b"
     },
     "extra": "a=b"
+   }
+  },
+  {
+   "op": "merge_dll_overrides",
+   "args": {
+    "env": {
+     "WINEDLLOVERRIDES": "a=b"
+    },
+    "extra": "a=b"
+   }
+  },
+  {
+   "op": "merge_dll_overrides",
+   "args": {
+    "env": {
+     "WINEDLLOVERRIDES": "a=b;"
+    },
+    "extra": "  ;;  "
+   }
+  },
+  {
+   "op": "merge_dll_overrides",
+   "args": {
+    "env": {},
+    "extra": "\u001cc=d\u001d"
+   }
+  },
+  {
+   "op": "merge_dll_overrides",
+   "args": {
+    "env": {},
+    "extra": " e=f "
+   }
+  },
+  {
+   "op": "merge_dll_overrides",
+   "args": {
+    "env": {
+     "OTHER": "1",
+     "WINEDLLOVERRIDES": "a=b"
+    },
+    "extra": "c=d"
+   }
+  },
+  {
+   "op": "merge_dll_overrides",
+   "args": {
+    "env": {
+     "WINEDLLOVERRIDES": "a=b;;;"
+    },
+    "extra": "c=d"
    }
   },
   {
@@ -4217,6 +4496,114 @@
    }
   },
   {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "12345x12345"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "123456x12345"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "12345x123456"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "12x12345"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "19X20x30X40"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "١٢٣x٤٥"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "１２３x４５"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "٠٠x٠٠"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "12x٣٤"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "\t1920x1080\t"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "\u001c1920x1080\u001d"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": " 1920x1080 "
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "1920\tx1080"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "1920 x1080"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "19\t20x10\t80"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "1920x1080\n"
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "  "
+   }
+  },
+  {
+   "op": "normalize_desktop_size",
+   "args": {
+    "value": "​1920x1080"
+   }
+  },
+  {
    "op": "virtual_desktop_argv",
    "args": {
     "name": "Half-Life",
@@ -4306,6 +4693,108 @@
     "argv": [
      "wine",
      "/g/app.exe"
+    ]
+   }
+  },
+  {
+   "op": "virtual_desktop_argv",
+   "args": {
+    "name": "a_b",
+    "virtual_desktop_size": "",
+    "argv": [
+     "wine"
+    ]
+   }
+  },
+  {
+   "op": "virtual_desktop_argv",
+   "args": {
+    "name": "under_score",
+    "virtual_desktop_size": "",
+    "argv": [
+     "wine"
+    ]
+   }
+  },
+  {
+   "op": "virtual_desktop_argv",
+   "args": {
+    "name": "Nier: Automata",
+    "virtual_desktop_size": "",
+    "argv": [
+     "wine"
+    ]
+   }
+  },
+  {
+   "op": "virtual_desktop_argv",
+   "args": {
+    "name": "aaaaaaaaaaaaaaaa",
+    "virtual_desktop_size": "",
+    "argv": [
+     "wine"
+    ]
+   }
+  },
+  {
+   "op": "virtual_desktop_argv",
+   "args": {
+    "name": "aaaaaaaaaaaaaaaaa",
+    "virtual_desktop_size": "",
+    "argv": [
+     "wine"
+    ]
+   }
+  },
+  {
+   "op": "virtual_desktop_argv",
+   "args": {
+    "name": "---abcdefghijklmnop---",
+    "virtual_desktop_size": "",
+    "argv": [
+     "wine"
+    ]
+   }
+  },
+  {
+   "op": "virtual_desktop_argv",
+   "args": {
+    "name": "你好 Half-Life",
+    "virtual_desktop_size": "",
+    "argv": [
+     "wine"
+    ]
+   }
+  },
+  {
+   "op": "virtual_desktop_argv",
+   "args": {
+    "name": "Game",
+    "virtual_desktop_size": "١٢٣٤x٥٦٧٨",
+    "argv": [
+     "wine"
+    ]
+   }
+  },
+  {
+   "op": "virtual_desktop_argv",
+   "args": {
+    "name": "Solo",
+    "virtual_desktop_size": "",
+    "argv": [
+     "umu-run"
+    ]
+   }
+  },
+  {
+   "op": "virtual_desktop_argv",
+   "args": {
+    "name": "Solo",
+    "virtual_desktop_size": "",
+    "argv": [
+     "/usr/bin/umu-run",
+     "/g/x.exe",
+     "--flag"
     ]
    }
   },

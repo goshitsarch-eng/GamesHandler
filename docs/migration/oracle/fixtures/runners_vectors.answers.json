@@ -5279,6 +5279,392 @@
   }
  },
  {
+  "op": "parse_env_block",
+  "args": {
+   "text": "D=a\\ b"
+  },
+  "ok": true,
+  "result": {
+   "D": "a\\ b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=B\\"
+  },
+  "ok": true,
+  "result": {
+   "A": "B\\"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"a\\\"b\""
+  },
+  "ok": true,
+  "result": {
+   "A": "a\\\"b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A='a\\ b'"
+  },
+  "ok": true,
+  "result": {
+   "A": "a\\ b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\\\\"
+  },
+  "ok": true,
+  "result": {
+   "A": "\\\\"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"a\\\\b\""
+  },
+  "ok": true,
+  "result": {
+   "A": "a\\\\b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A='q\\\\'"
+  },
+  "ok": true,
+  "result": {
+   "A": "q\\\\"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"a\\ b\""
+  },
+  "ok": true,
+  "result": {
+   "A": "a\\ b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=B\\;C=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "B\\",
+   "C": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"unterminated;B=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "unterminated;B=2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A='unterminated;B=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "unterminated;B=2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"a;b\";C=3"
+  },
+  "ok": true,
+  "result": {
+   "A": "a;b",
+   "C": "3"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "\"A\"=1"
+  },
+  "ok": true,
+  "result": {
+   "\"A\"": "1"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"  spaced  \""
+  },
+  "ok": true,
+  "result": {
+   "A": "  spaced  "
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"'x'\""
+  },
+  "ok": true,
+  "result": {
+   "A": "x"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A='\"x\"'"
+  },
+  "ok": true,
+  "result": {
+   "A": "\"x\""
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"a=b\""
+  },
+  "ok": true,
+  "result": {
+   "A": "a=b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A='a=b'"
+  },
+  "ok": true,
+  "result": {
+   "A": "a=b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"\";B="
+  },
+  "ok": true,
+  "result": {
+   "A": "",
+   "B": ""
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A='';B=''"
+  },
+  "ok": true,
+  "result": {
+   "A": "",
+   "B": ""
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1\tB=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1\u000bB=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1\u000bB=2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1\fB=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1\fB=2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "\u001cA=1\u001d"
+  },
+  "ok": true,
+  "result": {
+   "A": "1"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\u001c1"
+  },
+  "ok": true,
+  "result": {
+   "A": "1"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1 #comment"
+  },
+  "ok": true,
+  "result": {
+   "A": "1 #comment"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": " #A=1"
+  },
+  "ok": true,
+  "result": {}
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": " A=1"
+  },
+  "ok": true,
+  "result": {
+   "A": "1"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=​1"
+  },
+  "ok": true,
+  "result": {
+   "A": "​1"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1\t;\tB=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A\t=\t1"
+  },
+  "ok": true,
+  "result": {
+   "A": "1"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=١٢٣"
+  },
+  "ok": true,
+  "result": {
+   "A": "١٢٣"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "KÉY=1"
+  },
+  "ok": true,
+  "result": {
+   "KÉY": "1"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=😀"
+  },
+  "ok": true,
+  "result": {
+   "A": "😀"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1 B=2 C=3 D"
+  },
+  "ok": true,
+  "result": {
+   "A": "1 B=2 C=3 D"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A==B"
+  },
+  "ok": true,
+  "result": {
+   "A": "=B"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=a=b c=d"
+  },
+  "ok": true,
+  "result": {
+   "A": "a=b",
+   "c": "d"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1;B=C D"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "C D"
+  }
+ },
+ {
   "op": "merge_dll_overrides",
   "args": {
    "env": {},
@@ -5390,6 +5776,82 @@
   "ok": true,
   "result": {
    "WINEDLLOVERRIDES": "a=b;a=b"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {
+    "WINEDLLOVERRIDES": "a=b"
+   },
+   "extra": "a=b"
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "a=b;a=b"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {
+    "WINEDLLOVERRIDES": "a=b;"
+   },
+   "extra": "  ;;  "
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "a=b;"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {},
+   "extra": "\u001cc=d\u001d"
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "c=d"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {},
+   "extra": " e=f "
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "e=f"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {
+    "OTHER": "1",
+    "WINEDLLOVERRIDES": "a=b"
+   },
+   "extra": "c=d"
+  },
+  "ok": true,
+  "result": {
+   "OTHER": "1",
+   "WINEDLLOVERRIDES": "a=b;c=d"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {
+    "WINEDLLOVERRIDES": "a=b;;;"
+   },
+   "extra": "c=d"
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "a=b;c=d"
   }
  },
  {
@@ -5516,6 +5978,150 @@
   "op": "normalize_desktop_size",
   "args": {
    "value": " 1920x1080 "
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "12345x12345"
+  },
+  "ok": true,
+  "result": "12345x12345"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "123456x12345"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "12345x123456"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "12x12345"
+  },
+  "ok": true,
+  "result": "12x12345"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "19X20x30X40"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "١٢٣x٤٥"
+  },
+  "ok": true,
+  "result": "١٢٣x٤٥"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "１２３x４５"
+  },
+  "ok": true,
+  "result": "１２３x４５"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "٠٠x٠٠"
+  },
+  "ok": true,
+  "result": "٠٠x٠٠"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "12x٣٤"
+  },
+  "ok": true,
+  "result": "12x٣٤"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "\t1920x1080\t"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "\u001c1920x1080\u001d"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": " 1920x1080 "
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "1920\tx1080"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "1920 x1080"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "19\t20x10\t80"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "1920x1080\n"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "  "
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "​1920x1080"
   },
   "ok": true,
   "result": "1920x1080"
@@ -5666,6 +6272,170 @@
    "explorer",
    "/desktop=namewithspaces,1920x1080",
    "/g/app.exe"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "a_b",
+   "virtual_desktop_size": "",
+   "argv": [
+    "wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=ab,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "under_score",
+   "virtual_desktop_size": "",
+   "argv": [
+    "wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=underscore,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "Nier: Automata",
+   "virtual_desktop_size": "",
+   "argv": [
+    "wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=NierAutomata,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "aaaaaaaaaaaaaaaa",
+   "virtual_desktop_size": "",
+   "argv": [
+    "wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=aaaaaaaaaaaaaaaa,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "aaaaaaaaaaaaaaaaa",
+   "virtual_desktop_size": "",
+   "argv": [
+    "wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=aaaaaaaaaaaaaaaa,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "---abcdefghijklmnop---",
+   "virtual_desktop_size": "",
+   "argv": [
+    "wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=abcdefghijklmnop,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "你好 Half-Life",
+   "virtual_desktop_size": "",
+   "argv": [
+    "wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=HalfLife,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "Game",
+   "virtual_desktop_size": "١٢٣٤x٥٦٧٨",
+   "argv": [
+    "wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=Game,١٢٣٤x٥٦٧٨"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "Solo",
+   "virtual_desktop_size": "",
+   "argv": [
+    "umu-run"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "umu-run",
+   "explorer",
+   "/desktop=Solo,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "Solo",
+   "virtual_desktop_size": "",
+   "argv": [
+    "/usr/bin/umu-run",
+    "/g/x.exe",
+    "--flag"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "/usr/bin/umu-run",
+   "explorer",
+   "/desktop=Solo,1920x1080",
+   "/g/x.exe",
+   "--flag"
   ]
  },
  {

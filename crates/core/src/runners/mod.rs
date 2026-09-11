@@ -30,6 +30,7 @@
 pub mod archive;
 pub mod env;
 pub mod families;
+pub mod launch_opts;
 pub mod shell;
 
 use std::collections::BTreeMap;
@@ -42,6 +43,9 @@ use crate::paths;
 pub use archive::METADATA_NAME;
 pub use archive::{ArchiveError, Limits};
 pub use env::{LaunchEnv, SystemLaunchEnv};
+pub use launch_opts::{
+    DXVK_DLL_OVERRIDES, VKD3D_DLL_OVERRIDES, WINED3D_DLL_OVERRIDES,
+};
 pub use shell::{split_posix, ShellError};
 
 /// The built-in Wine runner's id.
@@ -125,6 +129,12 @@ pub enum RunnerError {
     AlreadyInstalled { id: String },
     /// `System Wine cannot be uninstalled`.
     SystemWineCannotBeUninstalled,
+    /// A library entry lives on a network share that has no local mount.
+    ///
+    /// The message is `netpaths.unreachable_share_message`, which is built from
+    /// the URL the user can recognise rather than from a fixed sentence — so
+    /// this variant carries it rather than formatting one of its own.
+    UnreachableShare { message: String },
     /// The archive layer refused the download or the staged tree.
     Archive(ArchiveError),
     /// A launch argument string could not be split (Python's `shlex` error).
@@ -169,6 +179,7 @@ impl fmt::Display for RunnerError {
             RunnerError::SystemWineCannotBeUninstalled => {
                 f.write_str("System Wine cannot be uninstalled")
             }
+            RunnerError::UnreachableShare { message } => f.write_str(message),
             // The wrapped errors already carry Python's message.
             RunnerError::Archive(error) => error.fmt(f),
             RunnerError::Shell(error) => error.fmt(f),

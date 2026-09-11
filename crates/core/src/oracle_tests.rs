@@ -1646,15 +1646,24 @@ fn save_replaces_a_symlink_rather_than_writing_through_it() {
 /// that quietly *disappears* from the suite fails too. That second case is the
 /// degenerate version of "a fixture that only ever checks what it already
 /// covers": a corpus that shrank to nothing would otherwise stay green.
-const PORTED_VECTOR_OPS: [&str; 13] = [
+///
+/// `PORTED_VECTOR_OPS` is now every op in the corpus: `launch_opts` closed the
+/// last four. The second list stays, empty, because deleting it would mean the
+/// guard has to be rewritten the next time an op is added here ahead of its
+/// port — and the guard is what makes that a deliberate act.
+const PORTED_VECTOR_OPS: [&str; 17] = [
     "asset_matches",
     "asset_name",
     "install_id_from_parts",
     "looks_like_archive",
+    "merge_dll_overrides",
+    "normalize_desktop_size",
+    "parse_env_block",
     "pick_asset",
     "pure_posix_name",
     "safe_archive_name",
     "safe_install_id",
+    "virtual_desktop_argv",
     "accent_index",
     "launch_failure_text",
     "readable_error",
@@ -1662,15 +1671,11 @@ const PORTED_VECTOR_OPS: [&str; 13] = [
     "shell_split",
 ];
 
-/// The four ops whose port lands with `launch_opts`.
+/// The ops a corpus case exists for and no arm answers yet.
 ///
-/// Named explicitly rather than silently skipped.
-const UNPORTED_VECTOR_OPS: [&str; 4] = [
-    "parse_env_block",
-    "merge_dll_overrides",
-    "normalize_desktop_size",
-    "virtual_desktop_argv",
-];
+/// Empty, and that is the assertion: a name appearing here again means a case
+/// is being counted as covered when it is not.
+const UNPORTED_VECTOR_OPS: [&str; 0] = [];
 
 fn vector_fixture(name: &str) -> Value {
     let path = fixtures_dir().join(name);
@@ -1687,6 +1692,63 @@ fn vector_answer(answers: &[Value], index: usize) -> &Value {
         .unwrap_or_else(|| panic!("the answers file has no record {index}"))
 }
 
+/// Rebuild `value` with every object's keys in sorted order, recursively.
+///
+/// # Why a mapping's order must not reach the comparison
+///
+/// Two ops in the corpus answer with an object (`parse_env_block`,
+/// `merge_dll_overrides`), and a `serde_json::Map`'s iteration order is **not a
+/// property of this crate**. It is a `BTreeMap` — alphabetical — under
+/// `cargo test -p gamehandler-core`, and an insertion-ordered map under a
+/// workspace-wide `cargo test`, because `cosmic-theme` enables
+/// `serde_json/preserve_order` and Cargo unifies features. That is not
+/// hypothetical: this comparison was added, passed under `-p
+/// gamehandler-core` for several runs, and then failed under `cargo test
+/// --workspace` on one case out of 760 (`#485 parse_env_block`) where the two
+/// sides held *the same mapping* in different orders. A test whose verdict
+/// depends on which crates are in the build is worse than no test — the same
+/// doctrine `json::tests::output_uses_python_layout_and_escaping`,
+/// `models::tests::field_order_matches_the_python_dataclass` and
+/// `settings::tests::field_order_matches_the_python_dataclass` each record.
+///
+/// Sorting both sides collapses the two orders onto one, so the comparison is
+/// over the *mapping* — the keys and their values — which is what the corpus is
+/// trying to pin, and never over an ordering that neither implementation
+/// promises. It does not weaken the oracle: a missing key, an extra key, a
+/// renamed key and a wrong value all still fail, because sorting is injective
+/// on multisets of pairs. What it stops checking is a property no consumer
+/// observes — the port's answer is a `BTreeMap<String, String>` and Python's is
+/// a `dict`, and both are read as a set of environment assignments, where order
+/// carries nothing.
+///
+/// Arrays are **not** reordered. An array's order *is* part of the contract
+/// (`virtual_desktop_argv` answers with an argv, where reordering changes the
+/// command), so only objects are canonicalised, and the recursion exists so
+/// that an object nested inside an array is covered without also sorting the
+/// array.
+fn canonicalise_object_keys(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let mut keys: Vec<&String> = object.keys().collect();
+            keys.sort_unstable();
+            // Rebuilding by insertion in sorted order gives sorted iteration
+            // under both `preserve_order` settings — under the ordered map
+            // because insertion order is what it preserves, and under the
+            // `BTreeMap` because that is already its order. So the canonical
+            // form does not itself depend on the feature.
+            let mut canonical = serde_json::Map::new();
+            for key in keys {
+                canonical.insert(key.clone(), canonicalise_object_keys(&object[key]));
+            }
+            Value::Object(canonical)
+        }
+        Value::Array(items) => {
+            Value::Array(items.iter().map(canonicalise_object_keys).collect())
+        }
+        scalar => scalar.clone(),
+    }
+}
+
 /// Render Python's answer as the string the Rust side has to produce, so the
 /// two are compared as text rather than as two JSON shapes.
 ///
@@ -1695,10 +1757,17 @@ fn vector_answer(answers: &[Value], index: usize) -> &Value {
 /// float cases in `install_id_from_parts` never produce one, but a future op
 /// that does will be compared with the port's own Python-compatible writer
 /// rather than with `serde_json`'s.
+///
+/// Both sides pass through [`canonicalise_object_keys`] first, so an object's
+/// key order never enters the verdict. That is applied here rather than at the
+/// two call sites in `every_runner_vector_matches_python` because this is the
+/// single door every answer goes through, on both sides — a canonicalisation
+/// applied to only the expected side would leave the Rust side's order
+/// load-bearing and reintroduce exactly the build-dependence it removes.
 fn python_answer_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
-        other => python_json::to_python_string(other)
+        other => python_json::to_python_string(&canonicalise_object_keys(other))
             .expect("the value is serialisable")
             .trim_end()
             .to_string(),
@@ -1766,6 +1835,70 @@ fn rust_vector_answer(op: &str, args: &Value) -> Result<Value, String> {
             // `"ValueError: <message>"` and the message is user-visible.
             Err(error) => Err(format!("ValueError: {error}")),
         },
+        "parse_env_block" => {
+            // A `dict`, so the answer is an object and the comparison is over
+            // the whole mapping — including the keys, which is what catches a
+            // lexer that produces the right *values* under different names.
+            // Only the key *order* is dropped, by `canonicalise_object_keys`;
+            // see there for why it must be. The `BTreeMap` iteration below is
+            // therefore incidental, not a claim about the answer's order.
+            let parsed = crate::runners::launch_opts::parse_env_block(&text("text"));
+            let mut object = serde_json::Map::new();
+            for (key, value) in parsed {
+                object.insert(key, Value::String(value));
+            }
+            Ok(Value::Object(object))
+        }
+        "merge_dll_overrides" => {
+            // The op records the *resulting* environment, so the arm starts
+            // from whatever the case declares. That is what makes the
+            // interaction with an inherited `WINEDLLOVERRIDES` visible: the
+            // documented case is a fragment appended to a value
+            // `build_command` has already `setdefault`ed.
+            let mut env: std::collections::BTreeMap<String, String> = args
+                .get("env")
+                .and_then(Value::as_object)
+                .map(|object| {
+                    object
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                value.as_str().unwrap_or_default().to_string(),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let extra = args.get("extra").and_then(Value::as_str).unwrap_or("");
+            crate::runners::launch_opts::merge_dll_overrides(&mut env, extra);
+            let mut object = serde_json::Map::new();
+            for (key, value) in env {
+                object.insert(key, Value::String(value));
+            }
+            Ok(Value::Object(object))
+        }
+        "normalize_desktop_size" => Ok(json!(
+            crate::runners::launch_opts::normalize_desktop_size(&text("value"))
+        )),
+        "virtual_desktop_argv" => {
+            // The op passes the two fields the function reads — the name and
+            // the size — rather than a whole `Game`, because a case that had to
+            // serialise 30 fields would be testing `Game`'s wire format twice
+            // over and the argv once.
+            let mut game = crate::models::Game::new_named(text("name"));
+            game.virtual_desktop_size = text("virtual_desktop_size");
+            let argv: Vec<String> = args
+                .get("argv")
+                .and_then(Value::as_array)
+                .expect("virtual_desktop_argv needs argv")
+                .iter()
+                .map(|word| word.as_str().unwrap_or_default().to_string())
+                .collect();
+            Ok(json!(crate::runners::launch_opts::virtual_desktop_argv(
+                &argv, &game
+            )))
+        }
         "pure_posix_name" => Ok(json!(crate::runners::pure_posix_name(&text("text")))),
         "safe_archive_name" => Ok(json!(archive::safe_archive_name(
             &text("name"),
@@ -2029,5 +2162,113 @@ fn every_runner_vector_matches_python() {
         "expected the whole ported corpus, replayed {replayed} of {} \
          ({deferred} deferred to launch_opts)",
         cases.len()
+    );
+}
+
+#[test]
+fn a_mapping_is_compared_in_key_order_not_in_build_order() {
+    // The regression this guards. `#485 parse_env_block` holds the mapping
+    // `{FOO: 1, BAR: two words, BAZ: 3}`; the Rust answer reached it through a
+    // `BTreeMap` and the Python answer through the answers file, so the two
+    // were compared as text in different key orders and the case failed — but
+    // *only* under a workspace-wide `cargo test`, which is the configuration
+    // that unifies `serde_json/preserve_order` in from `cosmic-theme`.
+    //
+    // The assertion is on the canonical *form* rather than on two differently
+    // ordered inputs being equal. Two inputs can only differ in order under an
+    // ordered map, so an equality assertion between them would pass vacuously
+    // under `-p gamehandler-core` and prove nothing there — its strength would
+    // depend on the build, which is the defect being fixed. A form pinned
+    // against keys in a deliberately un-alphabetical insertion order is
+    // non-vacuous in both configurations.
+    let mut object = serde_json::Map::new();
+    for (key, value) in [("zulu", "3"), ("alpha", "1"), ("mike", "2")] {
+        object.insert(key.to_string(), Value::String(value.to_string()));
+    }
+    assert_eq!(
+        python_answer_text(&Value::Object(object)),
+        "{\n  \"alpha\": \"1\",\n  \"mike\": \"2\",\n  \"zulu\": \"3\"\n}",
+        "objects must render in key order, whatever order they were built in"
+    );
+}
+
+#[test]
+fn canonicalising_drops_key_order_without_dropping_keys_or_values() {
+    // The property that keeps the fix from weakening the oracle: sorting is
+    // injective on multisets of key/value pairs, so everything the comparison
+    // was catching about a mapping it still catches. Written as an
+    // inequality between mappings that differ in exactly one thing at a time,
+    // because "still catches" is the claim that needs evidence — a
+    // canonicaliser that emptied every object would also make the corpus pass.
+    let render = |pairs: &[(&str, &str)]| {
+        let mut object = serde_json::Map::new();
+        for (key, value) in pairs {
+            object.insert(key.to_string(), Value::String(value.to_string()));
+        }
+        python_answer_text(&Value::Object(object))
+    };
+    let baseline = render(&[("A", "1"), ("B", "2")]);
+
+    // Same mapping, different construction order: equal, which is the fix.
+    assert_eq!(baseline, render(&[("B", "2"), ("A", "1")]));
+
+    // A missing key, an extra key, a renamed key, a changed value and a
+    // changed case are each still a disagreement.
+    assert_ne!(baseline, render(&[("A", "1")]), "a missing key must fail");
+    assert_ne!(
+        baseline,
+        render(&[("A", "1"), ("B", "2"), ("C", "3")]),
+        "an extra key must fail"
+    );
+    assert_ne!(
+        baseline,
+        render(&[("A", "1"), ("Z", "2")]),
+        "a renamed key must fail"
+    );
+    assert_ne!(
+        baseline,
+        render(&[("A", "1"), ("B", "9")]),
+        "a changed value must fail"
+    );
+    assert_ne!(
+        baseline,
+        render(&[("A", "1"), ("b", "2")]),
+        "keys are case-sensitive"
+    );
+
+    // And the canonical rendering really does contain the keys and values,
+    // rather than being equal-but-empty for every input.
+    assert!(baseline.contains("\"A\": \"1\""));
+    assert!(baseline.contains("\"B\": \"2\""));
+}
+
+#[test]
+fn canonicalising_sorts_objects_without_reordering_arrays() {
+    // An array's order is part of the contract — `virtual_desktop_argv`
+    // answers with an argv, where reordering changes the command that runs —
+    // so only objects may be canonicalised. The nested object is here because
+    // the top-level test cannot see whether the recursion sorts an array's
+    // *contents* when the array is not itself sorted.
+    let value: Value = serde_json::from_str(
+        r#"{"z": [{"b": 1, "a": 2}, "second", "first"], "a": 1}"#,
+    )
+    .expect("valid JSON");
+
+    assert_eq!(
+        python_answer_text(&value),
+        concat!(
+            "{\n",
+            "  \"a\": 1,\n",
+            "  \"z\": [\n",
+            "    {\n",
+            "      \"a\": 2,\n",
+            "      \"b\": 1\n",
+            "    },\n",
+            "    \"second\",\n",
+            "    \"first\"\n",
+            "  ]\n",
+            "}"
+        ),
+        "objects sorted at every depth; the array's own order untouched"
     );
 }

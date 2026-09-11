@@ -572,7 +572,29 @@ def _selection_cases():
 
 
 def _launch_option_cases():
-    """The pure launch-option inputs the toggle matrix will build on."""
+    """The pure launch-option inputs the toggle matrix is built on.
+
+    Designed against the two ways the *port* can go wrong rather than against
+    the ways the inputs normally look:
+
+    * `parse_env_block` builds a `shlex` lexer with `escape = ""` — a backslash
+      is an ordinary character — so the obvious move, reusing `shell::split_posix`
+      (which *is* `shlex.split`), gives different answers. Every backslash case
+      below is one where the two splitters disagree.
+    * `whitespace` is `" \\t\\r\\n"` while `str.isspace()` is that plus `\\v`,
+      `\\f` and `\\x1c..\\x1f`, so `\\v` does not separate tokens but is trimmed
+      from the ends, and those four also delete under `strip()` — the same four
+      characters `python_splitlines` has to name.
+
+    Excluded on purpose, with the measurement: `normalize_desktop_size` uses
+    `^\\d{2,5}x\\d{2,5}$`, and Python's `\\d` on a `str` is Unicode `Nd`. The
+    port uses `char::is_numeric` (`Nd ∪ Nl ∪ No`), so `½½x½½`, `ⅫⅫxⅪⅪ` and
+    `²²x²²` are accepted here and fall back to 1920x1080 in Python. Those three
+    cannot be matchable cases, so they are pinned by
+    `the_digit_class_is_a_documented_superset_of_python_s` instead. The agreeing
+    part of the same rule — every `Nd` digit, including the non-ASCII ones a
+    user with a non-Latin layout really types — *is* in the corpus.
+    """
     cases = []
     env_texts = [
         "FOO=1; BAR=two words\n# comment\nBAZ=3",
@@ -583,6 +605,21 @@ def _launch_option_cases():
         "A=1\rB=2", "A=1;;B=2", "  ", "", "A=1;A=2", "A=1 A=2",
         "A=1; # comment\nB=2", "#A=1", "A=1;B", "A='a\"b'", "A=\"a'b\"",
         "A=1;B=2;C=3", "A=\"\";B=''", "A=a b c", "A=1;B='x y';C=3",
+        # -- backslash is not an escape: `escape = ""` ------------------------
+        "D=a\\ b", "A=B\\", "A=\"a\\\"b\"", "A='a\\ b'", "A=\\\\",
+        "A=\"a\\\\b\"", "A='q\\\\'", "A=\"a\\ b\"", "A=B\\;C=2",
+        # -- quotes: which layer sees them, and what a missing one swallows ---
+        "A=\"unterminated;B=2", "A='unterminated;B=2", "A=\"a;b\";C=3",
+        "\"A\"=1", "A=\"  spaced  \"", "A=\"'x'\"", "A='\"x\"'",
+        "A=\"a=b\"", "A='a=b'", "A=\"\";B=", "A='';B=''",
+        # -- separators and whitespace classes -------------------------------
+        "A=1\tB=2", "A=1\u000bB=2", "A=1\fB=2", "\u001cA=1\u001d",
+        "A=\u001c1", "A=1 #comment", " #A=1", "\u00a0A=1",
+        "A=\u200b1", "A=1\t;\tB=2", "A\t=\t1",
+        # -- values that are not ASCII ---------------------------------------
+        "A=\u0661\u0662\u0663", "K\u00c9Y=1", "A=\U0001f600",
+        # -- the token-or-line rule, from both sides --------------------------
+        "A=1 B=2 C=3 D", "A==B", "A=a=b c=d", "A=1;B=C D",
     ]
     for text in env_texts:
         cases.append({"op": "parse_env_block", "args": {"text": text}})
@@ -598,6 +635,18 @@ def _launch_option_cases():
         ({"WINEDLLOVERRIDES": ""}, "a=b"),
         ({"WINEDLLOVERRIDES": "   "}, "a=b"),
         ({"WINEDLLOVERRIDES": "a=b"}, "a=b"),
+        # The second merge of the same fragment, which is what a relaunch does;
+        # the appended duplicate is Python's behaviour and is pinned as such.
+        ({"WINEDLLOVERRIDES": "a=b"}, "a=b"),
+        # A fragment that is only separators and whitespace, one of them a
+        # character only Python calls whitespace.
+        ({"WINEDLLOVERRIDES": "a=b;"}, "  ;;  "),
+        ({}, "\u001cc=d\u001d"),
+        ({}, "\u00a0e=f\u00a0"),
+        # Other keys must survive untouched.
+        ({"OTHER": "1", "WINEDLLOVERRIDES": "a=b"}, "c=d"),
+        # A trailing separator on the inherited value, which `rstrip` removes.
+        ({"WINEDLLOVERRIDES": "a=b;;;"}, "c=d"),
     ]:
         cases.append(
             {"op": "merge_dll_overrides", "args": {"env": env, "extra": extra}}
@@ -607,6 +656,21 @@ def _launch_option_cases():
         "1920x1080", "2560 x 1440", "nope", "", "   ", "3840X2160",
         "12x34", "123x456", "123456x123456", "1x1", "111x111",
         "1920x1080x2", "x1080", "1920x", "1920 x1080", " 1920x1080 ",
+        # Both bounds, inclusive, on each side independently.
+        "12345x12345", "123456x12345", "12345x123456", "12x12345",
+        # Lowercasing happens before the pattern, so a capital X is a separator.
+        "19X20x30X40",
+        # `\d` is Unicode `Nd`: these are valid resolutions to Python, and the
+        # whole reason the port cannot use `is_ascii_digit`.
+        "\u0661\u0662\u0663x\u0664\u0665",
+        "\uff11\uff12\uff13x\uff14\uff15",
+        "\u0660\u0660x\u0660\u0660", "12x\u0663\u0664",
+        # Whitespace classes: `\t`, `\x1c` and `\xa0` around the value are
+        # stripped (all `isspace`), an inner `\t` or `\xa0` is not removable and
+        # fails the pattern, and an inner ordinary space is removed.
+        "\t1920x1080\t", "\u001c1920x1080\u001d", "\u00a01920x1080\u00a0",
+        "1920\tx1080", "1920\u00a0x1080", "19\t20x10\t80",
+        "1920x1080\n", "  ", "\u200b1920x1080",
     ]:
         cases.append({"op": "normalize_desktop_size", "args": {"value": value}})
 
@@ -620,6 +684,25 @@ def _launch_option_cases():
         ("", "", []),
         ("ünïcøde game", "1x1", ["wine"]),
         ("name with spaces", "2x2", ["wine", "/g/app.exe"]),
+        # The class is `[^A-Za-z0-9]`, so `_` and `.` go but digits stay —
+        # `char::is_alphanumeric`, the obvious Rust call, keeps the underscore
+        # and would produce a different desktop name.
+        ("a_b", "", ["wine"]), ("under_score", "", ["wine"]),
+        ("Nier: Automata", "", ["wine"]),
+        # Exactly 16 and exactly 17 alphanumerics: the truncation boundary.
+        ("a" * 16, "", ["wine"]), ("a" * 17, "", ["wine"]),
+        # A non-alphanumeric prefix before a short name, so the count is of
+        # what remains rather than of the original.
+        ("---abcdefghijklmnop---", "", ["wine"]),
+        # A non-Latin name with ASCII mixed in.
+        ("\u4f60\u597d Half-Life", "", ["wine"]),
+        # A size that only a non-Latin layout produces.
+        ("Game", "\u0661\u0662\u0663\u0664x\u0665\u0666\u0667\u0668", ["wine"]),
+        # A single-element argv, where the wrapper has nowhere to be inserted
+        # between the launcher and its arguments.
+        ("Solo", "", ["umu-run"]),
+        # A launcher with a path, to show the basename is not consulted here.
+        ("Solo", "", ["/usr/bin/umu-run", "/g/x.exe", "--flag"]),
     ]:
         cases.append(
             {
