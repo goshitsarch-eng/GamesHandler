@@ -775,3 +775,100 @@ portal selection may be a URI that has no direct filesystem path — T-15 must
 keep the `url` → path conversion explicit and handle the failure case rather
 than assuming a local path. Also note `Err(file_chooser::Error::Cancelled)` is
 a normal outcome, not an error to report to the user.
+
+---
+
+## D-24. `crates/core` may depend on archive, compression, hashing and rename primitives
+
+**Question.** `architecture.md` §1.1 allowed `core` "only `serde`/`serde_json`, an
+HTTP client, and std". That allowlist was written before R-3 was understood.
+`core::runners` needs tar extraction, gzip/xz/bzip2 decompression, SHA-256, and
+an atomic no-replace rename. Is the allowlist amended, and if so which
+implementations?
+
+**Options considered.** For compression: pure-Rust backends (`flate2`/
+`miniz_oxide`, `lzma-rs`, `bzip2-rs`) versus bindings to the reference C
+implementations (`xz2` → liblzma, `bzip2` → libbz2, `flate2` → zlib).
+
+**Choice.** **Amend the allowlist**, and take the **reference backends**.
+
+**Why.** The allowlist's purpose was never "no dependencies" — it is that
+`cargo test -p gamehandler-core` stays instant, headless and offline (D-03). A
+tar/compression/hash dependency does not compromise that; an async runtime or a
+GUI crate would, and both remain excluded. So the rule being defended is intact.
+
+The backend choice is decided by what this code *is*: R-3 marks extraction as
+the one place in this port where a defect is a vulnerability rather than a bug,
+and it processes untrusted input (a downloaded Proton tarball, a user's installer
+archive). Against that, "mature implementation with a decade of adversarial
+attention" beats "fewer linked libraries". liblzma and libbz2 are the reference
+implementations for their formats; the pure-Rust equivalents are younger and
+less exercised on hostile input. Simplicity also favours them — they are thin
+wrappers, not reimplementations.
+
+**Consequence, and the thing to verify.** This links C libraries, so
+`org.freedesktop.Platform` must actually provide liblzma, libbz2 and zlib. All
+three are in the base runtime (liblzma is a systemd dependency), so this is
+expected to be a non-issue — but it is a **build-time fact, not a design
+assumption**, and T-17's `flatpak-build` stage is where it gets proven. If one
+is missing, the fix is a manifest module, not a redesign. Each format needs a
+round-trip test; `test_supported_xz_and_bzip2_streams_extract` is the gate.
+
+**Also decided here.** No `unsafe` in our own code, in this path or any other —
+see D-25.
+
+---
+
+## D-25. No-replace renames go through `rustix`, not `libc::renameat2`
+
+**Question.** Python reaches `RENAME_NOREPLACE` through `ctypes`
+(`runners.py`). In Rust, `libc::renameat2` is an `unsafe extern` call and the
+workspace lint sets `unsafe_code = "deny"`. Options: allow `unsafe` here, use
+`rustix::fs::renameat_with(.., RenameFlags::NOREPLACE)`, or use
+`nix::fcntl::renameat2`.
+
+**Choice.** **`rustix`.**
+
+**Why.** The cheapest correct answer. `rustix` is *already in our dependency
+graph* — libcosmic depends on it (`rustix = "1.1"`, features `pipe`/`process`),
+so it is already vendored for the Flatpak and adds no new source to
+`cargo-sources.json`. That makes it strictly better than `nix` (a new
+dependency for one syscall) on simplicity.
+
+Against `#[allow(unsafe_code)]`, the argument is not purity. This is a *security
+boundary* — the no-replace rename is what stops an install from clobbering a
+path that already exists — and an `unsafe` block there is precisely the kind of
+code that needs an invariant written down and maintained. `rustix` already
+encapsulates that invariant and is maintained by people who have thought about
+it, so we inherit it instead of restating it. Given the choice between
+"we promise this is safe" and "this is safe", take the second.
+
+---
+
+## D-26. The HTTP client is injected into `core`, not imported by it
+
+**Question.** `core::runners` needs to fetch Proton releases. §1.1 permits an
+HTTP client in `core` directly.
+
+**Options considered.** (1) Depend on a concrete blocking client (`ureq`) in
+`core`. (2) Define an `HttpClient` trait in `core` and inject the concrete
+client from the binary crate.
+
+**Choice.** **Option 2 — inject it.**
+
+**Why.** It is the same pattern already used twice in this port: `paths.rs`
+injects its `Env`, and blocking work takes `progress: &dyn Fn(f32)` so no async
+runtime is needed to test it. A trait keeps all 92 runner tests running
+**offline** — `test_security.py` mocks responses, so the tests exercise the
+retry, size-cap and error paths without a network — and it keeps `core` free of
+a networking dependency, so `cargo test -p gamehandler-core` stays instant and
+hermetic.
+
+There is a parity benefit too: an injected client makes the response-handling
+logic testable against the same mocked inputs the Python tests use, which is
+what makes those 92 tests portable at all. A concrete client in `core` would
+force those tests to become network tests or to be dropped.
+
+**Note.** This supersedes §1.1's allowance rather than contradicting it: §1.1
+*permitted* a client; it did not require one, and the trait is the better fit
+for the reason above.
