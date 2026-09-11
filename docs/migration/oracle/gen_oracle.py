@@ -14,14 +14,29 @@ into `docs/migration/oracle/fixtures/`. Requires nothing but the stdlib and
 this repository; the Python app is imported from the repo root.
 
 Declared in DECISIONS D-06 as the compatibility contract for T-02/T-03.
+
+**Deterministic by construction.** `Game.added` defaults to `time.time()`, and
+`from_dict` regenerates it whenever the incoming value is invalid — so a naive
+run produces different bytes every time. Since these fixtures are checked in
+and compared against, the clock is frozen to `FROZEN_NOW` for the whole run.
+Everything else in the output is a pure function of the input.
 """
-import json, math, sys, pathlib, importlib
+import json, math, sys, pathlib, importlib, time as _time
+
+# Freeze the clock *before* the app is imported, so every `time.time()` call the
+# implementation makes (the `added` default factory, `mark_played`,
+# `format_last_played`'s `now=None` path) resolves to one fixed instant. Without
+# this the fixtures change on every regeneration and cannot be committed.
+FROZEN_NOW = 1_700_000_000.0
+_time.time = lambda: FROZEN_NOW
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO))
 
 from gamehandler.models import Game, Library, format_last_played, UNCATEGORIZED, SORT_MODES
 from gamehandler.settings import Settings, COLOR_SCHEMES, VIEW_MODES
+
+assert _time.time() == FROZEN_NOW, "clock freeze failed; fixtures would be nondeterministic"
 
 OUT = pathlib.Path(__file__).resolve().parent / "fixtures"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -57,9 +72,13 @@ for label, data in from_dict_cases.items():
                                        "bool_false","str_ts","negative"),
         "output": {k: v for k, v in d.items() if k != "added"},
         "added_value": d["added"],
-        "added_is_recent": d["added"] is not None and abs(d["added"] - __import__("time").time()) < 60,
+        "added_is_recent": d["added"] is not None and abs(d["added"] - _time.time()) < 60,
         "is_linux": g.is_linux,
         "display_category": g.display_category,
+        # `null` is the one input where Rust must NOT copy this result — see
+        # rust_divergences and DECISIONS D-14. Flagged inline so a test writer
+        # reading only this entry cannot mistake None for the expected output.
+        "rust_must_diverge": label == "null_ts",
     }
 
 # ------------------------------------------------- 2. deserialize -> serialize bytes
@@ -228,7 +247,54 @@ for label, text in oob_cases.items():
             notes["sort_ok"] = f"{type(exc).__name__}: {exc}"
     results["out_of_range"][label] = notes
 
-# ---------------------------------------------------------------- 8. constants
+# ------------------------------------------------- 8. where Rust must DIVERGE
+# Everything above is behaviour the Rust port must reproduce. This section is
+# the opposite: the few places where matching Python would propagate a defect
+# or a divergence we have deliberately accepted. Stated machine-readably so the
+# T-02 tests do not have to infer it from prose.
+results["rust_divergences"] = {
+    "note": (
+        "Cases where the Rust port MUST NOT match the Python result recorded "
+        "elsewhere in this file. Each entry names the governing decision."
+    ),
+    "cases": [
+        {
+            "id": "null_timestamp_normalized",
+            "decision": "D-14",
+            "python": {
+                "input": '{"id": "h"*32, "name": "Null ts", "added": null, "last_played": null}',
+                "observed": "added stays None, last_played stays None",
+                "consequence": (
+                    'sort="recent"/"added" raise TypeError: bad operand type for '
+                    "unary -: 'NoneType'"
+                ),
+            },
+            "rust": {
+                "expected": "added regenerated from the clock, last_played = 0.0",
+                "rationale": (
+                    "null carries no information; from_dict already normalizes every "
+                    "other invalid value this way, so null slipping through is an early "
+                    "`continue` bug, not a policy. Never hold a nullable timestamp."
+                ),
+            },
+        },
+        {
+            "id": "float_exponent_spelling",
+            "decision": "D-15",
+            "python": {"observed": "1e-07 and 10000000.0 (C printf %g rules)"},
+            "rust": {
+                "expected": "1e-7 and 1e7 (serde_json/Ryu)",
+                "rationale": (
+                    "Both are valid JSON and reparse identically. Byte-equality is not "
+                    "required here; assert numeric equality after reparse instead of "
+                    "emulating printf."
+                ),
+            },
+        },
+    ],
+}
+
+# ---------------------------------------------------------------- 9. constants
 results["constants"] = {
     "COLOR_SCHEMES": list(COLOR_SCHEMES), "VIEW_MODES": list(VIEW_MODES),
     "SORT_MODES": list(SORT_MODES), "UNCATEGORIZED": UNCATEGORIZED,

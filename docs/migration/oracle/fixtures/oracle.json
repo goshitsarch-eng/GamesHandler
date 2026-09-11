@@ -41,9 +41,10 @@
         "last_played": 1700000001.25
       },
       "added_value": 1700000000.5,
-      "added_is_recent": false,
+      "added_is_recent": true,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "nan_added": {
       "input": {
@@ -85,10 +86,11 @@
         "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "last_played": 5.0
       },
-      "added_value": 1789092836.4126127,
+      "added_value": 1700000000.0,
       "added_is_recent": true,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "inf_last": {
       "input": {
@@ -133,7 +135,8 @@
       "added_value": 1.0,
       "added_is_recent": false,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "neg_inf_last": {
       "input": {
@@ -178,7 +181,8 @@
       "added_value": 1.0,
       "added_is_recent": false,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "bool_true": {
       "input": {
@@ -220,10 +224,11 @@
         "id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         "last_played": 0.0
       },
-      "added_value": 1789092836.4126592,
+      "added_value": 1700000000.0,
       "added_is_recent": true,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "bool_false": {
       "input": {
@@ -265,10 +270,11 @@
         "id": "ffffffffffffffffffffffffffffffff",
         "last_played": 0.0
       },
-      "added_value": 1789092836.4126716,
+      "added_value": 1700000000.0,
       "added_is_recent": true,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "str_ts": {
       "input": {
@@ -310,10 +316,11 @@
         "id": "gggggggggggggggggggggggggggggggg",
         "last_played": 0.0
       },
-      "added_value": 1789092836.4126828,
+      "added_value": 1700000000.0,
       "added_is_recent": true,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "null_ts": {
       "input": {
@@ -358,7 +365,8 @@
       "added_value": null,
       "added_is_recent": false,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": true
     },
     "negative": {
       "input": {
@@ -400,10 +408,11 @@
         "id": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
         "last_played": 0.0
       },
-      "added_value": 1789092836.412704,
+      "added_value": 1700000000.0,
       "added_is_recent": true,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "int_ts": {
       "input": {
@@ -448,7 +457,8 @@
       "added_value": 42.0,
       "added_is_recent": false,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "unknown_keys": {
       "input": {
@@ -493,10 +503,11 @@
         "id": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
         "last_played": 0.0
       },
-      "added_value": 1789092836.4127307,
+      "added_value": 1700000000.0,
       "added_is_recent": true,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "unicode": {
       "input": {
@@ -537,10 +548,11 @@
         "id": "llllllllllllllllllllllllllllllll",
         "last_played": 0.0
       },
-      "added_value": 1789092836.4127424,
+      "added_value": 1700000000.0,
       "added_is_recent": true,
       "is_linux": false,
-      "display_category": "\u65e5\u672c\u8a9e"
+      "display_category": "\u65e5\u672c\u8a9e",
+      "rust_must_diverge": false
     },
     "empty_category": {
       "input": {
@@ -581,10 +593,11 @@
         "id": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
         "last_played": 0.0
       },
-      "added_value": 1789092836.4127529,
+      "added_value": 1700000000.0,
       "added_is_recent": true,
       "is_linux": false,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     },
     "linux_game": {
       "input": {
@@ -625,10 +638,11 @@
         "id": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
         "last_played": 0.0
       },
-      "added_value": 1789092836.412763,
+      "added_value": 1700000000.0,
       "added_is_recent": true,
       "is_linux": true,
-      "display_category": "Uncategorized"
+      "display_category": "Uncategorized",
+      "rust_must_diverge": false
     }
   },
   "roundtrip": {
@@ -656,7 +670,7 @@
       "names": [
         "NaN game"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"NaN game\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"pppppppppppppppppppppppppppppppp\",\n    \"added\": 1789092836.4132838,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"NaN game\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"pppppppppppppppppppppppppppppppp\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
     },
     "non_dict_entries": {
       "input": "[\"a string\", 42, null, {\"id\": \"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\", \"name\": \"Real\"}]",
@@ -664,7 +678,7 @@
       "names": [
         "Real"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Real\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\",\n    \"added\": 1789092836.4134054,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"Real\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
     },
     "empty_name": {
       "input": "[{\"id\": \"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\", \"name\": \"\"}, {\"id\": \"ssssssssssssssssssssssssssssssss\", \"name\": \"Kept\"}]",
@@ -672,7 +686,7 @@
       "names": [
         "Kept"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Kept\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"ssssssssssssssssssssssssssssssss\",\n    \"added\": 1789092836.4135256,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"Kept\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"ssssssssssssssssssssssssssssssss\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
     },
     "duplicate_ids": {
       "input": "[{\"id\": \"tttttttttttttttttttttttttttttttt\", \"name\": \"First\"}, {\"id\": \"tttttttttttttttttttttttttttttttt\", \"name\": \"Second\"}]",
@@ -680,7 +694,7 @@
       "names": [
         "Second"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Second\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"tttttttttttttttttttttttttttttttt\",\n    \"added\": 1789092836.4136665,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"Second\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"tttttttttttttttttttttttttttttttt\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
     },
     "unicode_out": {
       "input": "[{\"id\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\", \"name\": \"Pok\u00e9mon \u2014 \u2713\", \"category\": \"\u65e5\u672c\u8a9e\"}]",
@@ -688,7 +702,7 @@
       "names": [
         "Pok\u00e9mon \u2014 \u2713"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Pok\\u00e9mon \\u2014 \\u2713\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"\\u65e5\\u672c\\u8a9e\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n    \"added\": 1789092836.4137897,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"Pok\\u00e9mon \\u2014 \\u2713\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"\\u65e5\\u672c\\u8a9e\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
     },
     "blank_category": {
       "input": "[{\"id\": \"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\", \"name\": \"A\", \"category\": \"  \"}, {\"id\": \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\", \"name\": \"B\", \"category\": \"RPG\"}]",
@@ -697,7 +711,7 @@
         "A",
         "B"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"A\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"  \",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\",\n    \"added\": 1789092836.4139047,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"B\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"RPG\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\",\n    \"added\": 1789092836.413909,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"A\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"  \",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"B\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"RPG\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
     },
     "trailing_garbage": {
       "input": "[{\"id\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\", \"name\": \"X\"}] trailing",
@@ -1060,14 +1074,14 @@
     "overflow_to_inf": {
       "parsed": true,
       "count": 1,
-      "added": "1789092836.4155483",
+      "added": "1700000000.0",
       "last_played": "0.0",
       "sort_ok": true
     },
     "neg_overflow": {
       "parsed": true,
       "count": 1,
-      "added": "1789092836.4156249",
+      "added": "1700000000.0",
       "last_played": "0.0",
       "sort_ok": true
     },
@@ -1092,6 +1106,35 @@
       "last_played": "0.0",
       "sort_ok": true
     }
+  },
+  "rust_divergences": {
+    "note": "Cases where the Rust port MUST NOT match the Python result recorded elsewhere in this file. Each entry names the governing decision.",
+    "cases": [
+      {
+        "id": "null_timestamp_normalized",
+        "decision": "D-14",
+        "python": {
+          "input": "{\"id\": \"h\"*32, \"name\": \"Null ts\", \"added\": null, \"last_played\": null}",
+          "observed": "added stays None, last_played stays None",
+          "consequence": "sort=\"recent\"/\"added\" raise TypeError: bad operand type for unary -: 'NoneType'"
+        },
+        "rust": {
+          "expected": "added regenerated from the clock, last_played = 0.0",
+          "rationale": "null carries no information; from_dict already normalizes every other invalid value this way, so null slipping through is an early `continue` bug, not a policy. Never hold a nullable timestamp."
+        }
+      },
+      {
+        "id": "float_exponent_spelling",
+        "decision": "D-15",
+        "python": {
+          "observed": "1e-07 and 10000000.0 (C printf %g rules)"
+        },
+        "rust": {
+          "expected": "1e-7 and 1e7 (serde_json/Ryu)",
+          "rationale": "Both are valid JSON and reparse identically. Byte-equality is not required here; assert numeric equality after reparse instead of emulating printf."
+        }
+      }
+    ]
   },
   "constants": {
     "COLOR_SCHEMES": [
