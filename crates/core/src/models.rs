@@ -421,7 +421,15 @@ fn timestamp(value: &Value) -> Option<f64> {
 }
 
 /// A fresh 32-character lowercase hex id, as `uuid.uuid4().hex` produces.
-fn new_id() -> String {
+///
+/// Public because two callers outside this module need *the same generator*
+/// rather than one of their own: `Game::default`/`new_named`, and the app's
+/// `Message::OpenNewGameForm` arm, which ports `newGameTemplate`'s
+/// `uuid.uuid4().hex` (`bridge.py:384`) — the form's id is generated when the
+/// form opens, not when it is saved. A second generator in the app crate would
+/// be a second spelling of the id format, which is the one thing every
+/// `Library::get` in both languages depends on.
+pub fn new_id() -> String {
     let mut bytes = [0u8; 16];
     if fill_random(&mut bytes).is_err() {
         // Unreachable on Linux; a deterministic-enough fallback beats failing

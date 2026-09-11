@@ -26,6 +26,36 @@
 /// How many placeholder shades there are. `covers.py:95`.
 pub const COVER_ACCENTS: usize = 8;
 
+/// The built-in category list, `covers.py:75-89`.
+///
+/// The game form offers these plus whatever the library already holds
+/// (`bridge.py:344-350`), and [`models::UNCATEGORIZED`] is deliberately the
+/// first entry — it is the one the reference sorts last in a library listing
+/// and the one a blank category folds to, so a form that seeded its selector
+/// with anything else would offer a category no game can be in.
+///
+/// It lives here rather than in `models` because `covers.py` is where the
+/// reference declares it, and because the module that answers "what shelf is
+/// this game on" is the one that owns the shelf list. The order is
+/// user-visible: it is the order the form's category selector reads.
+///
+/// [`models::UNCATEGORIZED`]: crate::models::UNCATEGORIZED
+pub const DEFAULT_CATEGORIES: [&str; 13] = [
+    "Uncategorized",
+    "Action",
+    "Adventure",
+    "RPG",
+    "Strategy",
+    "Shooter",
+    "Racing",
+    "Simulation",
+    "Sports",
+    "Puzzle",
+    "Indie",
+    "Utility",
+    "Emulation",
+];
+
 /// A stable colour bucket for `seed`, so a game's tile never changes shade.
 /// `accent_index` (`covers.py:107-110`).
 ///
