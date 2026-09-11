@@ -2812,3 +2812,72 @@ is indistinguishable from an accident, and gets corrected back into a bug.**
 
 Related: P-71, T-29, D-52 (a fact recorded only in the code is invisible to the
 reader who needs it).
+
+---
+
+## D-55. The Installers runner control is **per-install state**, not a write to the global default — and the port shipped neither
+
+**The reference's contract, read rather than assumed.** `InstallersPage.qml`
+draws a combo with `textRole: "label"`, `valueRole: "runnerId"`, model
+`backend.runnerChoices` (`:49-64`). It has **no write-back at all**: the
+`Connections` block only *reads* `backend.defaultRunner` to set `currentIndex` a
+change of runners. The selection is not stored anywhere. Instead the install
+button passes the combo's value straight into the call —
+`backend.installEasy(installerId, runnerBox.currentValue !== undefined ?
+runnerBox.currentValue : "")` (`:128-130`) — and the backend treats it as a
+per-install argument: `runner = self.runner_manager.get(runner_id or
+self.settings.default_runner)` (`bridge.py:840`), then
+`resolved_runner_id = runner_id or self.settings.default_runner` (`:855`)
+carried into `_finish_easy_install` and `game_from_install` (`:890`, `:906`).
+The global default is the **fallback**, used only when the combo yields nothing.
+The combo's own label — "Runner for new installs:" — and the empty-string
+default in the QML both say the same thing.
+
+**What the port did.** `view/installers.rs:389` builds
+`Message::SetDefaultRunner(index.to_string())` from the dropdown's **index**.
+Two defects in one line, and they compound:
+
+1. **Wrong value.** The index is not an id. `runner_index`
+   (`view/installers.rs:166`) maps id→index for display, and the tree holds no
+   inverse. The string reaches `main.rs:1503`'s arm verbatim, so
+   `settings.default_runner` becomes `"1"`; `RunnerManager::get`
+   (`core/src/runners/mod.rs:1087`) resolves an unknown id to System Wine, and
+   `default_runner_index` (`view/settings.rs:258`) is `.unwrap_or(0)`, so the
+   dropdown also **snaps back to System Wine** on the next render. The user picks
+   Proton GE and gets System Wine, with no error anywhere.
+2. **Wrong target.** It writes the *global* default, which is the Settings
+   page's control. The reference has no such write here at all.
+
+The second defect subsumes the first: fixing the value alone (routing the
+closure through an id mapping) would still leave the control writing to a
+destination the reference never writes to, and P-53's first clause —
+**"Per-install runner choice"** — is about the *install*, not the default.
+`InstallersView` has no field able to hold a per-install choice, so this is
+**missing state**, not a mis-set value.
+
+**Decision.** Implement P-53's first clause as the reference does: a
+per-install runner field, seeded from `settings.default_runner` and passed as an
+argument to the install, recorded onto the created game. Do **not** rewire the
+dropdown to the global default and call it parity — that was never the contract.
+
+**Why this needed a decision rather than a bug fix.** The two candidate repairs
+are not equivalent, and the cheaper one is wrong: a reader who fixes only the
+index→id mapping produces a control that writes the correct *value* to the wrong
+*place*, passes every test written against it, and looks like parity. The
+distinction is only visible in the reference's parameter list. **When a control
+reads as "the same control" in both implementations but is wired to a different
+destination, the wiring is the specification.**
+
+**Why the drift guard could not see it.** The port already has the correct id
+mapping **twice** — `view::settings::default_runner_selection`
+(`settings.rs:381`) and `view::form::runner_selection` (`form.rs:449`) — and a
+test at `form.rs:1440-1451` asserts the two agree "so they cannot drift apart
+silently". That test names its **two subjects by hand**; the third selector was
+never routed through either helper, so there was nothing for the guard to
+compare. **A drift guard whose subjects are an explicit list is a guard against
+drift among the listed, and is structurally blind to the unlisted.** Widening
+its scope is part of the fix, not a follow-up.
+
+Recorded as finding #97; owner Architecture. Related: P-53, T-38, #97, #99
+(a row crediting half of a P-item), D-52.
+
