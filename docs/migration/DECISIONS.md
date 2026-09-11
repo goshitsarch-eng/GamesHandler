@@ -2504,6 +2504,59 @@ the same rule applied to the *contents* of the commit rather than to a number),
 D-46 (a review names a commit, so a contaminated commit under review is not
 automatically still-reviewed), [[verification-defect-class]].
 
+### Round-trip: two of the three proposed checks do not close Hole 2, and one does
+
+`#53` left the procedure's (B) and (C) as proposals — "`git show --stat <sha>
+-- <path>`" and "`git diff-tree -r` + numstat against `git show --stat`". The
+round-trip (`crates/app/tests/` is not the place for this; it was run in a
+scratch repo, and the measurements below are the artefact) found that **neither
+can see Hole 2, and that the check which can is a different one that was not
+proposed.**
+
+Scratch repo: `a.txt` staged as `index-v1`, then edited to `index-v1` +
+`worktree-v2`, then `git commit -m "only a" -- a.txt`.
+
+- **Hole 2 reproduced.** The committed content is `index-v1\nworktree-v2\n` —
+  the **working tree** won over the index, exactly as D-49 states.
+- **(B) is blind to it.** `git show --stat <sha> -- a.txt` prints
+  `a.txt | 3 ++-` / `1 file changed` — byte-identical to the form *without* the
+  pathspec. `--stat` is enumeration plus line counts; Hole 2 changes neither the
+  path nor the count, so both spellings pass on a commit whose content was not
+  intended. **(B) is a check narrower than the claim it supports — the defect
+  class, inside the entry whose subject is the defect class.**
+- **(C) is vacuous as stated.** `git diff-tree -r --numstat <sha>` and
+  `git show --numstat --format= <sha>` print the same bytes (`2\t1\ta.txt`).
+  Comparing them cannot fail. The one divergence they *can* produce is
+  incidental and not about contents: `git show --stat` runs rename detection by
+  default while bare `git diff-tree -r` does not, so a pure rename reads as
+  `1 file changed` against `D`+`A` — 1 line versus 2. That is a real difference
+  and it is not Hole 2; a check built on it would be green on the incident and
+  red on an unrelated rename.
+- **(A — content comparison) is the check that works, and it was not in the
+  list.** `git show <sha>:<path> | cmp - <intended>` **fails** on the Hole-2
+  commit. Enumeration has an identical file set (`--name-only` prints `a.txt`,
+  which is what was intended), so no listing-based check can reach it; the
+  content is the only thing that moved.
+- **Hole 3 holds as written.** After HEAD advanced to `f8b1587`, the bad commit's
+  sha `23f116c` still resolved to `23f116c`. The sha the commit prints is the
+  only handle that cannot be moved by another agent.
+
+**The correction to the procedure:** step 5 keeps its enumeration (a file you did
+not touch is still the loudest failure and is still one command), and **gains a
+content comparison for the paths whose content you claim** — `git show
+<sha>:<path> | cmp` against the bytes you meant to commit. Every other check in
+this entry is a listing or a count, and Hole 2 is a content defect.
+
+**And the advocate already had the stronger check, which is why their review
+routine would not have been fooled.** They pin the content of each file they
+measure to its sha with `git show <sha>:<path> | cmp`; D-49 recorded that as
+"stronger than `--stat` for content" while noting they do not enumerate what
+*else* a commit contains. The round-trip says the stronger half is the one that
+closes Hole 2 and the enumeration half is the one that closes the original
+incident. **The two halves close different holes, and neither closes both** —
+which is the whole finding, and it is the same shape as #71: two failure modes
+of one mechanism, only one of which anything was watching.
+
 ## D-50. An ownership boundary the lead drew is the lead's to carry — a dependency stated only in a commit message is invisible to every gate
 
 **The incident.** `e98b4b1` landed `core/src/plugins.rs` and `core/src/credits.rs`
