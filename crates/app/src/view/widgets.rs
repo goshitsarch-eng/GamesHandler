@@ -950,6 +950,35 @@ mod tests {
         assert_decodes(&game, "the .webp fixture");
     }
 
+    /// **The icon fixture does not decode** — and the plate lays out anyway.
+    ///
+    /// `with_icon`'s eight bytes are the ICO magic and a claimed directory
+    /// entry, and then nothing: the entry `10 10` begins is never finished, so
+    /// there is no picture behind them. Nothing in this file asserted an icon
+    /// draws, which is precisely why the fact was invisible and worth writing
+    /// down — see `with_icon`'s own comment, which this test keeps honest.
+    ///
+    /// It is the same blindness #46 named, on the other fixture. The plate's
+    /// size comes from the spec, so a *size* assertion is satisfied by a
+    /// decoded icon and by these bytes alike; `measure_image` is the one
+    /// reading that separates them, and this is what it reads here.
+    ///
+    /// If the fixture is ever made a real ICO, this failing is correct: it
+    /// means that comment is now wrong too.
+    #[test]
+    fn the_icon_fixture_is_not_a_decodable_icon() {
+        let game = with_icon("Half-Life 2");
+        let measured = renderer().measure_image(&image::Handle::from_path(&game.cover_path));
+        assert_eq!(
+            measured,
+            None,
+            "these eight bytes are a truncated ICO header — a magic that classifies \
+             as an icon and no image data — so the decoder must refuse them; \
+             `Some(_)` means they now decode and `with_icon`'s comment no longer \
+             describes the fixture"
+        );
+    }
+
     /// The rendered size of `game`'s cover, which is `None` when it cannot be
     /// decoded.
     ///
@@ -1258,7 +1287,21 @@ mod tests {
         game
     }
 
-    /// A game whose cover is an icon: real bytes that *are* an ICO.
+    /// A game whose cover is an icon: eight bytes of ICO header, and no more.
+    ///
+    /// `00 00 01 00` is the ICO magic that `CoverSource::classify` checks, and
+    /// `01 00` claims one directory entry — which is what makes this path an
+    /// icon rather than a photograph. The file stops there: `10 10` begins a
+    /// 16x16 entry that is never finished, so **these bytes do not decode**.
+    /// There is no picture behind them.
+    ///
+    /// Nothing here asserts that one does, and that is the point of writing it
+    /// down rather than a gap to be closed by the next reader. The plate's size
+    /// comes from the spec, not from the intrinsic, so a failed icon decode is
+    /// exactly as invisible in the laid-out tree as a failed photograph decode
+    /// was (#46) — `with_photo` above is the fixture that had to be made real
+    /// for that reason. This one was not, because no assertion depends on the
+    /// icon drawing. Do not read it as evidence that an icon renders.
     fn with_icon(name: &str) -> Game {
         let mut game = Game::new_named(name);
         game.cover_path = cover_fixture("icon", &[0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x10]);
