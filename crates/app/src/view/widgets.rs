@@ -46,6 +46,7 @@ use cosmic::iced::widget::container;
 use cosmic::iced::{Alignment, Background, Border, Color, Length, Radians};
 use cosmic::widget::{image, text, Column, Row};
 use gamehandler_core::models::Game;
+use gamehandler_core::runners::RunnerManager;
 
 use super::cover::{self, CoverSource};
 use super::meta;
@@ -270,13 +271,17 @@ pub fn cover_box<M: Clone + 'static>(game: &Game, spec: CoverSpec) -> Element<'_
 /// The cover's box comes from [`card_cover_spec`], which is the same
 /// subtraction the metrics tests assert on — so a card whose chrome grows
 /// shortens its cover rather than overlapping it.
-pub fn card<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
+///
+/// `label` is the game's resolved runner label for the subtitle; see
+/// [`subtitle_of`]. It is data rather than a manager, and the caller resolves
+/// it when it builds the row — never here.
+pub fn card<'a, M: Clone + 'static>(game: &'a Game, label: &str) -> Element<'a, M> {
     let (cell_w, cell_h) = metrics::GRID_CELL;
     let spec = card_cover_spec();
 
     let body = Column::new()
         .push(cover_box(game, spec))
-        .push(name_and_subtitle(game))
+        .push(name_and_subtitle(game, label))
         .spacing(metrics::CARD_MARGIN)
         .width(Length::Fill);
 
@@ -296,11 +301,14 @@ pub fn card<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
 /// tile aspect. A row is a fixed-height line whose text must not move when one
 /// game's art is a different shape from the next, so the cover is fitted *into*
 /// the row rather than setting its height.
-pub fn row<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
+///
+/// `label` is the game's resolved runner label for the subtitle; see
+/// [`subtitle_of`].
+pub fn row<'a, M: Clone + 'static>(game: &'a Game, label: &str) -> Element<'a, M> {
     container(
         Row::new()
             .push(cover_box(game, row_cover_spec()))
-            .push(name_and_subtitle(game))
+            .push(name_and_subtitle(game, label))
             .spacing(metrics::CARD_MARGIN)
             .align_y(Alignment::Center),
     )
@@ -365,28 +373,60 @@ pub fn title_of(game: &Game) -> String {
 /// The subtitle comes from [`meta`] rather than being composed here — that is
 /// the whole point of the module — and the two widgets that show it are
 /// therefore guaranteed to show the same string.
-fn name_and_subtitle<'a, M: Clone + 'static>(game: &'a Game) -> Element<'a, M> {
+fn name_and_subtitle<'a, M: Clone + 'static>(game: &'a Game, label: &str) -> Element<'a, M> {
     Column::new()
         .push(text(title_of(game)).size(14.0))
-        .push(text(subtitle_of(game)).size(11.0))
+        .push(text(subtitle_of(game, label)).size(11.0))
         .spacing(2.0)
         .width(Length::Fill)
         .into()
 }
 
+/// The runner label for a game, resolved **where the row data is built**.
+///
+/// This is `bridge.py:298-301`'s `_runner_label` and nothing more, kept as one
+/// function so the two halves of that rule cannot drift:
+///
+/// ```text
+/// if game.is_linux: return "Linux native"
+/// return self.runner_manager.label(game.runner)
+/// ```
+///
+/// # Why this is not called from a widget
+///
+/// [`RunnerManager::label`] is **uncached** (`mod.rs:1041`): it joins the
+/// runners directory, tests `exists()`, and constructs a `ProtonRunner` to ask
+/// for its family label — on every call, for every game. A builder runs every
+/// frame, so resolving this inside [`card`] or [`row`] would put a filesystem
+/// walk per game per frame on the render path. That is the same defect as
+/// spawning a process there, only cheaper.
+///
+/// So the label is resolved when the row data is assembled and carried as a
+/// string from then on. It is also the cheaper answer for a second reason:
+/// **the runner list changes only on install or uninstall**, both of which
+/// already re-read the library — so resolving at build time is correct *and*
+/// free, where resolving per frame would be merely correct.
+///
+/// Resolving here rather than threading a `&RunnerManager` through the
+/// builders also keeps them free functions over the game: their `Element`
+/// borrows the game alone, so no caller's lifetime is welded to the manager's.
+pub fn resolved_runner_label(manager: &RunnerManager, game: &Game) -> String {
+    meta::runner_label(game.is_linux(), &manager.label(&game.runner))
+}
+
 /// The subtitle for a game, through the pure function.
 ///
-/// The runner label is the piece this layer cannot resolve: it comes from the
-/// runner manager, not from the [`Game`], and the manager is not part of the
-/// view's contract yet (T-07). Until it is, a Windows game's label is the
-/// empty string — which is exactly the answer [`meta::runner_label`] gives for
-/// a manager with nothing to say, and a case [`meta::subtitle`] already
-/// handles, so the subtitle degrades to the category alone rather than to a
-/// trailing separator. A Linux game is unaffected: its label never consults
-/// the manager at all.
-fn subtitle_of(game: &Game) -> String {
-    let label = meta::runner_label(game.is_linux(), "");
-    meta::subtitle(game.display_category(), &label)
+/// `label` is the **already-resolved** runner label — see
+/// [`resolved_runner_label`] for where it comes from and why it is a parameter
+/// rather than a manager. It used to be the literal `""`, which is `#30`: every
+/// Windows game rendered no runner at all, and for an uncategorised one an
+/// empty subtitle, where Python renders `"System Wine"`. The empty string is a
+/// legal input to [`meta::subtitle`], so a test asserting the old behaviour
+/// passed in both the fixed and the unfixed state — the defect D-34 names.
+///
+/// A Linux game is unaffected by `label`: [`meta::runner_label`] discards it.
+fn subtitle_of(game: &Game, label: &str) -> String {
+    meta::subtitle(game.display_category(), &meta::runner_label(game.is_linux(), label))
 }
 
 /// A cover image in a box of exactly `spec`'s size, inset by `inset`.
@@ -532,36 +572,78 @@ mod tests {
     /// The subtitle a widget shows, reached through the same path the widgets
     /// use. These are the strings a user reads, so they are asserted as
     /// strings; the pieces they are built from are tested in [`super::meta`].
+    ///
+    /// This is `#30`'s assertion, and it is written with a **real** label on
+    /// purpose. The previous version passed no label at all, so it asserted
+    /// `"Shooter"` — a string `meta::subtitle` produces both when the runner is
+    /// missing *and* when there is no runner to show. Python produces
+    /// `"Shooter · System Wine"` here (`bridge.py:309-320`), and D-36 records
+    /// the port rendering `"Shooter"`: the runner absent from the subtitle in
+    /// the common case, not merely on uncategorised rows.
     #[test]
     fn a_row_shows_the_category_and_the_runner_for_a_windows_game() {
         let mut game = Game::new_named("Half-Life 2");
         game.category = "Shooter".into();
         game.kind = "windows".into();
-        // No runner manager yet, so the label is empty and the subtitle is the
-        // category with no stray separator — the case `meta::subtitle` and
-        // `meta::runner_label` exist to keep honest.
-        assert_eq!(subtitle_of(&game), "Shooter");
+        assert_eq!(subtitle_of(&game, "System Wine"), "Shooter \u{b7} System Wine");
     }
 
-    /// A Linux game says so without any manager, which is the one half of the
-    /// subtitle this layer can complete today.
+    /// A Linux game says so whatever label it is handed — the label is
+    /// discarded, not merely overridden, which is why the second call passes a
+    /// label a manager could never return for a Linux game. A port that
+    /// consulted the manager first and the platform second would render the
+    /// passed label here.
     #[test]
-    fn a_linux_game_is_labelled_native_without_a_runner_manager() {
+    fn a_linux_game_is_labelled_native_and_discards_the_runner_label() {
         let mut game = Game::new_named("Celeste");
         game.category = "Platformer".into();
         game.kind = "linux".into();
-        assert_eq!(subtitle_of(&game), "Platformer \u{b7} Linux native");
+        assert_eq!(subtitle_of(&game, "System Wine"), "Platformer \u{b7} Linux native");
+        assert_eq!(subtitle_of(&game, ""), "Platformer \u{b7} Linux native");
     }
 
-    /// An uncategorised game shows the runner alone, and today that is the
-    /// empty string. Asserted rather than skipped: the point is that it is
-    /// *empty* and not a lone separator, which is the visible bug the
-    /// uncategorised branch of `meta::subtitle` exists to prevent.
+    /// An uncategorised Windows game shows the runner **alone**, which is
+    /// `"System Wine"` and not the empty string this used to assert.
+    ///
+    /// Both halves are claimed: that the runner is there, and that it is not
+    /// preceded by a lone separator — the visible bug the uncategorised branch
+    /// of `meta::subtitle` exists to prevent.
     #[test]
-    fn an_uncategorised_windows_game_shows_nothing_rather_than_a_separator() {
+    fn an_uncategorised_windows_game_shows_the_runner_alone() {
         let mut game = Game::new_named("Mystery");
         game.kind = "windows".into();
-        assert_eq!(subtitle_of(&game), "");
+        assert_eq!(subtitle_of(&game, "System Wine"), "System Wine");
+        assert_ne!(subtitle_of(&game, "System Wine"), "");
+    }
+
+    /// The resolution itself: a Windows game with no runner id gets
+    /// `"System Wine"`, which is the value `#30` says never reached the view.
+    ///
+    /// This is the half that makes the three tests above load-bearing rather
+    /// than hypothetical. `bridge.py:300-302` resolves the label *before* the
+    /// row is built, so Python can never hand `subtitle_of` an empty string;
+    /// [`resolved_runner_label`] is that resolution, and `runner.label("")`
+    /// returning `"System Wine"` (`runners.py:759-761`, `mod.rs:1041`) is the
+    /// fact that closes the gap. The manager is constructed at a path with no
+    /// runners in it, so this also pins the fallback rather than a lookup.
+    #[test]
+    fn a_windows_game_resolves_to_a_real_label_and_never_to_the_empty_string() {
+        let manager = RunnerManager::at("/nonexistent");
+
+        let mut windows = Game::new_named("Half-Life 2");
+        windows.kind = "windows".into();
+        assert_eq!(resolved_runner_label(&manager, &windows), "System Wine");
+        assert_ne!(resolved_runner_label(&manager, &windows), "");
+
+        // And the resolved label is what the subtitle is built from, so the two
+        // are one path rather than two that can disagree.
+        let label = resolved_runner_label(&manager, &windows);
+        assert_eq!(subtitle_of(&windows, &label), "System Wine");
+
+        // A Linux game's label is the platform's, whatever the manager holds.
+        let mut linux = Game::new_named("Celeste");
+        linux.kind = "linux".into();
+        assert_eq!(resolved_runner_label(&manager, &linux), "Linux native");
     }
 
     /// **The plate and the form's picker are different widgets.** The library
@@ -594,19 +676,27 @@ mod tests {
     }
 
     /// The same claim through the two builders the library page calls, with the
-    /// subtitle the third string: a game with no category and no runner label
-    /// shows an empty line rather than a dangling separator. That third string
-    /// is the end-to-end half of `meta`'s regression test — it is what a row
-    /// actually shows, after the widget has had its turn.
+    /// subtitle the third string: a game with no category shows the runner
+    /// alone, and the runner is a real one. That third string is the
+    /// end-to-end half of `meta`'s regression test — it is what a row actually
+    /// shows, after the widget has had its turn — and it is `#30`'s symptom
+    /// observed at the level a user sees it. The label passed here is the one
+    /// [`resolved_runner_label`] produces for this game, so the assertion is
+    /// about the shipped path rather than a hand-picked string.
     #[test]
     fn a_card_and_a_row_draw_the_initials_and_never_the_pickers_words() {
         let game = Game::new_named("Half-Life 2");
+        let manager = RunnerManager::at("/nonexistent");
+        let label = resolved_runner_label(&manager, &game);
 
-        let mut card: Element<'_, ()> = card(&game);
-        assert_eq!(texts(&traversal(&mut card)), ["HL", "Half-Life 2", ""]);
+        let mut card: Element<'_, ()> = card(&game, &label);
+        assert_eq!(
+            texts(&traversal(&mut card)),
+            ["HL", "Half-Life 2", "System Wine"]
+        );
 
-        let mut row: Element<'_, ()> = row(&game);
-        assert_eq!(texts(&traversal(&mut row)), ["HL", "Half-Life 2", ""]);
+        let mut row: Element<'_, ()> = row(&game, &label);
+        assert_eq!(texts(&traversal(&mut row)), ["HL", "Half-Life 2", "System Wine"]);
     }
 
     /// A card's cover box is the one the metrics module computes, and a card
@@ -660,7 +750,7 @@ mod tests {
 
         // "Halo" so that the initials "HA" cannot be confused with the name.
         let game = Game::new_named("Halo");
-        let mut card: Element<'_, ()> = card(&game);
+        let mut card: Element<'_, ()> = card(&game, "");
         let seen = traversal(&mut card);
         let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
 
@@ -694,7 +784,7 @@ mod tests {
         );
 
         let game = Game::new_named("Halo");
-        let mut row: Element<'_, ()> = row(&game);
+        let mut row: Element<'_, ()> = row(&game, "");
         let seen = traversal(&mut row);
         let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
 

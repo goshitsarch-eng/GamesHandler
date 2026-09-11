@@ -399,6 +399,33 @@ fn installed_card(row: &InstalledRow) -> Element<'_, Message> {
         .width(Length::Fill);
 
     if row.removable {
+        // The site is **unobservable**, and naming it here is the whole
+        // mitigation. `Message::UninstallRunner(row.runner_id.clone())` mutated
+        // to name a constant — `"system"`, one keystroke from `SYSTEM_WINE` —
+        // survives every test in this file.
+        //
+        // There is no reader to close it with, and this is established by
+        // reading the vendored sources rather than by assuming:
+        // `Operation`'s seven arms carry no message
+        // (`iced/core/src/widget/operation.rs:21-68`), cosmic `Button::operate`
+        // reports only `container` and `focusable`
+        // (`src/widget/button/widget.rs:338-357`), and `Button.on_press` is a
+        // private field holding an opaque `Box<dyn Fn(..) -> Message>`
+        // (`widget.rs:48`) rather than a comparable value.
+        //
+        // [`remove_press`] exists because the *value* should still be a readable
+        // thing rather than a literal buried in a builder — but it does not
+        // close this line. A test can only call the helper directly, and a site
+        // that routed around it would survive that test unchanged. Moving the
+        // value is not the same as testing this call; both statements are needed
+        // and neither substitutes for the other.
+        //
+        // So the value is checked where it can be, in
+        // `the_system_row_names_python_s_runner_id_and_not_the_family_id` (the
+        // field `installed_rows` sets) and
+        // `installers.rs`'s `install_press` (the same decision on the other
+        // page, where the guard is at least a value). This line is checked by
+        // reading it.
         line = line.push(
             button::icon(icon::from_name("delete"))
                 .on_press(Message::UninstallRunner(row.runner_id.clone())),
@@ -509,11 +536,57 @@ fn card_style(theme: &cosmic::Theme) -> container::Style {
 /// Extracted for the same reason [`release_detail`] and [`status_line`] are —
 /// one visible decision, one function, one test — and generic over the error so
 /// both halves can be driven without a runner directory to fail against.
+///
+/// # What this extraction does and does not close — measured, not argued
+///
+/// **The line is now readable; the call site is not.** The extracted body is
+/// covered: mutating `Err(error) => format!("Could not remove {runner_id}:
+/// {error}")` to drop the error tail fails
+/// [`tests::a_failed_removal_carries_the_error_text_and_the_runner_id`], and
+/// mutating it to `Err(_) => String::new()` fails it too.
+///
+/// Two call-site mutations **survive**, and are recorded rather than papered
+/// over:
+///
+/// ```text
+/// A   the arm ignores this function and formats success itself   SURVIVES
+/// A2  the call site passes a constant runner id, not `runner_id` SURVIVES
+/// ```
+///
+/// Both are unobservable for the reason above: the toast is the only output of
+/// this path and `Toasts` has no reader, so no test can see what the arm
+/// actually pushed. Closing them needs a `Toasts` accessor that libcosmic does
+/// not expose — the same wall `DismissToast` runs into, already measured and
+/// accepted for this project. A test double would be satisfied by the very
+/// thing it cannot distinguish, so there is deliberately none.
 fn uninstall_line<E: std::fmt::Display>(runner_id: &str, result: Result<(), E>) -> String {
     match result {
         Ok(()) => format!("Removed {runner_id}"),
         Err(error) => format!("Could not remove {runner_id}: {error}"),
     }
+}
+
+/// The message this helper builds for the remove button — **the value is
+/// readable here; whether [`installed_card`] calls it is not, see below.**
+///
+/// The first line says "this helper" rather than "the remove button" for the
+/// reason the whole extraction is documented the way it is: the button carries
+/// whatever `installed_card` builds, and nothing can read a built `Button`'s
+/// message back out (the sources are cited at the call site). Naming the helper
+/// keeps the claim inside what the measurement supports.
+///
+/// This is [`InstalledRow::runner_id`]'s remaining consumer. The field's other
+/// half — the value [`installed_rows`] puts there — is pinned by
+/// [`tests::the_system_row_names_python_s_runner_id_and_not_the_family_id`];
+/// this makes the value the button *would* carry readable, so `"system"` cannot
+/// replace it in the helper.
+///
+/// What this does **not** close: `installed_card` could stop calling this and
+/// build the message itself, and that mutation survives — the site is
+/// unobservable for the reason given there. This is the third such gap, beside
+/// `uninstall_line`'s call site (A) and `install_press`'s (B).
+fn remove_press(row: &InstalledRow) -> Message {
+    Message::UninstallRunner(row.runner_id.clone())
 }
 
 /// The Runners page's half of the dispatcher.
@@ -1157,6 +1230,51 @@ mod tests {
     }
 
     // ---- uninstall_line ----------------------------------------------------
+
+    /// [`remove_press`] builds the row's own id, and never a constant.
+    ///
+    /// `"system"` is the mutation this exists for: the family id is one
+    /// keystroke from `SYSTEM_WINE`, it reads as correct, and removing a
+    /// Windows game's runner by asking to remove the *family* is a refusal at
+    /// best. Asserted as an equality against `row.runner_id` so the helper and
+    /// the row cannot diverge, plus the literal so a second constant with the
+    /// same value cannot shadow the first.
+    ///
+    /// **The name says `helper` because that is the only thing this measures.**
+    /// It cannot see the button: `installed_card` could build the message
+    /// itself and this stays green — that mutation survives, and the call site
+    /// carries the comment saying so. A name promising "the remove button names
+    /// its row" would assert a fact about a widget this test never reaches,
+    /// which is the D-44 defect in miniature.
+    ///
+    /// The system row has no button at all — `removable: false` — so the value
+    /// is asserted for a downloaded build, the only row that draws one.
+    #[test]
+    fn the_remove_press_helper_names_the_rows_own_id() {
+        let protons = vec![ProtonRunner::new("/runners/GE-Proton9-5", "proton-ge", "GE-Proton9-5")];
+        let rows = installed_rows(&WineRunner::with_binary(None), &protons);
+
+        match remove_press(&rows[1]) {
+            Message::UninstallRunner(id) => {
+                assert_eq!(id, rows[1].runner_id, "the helper names its own row");
+                assert_eq!(id, "GE-Proton9-5");
+                assert_ne!(
+                    id, "system",
+                    "\"system\" is the family id, and removing it names no runner"
+                );
+            }
+            other => panic!("the remove helper must build a removal, got {other:?}"),
+        }
+
+        assert!(
+            rows[1].removable,
+            "a downloaded build is the row that draws the button"
+        );
+        assert!(
+            !rows[0].removable,
+            "and the system row does not, so this value is never built for it"
+        );
+    }
 
     /// A failed removal says *what* went wrong and *which* runner it was about.
     ///

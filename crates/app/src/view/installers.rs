@@ -12,7 +12,7 @@
 //! card_category        → the badge's text, folding a blank into "Uncategorized"
 //! install_tooltip      → what the Install button says it will do
 //! installing           → whether an install may start at all
-//! install_press        → the message a card's button carries, or none while busy
+//! install_press        → one card's install decision: the message, or none while busy
 //! progress_fraction    → whether the bar is drawn, and how full
 //! ```
 //!
@@ -148,6 +148,29 @@ pub fn installing(state: &State) -> bool {
 /// the reference fills from the current selection — the installer id and the
 /// chosen runner — are read at the same moment and a test that pinned only the
 /// guard would leave them free to transpose.
+///
+/// # What this extraction does and does not close — measured, not argued
+///
+/// **The guard is now readable; the call site is not.** The extracted body is
+/// covered: `(!busy).then(..)` mutated to `true.then(..)` fails
+/// [`tests::install_is_disabled_while_busy_and_names_what_it_would_install`],
+/// as does transposing the installer and the runner in the payload and
+/// `installer_id`/`runner_id` the other way round.
+///
+/// Two call-site mutations **survive**, and are recorded rather than papered
+/// over:
+///
+/// ```text
+/// B   installer_card ignores this function and always enables  SURVIVES
+/// B2  the call site hardcodes `busy = false`                    SURVIVES
+/// ```
+///
+/// Both are unobservable for the reason above: a `Button`'s pressed-message is
+/// not one of `Operation`'s arms, so no test can read the message a built card
+/// actually carries. Closing them needs a button reader libcosmic does not
+/// expose. A test double would be satisfied by the very thing it cannot
+/// distinguish, so there is deliberately none — the wiring is checked by
+/// reading the handoff, not by a test that cannot see it.
 pub fn install_press(row: &InstallerRow, runner_id: &str, busy: bool) -> Option<Message> {
     (!busy).then(|| Message::StartEasyInstall {
         installer_id: row.installer_id.clone(),
