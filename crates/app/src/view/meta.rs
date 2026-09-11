@@ -64,8 +64,21 @@ pub fn runner_label(is_linux: bool, manager_label: &str) -> String {
 /// (`runners/mod.rs:1099-1116`). So no game the application can draw reaches
 /// this branch.
 ///
-/// It stays because the branch is a property of *this function's contract*, not
-/// a workaround for one caller's bug. `subtitle` is public and pure over two
+/// That last step is the one worth not taking on faith, since it says the
+/// branch is dead — and it is a fact about the crate's call sites, not about
+/// this file, so it is written here with the command that checks it. The only
+/// two places that hand a label to a widget are `view/library.rs:343` and
+/// `:360`, and each resolves it on the line before it uses it:
+///
+/// ```text
+/// $ grep -rn 'resolved_runner_label(' crates/app/src/view/library.rs
+/// 343:        let label = widgets::resolved_runner_label(runners, game);
+/// 360:        let label = widgets::resolved_runner_label(runners, game);
+/// ```
+///
+/// So the branch is unreachable *and stays anyway*: it is a property of this
+/// function's contract, not a workaround for one caller's bug. `subtitle` is
+/// public and pure over two
 /// strings it does not validate, and the rule it states — an empty half is
 /// omitted, never left as a dangling separator — is the rule the category
 /// branch already implements. Guarding one half and not the other is an
