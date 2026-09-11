@@ -40,6 +40,7 @@
 
 pub mod badge;
 pub mod cover;
+pub mod credits;
 pub mod installers;
 pub mod library;
 pub mod meta;
