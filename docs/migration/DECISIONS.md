@@ -2503,3 +2503,56 @@ Related: D-45 (a count is evidence only with the commit it came from — this is
 the same rule applied to the *contents* of the commit rather than to a number),
 D-46 (a review names a commit, so a contaminated commit under review is not
 automatically still-reviewed), [[verification-defect-class]].
+
+## D-50. An ownership boundary the lead drew is the lead's to carry — a dependency stated only in a commit message is invisible to every gate
+
+**The incident.** `e98b4b1` landed `core/src/plugins.rs` and `core/src/credits.rs`
+(2022 lines, 37 tests) without the two `pub mod` declarations that make them
+compile, because `crates/core/src/lib.rs` belonged to Architecture under a rule
+**the lead set** ("Architecture keeps `lib.rs`"; "do not edit `lib.rs`"). The
+modules were reachable by nobody for about twenty minutes. The declaration
+repair is `4cf3351`.
+
+**The boundary worked exactly as designed, and that is the point.** UX did not
+touch Architecture's file, which is what the rule was for. What was missing was
+not compliance but **handoff**: a change one agent needs in a file a second agent
+owns, with nothing that either can trigger. The only actor who could have closed
+it was the lead — who had drawn the boundary and was not watching the file it
+protected. So the defect is not attributable to the agent who obeyed the rule
+(VERIFY-FINDINGS #61 has been corrected to say so), and the generalisable
+sentence is: **whoever sets an ownership boundary owns its consequences.**
+
+**Why prose was not enough, which is the durable part.** UX's commit message
+states the dependency and the terms exactly:
+
+    crates/core/src/lib.rs belongs to Architecture and is untouched, so the two
+    pub mod lines that make these modules compile are theirs to add. The counts
+    above were taken in a detached worktree with those two lines applied.
+
+That is honest, precise, and **read by nothing**. `cargo check`, `cargo clippy`,
+`cargo test` and `verify.sh` do not parse commit messages; neither does the
+declaration sweep that eventually caught this — it found the gap by looking at
+**the tree**, not at what anyone had written about it. A message is where a
+dependency goes to be recorded, not where it goes to be acted on. **A fact that
+only exists in a commit message is a fact no gate can see**, which is the same
+shape as D-45: evidence is admissible only in the form the check actually reads.
+
+**What to do instead.** State a cross-owner dependency where a mechanism reads
+it: the task list (which the lead does read and re-read), or a failing check. The
+`#61` sweep is now a working instrument and caught this in twenty minutes, so the
+cheap standing fix is: **the owner of a shared file runs the declaration sweep
+against the tree after any commit that adds a file** — it is mechanical, it needs
+no knowledge of who owns what, and it does not depend on anyone reading prose.
+
+**Kept from the author, because it is sharper than the finding.** UX reported
+against themselves that the verification "was in a tree that was not the
+committed one: the worktree proved the modules *work*; the commit proved they
+were *reachable by nobody*." Two trees, two claims, and the number 398 belonged
+to neither the tree they committed nor any commit in history. That is #21's
+shape — the same wall as a stale test binary (#50) and a build against a
+non-current tree (#60) — and it was volunteered by the person the finding was
+(for a time, incorrectly) aimed at.
+
+Related: D-45 (evidence only in the form the check reads), D-46 clause 2 (the
+repair is a new commit, not an amend, because the commit had landed), #60 and #61
+in VERIFY-FINDINGS, [[libcosmic-migration-project]].
