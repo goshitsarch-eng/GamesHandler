@@ -42,9 +42,11 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 mod hash;
 pub mod covers;
+pub mod credits;
 pub mod json;
 pub mod models;
 pub mod paths;
+pub mod plugins;
 pub mod runners;
 pub mod settings;
 
