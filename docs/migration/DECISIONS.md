@@ -307,6 +307,24 @@ fights the toolkit (and the user's desktop settings).
 technical blocker, so it is scheduled rather than spiked: decided at **T-13**
 (the Settings page task) and recorded here.
 
+> **T-13 finding (2026-09-11), recorded rather than decided.** The Settings page
+> has landed with the selector built, and the finding is that *the two options
+> are currently indistinguishable in the running app*. `_set_color_scheme`
+> (`bridge.py:197-203`) does two things — it stores the value **and** calls
+> `self._theme.apply(value)` — and the port does only the first: `Shell` has no
+> `theme()` override, so `cosmic::Theme` follows the system and nothing anywhere
+> reads `settings.color_scheme`. Same for `view_mode`'s effect on the Library
+> page, which reads the setting but is the only reader.
+>
+> So choosing Option 2 today would change a stored string and a README line and
+> nothing a user can see; choosing Option 1 would be equally invisible.
+> **The decision needs theming to exist before it can be evaluated**, which
+> makes it a follow-on task (apply `color_scheme` through `theme()`) rather than
+> a T-13 deliverable. The default is left at `"dark"` — the reference's, and
+> what `Settings::default()` already had — precisely so that this entry stays
+> open instead of being closed by an unexamined default. `COLOR_SCHEMES` and the
+> persisted key are untouched, so the constraint below still holds either way.
+
 **Constraints on the answer.** The three-value `COLOR_SCHEMES` tuple and the
 persisted `colorScheme` key must survive either way, so an existing user's saved
 choice is never lost. Whichever way it goes, the README's claim must match the
