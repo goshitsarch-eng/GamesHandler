@@ -64,6 +64,21 @@ fn base_dir(env: &dyn Env, override_key: &str, xdg_key: &str, default: PathBuf) 
     .join("gamehandler")
 }
 
+/// The user's home directory, as `Path.home()` resolves it.
+///
+/// Exposed because `runners.py` calls `Path.home()` directly in two places that
+/// are not XDG lookups — the anti-cheat runtime search (`runners.py:1119-1122`)
+/// and the desktop-shortcut directory (`runners.py:1451`) — and both must honour
+/// an injected `HOME` for the same reason every other path here does.
+pub fn home_dir() -> PathBuf {
+    home_dir_in(&SystemEnv)
+}
+
+/// [`home_dir`], reading `HOME` from `env`.
+pub fn home_dir_in(env: &dyn Env) -> PathBuf {
+    home(env)
+}
+
 /// Base directory for persistent application data (runners, prefixes, covers).
 pub fn data_home() -> PathBuf {
     data_home_in(&SystemEnv)
@@ -191,7 +206,7 @@ fn create_dir_all(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// An environment built from literal pairs, for tests.

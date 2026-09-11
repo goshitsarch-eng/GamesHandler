@@ -262,7 +262,7 @@ pub fn runner_guides() -> Vec<(String, String, String)> {
 
 /// Whether a name looks like one of the archive formats we can extract.
 /// `runners.py:260`.
-fn looks_like_archive(name: &str) -> bool {
+pub fn looks_like_archive(name: &str) -> bool {
     let lowered = name.to_lowercase();
     [".tar.gz", ".tar.xz", ".tgz", ".tar.bz2"]
         .iter()
@@ -275,16 +275,35 @@ fn looks_like_archive(name: &str) -> bool {
 /// `wow64` and `amd64` is rejected, not accepted. Reversing the two would offer
 /// 32-bit-only builds on a 64-bit host.
 pub fn asset_matches(asset_name: &str, family: &RunnerFamily) -> bool {
+    asset_matches_tokens(asset_name, family.require, family.exclude)
+}
+
+/// [`asset_matches`] over the token lists themselves rather than a family.
+///
+/// The narrower signature exists for two reasons. It is honest about what the
+/// rule actually reads — a family contributes only its `require` and `exclude`
+/// lists, and nothing else about it is consulted — and it makes the rule
+/// reachable from a test or an oracle vector without inventing a
+/// [`RunnerFamily`], whose fields are `&'static` because the catalogue is a
+/// compile-time constant. The Python vector script can build a synthetic family
+/// because Python dataclasses have no such constraint; the port cannot, and
+/// fabricating a `'static` leak to make a test read nicely would be worse than
+/// widening this one signature.
+///
+/// Exclude is checked before require, matching Python: an asset that is both
+/// `wow64` and `amd64` is rejected, not accepted. Reversing the two would offer
+/// 32-bit-only builds on a 64-bit host.
+pub fn asset_matches_tokens(asset_name: &str, require: &[&str], exclude: &[&str]) -> bool {
     if !looks_like_archive(asset_name) {
         return false;
     }
     let lowered = asset_name.to_lowercase();
-    for token in family.exclude {
+    for token in exclude {
         if lowered.contains(&token.to_lowercase()) {
             return false;
         }
     }
-    for token in family.require {
+    for token in require {
         if !lowered.contains(&token.to_lowercase()) {
             return false;
         }
@@ -299,21 +318,31 @@ pub fn asset_matches(asset_name: &str, family: &RunnerFamily) -> bool {
 /// caller has the raw release JSON and nothing else needs the extra fields —
 /// the same shape as the Python, which takes `dict`s and reads only `name`.
 pub fn pick_asset(assets: &[Value], family: &RunnerFamily) -> Option<Value> {
+    pick_asset_tokens(assets, family.require, family.exclude, family.prefer)
+}
+
+/// [`pick_asset`] over the token lists themselves. See [`asset_matches_tokens`]
+/// for why the narrower form exists.
+pub fn pick_asset_tokens(
+    assets: &[Value],
+    require: &[&str],
+    exclude: &[&str],
+    prefer: &[&str],
+) -> Option<Value> {
     let mut matches: Vec<&Value> = assets
         .iter()
-        .filter(|asset| asset_matches(asset_name(asset).as_str(), family))
+        .filter(|asset| asset_matches_tokens(asset_name(asset).as_str(), require, exclude))
         .collect();
     if matches.is_empty() {
         return None;
     }
-    if !family.prefer.is_empty() {
+    if !prefer.is_empty() {
         let preferred: Vec<&Value> = matches
             .iter()
             .copied()
             .filter(|asset| {
                 let name = asset_name(asset).to_lowercase();
-                family
-                    .prefer
+                prefer
                     .iter()
                     .all(|token| name.contains(&token.to_lowercase()))
             })
@@ -360,7 +389,7 @@ pub fn asset_name(asset: &Value) -> String {
 /// as an `f64`, so `0` and `0.0` are different variants that are both falsy.
 /// `-0.0` is falsy too, which `as_f64() == 0.0` gets right and a sign check
 /// would not.
-fn is_truthy(value: &Value) -> bool {
+pub(crate) fn is_truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(flag) => *flag,
@@ -392,7 +421,7 @@ fn is_truthy(value: &Value) -> bool {
 ///
 /// Everything else — null, booleans, integers that fit `i64`/`u64`, strings,
 /// and arrays — is exact.
-fn python_str(value: &Value) -> String {
+pub(crate) fn python_str(value: &Value) -> String {
     match value {
         Value::Null => "None".to_string(),
         Value::Bool(flag) => if *flag { "True" } else { "False" }.to_string(),
@@ -414,7 +443,62 @@ fn python_str(value: &Value) -> String {
 
 /// Python's `repr()`, which differs from `str()` for exactly one type: a string
 /// is quoted, with single quotes unless that would need escaping.
-fn python_repr(value: &Value) -> String {
+/// Python's `repr()` for a `str`, as far as the errors in this crate need it.
+///
+/// Python's `f"Unsafe runner id: {value!r}"` puts the value through `repr`, and
+/// `repr` of a string is **not** Rust's `{:?}`: it prefers single quotes, and
+/// switches to double quotes only when the string contains a `'` and no `"`.
+/// So `repr("")` is `''` where `{:?}` gives `""`, and a message carrying the
+/// wrong quote character is a parity defect the moment anyone compares the two
+/// implementations' output — which the vectors in
+/// `docs/migration/oracle/` do.
+///
+/// # The approximation, stated rather than hidden
+///
+/// Python decides "printable" with `unicodedata.category`, which needs the
+/// Unicode character database: it escapes unassigned code points, format
+/// characters, surrogates and private-use characters, which this does not. What
+/// this does cover is every control character — the reachable class for a
+/// release tag or an install id — plus the quote and escape rules, which are
+/// the two things a naive port gets wrong.
+///
+/// Nothing here is reachable from a well-formed tag; the vectors pin it because
+/// "nothing here is reachable" is the claim that has failed before.
+pub(crate) fn python_str_repr(value: &str) -> String {
+    let quote = if value.contains('\'') && !value.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push(quote);
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            // C0 and C1 controls, and DEL: Python never prints these raw.
+            c if (c as u32) < 0x20 || (0x7f..=0x9f).contains(&(c as u32)) => {
+                let code = c as u32;
+                if code <= 0xff {
+                    out.push_str(&format!("\\x{code:02x}"));
+                } else {
+                    out.push_str(&format!("\\u{code:04x}"));
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
+    out
+}
+
+pub(crate) fn python_repr(value: &Value) -> String {
     match value {
         Value::String(text) => {
             if text.contains('\'') && !text.contains('"') {
@@ -471,27 +555,37 @@ impl ReleaseInfo {
     ///   again with `~i{hash}` over the *full* family id and tag, so two long
     ///   tags that share a 166-character prefix still get distinct directories.
     pub fn install_id(&self) -> Result<String, super::archive::ArchiveError> {
-        use super::archive::{safe_install_id, sanitise_release_tag};
-
-        let safe_tag = sanitise_release_tag(&self.tag)?;
-        if self.family_id == "proton-ge" {
-            return Ok(safe_tag);
-        }
-        let safe_family = sanitise_release_tag(&self.family_id)?;
-        let combined = format!("{safe_family}~f{safe_tag}");
-        if combined.len() <= 180 {
-            return safe_install_id(&combined);
-        }
-        let identity = format!("{}:{}{}", self.family_id.len(), self.family_id, self.tag);
-        let digest = &crate::hash::sha256_hex(identity.as_bytes())[..12];
-        let head: String = combined.chars().take(166).collect();
-        safe_install_id(&format!("{head}~i{digest}"))
+        install_id_for(&self.tag, &self.family_id)
     }
 
     /// The family this release belongs to. `runners.py:343`.
     pub fn family(&self) -> Result<&'static RunnerFamily, String> {
         family_by_id(&self.family_id)
     }
+}
+
+/// [`ReleaseInfo::install_id`] over its two inputs alone.
+///
+/// Free-standing because `install_id` reads nothing else off the release — not
+/// the name, not the URL, not the size — and the oracle corpus exercises it
+/// against family ids the catalogue does not contain, which no `ReleaseInfo`
+/// constructor will build. See `asset_matches_tokens` for the same reasoning.
+pub fn install_id_for(tag: &str, family_id: &str) -> Result<String, super::archive::ArchiveError> {
+    use super::archive::{safe_install_id, sanitise_release_tag};
+
+    let safe_tag = sanitise_release_tag(tag)?;
+    if family_id == "proton-ge" {
+        return Ok(safe_tag);
+    }
+    let safe_family = sanitise_release_tag(family_id)?;
+    let combined = format!("{safe_family}~f{safe_tag}");
+    if combined.len() <= 180 {
+        return safe_install_id(&combined);
+    }
+    let identity = format!("{}:{}{}", family_id.len(), family_id, tag);
+    let digest = &crate::hash::sha256_hex(identity.as_bytes())[..12];
+    let head: String = combined.chars().take(166).collect();
+    safe_install_id(&format!("{head}~i{digest}"))
 }
 
 #[cfg(test)]
@@ -663,6 +757,34 @@ mod tests {
         let assets = vec![json!({ "name": "wine-9.0-wow64.tar.xz" })];
         assert!(pick_asset(&assets, vanilla).is_none());
         assert!(pick_asset(&[], vanilla).is_none());
+    }
+
+    #[test]
+    fn string_repr_matches_pythons_quoting_rules() {
+        // Every expectation below was produced by CPython, not inferred: the
+        // quote-switching rule and `\xNN` for control characters are the two
+        // that a `{:?}`-shaped implementation gets wrong.
+        let cases: &[(&str, &str)] = &[
+            ("", "''"),
+            (".", "'.'"),
+            ("..", "'..'"),
+            ("a/b", "'a/b'"),
+            ("a\\b", "'a\\\\b'"),
+            ("with space", "'with space'"),
+            ("\u{fc}n\u{ef}c\u{f8}de", "'\u{fc}n\u{ef}c\u{f8}de'"),
+            ("a\"b", "'a\"b'"),
+            // A `'` with no `"` switches the delimiter, which is the whole
+            // reason a `{:?}` port cannot be right here.
+            ("a'b", "\"a'b\""),
+            ("a\nb", "'a\\nb'"),
+            ("a\tb", "'a\\tb'"),
+            ("a\u{b}b", "'a\\x0bb'"),
+            ("a\u{0}b", "'a\\x00b'"),
+            ("a\u{7f}b", "'a\\x7fb'"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(&python_str_repr(value), expected, "for {value:?}");
+        }
     }
 
     #[test]

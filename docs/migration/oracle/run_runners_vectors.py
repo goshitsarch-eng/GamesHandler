@@ -47,6 +47,7 @@ kind of difference that hides a real one.
 import json
 import pathlib
 import re
+import shlex
 import sys
 import time as _time
 
@@ -224,6 +225,37 @@ def op_virtual_desktop_argv(args):
     return runners.virtual_desktop_argv(list(_need(args, "argv")), game)
 
 
+def op_shell_split(args):
+    """`shlex.split`: the launch-arguments field.
+
+    A raise is the behaviour under test here, so this returns normally and lets
+    `run_case` record the ValueError — the two messages (`No closing quotation`
+    and `No escaped character`) are user-visible and the port keeps them
+    distinct.
+    """
+    return shlex.split(_need(args, "text"))
+
+
+def op_pure_posix_name(args):
+    """`PurePosixPath(text).name` — the basename rule, not `rsplit('/')`.
+
+    Reached in the port through `safe_archive_name` and the `umu-run`
+    comparison in `uses_proton_runtime`.
+    """
+    return pathlib.PurePosixPath(_need(args, "text")).name
+
+
+def op_install_id_from_parts(args):
+    """`ReleaseInfo.install_id` built from raw parts, with no asset selection."""
+    return runners.ReleaseInfo(
+        tag=_need(args, "tag"),
+        name="vector",
+        download_url="https://example.invalid/x",
+        size=0,
+        family_id=_need(args, "family_id"),
+    ).install_id
+
+
 def op_wine_prefix_root(args):
     return runners.wine_prefix_root(_need(args, "prefix"))
 
@@ -252,7 +284,263 @@ OPS = {
     "virtual_desktop_argv": op_virtual_desktop_argv,
     "wine_prefix_root": op_wine_prefix_root,
     "prefix_drive_cs": op_prefix_drive_cs,
+    "shell_split": op_shell_split,
+    "pure_posix_name": op_pure_posix_name,
+    "install_id_from_parts": op_install_id_from_parts,
 }
+
+
+# ---------------------------------------------------------------------------
+# The suite: an adversarial corpus, kept as code
+# ---------------------------------------------------------------------------
+#
+# `--suite` writes the case list to stdout, so the committed fixtures are
+# *derived* rather than hand-maintained:
+#
+#     python3 docs/migration/oracle/run_runners_vectors.py --suite \
+#         > docs/migration/oracle/fixtures/runners_vectors.cases.json
+#     python3 docs/migration/oracle/run_runners_vectors.py \
+#         < docs/migration/oracle/fixtures/runners_vectors.cases.json \
+#         > docs/migration/oracle/fixtures/runners_vectors.answers.json
+#
+# The corpus lives here, in reviewable code, rather than in a JSON blob whose
+# provenance nobody can check. It is deliberately **adversarial rather than
+# representative**: F-H's lesson was that fixtures drawn from tidy inputs pass
+# while real data breaks, so the cases below are the ones designed to catch the
+# *last* review's class of bug — inputs where the obvious implementation and
+# Python's differ — not cases that cover lines.
+#
+# Four groups earn their size:
+#
+# * `shell_split` — the hand-written `shlex` port. Every case is a place where a
+#   plausible scanner disagrees with CPython: `\x0b` is not whitespace, `''` is
+#   a word, single quotes do not escape, `"a\nb"` keeps its backslash, `a\` is
+#   an error but `"a\"` is a different one.
+# * `asset_name` / `safe_archive_name` / `pure_posix_name` — the `or ""`
+#   truthiness rule and the `PurePosixPath` basename rule. Both already found
+#   real defects in the port; these are the cases that found them.
+# * `parse_env_block` / `merge_dll_overrides` / `normalize_desktop_size` — the
+#   pure launch-option inputs, which the toggle matrix will cross next. They are
+#   pure, so they are pinned now rather than with `launch_opts`.
+# * `launch_failure_text` — the B-07 reproducer, and the one op here that is not
+#   pure. See its own note.
+
+
+def _shell_split_cases():
+    """Inputs where a plausible `shlex` reimplementation diverges."""
+    texts = [
+        # Ordinary shapes, for a baseline.
+        "", "   ", "-fullscreen -dx11", " \t-x\r\n-y ", "a b", "trailing  ",
+        # Quoting and grouping.
+        "a 'b c' d", '"a b"', "'a b'", "''", '""', "a '' b", "-x ''",
+        "''''", '""""', "a''b", "'a' 'b'", "''  ''", "' '", '" "', '"\t"',
+        'a"b"c', "'a'\"b\"", '"a b"c d', "-b''", "-x=1 2",
+        # Whitespace that is *not* in `shlex.whitespace`.
+        "\x0b", "a\x0cb", "a\tb", "\x0c", "a\x0b b",
+        # Comments are disabled, so `#` is an ordinary character.
+        "a#b", "# comment", "a # b", "#a=1",
+        # Escapes outside quotes.
+        "back\\slash", "a\\ b", "a\\$b", "a\\`b", "-DNAME=\\'v\\'", "\\\\",
+        "x\\ y\\ z", "\\'a'", "a\\\\b", 'a\\"b', "\\$HOME",
+        # Single quotes are literal — the case a uniform-backslash scanner
+        # gets wrong.
+        "'a\\b'", "'\\'", "'a\\$'", "'\\$'", "'\\`'",
+        # Double quotes escape only the quote and the backslash.
+        '"a\\\\b"', '"a\\"b"', '"a\\$b"', '"a\\nb"', '"a\\ b"', '"\\ "',
+        "x\"\\ \"", '"\\\\"', '"\\""',
+        # Errors: unterminated quotes.
+        "'unterminated", '"unterminated', "a'", "a\"b", '"a b', "'", '"',
+        '"a\\"', '"a\\\\', "'a\\", "x'y",
+        # Errors: a trailing backslash.
+        "\\", "a\\", "x y\\", '"a\\', "'a b\\",
+        # Both at once, where CPython's precedence is observable.
+        "'unterminated\\", '"unterminated\\',
+    ]
+    return [{"op": "shell_split", "args": {"text": text}} for text in texts]
+
+
+def _name_cases():
+    """The `or ""` truthiness rule and the basename rule."""
+    cases = []
+    # `asset_name` reads `str(asset.get("name") or "")`, so falsy values of
+    # every type collapse to "" and truthy non-strings go through `str()`.
+    # `1e-5` is deliberately **absent**. `str(1e-05)` is `'1e-05'` in Python and
+    # the port's float writer renders the same value `0.00001` — the notation
+    # band recorded with the float-divergence predicate, whose boundary is
+    # agreed at `1e-4`. Carrying the case here would make this corpus's text
+    # comparison red for a reason it cannot fix, and dropping it silently would
+    # hide the difference; it is pinned instead by
+    # `oracle_tests::the_notation_band_is_a_known_difference` and by the
+    # `exp_notation_boundary` fixtures. `0.0001` is the agreed boundary and
+    # agrees exactly, so the band's edge is still covered.
+    for value in [
+        None, "", "GE-Proton9-5.tar.gz", 0, 1, 0.0, 1.5, False, True, [],
+        {}, ["a"], {"a": 1}, -0.0, "  ", "\n", 0.0001,
+    ]:
+        cases.append({"op": "asset_name", "args": {"asset": {"name": value}}})
+    # A missing key is the same branch as an explicit null.
+    cases.append({"op": "asset_name", "args": {"asset": {}}})
+    # `PurePosixPath(name).name` drops empty and `.` components *before* taking
+    # the last one, and keeps a `..`.
+    for text in [
+        "", "/", "a", "a/b", "trailing/", "a/./b", "a/..", "..", ".",
+        "/abs/path", "//double//slash//", "a//b", "./", "../", "a/b/",
+        "a/./", "a/b/..", "with space.tar.gz", "\\windows\\path",
+        "GE-Proton9-5.tar.gz", "...", "a/...", "a/.b", ".hidden",
+    ]:
+        cases.append({"op": "pure_posix_name", "args": {"text": text}})
+        cases.append(
+            {"op": "safe_archive_name", "args": {"name": text, "fallback": "runner.tar.gz"}}
+        )
+    # The fallback is only used when the name reduces to nothing.
+    for name, fallback in [
+        ("", "custom.tar.xz"), ("/", "custom.tar.xz"), (".", "custom.tar.xz"),
+        ("..", "custom.tar.xz"), ("x", ""), ("", ""),
+    ]:
+        cases.append(
+            {"op": "safe_archive_name", "args": {"name": name, "fallback": fallback}}
+        )
+    return cases
+
+
+def _install_id_cases():
+    """Install ids, where a collision is a silently broken install."""
+    cases = []
+    for tag in [
+        "GE-Proton9-5", "v1", "", "release/v1", "..", ".", "  spaced  ",
+        "a" * 200, "a" * 166, "a" * 167, "tag with spaces", "tag;rm -rf /",
+        "-leading-dash", "trailing.", "dots...", "~tilde", "a~b",
+        "ünïcøde", "1.2.3", "x" * 180, "x" * 181,
+    ]:
+        for family_id in ["proton-ge", "wine-vanilla", "proton-cachyos", "system", "x"]:
+            cases.append(
+                {"op": "install_id_from_parts", "args": {"tag": tag, "family_id": family_id}}
+            )
+    for install_id in ["", ".", "..", "a/b", "a\\b", ".hidden", "ok", "with space", "/abs"]:
+        cases.append({"op": "safe_install_id", "args": {"install_id": install_id}})
+    for tag in ["", "..", ".", "/", "\\", "ok", "a b", "a" * 300, "ünïcøde"]:
+        cases.append({"op": "sanitise_release_tag", "args": {"tag": tag}})
+    return cases
+
+
+def _selection_cases():
+    """Asset selection, crossed so no shipped family's token set is assumed."""
+    cases = []
+    names = [
+        "GE-Proton9-5.tar.gz", "wine-11.15-amd64.tar.xz",
+        "wine-11.15-amd64-wow64.tar.xz", "wine-11.15-staging-amd64.tar.xz",
+        "wine-11.15-staging-tkg-amd64.tar.xz", "wine-11.15-proton-amd64.tar.xz",
+        "proton-cachyos-11.0-v3-x86_64.tar.xz",
+        "proton-cachyos-11.0-slr-x86_64.tar.xz",
+        "notes.txt", "sha256sums.txt", "a.tar.gz", "a.tgz", "a.tar.xz",
+        "a.tar.bz2", "a.zip", "A.TAR.GZ", "x.tar.gz.sig", "",
+    ]
+    for family_id in [
+        "proton-ge", "proton-ge-rtsp", "proton-cachyos", "proton-em",
+        "wine-vanilla", "wine-staging", "wine-staging-tkg", "wine-proton",
+    ]:
+        for name in names:
+            cases.append(
+                {"op": "asset_matches", "args": {"asset_name": name, "family_id": family_id}}
+            )
+    # `pick_asset` with an inline family, to reach the branches where `require`
+    # and `exclude` both bite — no shipped family has both.
+    inline = [
+        {"id": "both", "require": ["amd64"], "exclude": ["wow64"]},
+        {"id": "prefer", "prefer": ["slr"]},
+        {"id": "prefer-missing", "prefer": ["nope"]},
+        {"id": "empty", "require": [], "exclude": [], "prefer": []},
+        {"id": "case", "require": ["AMD64"], "exclude": ["WOW64"]},
+    ]
+    for spec in inline:
+        for assets in [
+            [],
+            [{"name": "a.txt"}],
+            [{"name": "wine-11.15-amd64.tar.xz"}],
+            [{"name": "wine-11.15-amd64.tar.xz"}, {"name": "wine-11.15-amd64-wow64.tar.xz"}],
+            [{"name": "wine-11.15-wow64.tar.xz"}, {"name": "wine-11.15-amd64.tar.xz"}],
+            [{"name": "a-slr.tar.xz"}, {"name": "b.tar.xz"}],
+            [{"name": "A-SLR.tar.xz"}],
+            [{"name": None}, {"name": "wine-11.15-amd64.tar.xz"}],
+            [{"name": 0}, {"name": "wine-11.15-amd64.tar.xz"}],
+            [{"name": "WINE-11.15-AMD64.TAR.XZ"}],
+        ]:
+            cases.append(
+                {"op": "pick_asset", "args": {"assets": assets, "family": spec}}
+            )
+    for name in names:
+        cases.append({"op": "looks_like_archive", "args": {"name": name}})
+    return cases
+
+
+def _launch_option_cases():
+    """The pure launch-option inputs the toggle matrix will build on."""
+    cases = []
+    env_texts = [
+        "FOO=1; BAR=two words\n# comment\nBAZ=3",
+        "A=1;B=2", "A=1 B=2", "KEY=", "KEY", "=v", " A = b ",
+        "export A=1", "A='quoted value';B=2", "A=\"double\";B=2",
+        "A='semi;colon'", "A=\"semi;colon\"", "A=a\\b", "A=C:\\path\\to",
+        "A='unclosed", "A=\"unclosed", "A=1\n\nB=2", "A=1\r\nB=2",
+        "A=1\rB=2", "A=1;;B=2", "  ", "", "A=1;A=2", "A=1 A=2",
+        "A=1; # comment\nB=2", "#A=1", "A=1;B", "A='a\"b'", "A=\"a'b\"",
+        "A=1;B=2;C=3", "A=\"\";B=''", "A=a b c", "A=1;B='x y';C=3",
+    ]
+    for text in env_texts:
+        cases.append({"op": "parse_env_block", "args": {"text": text}})
+
+    for env, extra in [
+        ({}, "d3d12=b"),
+        ({}, ""),
+        ({}, "   "),
+        ({}, ";"),
+        ({}, ";;a=b;;"),
+        ({"WINEDLLOVERRIDES": "winemenubuilder.exe=d"}, "d3d12=b"),
+        ({"WINEDLLOVERRIDES": "x=y;"}, "z=w"),
+        ({"WINEDLLOVERRIDES": ""}, "a=b"),
+        ({"WINEDLLOVERRIDES": "   "}, "a=b"),
+        ({"WINEDLLOVERRIDES": "a=b"}, "a=b"),
+    ]:
+        cases.append(
+            {"op": "merge_dll_overrides", "args": {"env": env, "extra": extra}}
+        )
+
+    for value in [
+        "1920x1080", "2560 x 1440", "nope", "", "   ", "3840X2160",
+        "12x34", "123x456", "123456x123456", "1x1", "111x111",
+        "1920x1080x2", "x1080", "1920x", "1920 x1080", " 1920x1080 ",
+    ]:
+        cases.append({"op": "normalize_desktop_size", "args": {"value": value}})
+
+    for name, size, argv in [
+        ("Half-Life", "1280x720", ["/usr/bin/wine", "/g/hl.exe"]),
+        ("Half-Life", "", ["/usr/bin/wine", "/g/hl.exe"]),
+        ("Half-Life", "bogus", ["/usr/bin/wine"]),
+        ("!!!", "", ["wine", "/g/app.exe"]),
+        ("a" * 40, "", ["wine", "/g/app.exe"]),
+        ("", "", ["wine"]),
+        ("", "", []),
+        ("ünïcøde game", "1x1", ["wine"]),
+        ("name with spaces", "2x2", ["wine", "/g/app.exe"]),
+    ]:
+        cases.append(
+            {
+                "op": "virtual_desktop_argv",
+                "args": {"name": name, "virtual_desktop_size": size, "argv": argv},
+            }
+        )
+    return cases
+
+
+def build_suite():
+    """The whole adversarial corpus, as a list of request objects."""
+    cases = []
+    cases += _shell_split_cases()
+    cases += _name_cases()
+    cases += _install_id_cases()
+    cases += _selection_cases()
+    cases += _launch_option_cases()
+    return cases
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +570,12 @@ def run_case(case):
 
 
 def main(argv):
+    if "--suite" in argv[1:]:
+        json.dump({"cases": build_suite()}, sys.stdout, indent=1,
+                  ensure_ascii=False)
+        sys.stdout.write("\n")
+        return 0
+
     raw = sys.stdin.read()
     try:
         document = json.loads(raw) if raw.strip() else {"cases": []}

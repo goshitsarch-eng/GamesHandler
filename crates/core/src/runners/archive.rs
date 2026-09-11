@@ -169,8 +169,16 @@ impl std::fmt::Display for ArchiveError {
             Self::NoUsableRunner => {
                 write!(f, "Extracted archive does not contain a usable runner")
             }
-            Self::UnsafeId(id) => write!(f, "Unsafe runner id: {id:?}"),
-            Self::UnsafeTag(tag) => write!(f, "Unsafe runner tag: {tag:?}"),
+            Self::UnsafeId(id) => write!(
+                f,
+                "Unsafe runner id: {}",
+                super::families::python_str_repr(id)
+            ),
+            Self::UnsafeTag(tag) => write!(
+                f,
+                "Unsafe runner tag: {}",
+                super::families::python_str_repr(tag)
+            ),
         }
     }
 }

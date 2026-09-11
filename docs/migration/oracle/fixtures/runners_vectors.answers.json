@@ -1,0 +1,5671 @@
+[
+ {
+  "op": "shell_split",
+  "args": {
+   "text": ""
+  },
+  "ok": true,
+  "result": []
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "   "
+  },
+  "ok": true,
+  "result": []
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "-fullscreen -dx11"
+  },
+  "ok": true,
+  "result": [
+   "-fullscreen",
+   "-dx11"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": " \t-x\r\n-y "
+  },
+  "ok": true,
+  "result": [
+   "-x",
+   "-y"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a b"
+  },
+  "ok": true,
+  "result": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "trailing  "
+  },
+  "ok": true,
+  "result": [
+   "trailing"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a 'b c' d"
+  },
+  "ok": true,
+  "result": [
+   "a",
+   "b c",
+   "d"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a b\""
+  },
+  "ok": true,
+  "result": [
+   "a b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'a b'"
+  },
+  "ok": true,
+  "result": [
+   "a b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "''"
+  },
+  "ok": true,
+  "result": [
+   ""
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"\""
+  },
+  "ok": true,
+  "result": [
+   ""
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a '' b"
+  },
+  "ok": true,
+  "result": [
+   "a",
+   "",
+   "b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "-x ''"
+  },
+  "ok": true,
+  "result": [
+   "-x",
+   ""
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "''''"
+  },
+  "ok": true,
+  "result": [
+   ""
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"\"\"\""
+  },
+  "ok": true,
+  "result": [
+   ""
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a''b"
+  },
+  "ok": true,
+  "result": [
+   "ab"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'a' 'b'"
+  },
+  "ok": true,
+  "result": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "''  ''"
+  },
+  "ok": true,
+  "result": [
+   "",
+   ""
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "' '"
+  },
+  "ok": true,
+  "result": [
+   " "
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\" \""
+  },
+  "ok": true,
+  "result": [
+   " "
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"\t\""
+  },
+  "ok": true,
+  "result": [
+   "\t"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\"b\"c"
+  },
+  "ok": true,
+  "result": [
+   "abc"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'a'\"b\""
+  },
+  "ok": true,
+  "result": [
+   "ab"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a b\"c d"
+  },
+  "ok": true,
+  "result": [
+   "a bc",
+   "d"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "-b''"
+  },
+  "ok": true,
+  "result": [
+   "-b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "-x=1 2"
+  },
+  "ok": true,
+  "result": [
+   "-x=1",
+   "2"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\u000b"
+  },
+  "ok": true,
+  "result": [
+   "\u000b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\fb"
+  },
+  "ok": true,
+  "result": [
+   "a\fb"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\tb"
+  },
+  "ok": true,
+  "result": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\f"
+  },
+  "ok": true,
+  "result": [
+   "\f"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\u000b b"
+  },
+  "ok": true,
+  "result": [
+   "a\u000b",
+   "b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a#b"
+  },
+  "ok": true,
+  "result": [
+   "a#b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "# comment"
+  },
+  "ok": true,
+  "result": [
+   "#",
+   "comment"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a # b"
+  },
+  "ok": true,
+  "result": [
+   "a",
+   "#",
+   "b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "#a=1"
+  },
+  "ok": true,
+  "result": [
+   "#a=1"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "back\\slash"
+  },
+  "ok": true,
+  "result": [
+   "backslash"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\\ b"
+  },
+  "ok": true,
+  "result": [
+   "a b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\\$b"
+  },
+  "ok": true,
+  "result": [
+   "a$b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\\`b"
+  },
+  "ok": true,
+  "result": [
+   "a`b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "-DNAME=\\'v\\'"
+  },
+  "ok": true,
+  "result": [
+   "-DNAME='v'"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\\\\"
+  },
+  "ok": true,
+  "result": [
+   "\\"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "x\\ y\\ z"
+  },
+  "ok": true,
+  "result": [
+   "x y z"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\\'a'"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\\\\b"
+  },
+  "ok": true,
+  "result": [
+   "a\\b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\\\"b"
+  },
+  "ok": true,
+  "result": [
+   "a\"b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\\$HOME"
+  },
+  "ok": true,
+  "result": [
+   "$HOME"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'a\\b'"
+  },
+  "ok": true,
+  "result": [
+   "a\\b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'\\'"
+  },
+  "ok": true,
+  "result": [
+   "\\"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'a\\$'"
+  },
+  "ok": true,
+  "result": [
+   "a\\$"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'\\$'"
+  },
+  "ok": true,
+  "result": [
+   "\\$"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'\\`'"
+  },
+  "ok": true,
+  "result": [
+   "\\`"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a\\\\b\""
+  },
+  "ok": true,
+  "result": [
+   "a\\b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a\\\"b\""
+  },
+  "ok": true,
+  "result": [
+   "a\"b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a\\$b\""
+  },
+  "ok": true,
+  "result": [
+   "a\\$b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a\\nb\""
+  },
+  "ok": true,
+  "result": [
+   "a\\nb"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a\\ b\""
+  },
+  "ok": true,
+  "result": [
+   "a\\ b"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"\\ \""
+  },
+  "ok": true,
+  "result": [
+   "\\ "
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "x\"\\ \""
+  },
+  "ok": true,
+  "result": [
+   "x\\ "
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"\\\\\""
+  },
+  "ok": true,
+  "result": [
+   "\\"
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"\\\"\""
+  },
+  "ok": true,
+  "result": [
+   "\""
+  ]
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'unterminated"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"unterminated"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a'"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\"b"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a b"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\""
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a\\\""
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a\\\\"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'a\\"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "x'y"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\\"
+  },
+  "ok": false,
+  "error": "ValueError: No escaped character"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "a\\"
+  },
+  "ok": false,
+  "error": "ValueError: No escaped character"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "x y\\"
+  },
+  "ok": false,
+  "error": "ValueError: No escaped character"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"a\\"
+  },
+  "ok": false,
+  "error": "ValueError: No escaped character"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'a b\\"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "'unterminated\\"
+  },
+  "ok": false,
+  "error": "ValueError: No closing quotation"
+ },
+ {
+  "op": "shell_split",
+  "args": {
+   "text": "\"unterminated\\"
+  },
+  "ok": false,
+  "error": "ValueError: No escaped character"
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": null
+   }
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": ""
+   }
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": "GE-Proton9-5.tar.gz"
+   }
+  },
+  "ok": true,
+  "result": "GE-Proton9-5.tar.gz"
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": 0
+   }
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": 1
+   }
+  },
+  "ok": true,
+  "result": "1"
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": 0.0
+   }
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": 1.5
+   }
+  },
+  "ok": true,
+  "result": "1.5"
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": false
+   }
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": true
+   }
+  },
+  "ok": true,
+  "result": "True"
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": []
+   }
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": {}
+   }
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": [
+     "a"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "['a']"
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": {
+     "a": 1
+    }
+   }
+  },
+  "ok": true,
+  "result": "{'a': 1}"
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": -0.0
+   }
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": "  "
+   }
+  },
+  "ok": true,
+  "result": "  "
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": "\n"
+   }
+  },
+  "ok": true,
+  "result": "\n"
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {
+    "name": 0.0001
+   }
+  },
+  "ok": true,
+  "result": "0.0001"
+ },
+ {
+  "op": "asset_name",
+  "args": {
+   "asset": {}
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": ""
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "runner.tar.gz"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "/"
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "/",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "runner.tar.gz"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "a"
+  },
+  "ok": true,
+  "result": "a"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "a",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "a"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "a/b"
+  },
+  "ok": true,
+  "result": "b"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "a/b",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "b"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "trailing/"
+  },
+  "ok": true,
+  "result": "trailing"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "trailing/",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "trailing"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "a/./b"
+  },
+  "ok": true,
+  "result": "b"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "a/./b",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "b"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "a/.."
+  },
+  "ok": true,
+  "result": ".."
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "a/..",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "runner.tar.gz"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": ".."
+  },
+  "ok": true,
+  "result": ".."
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "..",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "runner.tar.gz"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "."
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": ".",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "runner.tar.gz"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "/abs/path"
+  },
+  "ok": true,
+  "result": "path"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "/abs/path",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "path"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "//double//slash//"
+  },
+  "ok": true,
+  "result": "slash"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "//double//slash//",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "slash"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "a//b"
+  },
+  "ok": true,
+  "result": "b"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "a//b",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "b"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "./"
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "./",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "runner.tar.gz"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "../"
+  },
+  "ok": true,
+  "result": ".."
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "../",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "runner.tar.gz"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "a/b/"
+  },
+  "ok": true,
+  "result": "b"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "a/b/",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "b"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "a/./"
+  },
+  "ok": true,
+  "result": "a"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "a/./",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "a"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "a/b/.."
+  },
+  "ok": true,
+  "result": ".."
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "a/b/..",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "runner.tar.gz"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "with space.tar.gz"
+  },
+  "ok": true,
+  "result": "with space.tar.gz"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "with space.tar.gz",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "with space.tar.gz"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "\\windows\\path"
+  },
+  "ok": true,
+  "result": "\\windows\\path"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "\\windows\\path",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "path"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "GE-Proton9-5.tar.gz"
+  },
+  "ok": true,
+  "result": "GE-Proton9-5.tar.gz"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "GE-Proton9-5.tar.gz",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "GE-Proton9-5.tar.gz"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "..."
+  },
+  "ok": true,
+  "result": "..."
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "...",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "..."
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "a/..."
+  },
+  "ok": true,
+  "result": "..."
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "a/...",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": "..."
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": "a/.b"
+  },
+  "ok": true,
+  "result": ".b"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "a/.b",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": ".b"
+ },
+ {
+  "op": "pure_posix_name",
+  "args": {
+   "text": ".hidden"
+  },
+  "ok": true,
+  "result": ".hidden"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": ".hidden",
+   "fallback": "runner.tar.gz"
+  },
+  "ok": true,
+  "result": ".hidden"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "",
+   "fallback": "custom.tar.xz"
+  },
+  "ok": true,
+  "result": "custom.tar.xz"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "/",
+   "fallback": "custom.tar.xz"
+  },
+  "ok": true,
+  "result": "custom.tar.xz"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": ".",
+   "fallback": "custom.tar.xz"
+  },
+  "ok": true,
+  "result": "custom.tar.xz"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "..",
+   "fallback": "custom.tar.xz"
+  },
+  "ok": true,
+  "result": "custom.tar.xz"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "x",
+   "fallback": ""
+  },
+  "ok": true,
+  "result": "x"
+ },
+ {
+  "op": "safe_archive_name",
+  "args": {
+   "name": "",
+   "fallback": ""
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "GE-Proton9-5",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "GE-Proton9-5"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "GE-Proton9-5",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~fGE-Proton9-5"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "GE-Proton9-5",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~fGE-Proton9-5"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "GE-Proton9-5",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~fGE-Proton9-5"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "GE-Proton9-5",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~fGE-Proton9-5"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "v1",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "v1"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "v1",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~fv1"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "v1",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~fv1"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "v1",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~fv1"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "v1",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~fv1"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "",
+   "family_id": "proton-ge"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: ''"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "",
+   "family_id": "wine-vanilla"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: ''"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "",
+   "family_id": "proton-cachyos"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: ''"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "",
+   "family_id": "system"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: ''"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "",
+   "family_id": "x"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: ''"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "release/v1",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "release-v1~h8eeec730f2e1"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "release/v1",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~frelease-v1~h8eeec730f2e1"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "release/v1",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~frelease-v1~h8eeec730f2e1"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "release/v1",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~frelease-v1~h8eeec730f2e1"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "release/v1",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~frelease-v1~h8eeec730f2e1"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "..",
+   "family_id": "proton-ge"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '..'"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "..",
+   "family_id": "wine-vanilla"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '..'"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "..",
+   "family_id": "proton-cachyos"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '..'"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "..",
+   "family_id": "system"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '..'"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "..",
+   "family_id": "x"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '..'"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": ".",
+   "family_id": "proton-ge"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '.'"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": ".",
+   "family_id": "wine-vanilla"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '.'"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": ".",
+   "family_id": "proton-cachyos"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '.'"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": ".",
+   "family_id": "system"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '.'"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": ".",
+   "family_id": "x"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '.'"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "  spaced  ",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "spaced"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "  spaced  ",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~fspaced"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "  spaced  ",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~fspaced"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "  spaced  ",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~fspaced"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "  spaced  ",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~fspaced"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~hc2a908d98f5d"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~i3a4e1dfa510b"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~i932cfce2ea70"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~id550e6ed9b17"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~ia52822cb9d88"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~i00c649c5b2c9"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~ibda31db1bf60"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~ie9159ac0d918"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "tag with spaces",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "tag-with-spaces~h699cc2c629a0"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "tag with spaces",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~ftag-with-spaces~h699cc2c629a0"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "tag with spaces",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~ftag-with-spaces~h699cc2c629a0"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "tag with spaces",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~ftag-with-spaces~h699cc2c629a0"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "tag with spaces",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~ftag-with-spaces~h699cc2c629a0"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "tag;rm -rf /",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "tag-rm--rf~hbccfc68044b7"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "tag;rm -rf /",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~ftag-rm--rf~hbccfc68044b7"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "tag;rm -rf /",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~ftag-rm--rf~hbccfc68044b7"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "tag;rm -rf /",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~ftag-rm--rf~hbccfc68044b7"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "tag;rm -rf /",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~ftag-rm--rf~hbccfc68044b7"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "-leading-dash",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "leading-dash~hbb224188a7a9"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "-leading-dash",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~fleading-dash~hbb224188a7a9"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "-leading-dash",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~fleading-dash~hbb224188a7a9"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "-leading-dash",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~fleading-dash~hbb224188a7a9"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "-leading-dash",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~fleading-dash~hbb224188a7a9"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "trailing.",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "trailing~h44c12a4e432e"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "trailing.",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~ftrailing~h44c12a4e432e"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "trailing.",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~ftrailing~h44c12a4e432e"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "trailing.",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~ftrailing~h44c12a4e432e"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "trailing.",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~ftrailing~h44c12a4e432e"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "dots...",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "dots~h60b392c93976"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "dots...",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~fdots~h60b392c93976"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "dots...",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~fdots~h60b392c93976"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "dots...",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~fdots~h60b392c93976"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "dots...",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~fdots~h60b392c93976"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "~tilde",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "tilde~ha634f2601247"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "~tilde",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~ftilde~ha634f2601247"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "~tilde",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~ftilde~ha634f2601247"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "~tilde",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~ftilde~ha634f2601247"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "~tilde",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~ftilde~ha634f2601247"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "a~b",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "a-b~h941528e5e77c"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "a~b",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~fa-b~h941528e5e77c"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "a~b",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~fa-b~h941528e5e77c"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "a~b",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~fa-b~h941528e5e77c"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "a~b",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~fa-b~h941528e5e77c"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "ünïcøde",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "n-c-de~hd9680c377ffa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "ünïcøde",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~fn-c-de~hd9680c377ffa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "ünïcøde",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~fn-c-de~hd9680c377ffa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "ünïcøde",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~fn-c-de~hd9680c377ffa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "ünïcøde",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~fn-c-de~hd9680c377ffa"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "1.2.3",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "1.2.3"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "1.2.3",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~f1.2.3"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "1.2.3",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~f1.2.3"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "1.2.3",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~f1.2.3"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "1.2.3",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~f1.2.3"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~fxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx~ib99ace940eea"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~fxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx~i0db723522676"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~fxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx~ie5a7032db4af"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~fxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx~i324e0281164b"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx~hdc31ed5afb94"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": "wine-vanilla~fxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx~i7d128a5f4d64"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": "proton-cachyos~fxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx~i6d24e0025a15"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "family_id": "system"
+  },
+  "ok": true,
+  "result": "system~fxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx~i5be110194fcc"
+ },
+ {
+  "op": "install_id_from_parts",
+  "args": {
+   "tag": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "family_id": "x"
+  },
+  "ok": true,
+  "result": "x~fxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx~i4061cdd15bbd"
+ },
+ {
+  "op": "safe_install_id",
+  "args": {
+   "install_id": ""
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner id: ''"
+ },
+ {
+  "op": "safe_install_id",
+  "args": {
+   "install_id": "."
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner id: '.'"
+ },
+ {
+  "op": "safe_install_id",
+  "args": {
+   "install_id": ".."
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner id: '..'"
+ },
+ {
+  "op": "safe_install_id",
+  "args": {
+   "install_id": "a/b"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner id: 'a/b'"
+ },
+ {
+  "op": "safe_install_id",
+  "args": {
+   "install_id": "a\\b"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner id: 'a\\\\b'"
+ },
+ {
+  "op": "safe_install_id",
+  "args": {
+   "install_id": ".hidden"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner id: '.hidden'"
+ },
+ {
+  "op": "safe_install_id",
+  "args": {
+   "install_id": "ok"
+  },
+  "ok": true,
+  "result": "ok"
+ },
+ {
+  "op": "safe_install_id",
+  "args": {
+   "install_id": "with space"
+  },
+  "ok": true,
+  "result": "with space"
+ },
+ {
+  "op": "safe_install_id",
+  "args": {
+   "install_id": "/abs"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner id: '/abs'"
+ },
+ {
+  "op": "sanitise_release_tag",
+  "args": {
+   "tag": ""
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: ''"
+ },
+ {
+  "op": "sanitise_release_tag",
+  "args": {
+   "tag": ".."
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '..'"
+ },
+ {
+  "op": "sanitise_release_tag",
+  "args": {
+   "tag": "."
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '.'"
+ },
+ {
+  "op": "sanitise_release_tag",
+  "args": {
+   "tag": "/"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '/'"
+ },
+ {
+  "op": "sanitise_release_tag",
+  "args": {
+   "tag": "\\"
+  },
+  "ok": false,
+  "error": "ValueError: Unsafe runner tag: '\\\\'"
+ },
+ {
+  "op": "sanitise_release_tag",
+  "args": {
+   "tag": "ok"
+  },
+  "ok": true,
+  "result": "ok"
+ },
+ {
+  "op": "sanitise_release_tag",
+  "args": {
+   "tag": "a b"
+  },
+  "ok": true,
+  "result": "a-b~hc8687a08aa5d"
+ },
+ {
+  "op": "sanitise_release_tag",
+  "args": {
+   "tag": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "ok": true,
+  "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~h9835fa6bf4e2"
+ },
+ {
+  "op": "sanitise_release_tag",
+  "args": {
+   "tag": "ünïcøde"
+  },
+  "ok": true,
+  "result": "n-c-de~hd9680c377ffa"
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "GE-Proton9-5.tar.gz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64.tar.xz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64-wow64.tar.xz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-amd64.tar.xz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-tkg-amd64.tar.xz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-proton-amd64.tar.xz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-v3-x86_64.tar.xz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-slr-x86_64.tar.xz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "notes.txt",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "sha256sums.txt",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.gz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tgz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.xz",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.bz2",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.zip",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "A.TAR.GZ",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "x.tar.gz.sig",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "",
+   "family_id": "proton-ge"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "GE-Proton9-5.tar.gz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64.tar.xz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64-wow64.tar.xz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-amd64.tar.xz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-tkg-amd64.tar.xz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-proton-amd64.tar.xz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-v3-x86_64.tar.xz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-slr-x86_64.tar.xz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "notes.txt",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "sha256sums.txt",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.gz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tgz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.xz",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.bz2",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.zip",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "A.TAR.GZ",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "x.tar.gz.sig",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "",
+   "family_id": "proton-ge-rtsp"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "GE-Proton9-5.tar.gz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64.tar.xz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64-wow64.tar.xz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-amd64.tar.xz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-tkg-amd64.tar.xz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-proton-amd64.tar.xz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-v3-x86_64.tar.xz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-slr-x86_64.tar.xz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "notes.txt",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "sha256sums.txt",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.gz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tgz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.xz",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.bz2",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.zip",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "A.TAR.GZ",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "x.tar.gz.sig",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "",
+   "family_id": "proton-cachyos"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "GE-Proton9-5.tar.gz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64.tar.xz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64-wow64.tar.xz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-amd64.tar.xz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-tkg-amd64.tar.xz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-proton-amd64.tar.xz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-v3-x86_64.tar.xz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-slr-x86_64.tar.xz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "notes.txt",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "sha256sums.txt",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.gz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tgz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.xz",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.bz2",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.zip",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "A.TAR.GZ",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "x.tar.gz.sig",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "",
+   "family_id": "proton-em"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "GE-Proton9-5.tar.gz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64.tar.xz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64-wow64.tar.xz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-amd64.tar.xz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-tkg-amd64.tar.xz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-proton-amd64.tar.xz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-v3-x86_64.tar.xz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-slr-x86_64.tar.xz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "notes.txt",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "sha256sums.txt",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.gz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tgz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.xz",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.bz2",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.zip",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "A.TAR.GZ",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "x.tar.gz.sig",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "",
+   "family_id": "wine-vanilla"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "GE-Proton9-5.tar.gz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64.tar.xz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64-wow64.tar.xz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-amd64.tar.xz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-tkg-amd64.tar.xz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-proton-amd64.tar.xz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-v3-x86_64.tar.xz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-slr-x86_64.tar.xz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "notes.txt",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "sha256sums.txt",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.gz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tgz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.xz",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.bz2",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.zip",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "A.TAR.GZ",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "x.tar.gz.sig",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "",
+   "family_id": "wine-staging"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "GE-Proton9-5.tar.gz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64.tar.xz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64-wow64.tar.xz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-amd64.tar.xz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-tkg-amd64.tar.xz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-proton-amd64.tar.xz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-v3-x86_64.tar.xz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-slr-x86_64.tar.xz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "notes.txt",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "sha256sums.txt",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.gz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tgz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.xz",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.bz2",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.zip",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "A.TAR.GZ",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "x.tar.gz.sig",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "",
+   "family_id": "wine-staging-tkg"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "GE-Proton9-5.tar.gz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64.tar.xz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-amd64-wow64.tar.xz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-amd64.tar.xz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-staging-tkg-amd64.tar.xz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "wine-11.15-proton-amd64.tar.xz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-v3-x86_64.tar.xz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "proton-cachyos-11.0-slr-x86_64.tar.xz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "notes.txt",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "sha256sums.txt",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.gz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tgz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.xz",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.tar.bz2",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "a.zip",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "A.TAR.GZ",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "x.tar.gz.sig",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "asset_matches",
+  "args": {
+   "asset_name": "",
+   "family_id": "wine-proton"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [],
+   "family": {
+    "id": "both",
+    "require": [
+     "amd64"
+    ],
+    "exclude": [
+     "wow64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "a.txt"
+    }
+   ],
+   "family": {
+    "id": "both",
+    "require": [
+     "amd64"
+    ],
+    "exclude": [
+     "wow64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "both",
+    "require": [
+     "amd64"
+    ],
+    "exclude": [
+     "wow64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    },
+    {
+     "name": "wine-11.15-amd64-wow64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "both",
+    "require": [
+     "amd64"
+    ],
+    "exclude": [
+     "wow64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-wow64.tar.xz"
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "both",
+    "require": [
+     "amd64"
+    ],
+    "exclude": [
+     "wow64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "a-slr.tar.xz"
+    },
+    {
+     "name": "b.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "both",
+    "require": [
+     "amd64"
+    ],
+    "exclude": [
+     "wow64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "A-SLR.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "both",
+    "require": [
+     "amd64"
+    ],
+    "exclude": [
+     "wow64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": null
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "both",
+    "require": [
+     "amd64"
+    ],
+    "exclude": [
+     "wow64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": 0
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "both",
+    "require": [
+     "amd64"
+    ],
+    "exclude": [
+     "wow64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "WINE-11.15-AMD64.TAR.XZ"
+    }
+   ],
+   "family": {
+    "id": "both",
+    "require": [
+     "amd64"
+    ],
+    "exclude": [
+     "wow64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "WINE-11.15-AMD64.TAR.XZ"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [],
+   "family": {
+    "id": "prefer",
+    "prefer": [
+     "slr"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "a.txt"
+    }
+   ],
+   "family": {
+    "id": "prefer",
+    "prefer": [
+     "slr"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer",
+    "prefer": [
+     "slr"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    },
+    {
+     "name": "wine-11.15-amd64-wow64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer",
+    "prefer": [
+     "slr"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-wow64.tar.xz"
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer",
+    "prefer": [
+     "slr"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-wow64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "a-slr.tar.xz"
+    },
+    {
+     "name": "b.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer",
+    "prefer": [
+     "slr"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "a-slr.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "A-SLR.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer",
+    "prefer": [
+     "slr"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "A-SLR.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": null
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer",
+    "prefer": [
+     "slr"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": 0
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer",
+    "prefer": [
+     "slr"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "WINE-11.15-AMD64.TAR.XZ"
+    }
+   ],
+   "family": {
+    "id": "prefer",
+    "prefer": [
+     "slr"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "WINE-11.15-AMD64.TAR.XZ"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [],
+   "family": {
+    "id": "prefer-missing",
+    "prefer": [
+     "nope"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "a.txt"
+    }
+   ],
+   "family": {
+    "id": "prefer-missing",
+    "prefer": [
+     "nope"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer-missing",
+    "prefer": [
+     "nope"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    },
+    {
+     "name": "wine-11.15-amd64-wow64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer-missing",
+    "prefer": [
+     "nope"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-wow64.tar.xz"
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer-missing",
+    "prefer": [
+     "nope"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-wow64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "a-slr.tar.xz"
+    },
+    {
+     "name": "b.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer-missing",
+    "prefer": [
+     "nope"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "a-slr.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "A-SLR.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer-missing",
+    "prefer": [
+     "nope"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "A-SLR.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": null
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer-missing",
+    "prefer": [
+     "nope"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": 0
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "prefer-missing",
+    "prefer": [
+     "nope"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "WINE-11.15-AMD64.TAR.XZ"
+    }
+   ],
+   "family": {
+    "id": "prefer-missing",
+    "prefer": [
+     "nope"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "WINE-11.15-AMD64.TAR.XZ"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [],
+   "family": {
+    "id": "empty",
+    "require": [],
+    "exclude": [],
+    "prefer": []
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "a.txt"
+    }
+   ],
+   "family": {
+    "id": "empty",
+    "require": [],
+    "exclude": [],
+    "prefer": []
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "empty",
+    "require": [],
+    "exclude": [],
+    "prefer": []
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    },
+    {
+     "name": "wine-11.15-amd64-wow64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "empty",
+    "require": [],
+    "exclude": [],
+    "prefer": []
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-wow64.tar.xz"
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "empty",
+    "require": [],
+    "exclude": [],
+    "prefer": []
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-wow64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "a-slr.tar.xz"
+    },
+    {
+     "name": "b.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "empty",
+    "require": [],
+    "exclude": [],
+    "prefer": []
+   }
+  },
+  "ok": true,
+  "result": "a-slr.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "A-SLR.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "empty",
+    "require": [],
+    "exclude": [],
+    "prefer": []
+   }
+  },
+  "ok": true,
+  "result": "A-SLR.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": null
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "empty",
+    "require": [],
+    "exclude": [],
+    "prefer": []
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": 0
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "empty",
+    "require": [],
+    "exclude": [],
+    "prefer": []
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "WINE-11.15-AMD64.TAR.XZ"
+    }
+   ],
+   "family": {
+    "id": "empty",
+    "require": [],
+    "exclude": [],
+    "prefer": []
+   }
+  },
+  "ok": true,
+  "result": "WINE-11.15-AMD64.TAR.XZ"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [],
+   "family": {
+    "id": "case",
+    "require": [
+     "AMD64"
+    ],
+    "exclude": [
+     "WOW64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "a.txt"
+    }
+   ],
+   "family": {
+    "id": "case",
+    "require": [
+     "AMD64"
+    ],
+    "exclude": [
+     "WOW64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "case",
+    "require": [
+     "AMD64"
+    ],
+    "exclude": [
+     "WOW64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    },
+    {
+     "name": "wine-11.15-amd64-wow64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "case",
+    "require": [
+     "AMD64"
+    ],
+    "exclude": [
+     "WOW64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "wine-11.15-wow64.tar.xz"
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "case",
+    "require": [
+     "AMD64"
+    ],
+    "exclude": [
+     "WOW64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "a-slr.tar.xz"
+    },
+    {
+     "name": "b.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "case",
+    "require": [
+     "AMD64"
+    ],
+    "exclude": [
+     "WOW64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "A-SLR.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "case",
+    "require": [
+     "AMD64"
+    ],
+    "exclude": [
+     "WOW64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": null
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "case",
+    "require": [
+     "AMD64"
+    ],
+    "exclude": [
+     "WOW64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": 0
+    },
+    {
+     "name": "wine-11.15-amd64.tar.xz"
+    }
+   ],
+   "family": {
+    "id": "case",
+    "require": [
+     "AMD64"
+    ],
+    "exclude": [
+     "WOW64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "wine-11.15-amd64.tar.xz"
+ },
+ {
+  "op": "pick_asset",
+  "args": {
+   "assets": [
+    {
+     "name": "WINE-11.15-AMD64.TAR.XZ"
+    }
+   ],
+   "family": {
+    "id": "case",
+    "require": [
+     "AMD64"
+    ],
+    "exclude": [
+     "WOW64"
+    ]
+   }
+  },
+  "ok": true,
+  "result": "WINE-11.15-AMD64.TAR.XZ"
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "GE-Proton9-5.tar.gz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "wine-11.15-amd64.tar.xz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "wine-11.15-amd64-wow64.tar.xz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "wine-11.15-staging-amd64.tar.xz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "wine-11.15-staging-tkg-amd64.tar.xz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "wine-11.15-proton-amd64.tar.xz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "proton-cachyos-11.0-v3-x86_64.tar.xz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "proton-cachyos-11.0-slr-x86_64.tar.xz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "notes.txt"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "sha256sums.txt"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "a.tar.gz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "a.tgz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "a.tar.xz"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "a.tar.bz2"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "a.zip"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "A.TAR.GZ"
+  },
+  "ok": true,
+  "result": true
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": "x.tar.gz.sig"
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "looks_like_archive",
+  "args": {
+   "name": ""
+  },
+  "ok": true,
+  "result": false
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "FOO=1; BAR=two words\n# comment\nBAZ=3"
+  },
+  "ok": true,
+  "result": {
+   "FOO": "1",
+   "BAR": "two words",
+   "BAZ": "3"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1;B=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1 B=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "KEY="
+  },
+  "ok": true,
+  "result": {
+   "KEY": ""
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "KEY"
+  },
+  "ok": true,
+  "result": {}
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "=v"
+  },
+  "ok": true,
+  "result": {}
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": " A = b "
+  },
+  "ok": true,
+  "result": {
+   "A": "b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "export A=1"
+  },
+  "ok": true,
+  "result": {
+   "export A": "1"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A='quoted value';B=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "quoted value",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"double\";B=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "double",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A='semi;colon'"
+  },
+  "ok": true,
+  "result": {
+   "A": "semi;colon"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"semi;colon\""
+  },
+  "ok": true,
+  "result": {
+   "A": "semi;colon"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=a\\b"
+  },
+  "ok": true,
+  "result": {
+   "A": "a\\b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=C:\\path\\to"
+  },
+  "ok": true,
+  "result": {
+   "A": "C:\\path\\to"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A='unclosed"
+  },
+  "ok": true,
+  "result": {
+   "A": "unclosed"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"unclosed"
+  },
+  "ok": true,
+  "result": {
+   "A": "unclosed"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1\n\nB=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1\r\nB=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1\rB=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1;;B=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "  "
+  },
+  "ok": true,
+  "result": {}
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": ""
+  },
+  "ok": true,
+  "result": {}
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1;A=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1 A=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1; # comment\nB=2"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "2"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "#A=1"
+  },
+  "ok": true,
+  "result": {}
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1;B"
+  },
+  "ok": true,
+  "result": {
+   "A": "1"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A='a\"b'"
+  },
+  "ok": true,
+  "result": {
+   "A": "a\"b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"a'b\""
+  },
+  "ok": true,
+  "result": {
+   "A": "a'b"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1;B=2;C=3"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "2",
+   "C": "3"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=\"\";B=''"
+  },
+  "ok": true,
+  "result": {
+   "A": "",
+   "B": ""
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=a b c"
+  },
+  "ok": true,
+  "result": {
+   "A": "a b c"
+  }
+ },
+ {
+  "op": "parse_env_block",
+  "args": {
+   "text": "A=1;B='x y';C=3"
+  },
+  "ok": true,
+  "result": {
+   "A": "1",
+   "B": "x y",
+   "C": "3"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {},
+   "extra": "d3d12=b"
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "d3d12=b"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {},
+   "extra": ""
+  },
+  "ok": true,
+  "result": {}
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {},
+   "extra": "   "
+  },
+  "ok": true,
+  "result": {}
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {},
+   "extra": ";"
+  },
+  "ok": true,
+  "result": {}
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {},
+   "extra": ";;a=b;;"
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "a=b"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {
+    "WINEDLLOVERRIDES": "winemenubuilder.exe=d"
+   },
+   "extra": "d3d12=b"
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "winemenubuilder.exe=d;d3d12=b"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {
+    "WINEDLLOVERRIDES": "x=y;"
+   },
+   "extra": "z=w"
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "x=y;z=w"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {
+    "WINEDLLOVERRIDES": ""
+   },
+   "extra": "a=b"
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "a=b"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {
+    "WINEDLLOVERRIDES": "   "
+   },
+   "extra": "a=b"
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "a=b"
+  }
+ },
+ {
+  "op": "merge_dll_overrides",
+  "args": {
+   "env": {
+    "WINEDLLOVERRIDES": "a=b"
+   },
+   "extra": "a=b"
+  },
+  "ok": true,
+  "result": {
+   "WINEDLLOVERRIDES": "a=b;a=b"
+  }
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "1920x1080"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "2560 x 1440"
+  },
+  "ok": true,
+  "result": "2560x1440"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "nope"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": ""
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "   "
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "3840X2160"
+  },
+  "ok": true,
+  "result": "3840x2160"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "12x34"
+  },
+  "ok": true,
+  "result": "12x34"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "123x456"
+  },
+  "ok": true,
+  "result": "123x456"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "123456x123456"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "1x1"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "111x111"
+  },
+  "ok": true,
+  "result": "111x111"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "1920x1080x2"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "x1080"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "1920x"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": "1920 x1080"
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "normalize_desktop_size",
+  "args": {
+   "value": " 1920x1080 "
+  },
+  "ok": true,
+  "result": "1920x1080"
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "Half-Life",
+   "virtual_desktop_size": "1280x720",
+   "argv": [
+    "/usr/bin/wine",
+    "/g/hl.exe"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "/usr/bin/wine",
+   "explorer",
+   "/desktop=HalfLife,1280x720",
+   "/g/hl.exe"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "Half-Life",
+   "virtual_desktop_size": "",
+   "argv": [
+    "/usr/bin/wine",
+    "/g/hl.exe"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "/usr/bin/wine",
+   "explorer",
+   "/desktop=HalfLife,1920x1080",
+   "/g/hl.exe"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "Half-Life",
+   "virtual_desktop_size": "bogus",
+   "argv": [
+    "/usr/bin/wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "/usr/bin/wine",
+   "explorer",
+   "/desktop=HalfLife,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "!!!",
+   "virtual_desktop_size": "",
+   "argv": [
+    "wine",
+    "/g/app.exe"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=Game,1920x1080",
+   "/g/app.exe"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "virtual_desktop_size": "",
+   "argv": [
+    "wine",
+    "/g/app.exe"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=aaaaaaaaaaaaaaaa,1920x1080",
+   "/g/app.exe"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "",
+   "virtual_desktop_size": "",
+   "argv": [
+    "wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=Game,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "",
+   "virtual_desktop_size": "",
+   "argv": []
+  },
+  "ok": true,
+  "result": []
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "ünïcøde game",
+   "virtual_desktop_size": "1x1",
+   "argv": [
+    "wine"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=ncdegame,1920x1080"
+  ]
+ },
+ {
+  "op": "virtual_desktop_argv",
+  "args": {
+   "name": "name with spaces",
+   "virtual_desktop_size": "2x2",
+   "argv": [
+    "wine",
+    "/g/app.exe"
+   ]
+  },
+  "ok": true,
+  "result": [
+   "wine",
+   "explorer",
+   "/desktop=namewithspaces,1920x1080",
+   "/g/app.exe"
+  ]
+ }
+]

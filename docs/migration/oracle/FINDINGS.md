@@ -537,6 +537,52 @@ a `.jpg` name does not imply JPEG. R-11's scope is nevertheless still correct:
 webp can only reach disk through `copy_custom_cover`, because every other writer
 emits JPEG, PNG or ICO bytes.
 
+**Verified against the pinned iced, not assumed.** The sniffing claim above is
+correct, and the citation is
+`iced/graphics/src/image.rs:126-130` (in the libcosmic checkout at the pinned
+rev):
+
+```rust
+let image = ::image::ImageReader::open(&path)
+    .map_err(|e| image::Error::Inaccessible(Arc::new(e)))?
+    .with_guessed_format()
+    .map_err(|e| image::Error::Invalid(Arc::new(e)))?
+    .decode()
+```
+
+`with_guessed_format` reads the magic bytes, so a `<id>.jpg` holding PNG or ICO
+bytes decodes correctly. The port therefore gets F-N's requirement for free on
+the `Handle::Path` route, provided it passes a path and does not pre-decode the
+suffix itself.
+
+**A parity deviation F-N did not predict, found in the same block.** Four lines
+below the decode, iced reads the file a *second* time for its EXIF metadata and
+applies the orientation transform:
+
+```rust
+let operation = std::fs::File::open(path)
+    .ok()
+    .map(std::io::BufReader::new)
+    .and_then(|mut reader| Operation::from_exif(&mut reader).ok())
+    .unwrap_or_else(Operation::empty);
+let rgba = operation.perform(image).into_rgba8();
+```
+
+So a cover JPEG carrying an EXIF `Orientation` tag — reachable through
+`copy_custom_cover` (`covers.py:296-307`), the one path that imports a user's
+own file, e.g. a phone photo — is rendered **upright** by iced. Qt Quick's
+`Image` element exposes no auto-transform property, so the Python app renders
+the same file in its stored orientation. Two different pictures from one file.
+
+This is a **deviation, not a regression** — the iced behaviour is the one a user
+would call correct, and the priority order puts parity first only for
+*behaviour worth keeping*, which this is not. It is recorded rather than
+silenced because a parity checklist that does not mention it would later look
+like a bug. The iced half is verified above; the Qt half is stated from the
+element's documented API and **has not been run**, so it is the weaker of the
+two claims. Owner: the UX implementer at T-14, who can settle it by loading one
+rotated JPEG through the Python app beside the Rust one.
+
 ### F-O. `failure()` can silently lose the runner's error text (a race)
 
 Found by the UX teammate during T-18 while chasing an intermittent

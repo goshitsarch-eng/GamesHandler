@@ -1037,6 +1037,134 @@ fn the_notation_band_diverges_only_in_spelling() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
+/// Which of F-F's two divergence bands a value falls in.
+///
+/// The rule, measured on the pinned writer and recorded in FINDINGS F-F: the
+/// divergence set is exactly two bands, both closed below and open above.
+fn float_band(value: f64) -> &'static str {
+    let magnitude = value.abs();
+    if (1e-5..1e-4).contains(&magnitude) {
+        // Notation: `%g` switches to exponent form below 1e-4, `zmij` does not.
+        "notation"
+    } else if (1e-9..1e-5).contains(&magnitude) {
+        // Padding: Python pads the exponent to two digits, `zmij` does not.
+        "padding"
+    } else {
+        "none"
+    }
+}
+
+#[test]
+fn the_two_float_divergence_bands_are_pinned_at_both_edges() {
+    // F-F says the divergence between Python's float rendering and this port's
+    // is exactly two bands, and nothing else in the whole `f64` range. This
+    // test asserts *that claim* rather than sampling it, because the claim is
+    // what the port depends on: it is why a game library full of `~1.7e9`
+    // timestamps round-trips byte-for-byte, and why the two bands can be left
+    // divergent instead of patched.
+    //
+    //     |x| in [1e-5, 1e-4)   notation   python "1e-05"    rust "0.00001"
+    //     |x| in [1e-9, 1e-5)   padding    python "1e-07"    rust "1e-7"
+    //     everything else       agrees     python "0.0001"   rust "0.0001"
+    //
+    // # Why the edges are the assertion, not an example value
+    //
+    // The corpus found this band by accident and an earlier version of this
+    // test pinned only `1e-5`. That passes if the writer's threshold moves to
+    // `1e-6`, or to `1e-4`, or if `zmij` adopts `%g`'s rules outright — the
+    // threshold is precisely the thing under test, so a value chosen from the
+    // middle of a band cannot see it move. Every case below is therefore
+    // either the agreeing value *immediately* outside an edge (`1e-4`,
+    // `1e-10`) or the diverging value immediately inside one (`9.9e-5`,
+    // `9.9e-6`). F-F's own history is the reason for the suspicion: its first
+    // revision stated the divergence was narrower than it was, on the strength
+    // of a 14-value probe that happened to contain no value in the notation
+    // band at all.
+    //
+    // # Both rendering paths
+    //
+    // `python_str` renders a number through `serde_json::Number`'s `Display`,
+    // which is *not* the same code as this crate's `PythonFormatter`. A float
+    // reaches user-visible text down both routes — `str()` inside
+    // `asset_name`, and the JSON writer for a saved library — so both are
+    // pinned here. They happen to agree today; that is a fact worth stating
+    // rather than assuming, since a change to one would otherwise leave the
+    // other silently divergent.
+    //
+    // Python's answers below were produced by CPython:
+    // `str(v) == json.dumps(v)` for every value in the table.
+    use crate::runners::families::python_str;
+    use serde_json::Value as V;
+
+    let cases: &[(f64, &str, &str, &str)] = &[
+        // value      python      rust        band
+        (1e-5, "1e-05", "0.00001", "notation"),
+        (9.9e-5, "9.9e-05", "0.000099", "notation"),
+        (1e-7, "1e-07", "1e-7", "padding"),
+        (9.9e-6, "9.9e-06", "9.9e-6", "padding"),
+        // The agreeing values immediately outside each edge. These are what
+        // make a moved threshold fail: if the writer started rendering
+        // `1e-4` as `1e-04`, or stopped rendering `1e-10` as `1e-10`, the
+        // band statement above would be false.
+        (1e-4, "0.0001", "0.0001", "none"),
+        (1e-10, "1e-10", "1e-10", "none"),
+        // Far outside both bands, so the "everything else" arm is covered by
+        // values rather than by the absence of values.
+        (1.7e9, "1700000000.0", "1700000000.0", "none"),
+        (1.5, "1.5", "1.5", "none"),
+        (1e23, "1e+23", "1e+23", "none"),
+    ];
+
+    for (value, python_text, rust_text, named_band) in cases {
+        // The table and the rule have to agree with each other, so a case
+        // cannot be filed in the wrong band by hand.
+        assert_eq!(
+            float_band(*value),
+            *named_band,
+            "{value:e} is filed as {named_band:?} but the band rule says {:?}",
+            float_band(*value)
+        );
+
+        let through_str = python_str(&V::from(*value));
+        let through_writer = python_json::to_python_string(value)
+            .expect("a float is serialisable")
+            .trim_end()
+            .to_string();
+        assert_eq!(
+            through_str, *rust_text,
+            "{value:e} rendered through `str()`"
+        );
+        assert_eq!(
+            through_writer, *rust_text,
+            "{value:e} rendered through the JSON writer — the two rendering \
+             paths are supposed to agree with each other, and this is the \
+             assertion that says so"
+        );
+
+        // The divergence, where there is one, is *spelling only*: both texts
+        // reparse to the same double. This is the property that matters — a
+        // value that came back different would be a lost timestamp, not a
+        // differently spelled one.
+        let theirs: f64 = python_text.parse().expect("Python's text parses");
+        assert_eq!(
+            through_str.parse::<f64>().expect("our text parses").to_bits(),
+            theirs.to_bits(),
+            "{value:e}: {through_str} and {python_text} must be the same double"
+        );
+
+        // And the direction of the difference is as stated: a banded value
+        // *must* differ, an unbanded one *must not*. Without this, a case
+        // could sit in a band and still pass by agreeing, which would make the
+        // band claim untested.
+        assert_eq!(
+            through_str != *python_text,
+            *named_band != "none",
+            "{value:e}: rust {through_str:?} vs python {python_text:?} is \
+             not what the {named_band:?} band predicts"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 7. floats, pinned by bits (D-19)
 // ---------------------------------------------------------------------------
@@ -1484,4 +1612,376 @@ fn save_replaces_a_symlink_rather_than_writing_through_it() {
     );
 
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+
+// ---------------------------------------------------------------------------
+// 12. the runners vector corpus (T-03)
+// ---------------------------------------------------------------------------
+//
+// `docs/migration/oracle/run_runners_vectors.py` answers one question per line
+// from the *Python* implementation. `--suite` emits the adversarial case list,
+// which is committed as `runners_vectors.cases.json` beside its answers, so
+// both are derived from reviewable code rather than hand-maintained.
+//
+//     python3 docs/migration/oracle/run_runners_vectors.py --suite \
+//         > docs/migration/oracle/fixtures/runners_vectors.cases.json
+//     python3 docs/migration/oracle/run_runners_vectors.py \
+//         < docs/migration/oracle/fixtures/runners_vectors.cases.json \
+//         > docs/migration/oracle/fixtures/runners_vectors.answers.json
+//
+// **Why this exists next to the file-shaped fixtures.** The oracle in §1-§11
+// pins JSON *bytes*: it can prove the port writes `games.json` the way Python
+// does. It cannot prove anything about the pure helpers — `shlex.split`, the
+// `PurePosixPath` basename rule, `or ""` truthiness — and those are where the
+// port's own two defects were found. Two of the ops here are direct ports of
+// bugs that reached the committed code (`asset_name`, `safe_archive_name`).
+
+/// The ops the corpus carries and this file answers.
+///
+/// A corpus op is covered by being on exactly one of these two lists, and
+/// `the_vector_corpus_is_fully_replayed` asserts the union against what the
+/// corpus actually contains. So an op added to the suite without an arm fails
+/// loudly, and — the other direction, which a one-list guard misses — an op
+/// that quietly *disappears* from the suite fails too. That second case is the
+/// degenerate version of "a fixture that only ever checks what it already
+/// covers": a corpus that shrank to nothing would otherwise stay green.
+const PORTED_VECTOR_OPS: [&str; 10] = [
+    "asset_matches",
+    "asset_name",
+    "install_id_from_parts",
+    "looks_like_archive",
+    "pick_asset",
+    "pure_posix_name",
+    "safe_archive_name",
+    "safe_install_id",
+    "sanitise_release_tag",
+    "shell_split",
+];
+
+/// The four ops whose port lands with `launch_opts`.
+///
+/// Named explicitly rather than silently skipped.
+const UNPORTED_VECTOR_OPS: [&str; 4] = [
+    "parse_env_block",
+    "merge_dll_overrides",
+    "normalize_desktop_size",
+    "virtual_desktop_argv",
+];
+
+fn vector_fixture(name: &str) -> Value {
+    let path = fixtures_dir().join(name);
+    match python_json::parse_lenient(&read(&path)) {
+        Ok(value) => value,
+        Err(error) => panic!("{} is not readable JSON: {error}", path.display()),
+    }
+}
+
+/// The answer the Python implementation gave for one case.
+fn vector_answer(answers: &[Value], index: usize) -> &Value {
+    answers
+        .get(index)
+        .unwrap_or_else(|| panic!("the answers file has no record {index}"))
+}
+
+/// Render Python's answer as the string the Rust side has to produce, so the
+/// two are compared as text rather than as two JSON shapes.
+///
+/// A `Value` answer is rendered with the port's own writer, which is what makes
+/// this a comparison of *behaviour* and not of serde's float formatting: the
+/// float cases in `install_id_from_parts` never produce one, but a future op
+/// that does will be compared with the port's own Python-compatible writer
+/// rather than with `serde_json`'s.
+fn python_answer_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => python_json::to_python_string(other)
+            .expect("the value is serialisable")
+            .trim_end()
+            .to_string(),
+    }
+}
+
+fn rust_vector_answer(op: &str, args: &Value) -> Result<Value, String> {
+    use crate::runners::families;
+    use crate::runners::{archive, shell};
+
+    let text = |key: &str| -> String {
+        args.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("{op} needs a string {key:?}"))
+            .to_string()
+    };
+
+    match op {
+        "shell_split" => match shell::split_posix(&text("text")) {
+            Ok(words) => Ok(json!(words)),
+            // Python raises `ValueError`; the recorded answer is
+            // `"ValueError: <message>"` and the message is user-visible.
+            Err(error) => Err(format!("ValueError: {error}")),
+        },
+        "pure_posix_name" => Ok(json!(crate::runners::pure_posix_name(&text("text")))),
+        "safe_archive_name" => Ok(json!(archive::safe_archive_name(
+            &text("name"),
+            args.get("fallback")
+                .and_then(Value::as_str)
+                .unwrap_or("runner.tar.gz")
+        ))),
+        "asset_name" => {
+            let asset = args.get("asset").expect("asset_name needs an asset");
+            Ok(json!(families::asset_name(asset)))
+        }
+        "asset_matches" => {
+            let (require, exclude) = vector_tokens_by_family(args);
+            Ok(json!(families::asset_matches_tokens(
+                &text("asset_name"),
+                &borrowed(&require),
+                &borrowed(&exclude)
+            )))
+        }
+        "looks_like_archive" => Ok(json!(families::looks_like_archive(&text("name")))),
+        "pick_asset" => {
+            let (require, exclude, prefer) = vector_tokens_by_family_full(args);
+            let assets = args
+                .get("assets")
+                .and_then(Value::as_array)
+                .expect("pick_asset needs assets")
+                .clone();
+            Ok(
+                match families::pick_asset_tokens(
+                    &assets,
+                    &borrowed(&require),
+                    &borrowed(&exclude),
+                    &borrowed(&prefer),
+                ) {
+                    None => Value::Null,
+                    // The op records the chosen *name*, so a missing or falsy
+                    // name is the empty string rather than a null.
+                    Some(asset) => json!(families::asset_name(&asset)),
+                },
+            )
+        }
+        "safe_install_id" => match archive::safe_install_id(&text("install_id")) {
+            Ok(id) => Ok(json!(id)),
+            Err(error) => Err(format!("ValueError: {error}")),
+        },
+        "sanitise_release_tag" => match archive::sanitise_release_tag(&text("tag")) {
+            Ok(tag) => Ok(json!(tag)),
+            Err(error) => Err(format!("ValueError: {error}")),
+        },
+        "install_id_from_parts" => {
+            // The op builds a `ReleaseInfo` from raw parts and calls
+            // `install_id`, which reads only these two fields — see
+            // `families::install_id_for`.
+            match families::install_id_for(&text("tag"), &text("family_id")) {
+                Ok(id) => Ok(json!(id)),
+                Err(error) => Err(format!("ValueError: {error}")),
+            }
+        }
+        "wine_prefix_root" => Ok(json!(crate::runners::wine_prefix_root(
+            Path::new(&text("prefix"))
+        )
+        .to_string_lossy())),
+        "prefix_drive_cs" => Ok(json!(crate::runners::prefix_drive_cs(Path::new(
+            &text("prefix")
+        ))
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>())),
+        other => panic!("no Rust arm for vector op {other:?}"),
+    }
+}
+
+/// The `require`/`exclude` token lists a selection case names.
+///
+/// A case carries either a catalogue `family_id` or an inline `family` spec.
+/// The inline form is not a convenience: the corpus needs token combinations no
+/// shipped family has (both a `require` and an `exclude` that bite), and
+/// `RunnerFamily`'s fields are `&'static`, so a synthetic one cannot be built
+/// here at all. That is why `families` exposes the token-level entry points.
+fn vector_tokens(args: &Value) -> (Vec<String>, Vec<String>, Vec<String>) {
+    use crate::runners::families;
+
+    if let Some(id) = args.get("family_id").and_then(Value::as_str) {
+        let family = families::family_by_id(id).expect("a catalogue family id");
+        return (
+            family.require.iter().map(|t| (*t).to_string()).collect(),
+            family.exclude.iter().map(|t| (*t).to_string()).collect(),
+            family.prefer.iter().map(|t| (*t).to_string()).collect(),
+        );
+    }
+    let spec = args.get("family").expect("needs family_id or family");
+    let strings = |key: &str| -> Vec<String> {
+        spec.get(key)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    (strings("require"), strings("exclude"), strings("prefer"))
+}
+
+fn vector_tokens_by_family(args: &Value) -> (Vec<String>, Vec<String>) {
+    let (require, exclude, _) = vector_tokens(args);
+    (require, exclude)
+}
+
+fn vector_tokens_by_family_full(args: &Value) -> (Vec<String>, Vec<String>, Vec<String>) {
+    vector_tokens(args)
+}
+
+/// `&[&str]` over owned token lists, for the duration of one call.
+fn borrowed(tokens: &[String]) -> Vec<&str> {
+    tokens.iter().map(String::as_str).collect()
+}
+
+#[test]
+fn the_vector_corpus_is_fully_replayed() {
+    // Guards the guard: every op in the corpus is either replayed below or
+    // named in `UNPORTED_VECTOR_OPS`. Without this, an op that quietly stopped
+    // being replayed would leave a green suite covering less than it claims.
+    let cases = vector_fixture("runners_vectors.cases.json");
+    let cases = cases
+        .get("cases")
+        .and_then(Value::as_array)
+        .expect("the corpus is a `cases` array");
+
+    let mut seen: Vec<String> = Vec::new();
+    for case in cases {
+        let op = case
+            .get("op")
+            .and_then(Value::as_str)
+            .expect("every case names an op")
+            .to_string();
+        if !seen.contains(&op) {
+            seen.push(op);
+        }
+    }
+    seen.sort();
+
+    let mut expected: Vec<String> = PORTED_VECTOR_OPS
+        .iter()
+        .chain(UNPORTED_VECTOR_OPS.iter())
+        .map(|op| (*op).to_string())
+        .collect();
+    expected.sort();
+    assert_eq!(
+        seen, expected,
+        "the corpus and the arm lists are out of step: a corpus op has no Rust \
+         arm, or an op named here is no longer in the suite"
+    );
+    assert!(
+        !seen.is_empty(),
+        "the vector corpus is empty — regenerate it"
+    );
+    for op in UNPORTED_VECTOR_OPS {
+        assert!(
+            seen.iter().any(|present| present == op),
+            "{op} is listed as unported but the corpus no longer carries it"
+        );
+    }
+}
+
+#[test]
+fn every_runner_vector_matches_python() {
+    // The main replay. Each case is dispatched to the port and compared with
+    // the answer `run_runners_vectors.py` recorded from CPython, as text so a
+    // list, a string and a null are all comparable.
+    let cases = vector_fixture("runners_vectors.cases.json");
+    let cases = cases
+        .get("cases")
+        .and_then(Value::as_array)
+        .expect("the corpus is a `cases` array");
+    let answers = vector_fixture("runners_vectors.answers.json");
+    let answers = answers.as_array().expect("answers is an array");
+    assert_eq!(
+        cases.len(),
+        answers.len(),
+        "the corpus and its answers are out of step — regenerate both"
+    );
+
+    let mut replayed = 0usize;
+    let mut deferred = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+    for (index, case) in cases.iter().enumerate() {
+        let op = case.get("op").and_then(Value::as_str).expect("an op");
+        if UNPORTED_VECTOR_OPS.contains(&op) {
+            // Counted rather than skipped silently, so the assertion below is
+            // "every case in the corpus is either replayed or acknowledged as
+            // deferred" instead of a magic number that drifts.
+            deferred += 1;
+            continue;
+        }
+        let args = case.get("args").cloned().unwrap_or(Value::Null);
+        let answer = vector_answer(answers, index);
+
+        let outcome = rust_vector_answer(op, &args);
+        let (expected_ok, expected_text) = match answer.get("ok") {
+            Some(Value::Bool(true)) => (
+                true,
+                python_answer_text(answer.get("result").unwrap_or(&Value::Null)),
+            ),
+            Some(Value::Bool(false)) => (
+                false,
+                answer
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
+            other => panic!("malformed answer record at {index}: {other:?}"),
+        };
+
+        match (&outcome, expected_ok) {
+            (Ok(value), true) => {
+                let produced = python_answer_text(value);
+                if produced != expected_text {
+                    failures.push(format!(
+                        "#{index} {op}({args})\n  rust:   {produced}\n  python: {expected_text}"
+                    ));
+                }
+            }
+            (Err(error), false) => {
+                if error != &expected_text {
+                    failures.push(format!(
+                        "#{index} {op}({args})\n  rust:   {error}\n  python: {expected_text}"
+                    ));
+                }
+            }
+            (Ok(value), false) => failures.push(format!(
+                "#{index} {op}({args}) should have raised {expected_text}, \
+                 but produced {}",
+                python_answer_text(value)
+            )),
+            (Err(error), true) => failures.push(format!(
+                "#{index} {op}({args}) should have produced {expected_text}, \
+                 but raised {error}"
+            )),
+        }
+        replayed += 1;
+    }
+
+    assert_eq!(
+        failures.len(),
+        0,
+        "{} of {replayed} vector cases disagree with Python:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    assert_eq!(
+        replayed + deferred,
+        cases.len(),
+        "every case should be either replayed or deferred"
+    );
+    assert!(
+        replayed >= 480,
+        "expected the whole ported corpus, replayed {replayed} of {} \
+         ({deferred} deferred to launch_opts)",
+        cases.len()
+    );
 }
