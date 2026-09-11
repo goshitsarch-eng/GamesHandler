@@ -156,7 +156,7 @@ behaviour. [`is_delimiter`] is that structural rule, and it is what the checks
 use; the renderers are how the rule was confirmed rather than what implements
 it.
 
-# What the headers did not fix (#94)
+# The fix the headers did not fix, and then did (#94)
 
 The four headers were taken from "each file's own first well-formed table
 rather than retyped" (`7d8176e`), and for `PLAN.md` the first well-formed table
@@ -164,11 +164,42 @@ is the legend at `:12` — `| Doc | Owner | Contents |`. That is a three-cell
 header over `T-12`…`T-40`, whose rows have four cells, so GFM renders three
 columns and **drops the Notes cell of all 29 rows**: rendered, T-12 produces
 three `<td>` where T-01 produces four, and the Notes text is simply absent. It
-is #84's defect class again — silent, because the row still renders — and it is
-recorded in [`MISHEADED_TABLES`] rather than fixed here, because `PLAN.md` is
-the lead's file (D-05). The rule it illustrates is the one both findings share:
-a table has one header, and copying one from elsewhere in the file is retyping
-with extra steps.
+is #84's defect class again — silent, because the row still renders — and it
+was worse than the paragraph `7d8176e` replaced, which lost every cell but
+claimed nothing.
+
+**It was reported rather than fixed here** (`PLAN.md` is the lead's, D-05) and
+recorded in [`MISHEADED_TABLES`]; the lead repaired the header at `b2459c6`,
+and the deferral then *expired on its own* — `test_the_misheaded_table_list_is_not_stale`
+went red on the repaired tree and required the entry's deletion, which is the
+whole reason the list is checked in the same pass that uses it. Both #84's
+`T-09` entry and this one are gone as of that commit, so the row check asserts
+over both tables on their own merits for the first time. The rule the finding
+leaves behind is the one it shares with #93: a table has one header, and taking
+one from elsewhere in the file is retyping with extra steps.
+
+# The third way a `|`-run is not a table: a delimiter that disagrees
+
+`tables` requires a delimiter row, but until this was measured nothing required
+the delimiter to *agree* with the header it delimits. Measured in
+`markdown_it`'s `gfm-like` preset, the two disagreements are not the same
+failure:
+
+  * **Header narrower than the rows** (`| A | B | C |` over a four-cell row)
+    renders a three-column table and silently **drops** the extra cell — #84,
+    #94.
+  * **Delimiter narrower or wider than the header** (`| A | B | C |` over
+    `|---|---|`) renders **no table at all**: the whole run is a paragraph, cell
+    by cell, which is #93's loss arriving by a route #93's rule cannot see (the
+    run *is* immediately preceded by a header and a delimiter —
+    [`is_delimiter`] is satisfied — so [`headerless_runs`] is clean while every
+    row of the table is prose).
+
+So the arity rule is stated over all three rows of the shape, and
+[`delimiter_mismatches`] is its own function with its own message because the
+remedy differs: a narrow header is a header to widen, a narrow delimiter is a
+delimiter to widen, and confusing the two is how `7d8176e`'s repair went wrong
+in the first place.
 """
 
 import re
@@ -225,20 +256,20 @@ MIN_TAG_IDS = 2
 MIN_TAG_FILES = 2
 
 # Floors for the table direction, set below the pair's total for the same
-# reason. Measured at `f051b82`, counting only runs that are actually tables:
-# PLAN.md 15 tables / 144 body rows, VERIFY-FINDINGS.md 2 / 34 — **17 tables and
-# 178 rows** together. The other 4 runs, 56 lines, are not tables at all and are
-# named in [`MALFORMED_RUNS`]; under the earlier rule that called every run a
-# table these parsed as 230 rows (171 + 59), and the comment here used to say
-# 264. That 264 is not reproducible and was carried for several commits without
-# being re-measured, which is why the numbers above name the sha they came from.
+# reason. Measured at `b2459c6`, counting only runs that are actually tables:
+# PLAN.md 16 tables / 173 body rows, VERIFY-FINDINGS.md 5 / 70 — **21 tables and
+# 243 rows** together, up from 17/178 at `f051b82` as the four headerless runs
+# became tables and both documents grew. The comment here was 264 at one point
+# and was not reproducible; the numbers above name the sha they came from for
+# that reason.
 MIN_TABLES = 12
 MIN_TABLE_ROWS = 150
 
 # Floors for #93's run check, per document. A run of id-bearing rows is the unit
 # the rule is stated over, and a parser that found no runs would report every
-# document headed. Measured at `bc47b41`: PLAN.md 2 runs / 40 rows,
-# VERIFY-FINDINGS.md 4 runs / 76 rows.
+# document headed. Measured at `b2459c6` (re-measured; `bc47b41` read 40/76, and
+# the lead's repairs and #96's row moved both): PLAN.md 2 runs / 41 rows,
+# VERIFY-FINDINGS.md 4 runs / 68 rows.
 MIN_PLAN_RUNS = 2
 MIN_PLAN_RUN_ROWS = 20
 MIN_FINDINGS_RUNS = 3
@@ -259,20 +290,17 @@ MIN_FINDINGS_RUN_ROWS = 40
 #: An entry that stops describing a malformed row — because the row was fixed, or
 #: the table was rewritten — fails `test_the_malformed_row_list_is_not_stale`, so
 #: the list cannot outlive the defect.
-MALFORMED_ROWS = {
-    (PLAN.name, "T-09"): (
-        "#84. The T-09 row has **5 cells in a 4-column table** and the extra one is "
-        "silently dropped when rendered: GFM ignores cells past the header's count, so "
-        "the `**REMAINDER, per D-52 (#68b)**` paragraph — the note that T-09 is LANDED "
-        "while its scope is not met — does not appear in the table. Measured by "
-        "rendering the table: 4 `<td>` cells, and `none asks whether its P-items are "
-        "met` absent from the HTML. Left as a deferral because `docs/migration/PLAN.md` "
-        "is the lead's file (D-05); the fix is theirs, and it is to merge the two "
-        "paragraphs into the Notes cell (or add the fifth column to the header) rather "
-        "than to escape a pipe — this is an extra cell, not a split one. Delete this "
-        "entry when the row is fixed."
-    ),
-}
+#:
+#: **EMPTY as of `b2459c6`, and it emptied itself.** Its one entry, `T-09`, was
+#: a row with 5 cells in a 4-column table: the extra cell was the `REMAINDER,
+#: per D-52` note and GFM silently drops cells past the header's count, so the
+#: one paragraph saying T-09 was LANDED while its scope was unmet rendered
+#: nowhere. The lead escaped the pipe at `b2459c6` and
+#: `test_the_malformed_row_list_is_not_stale` immediately went red demanding the
+#: entry's deletion — which is the design working, not a false alarm: the
+#: deferral is checked in the same pass that uses it, so it cannot outlive the
+#: defect it names. The mechanism stays for the next one.
+MALFORMED_ROWS = {}
 
 #: Whole tables whose header disagrees with every row under it, keyed by
 #: `(document, first body row's first cell)` with the finding that owns each.
@@ -287,22 +315,16 @@ MALFORMED_ROWS = {
 #: named in the test's output with its finding, and
 #: `test_the_misheaded_table_list_is_not_stale` fails if an entry stops naming a
 #: table whose rows disagree with its own header.
-MISHEADED_TABLES = {
-    (PLAN.name, "T-12"): (
-        "#94. **The fix for #93 put the wrong header on half the task table.** "
-        "`PLAN.md:361` was given `| Doc | Owner | Contents |` — three cells, and the "
-        "legend table's header from `:12`, not this table's `| # | Task | Owner | "
-        "Notes |`. Every row from T-12 to T-40 has four cells, so GFM renders three "
-        "columns and **drops the Notes cell of all 29 rows**: measured by rendering, "
-        "T-12 produces 3 `<td>` where T-01 produces 4, and the Notes text "
-        "`OWNERSHIP CORRECTED` is absent from the output. This is #84's own defect "
-        "class (silent, because the row still renders) and it is worse than the "
-        "paragraph it replaced, where every cell was lost but nothing claimed "
-        "otherwise. **Fix: replace `:361` with `| # | Task | Owner | Notes |`** — the "
-        "same header the table's first half uses at `:341`. Delete this entry when "
-        "the header matches."
-    ),
-}
+#: **EMPTY as of `b2459c6`, and it emptied itself the same way.** Its one entry
+#: was finding #94: the header the `7d8176e` repair inserted over `T-12`…`T-40`
+#: was `| Doc | Owner | Contents |` — the legend table's header, taken from
+#: `PLAN.md:12` — so three cells governed 29 four-cell rows and GFM dropped the
+#: `Notes` cell of every one of them, which is where the landing markers live.
+#: The lead replaced it with `| # | Task | Owner | Notes |` at `b2459c6`; the
+#: entry went stale, `test_the_misheaded_table_list_is_not_stale` went red, and
+#: the entry was deleted. `PLAN.md:361` is now the second half of the same table
+#: `PLAN.md:341` starts, with the same header.
+MISHEADED_TABLES = {}
 
 #: Pipe-runs that are not tables, keyed by `(document, first cell)` with the
 #: finding that owns each.
@@ -552,6 +574,10 @@ def tables(text):
     The delimiter row is dropped: it is dashes and colons, it carries no cells to
     disagree about, and including it would make the count depend on how many
     dashes an author wrote.
+
+    Dropped from the *rows*, not from the rule — a delimiter that disagrees with
+    its header is measured by [`delimiter_mismatches`], because that disagreement
+    loses the table rather than a cell and so fails differently.
     """
     out = []
     for run in pipe_runs(text):
@@ -565,6 +591,33 @@ def tables(text):
             if not is_delimiter(row[1])
         ]
         out.append((header_line, n_cells, rows))
+    return out
+
+
+def delimiter_mismatches(doc, text):
+    """`(doc, header_line, n_header, n_delimiter, header_text)` per disagreeing table.
+
+    The third way a `|`-run is not a table. GFM accepts a delimiter row as a
+    delimiter only when its cell count equals the header's; measured in
+    `markdown_it`'s `gfm-like` preset, `| A | B | C |` over `|---|---|` renders
+    as a **paragraph** — the whole table, every cell of it, back to plain text.
+    That is #93's loss reached by a route [`headerless_runs`] cannot see: the run
+    *is* immediately preceded by a header and a delimiter row, so that check is
+    clean, and only the counts say there is no table here.
+
+    Kept apart from [`malformed_rows`] because it fails differently and is fixed
+    differently. A header narrower than its rows drops cells and still renders;
+    a delimiter narrower than its header renders nothing. Confusing the two is
+    how `7d8176e`'s repair put a 3-cell header over 4-cell rows (#94) while
+    looking for a missing one.
+    """
+    out = []
+    for run in pipe_runs(text):
+        if len(run) < 2 or not is_delimiter(run[1][1]):
+            continue
+        n_header, n_delimiter = len(cells(run[0][1])), len(cells(run[1][1]))
+        if n_header != n_delimiter:
+            out.append((doc, run[0][0], n_header, n_delimiter, run[0][1].strip()))
     return out
 
 
@@ -1065,6 +1118,117 @@ class PlanTraceabilityTests(unittest.TestCase):
                 f"{table!r} — {len(rows)} rows disagree with their header. "
                 f"{reason[:100]}…"
             )
+        # The sweep, stated rather than implied by the green assertion above —
+        # and stated per document, because the assertion is satisfied just as
+        # well by a parser that read one file and skipped the other.
+        print(
+            "header arity: "
+            + "; ".join(
+                f"{doc} {len(tables(text))} tables / "
+                f"{sum(len(rows) for _, _, rows in tables(text))} rows, "
+                f"{sum(1 for row in problems if row[0] == doc)} rows disagree with "
+                f"their own header"
+                for doc, text in documents
+            )
+        )
+
+    def test_every_delimiter_row_matches_its_header(self):
+        """The third way a `|`-run is not a table: a delimiter that disagrees.
+
+        [`headerless_runs`] is satisfied here — a header *is* immediately above,
+        and a `|---|` row is immediately below it — so this is the one loss in
+        the family that neither of the other two checks can see. Rendered, the
+        whole run is a paragraph.
+        """
+        documents = ((PLAN.name, self.plan), (FINDINGS.name, self.findings))
+        problems = [
+            entry for doc, text in documents for entry in delimiter_mismatches(doc, text)
+        ]
+        self.assertEqual(
+            [],
+            problems,
+            "these tables' delimiter rows have a different number of cells than "
+            "their headers, so no GFM renderer shows them as tables at all — the "
+            "header, the delimiter and every row under them render as one "
+            "paragraph:\n"
+            + "\n".join(
+                f"  {doc}:{line}  header {n_header} cells, delimiter {n_delimiter}"
+                f"  ({header!r})"
+                for doc, line, n_header, n_delimiter, header in problems
+            )
+            + "\n\nWiden the delimiter row to the header's width (or the header to "
+            "the delimiter's) — GFM requires the two to agree, and a delimiter "
+            "with the wrong count does not produce a narrow table, it produces no "
+            "table. Check which of the two is wrong before editing: `7d8176e` "
+            "went looking for a missing header and inserted one from a different "
+            "table (#94), which is this rule's neighbour and not this rule.",
+        )
+        print(
+            "delimiter arity: "
+            + "; ".join(
+                f"{doc} {len(tables(text))} tables, "
+                f"{sum(1 for entry in problems if entry[0] == doc)} with a "
+                f"disagreeing delimiter row"
+                for doc, text in documents
+            )
+        )
+
+    def test_the_delimiter_check_notices_a_narrow_delimiter(self):
+        """The rule above, driven over the state it exists to catch.
+
+        The mutation is the one GFM answers with a paragraph rather than a
+        truncated table: the task table's own delimiter row, narrowed by one
+        cell. Its header is still immediately above it and the `|---|` row is
+        still immediately below, so `headerless_runs` reports this document
+        clean — which is the point of the rule and the reason it is a separate
+        check.
+        """
+        self.assertEqual(
+            [],
+            [entry for entry in delimiter_mismatches(PLAN.name, self.plan)],
+            "this test needs a document whose delimiters all agree, so the "
+            "mutation is the only thing it can be reporting",
+        )
+        rows = self.plan.splitlines()
+        first_row = next(
+            n for n, line in enumerate(rows, start=1) if line.startswith("| T-12 |")
+        )
+        # `enumerate(..., start=1)` above means the T-12 row's *line number* is
+        # `first_row` and the header's is `first_row - 2`, so the list index of
+        # the delimiter row is `first_row - 2`.
+        delimiter = first_row - 2
+        self.assertTrue(
+            is_delimiter(rows[delimiter]),
+            f"expected a delimiter row at {PLAN.name}:{delimiter + 1}; found "
+            f"{rows[delimiter]!r}",
+        )
+        narrowed = "|---|---|---|"
+        self.assertNotEqual(
+            narrowed, rows[delimiter], "the mutation did not change the delimiter"
+        )
+        rows[delimiter] = narrowed
+        mutated = "\n".join(rows)
+
+        found = delimiter_mismatches(PLAN.name, mutated)
+        self.assertEqual(
+            [(first_row - 2, 4, 3)],
+            [(line, n_header, n_delimiter) for _, line, n_header, n_delimiter, _ in found],
+            f"narrowing a delimiter row to 3 cells under a 4-cell header was not "
+            f"reported as exactly that. Reported: {found}. Rendered, this table "
+            f"is a paragraph — and the run check is clean on it, because the "
+            f"header and the `|---|` row are both still where GFM wants them.",
+        )
+        self.assertEqual(
+            [],
+            headerless_runs(PLAN.name, mutated),
+            "the narrowed delimiter was reported as a *missing* header. The two "
+            "losses have different remedies — a missing header is a header to "
+            "write, a disagreeing delimiter is a delimiter to widen — and a check "
+            "that folds them together names the wrong fix. This assertion is also "
+            "what makes the case for the rule being its own function: the run "
+            "check is clean on this mutation, so nothing else in this file sees "
+            "that the table is gone.",
+        )
 
     def test_the_malformed_row_list_is_not_stale(self):
         """Deferrals are checked, so the list cannot outlive the defect."""
@@ -1265,6 +1429,47 @@ class PlanTraceabilityTests(unittest.TestCase):
             f"one it is reachable at only if the count is taken after removing the "
             f"edge pipes.",
         )
+
+        # The same row again, with the two GFM details the check has to get right
+        # applied — encoded here rather than left to prose, because both were
+        # got wrong by hand today and both fail *silently* when got wrong:
+        #
+        #   * the pipe escaped as `\|`, so it is content and not a split; and
+        #   * no closing `|`, which GFM permits (this row has one, so drop it).
+        #
+        # If the counter handled either wrongly it would report the same thing
+        # for this row as for the row above, and the two cases would be
+        # indistinguishable in the output — which is precisely how a check that
+        # counts the wrong thing stays green.
+        escaped_row = (
+            "| T-99 | `app`: probe | UX | `DEFAULT_TOGGLES.iter().map(\\|(key, _, _)\\| "
+            "*key)`"
+        )
+        escaped = self.plan.replace(anchor, anchor + "\n" + escaped_row, 1)
+        self.assertNotEqual(escaped, self.plan, "the escaped row was not inserted")
+        # Not vacuous: the row is in a parsed table, with the cell count the
+        # header has. An assertion of `[]` above a mutation that inserted
+        # nothing is the defect this whole file is about.
+        self.assertTrue(
+            any(
+                first == "T-99" and got == expected
+                for _, expected, rows in tables(escaped)
+                for _, got, first in rows
+            ),
+            "the escaped row is not in any parsed table, so the assertion below "
+            "would pass on nothing at all",
+        )
+        self.assertEqual(
+            [],
+            live_malformed_rows(PLAN.name, escaped),
+            "a row whose cell escapes its pipe as `\\|` and omits the optional "
+            "closing pipe was reported as malformed. Both are valid GFM: `\\|` is "
+            "a literal pipe inside a cell, and neither edge pipe is required "
+            "(`PLAN.md:325` is such a row and is in the tree today). A counter "
+            "that counts `|` verbatim is wrong in both directions — red on this "
+            "row, blind to the one above — which is why `cells` strips the edges "
+            "and splits on unescaped pipes.",
+        )
         print(
             f"table check: {sum(len(tables(t)) for t in (self.plan, self.findings))} "
             f"tables over 2 documents, "
@@ -1272,6 +1477,112 @@ class PlanTraceabilityTests(unittest.TestCase):
             f"rows in them; the mutated plan's only live defect is "
             f"{[first for _, _, _, _, first, _ in found]} — the fabricated row whose "
             f"cell contains `map(|(key, _, _)| *key)`"
+        )
+
+    def test_the_arity_check_notices_a_narrowed_header(self):
+        """#94, restored: the header is present and the rows are all well-formed.
+
+        The state this rule exists for, and the one no earlier version of this
+        file could catch. The header above `T-12`…`T-40` is replaced with the
+        three-cell legend header `| Doc | Owner | Contents |` that `7d8176e`
+        actually put there — every row beneath is untouched and still has the
+        cell count it always had. So a check that asks "is each row well-formed"
+        and a check that asks "is there a header" are both clean, and the table
+        is still broken: GFM renders three columns and drops the fourth.
+        """
+        self.assertEqual(
+            [],
+            live_malformed_rows(PLAN.name, self.plan),
+            "this test needs a clean baseline to mutate from",
+        )
+        rows = self.plan.splitlines()
+        first_row = next(
+            n for n, line in enumerate(rows, start=1) if line.startswith("| T-12 |")
+        )
+        # List indices, not line numbers: the T-12 row is `rows[first_row - 1]`,
+        # so the header is two above it and the delimiter is the line between.
+        header = first_row - 3
+        self.assertTrue(
+            rows[header].startswith("|") and is_delimiter(rows[header + 1]),
+            f"expected a header row at {PLAN.name}:{header + 1} over a delimiter "
+            f"row; found {rows[header]!r} then {rows[header + 1]!r}",
+        )
+        # Both rows, because that is what `7d8176e` inserted and what makes this
+        # an arity defect rather than a delimiter one: a 3-cell header over a
+        # 3-cell delimiter is a *valid* table. Only the rows disagree with it.
+        narrow = "| Doc | Owner | Contents |"
+        narrow_delimiter = "|---" * 3 + "|"
+        self.assertNotEqual(narrow, rows[header], "the header already is this")
+        self.assertEqual(
+            4,
+            len(cells(rows[header])),
+            f"the header at {PLAN.name}:{header + 1} does not have the four cells "
+            f"this test is written around; found {rows[header]!r}",
+        )
+        self.assertEqual(
+            len(cells(rows[header])),
+            len(cells(rows[header + 1])),
+            f"the delimiter at {PLAN.name}:{header + 2} already disagrees with its "
+            f"header, so this test would be measuring the delimiter rule instead",
+        )
+        rows[header], rows[header + 1] = narrow, narrow_delimiter
+        mutated = "\n".join(rows)
+
+        # The other two checks, on the same mutation — this is the whole point of
+        # the finding, so it is asserted rather than argued.
+        self.assertEqual(
+            [],
+            headerless_runs(PLAN.name, mutated),
+            "the narrowed header was reported as a *missing* header. It is not "
+            "missing: it is there, it is followed by a delimiter row, and the run "
+            "under it is a table. Only its width is wrong (#94).",
+        )
+        self.assertEqual(
+            [],
+            delimiter_mismatches(PLAN.name, mutated),
+            "the narrowed header/delimiter pair was reported as a delimiter "
+            "mismatch. Both have three cells, so GFM accepts them as a table and "
+            "the defect is the *rows* disagreeing with the header — which is the "
+            "finding, and the reason the arity rule is stated over all three rows "
+            "of the shape rather than over the delimiter alone.",
+        )
+
+        found = live_malformed_rows(PLAN.name, mutated)
+        self.assertEqual(
+            29,
+            len(found),
+            f"the narrowed header did not make every row under it disagree with it. "
+            f"Reported: {found}. T-12…T-40 is 29 rows, all with four cells under a "
+            f"header of three.",
+        )
+        self.assertEqual(
+            {(3, 4, "T-12")},
+            {(expected, got, table) for _, _, expected, got, _, table in found},
+            f"the 29 rows were not reported against their own header — every one "
+            f"should read `4 cells, header has 3` against the table whose first "
+            f"body row is T-12. Reported: "
+            f"{sorted({(expected, got, table) for _, _, expected, got, _, table in found})}",
+        )
+        self.assertEqual(
+            [f"T-{n:02d}" for n in range(12, 41)],
+            [first for _, _, _, _, first, _ in found],
+            f"the rows reported are not T-12…T-40 in order. Reported: "
+            f"{[first for _, _, _, _, first, _ in found]}",
+        )
+        # Named by the table's first body row, so the report says which table is
+        # broken and not only how many rows are — 29 lines of the same sentence
+        # is how a finding gets buried.
+        self.assertEqual(
+            {"T-12"},
+            {table for *_, table in found},
+            "the rows were reported without naming the table they are in",
+        )
+        print(
+            f"arity check: the header above T-12 in a scratch copy replaced with "
+            f"`{narrow}` — every one of the {len(found)} rows beneath it is "
+            f"reported against table 'T-12' while `headerless_runs` and "
+            f"`delimiter_mismatches` both stay clean, which is why the rule is "
+            f"stated over the header's width and not only over its presence"
         )
 
 
