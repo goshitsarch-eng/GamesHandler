@@ -480,8 +480,32 @@ prints the full table instead, for a diagnostic sweep.
    `clippy` package; in the Flatpak SDK it arrives via rust-stable).
 3. `test` — `cargo test`. Unit + business-logic + integration + manifest tests
    (sections 5.1–5.5). Runs with `DISPLAY`/`WAYLAND_DISPLAY`/`WAYLAND_SOCKET`
-   unset, so it must pass with no display server and no GPU.
-4. `oracle-freshness` — regenerate `docs/migration/oracle/fixtures/` from the
+   unset, so it must pass with no display server and no GPU. **Two invocations
+   since task #27**, because there are two configurations and they can disagree:
+   the workspace run (features unified across every member) and
+   `cargo test -p gamehandler-core` (that crate's own graph, where
+   `serde_json/preserve_order` is off — `cosmic-theme` turns it on and cargo
+   unifies it into everything that depends on libcosmic). D-33 has the rule this
+   follows: a verdict without its build scope is not evidence. The narrow run is
+   given its own `CARGO_TARGET_DIR` under `target/verify-narrow`, so alternating
+   between configurations does not rebuild core's dependency graph twice a run.
+4. `cli` — the headless CLI (`--list` / `--launch` / `--version`), driven
+   against a library the stage owns, with `HOME` and all three XDG bases pointed
+   into one temp directory. It exists because the smoke test checked the *empty*
+   case of `--list` (exit code only) and **a check that only exercises the empty
+   case passes on a program that never reads the file** — which is what happened
+   (task #31: `--list` printed the empty-library line over a real two-game
+   library and exited 0). The assertions are deliberately of two different kinds:
+   `--list` on a known-non-empty library is compared **byte for byte** against
+   the expected rows (in *lowercased*-name order, so the fixture's `apple` /
+   `Banana` is also a sorting trap), while `--launch <unknown id>` is asserted on
+   its **exit code** with the reason required on stderr — the stub printed the
+   right words and returned the wrong status, so a text-only check would pass it.
+   A *known* id is never launched: that would start a game through Wine, which is
+   not something a verification gate should do. It uses the debug binary
+   `cargo build` produced, not the Flatpak's release binary, so it needs no build
+   tree and no lock.
+5. `oracle-freshness` — regenerate `docs/migration/oracle/fixtures/` from the
    Python implementation and fail if the checked-in copy differs. `gen_oracle.py`
    resolves its repo root from its own path (`parents[3]`) and writes its
    fixtures beside itself, so the stage stages a throwaway copy of the
@@ -490,10 +514,10 @@ prints the full table instead, for a diagnostic sweep.
    nothing else, which is what makes the copy sufficient.) The fixtures on disk
    are SHA-256 hashed before and after and asserted unchanged, so the "verify
    never dirties the tree" rule is checked rather than assumed.
-5. `python-tests` — the existing Python suite (`python3 -m unittest discover
+6. `python-tests` — the existing Python suite (`python3 -m unittest discover
    -s tests -t .`, per README.md:261 — **not** pytest, which the repo does not
    use and this host does not have) must stay green. DECISIONS D-17.
-6. `cargo-sources` — `cargo-sources.json` freshness: regenerate from
+7. `cargo-sources` — `cargo-sources.json` freshness: regenerate from
    `Cargo.lock` to a temp file, compare as a *set* of canonicalised entries
    (the generator's entry order is an implementation detail; the entry set is
    the contract), and assert every `Cargo.lock` git URL has a `type: git`
@@ -503,24 +527,24 @@ prints the full table instead, for a diagnostic sweep.
    instructions rather than failing obscurely. It looks in `$FLATPAK_CARGO_
    GENERATOR`, on `PATH`, and in the usual cache paths, and prefers a
    `venv/bin/python` beside the script when one exists.
-7. `flatpak-build` — `flatpak-builder`, with the flags from
+8. `flatpak-build` — `flatpak-builder`, with the flags from
    `build-aux/flatpak/build.sh` (`--force-clean`, `--install-deps-from=flathub`,
    `--default-branch=stable`) plus `--state-dir=.flatpak-builder` and
    `--repo=flatpak-repo`. **Correction:** `--offline` passes
    `--disable-download`; flatpak-builder 1.4.10 has no `--disable-network`
    flag, which the original text of this section named.
-8. `smoke-test` — delegates to `scripts/smoke-test.sh` (section 7.2). Its
+9. `smoke-test` — delegates to `scripts/smoke-test.sh` (section 7.2). Its
    four sub-checks are echoed indented under the stage line, so a pass is
    legible without opening the log. Exit 77 from the script (no compositor
    available) is reported as `SKIP`, never as `ok`.
-9. `desktop-metainfo` — `desktop-file-validate` + `appstreamcli validate
+10. `desktop-metainfo` — `desktop-file-validate` + `appstreamcli validate
    --no-net`, on the copies inside `build-flatpak/files/share/` when they exist
    and on `data/` otherwise. Successor to `data/meson.build:15-34`'s
    `validate-desktop`/`validate-metainfo` tests. An invalid file fails the
    stage; a *missing* validator reports `SKIP` with install instructions rather
    than `ok`, because the stage did not actually run — silence there would be a
    fake pass.
-10. `flatpak-contents` — added by T-23, later than the rest of this list. Stages
+11. `flatpak-contents` — added by T-23, later than the rest of this list. Stages
    1–9 all ask whether a file is *well-formed*; none asked whether the Flatpak
    *contains* anything, and that gap was real: T-16 moved the build from meson
    (which ran `data/meson.build`'s `install_data`) to cargo, dropped the
@@ -565,8 +589,23 @@ and prints a warning if the two differ, because a verify script that leaves the
 tree dirty cannot be run in CI or before a commit.
 
 **SKIPs are not passes.** The summary names the skipped stages and says so
-explicitly; the script's exit status is non-zero only for real failures, so a
-green run with a SKIP is possible and is meant to be read as incomplete.
+explicitly. Since D-31 the exit status distinguishes the two causes: a skip the
+caller asked for (`--skip-flatpak` / `--skip-smoke`) is a legitimate 0, and a
+skip forced by a missing prerequisite exits 3, because that run did not verify
+what this section claims it verifies.
+
+**Nor is a *failure* a report of everything that ran.** Fail-fast is the default,
+so a stage that fails stops the run — and until D-34 the summary named only
+`passed`/`failed`/`skipped`, which meant the stages that were never attempted
+appeared nowhere at all. A run that died at `oracle-freshness` printed
+`failed: oracle-freshness` and nothing about the six stages it never reached,
+which reads as "only the oracle is broken". The summary now prints those
+explicitly, as `did not run (<reason>): ...`, with the reason supplied by
+whatever stopped the run. The stage list itself is one array (`STAGES`) from
+which the usage text is generated and which `begin()` checks every stage
+against, so an edit to the run order cannot leave the documentation behind:
+a stage announced out of order, or a `run_stage` naming a function that does not
+exist, is a usage error (2) rather than a silent omission.
 
 ---
 

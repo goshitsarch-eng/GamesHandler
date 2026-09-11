@@ -12,7 +12,10 @@
 #   cli-version             `--version` exits 0 with the expected shape, with
 #                           no display (DECISIONS D-12: the CLI never
 #                           initialises the GUI).
-#   cli-list                `--list` exits 0 with no display (D-12).
+#   cli-list-exits-0        `--list` *exits 0* with no display (D-12). Named
+#                           for exactly what it asserts: its output is not
+#                           examined at all, and a `--list` that prints anything
+#                           at all passes it.
 #   no-display-diagnostic   the *GUI* path with neither WAYLAND_DISPLAY nor
 #                           DISPLAY must print a diagnostic, not panic
 #                           (D-12a / N-01). Exit 101 plus a winit
@@ -21,6 +24,13 @@
 #   gui-stays-up            under a compositor, the GUI starts and is still
 #                           running after --hold seconds, prints no panic, and
 #                           terminates on SIGTERM rather than hanging.
+#
+# Both CLI checks are *smoke* checks and are deliberately shallow: they prove the
+# packaged binary starts and the verbs are reachable, nothing more. What the
+# verbs actually print and return is gated by verify.sh's `cli` stage, against a
+# library it owns -- a check that only exercises the empty library passes on a
+# `--list` that never reads the file, which is exactly what happened (D-35,
+# task #31). Do not treat these two lines as coverage of the CLI.
 #
 # Exit status:  0 = every check that could run passed.
 #               1 = at least one check FAILED.
@@ -240,9 +250,9 @@ fi
 rc=0
 run_once "$WORK/list.log" none "" --list || rc=$?
 if [ "$rc" -eq 0 ]; then
-    ok "cli-list (exit 0, no display)"
+    ok "cli-list-exits-0 (exit 0, no display; output not examined)"
 else
-    bad "cli-list: exit $rc with no display"
+    bad "cli-list-exits-0: exit $rc with no display"
     dump "stdout+stderr" "$WORK/list.log"
 fi
 

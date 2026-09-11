@@ -8,40 +8,55 @@
 # validation, and — T-23 — that the built Flatpak actually carries the files no
 # validator looks at). Task T-17.
 #
-# Stages, in order:
+# The stage list itself — names, order and one-line descriptions — is the STAGES
+# array below, which `usage()` prints and `begin()` enforces. What follows is the
+# reasoning behind each entry, which does not belong in an array element; if the
+# two ever disagree about a *name*, STAGES is right and this is stale.
 #
 #   1  build                 cargo build (workspace root)
 #   2  clippy                cargo clippy --all-targets -- -D warnings
 #                            (workspace root ONLY — DECISIONS D-08)
 #   3  test                  cargo test, with DISPLAY/WAYLAND_DISPLAY unset
-#   4  oracle-freshness      regenerate docs/migration/oracle/fixtures/ from the
+#   4  cli                   the headless CLI. Drives `--list`/`--launch`/
+#                            `--version` against a library this stage owns, and
+#                            asserts the *non-empty* case — the empty one is
+#                            what the smoke test already covered, and what a
+#                            stub that never reads games.json passes (#31).
+#   5  oracle-freshness      regenerate docs/migration/oracle/fixtures/ from the
 #                            Python implementation and fail if the checked-in
 #                            copy differs. This is what stops the Python
 #                            contract from drifting silently.
-#   5  python-tests          the existing Python suite must stay green
+#   6  python-tests          the existing Python suite must stay green
 #                            (DECISIONS D-17: it is the behavioural reference
 #                            the Rust port is written against)
-#   6  cargo-sources         build-aux/flatpak/cargo-sources.json is fresh
+#   7  cargo-sources         build-aux/flatpak/cargo-sources.json is fresh
 #                            against Cargo.lock and covers every git source
-#   7  flatpak-build         flatpak-builder builds the manifest
-#   8  smoke-test            scripts/smoke-test.sh — CLI + headless GUI
-#   9  desktop-metainfo      desktop-file-validate + appstreamcli validate
-#  10  flatpak-contents      the built Flatpak carries the files no validator
+#   8  flatpak-build         flatpak-builder builds the manifest
+#   9  smoke-test            scripts/smoke-test.sh — CLI + headless GUI
+#  10  desktop-metainfo      desktop-file-validate + appstreamcli validate
+#  11  flatpak-contents      the built Flatpak carries the files no validator
 #                            looks at: the application's own licence text, the
 #                            Authenticode trust root, and the three metadata
-#                            installs — which stage 9 reads for well-formedness
-#                            (two of them) but never for presence or path.
-#                            Added by T-23, after the GPL text turned out to be
-#                            missing from the Flatpak with every one of stages
-#                            1-9 green; widened to the metadata installs and to
-#                            the manifest's whole install set by tasks #23/#24.
+#                            installs — which desktop-metainfo reads for
+#                            well-formedness (two of them) but never for presence
+#                            or path. Added by T-23, after the GPL text turned
+#                            out to be missing from the Flatpak with every
+#                            earlier stage green; widened to the metadata
+#                            installs and to the manifest's whole install set by
+#                            tasks #23/#24.
 #
-# Stages 7-10 are one critical section under a `flock`, because all four read or
-# write build-flatpak/ and stage 7 writes it destructively. The lock note above
-# `acquire_flatpak_lock` explains why the lock spans the group rather than each
-# stage; the short version is that a released lock in the middle is a window for
-# another run to swap the tree, and the reader would then validate a different
-# revision with every line still saying "ok".
+# The last four are one critical section under a `flock`: flatpak-build,
+# smoke-test, desktop-metainfo and flatpak-contents all read or write
+# build-flatpak/, and flatpak-build alone writes it destructively. The lock note
+# above `acquire_flatpak_lock` explains why the lock spans the group rather than
+# each stage; the short version is that a released lock in the middle is a window
+# for another run to swap the tree, and the reader would then validate a
+# different revision with every line still saying "ok".
+#
+# Those four are named rather than numbered on purpose. "stages 7-10" was a
+# second copy of the stage order, kept in step with the list above by hand, and
+# inserting the `cli` stage moved every number after it — the same drift the
+# STAGES array exists to stop. Names do not move.
 #
 # Output contract (packaging.md §6): one machine-greppable line per stage on
 # stdout — `ok <stage>`, `FAIL <stage>`, `SKIP <stage>` — and every stage is
@@ -51,16 +66,18 @@
 # its own sub-checks (the smoke test) has those echoed indented so a pass is
 # still legible without opening the log.
 #
-# Read-only with respect to the repository. Stage 4 regenerates the oracle into
-# a temporary directory and compares, rather than writing over the tree, and
-# asserts afterwards that the fixtures on disk are unchanged. Every other stage
+# Read-only with respect to the repository. oracle-freshness regenerates the
+# oracle into a temporary directory and compares, rather than writing over the
+# tree, and asserts afterwards that the fixtures on disk are unchanged. Every
+# other stage
 # writes only to gitignored paths (target/, .flatpak-builder/, build-flatpak/,
 # flatpak-repo/).
 #
 # Usage: scripts/verify.sh [options]
 #
-#   --skip-flatpak   skip stages 7 and 8 (fast local iteration)
-#   --skip-smoke     skip stage 8 only
+#   --skip-flatpak   skip the flatpak-build and smoke-test stages
+#                    (fast local iteration)
+#   --skip-smoke     skip the smoke-test stage only
 #   --keep-going     run every stage and report the full table instead of
 #                    stopping at the first failure (packaging.md §6 specifies
 #                    fail-fast; this is the flag for a full diagnostic sweep)
@@ -104,21 +121,55 @@ SKIPPED=()
 # "Exit codes" note in the header. `finish_skip` fills these.
 SKIPPED_REQUESTED=()
 SKIPPED_UNREQUESTED=()
+# Every stage that announced itself, in order — filled by `begin()`. Its length
+# is also the cursor into STAGES: see the note above `begin`.
+ATTEMPTED=()
+# Why the run stopped early, for the summary's "did not run" line. Empty on a
+# run that reached the end.
+STOPPED=""
+
+# name|what it is — THE stage list, in the order they run, and the only copy of
+# it. Three things are derived from this array: the usage text, `begin()`'s
+# refusal to announce a stage that is not listed here or is out of order, and the
+# summary's account of the stages an early exit never reached.
+#
+# That last one is why it exists. The order used to be implied by the sequence of
+# `run_stage` calls and restated in the usage text, and nothing compared them, so
+# a run that died at oracle-freshness printed `skipped: none` while six stages had
+# not been attempted at all — and "failed: oracle-freshness" on its own reads as
+# "only the oracle is broken" (task #29; the lead read it that way himself).
+STAGES=(
+    "build|the workspace builds"
+    "clippy|cargo clippy --all-targets -- -D warnings (workspace root ONLY, D-08)"
+    "test|the test suite, in BOTH feature configurations (task #27)"
+    "cli|the headless CLI --list/--launch/--version, against a library it must read"
+    "oracle-freshness|the checked-in fixtures equal what the Python generators produce"
+    "python-tests|the Python suite stays green (D-17)"
+    "cargo-sources|cargo-sources.json is fresh against Cargo.lock and covers every git source"
+    "flatpak-build|flatpak-builder builds the manifest"
+    "smoke-test|scripts/smoke-test.sh — CLI + headless GUI"
+    "desktop-metainfo|desktop-file-validate + appstreamcli validate"
+    "flatpak-contents|the built Flatpak carries the files no validator looks at"
+)
 
 usage() {
     cat <<'EOF'
 usage: scripts/verify.sh [options]
 
-  --skip-flatpak   skip stages 7 and 8 (fast local iteration)
-  --skip-smoke     skip stage 8 only
+  --skip-flatpak   skip the flatpak-build and smoke-test stages
+                   (fast local iteration)
+  --skip-smoke     skip the smoke-test stage only
   --keep-going     run every stage and report the full table instead of
                    stopping at the first failure
   --offline        pass --disable-download to flatpak-builder
   --hold SECONDS   forward the GUI hold interval to the smoke test
 
-Stages: build, clippy, test, oracle-freshness, python-tests, cargo-sources,
-        flatpak-build, smoke-test, desktop-metainfo, flatpak-contents
+Stages, in order:
 EOF
+    local entry
+    for entry in "${STAGES[@]}"; do
+        printf '  %-18s %s\n' "${entry%%|*}" "${entry#*|}"
+    done
 }
 
 while [ $# -gt 0 ]; do
@@ -141,8 +192,28 @@ STAGE=""
 STAGE_LOG=""
 STAGE_START=0
 
+# Announce a stage. Every stage goes through here — the `run_stage` calls and the
+# direct `begin <stage>; finish_skip ...` ones alike — which is what makes this
+# the right place to enforce STAGES rather than merely read it.
+#
+# A stage not in STAGES would be invisible to `summary` (it is neither passed,
+# failed nor skipped) and so could vanish from the report exactly as the six
+# unattempted stages did in task #29; a stage out of order means the array and
+# the run disagree about what runs when. Both are a bug in this script, not a
+# stage result, so both are a usage error (2) rather than a FAIL — and they are
+# caught on the run that introduces them rather than on the next reader's.
 begin() {
     STAGE="$1"
+    local index="${#ATTEMPTED[@]}" declared="${STAGES[${#ATTEMPTED[@]}]:-}"
+    declared="${declared%%|*}"
+    if [ -z "${STAGES[${#ATTEMPTED[@]}]:-}" ] || [ "$STAGE" != "$declared" ]; then
+        printf 'verify.sh: begin %s — STAGES says stage %d is %s\n' \
+            "$STAGE" "$index" "${declared:-<past the end of the list>}" >&2
+        printf '  the STAGES array is the order the stages must run in; add the\n'
+        printf '  stage there, or move this call to where it belongs.\n' >&2
+        exit 2
+    fi
+    ATTEMPTED+=("$STAGE")
     STAGE_LOG="$LOGDIR/$1.log"
     STAGE_START="$SECONDS"
     printf '### %s\n' "$STAGE"
@@ -190,6 +261,24 @@ summary() {
     printf 'failed:  %s\n' "${FAILED[*]:-none}"
     printf 'skipped: %s\n' "${SKIPPED[*]:-none}"
     printf 'logs:    %s/\n' "${LOGDIR#"$ROOT"/}"
+    # Stages that never announced themselves. They are not skips — nothing was
+    # decided about them, they were never reached — and leaving them out of the
+    # report is how a run that died there came to read as "only the oracle
+    # is broken" while six stages had not run (task #29). They cannot appear in
+    # PASSED/FAILED/SKIPPED, because none of those is ever set for a stage that
+    # did not begin.
+    local -a unrun=()
+    local i
+    for ((i = ${#ATTEMPTED[@]}; i < ${#STAGES[@]}; i++)); do
+        unrun+=("${STAGES[i]%%|*}")
+    done
+    if [ "${#unrun[@]}" -gt 0 ]; then
+        # No STOPPED means the run *finished* without reaching them, which can
+        # only be STAGES and the run disagreeing — not an abort.
+        printf 'did not run (%s): %s\n' \
+            "${STOPPED:-the run finished without reaching them}" "${unrun[*]}"
+        printf '  these are neither passes nor skips: nothing was verified about them\n'
+    fi
     if [ "${#SKIPPED_REQUESTED[@]}" -gt 0 ]; then
         printf 'asked to skip: %s (legitimate)\n' "${SKIPPED_REQUESTED[*]}"
     fi
@@ -212,6 +301,7 @@ finish_fail() {
     fi
     FAILED+=("$STAGE")
     if [ "$KEEP_GOING" -eq 0 ]; then
+        STOPPED="an earlier stage failed"
         summary
         exit 1
     fi
@@ -220,10 +310,10 @@ finish_fail() {
 # ---------------------------------------------------------------------------
 # The Flatpak build lock
 #
-# Stages 7-10 all touch build-flatpak/: 7 writes it destructively (--force-clean
-# erases the tree), 8 runs the app out of it, and 9 and 10 read the installed
-# copies from it. Two verify.sh runs in one checkout therefore corrupt each
-# other — one wipes the tree while the other is reading it, which makes
+# The four locked stages all touch build-flatpak/: flatpak-build writes it
+# destructively (--force-clean erases the tree), smoke-test runs the app out of
+# it, and desktop-metainfo and flatpak-contents read the installed copies from
+# it. Two verify.sh runs in one checkout therefore corrupt each other — one wipes the tree while the other is reading it, which makes
 # flatpak-contents report SKIP. That is the worst possible shape for this
 # harness: the reader concludes the check does not work, when what actually
 # happened is that it was raced. A result that depends on who else is running is
@@ -250,11 +340,12 @@ acquire_flatpak_lock() {
         # Reported rather than fatal, and reported rather than silent: the run
         # can still do its work, but its result now depends on who else is
         # running, and a reader has to be told that to interpret it. Failing
-        # hard here would take stages 1-6 down with it on a box without
+        # hard here would take the earlier stages down with it on a box without
         # util-linux, which would be a worse trade — those stages are unaffected
         # by this hazard.
-        echo "flock is not installed, so stages 7-10 are NOT serialised against"
-        echo "  another verify.sh in this checkout. If none is running, the result"
+        echo "flock is not installed, so the build-flatpak/ stages are NOT serialised"
+        echo "  against another verify.sh in this checkout. If none is running, the"
+        echo "  result"
         echo "  is sound; if one is, build-flatpak/ may have been swapped underneath"
         echo "  this run. Install util-linux (flock) to remove the caveat."
         return 0
@@ -303,9 +394,189 @@ stage_clippy() {
 
 # ---------------------------------------------------------------------------
 # Stage 3 — tests, with no display, to prove the logic suite is headless
+#
+# TWO configurations, because they are not the same gate. `cargo test` with no
+# -p unifies features across every workspace member; `-p gamehandler-core` builds
+# that crate's own graph, and cosmic-theme turns on `serde_json/preserve_order`,
+# which is inherited by anything that depends on libcosmic. Measured (D-33):
+#
+#   cargo tree -p gamehandler-core -e features -i serde_json  -> no preserve_order
+#   cargo tree -p gamehandler      -e features -i serde_json  -> preserve_order
+#   cargo tree                     -e features -i serde_json  -> preserve_order
+#         via serde_json feature "preserve_order" <- cosmic-theme <- libcosmic
+#
+# So a `serde_json::Map` is a BTreeMap (key order: alphabetical) in the first
+# configuration and insertion-ordered in the other two — and the two disagree in
+# practice: a vector case passed narrow and failed wide. Running only the wide
+# one, which is what this stage did until #27, leaves the narrow configuration
+# ungated, so a change that depends on it passes here and fails for anyone
+# building that crate alone. The app crate needs no separate run: it depends on
+# libcosmic, so it is the wide configuration already.
+#
+# D-33 records the mechanism and the rule that follows from it: a verdict
+# without its build scope is not evidence. This stage runs both scopes so the
+# verdict does not have one.
+#
+# The narrow run gets its own CARGO_TARGET_DIR. Features are part of cargo's
+# fingerprint, so flipping between the two configurations in one target
+# directory rebuilds core's whole dependency graph on every alternation — twice
+# per verify run, for nothing. It is a subdirectory of *this* checkout's
+# gitignored target/, not a shared or borrowed cache: an artifact built from
+# another source tree landing in target/ is a real hazard here (it cost the lead
+# an hour), and this is the one thing that avoids rather than courts it.
+#
+# Production serialisation is unaffected either way, so this is not a shipping
+# risk: json::to_python_string calls value.serialize() on the typed value, so no
+# serde_json::Map is ever constructed and Library::save / Settings::save write
+# identical bytes in both configurations. The exposure is test-side `to_value`
+# only — which is precisely why it is worth a gate rather than an argument.
 # ---------------------------------------------------------------------------
 stage_test() {
-    env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET cargo test
+    env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
+        cargo test || return 1
+    env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
+        CARGO_TARGET_DIR="$ROOT/target/verify-narrow" \
+        cargo test -p gamehandler-core
+}
+
+# ---------------------------------------------------------------------------
+# Stage 4 — the headless CLI, against a library it has to actually read
+#
+# `--list`, `--launch` and `--version` are what the app's own desktop shortcuts
+# invoke, and D-12 makes them a hard requirement: no display, no GPU, no
+# toolkit. The smoke test covers all three, but only half of each — it asserts
+# `--list` *exits 0* and never looks at what was printed, and it runs against
+# whatever library the ambient environment happens to point at. A `--list` that
+# printed the empty-library line unconditionally therefore passed it, and did:
+# `--list` was a stub that never opened games.json while a real library sat in
+# `$XDG_CONFIG_HOME` (#31, task #31's gate). The lesson generalises, and is why
+# this stage exists rather than a fourth line in the smoke test: **a check that
+# only exercises the empty case passes on a program that never reads the file.**
+#
+# So this stage owns its library and asserts the non-empty case. It uses the
+# binary stage 1 just built — the artifact `cargo test` tested — not the
+# Flatpak's release binary, so it needs no build tree and no lock; the Flatpak's
+# own copy is the smoke test's business.
+#
+# Two things about the assertions, both deliberate:
+#
+#   * the non-empty check compares *bytes* against the expected two rows, so
+#     extra output, a missing row, a missing trailing newline and the wrong
+#     order all fail. The fixture's names ("apple", "Banana") are a sorting
+#     trap: the contract is `Library::all()`'s default sort by the *lowercased*
+#     name (gamehandler/models.py:156-163), so "apple" precedes "Banana", where
+#     a byte-wise sort would reverse them;
+#   * `--launch` is asserted on the **exit code**, with the stderr reason
+#     required as well. Asserting only the text would pass on a program that
+#     prints the right words and returns the wrong status — which is exactly
+#     what the stub does. A *known* id is not launched: that would start a real
+#     game through Wine, which is not something a verification gate should do.
+#
+# Hermetic by construction: HOME and all three XDG bases point into one temp
+# dir, so nothing the binary writes can reach the developer's library or the
+# checkout, and nothing it reads can come from the ambient environment.
+#
+# This stage is RED until #31 lands (T-07 owns the port). That is intended: a
+# stage that fails for a real reason is the point of having it.
+# ---------------------------------------------------------------------------
+stage_cli() {
+    local bin="$ROOT/target/debug/gamehandler"
+    if [ ! -x "$bin" ]; then
+        echo "no binary at ${bin#"$ROOT"/}, which is what stage 1 (cargo build) produces"
+        return 1
+    fi
+
+    local tmp
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/gh-cli-XXXXXX")" || return 1
+    # Two libraries: one a user has never written (no games.json at all), one
+    # with two games.
+    #
+    # `fresh` and `two` are the *XDG_CONFIG_HOME values*, not the directories
+    # holding games.json: the app appends `gamehandler/games.json` to whatever
+    # base it is given (`paths.rs:56-65` → `base_dir(...).join("gamehandler")`),
+    # so passing the inner directory here would point the binary one level too
+    # deep and every check would see an empty library. It did, while this stage
+    # was being written — and the *empty* check could not tell the difference,
+    # which is the same asymmetry that let #31 through in the first place.
+    local fresh="$tmp/fresh" two="$tmp/two"
+    mkdir -p "$fresh/gamehandler" "$two/gamehandler" || { rm -rf "$tmp"; return 1; }
+    cat >"$two/gamehandler/games.json" <<'JSON'
+[{"id": "11111111111111111111111111111111", "name": "apple"},
+ {"id": "22222222222222222222222222222222", "name": "Banana"}]
+JSON
+
+    local out="$tmp/out" err="$tmp/err" expected="$tmp/expected"
+    local rc=0 failures=0
+
+    # cli_run <config-home> <args...> — the binary, with no display and with
+    # every base directory inside $tmp. Defined here rather than at the top
+    # level so it cannot be reached by another stage; the stage runs in this
+    # shell, so it does not outlive the call.
+    cli_run() {
+        local config="$1"; shift
+        env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
+            HOME="$tmp" \
+            XDG_CONFIG_HOME="$config" \
+            XDG_DATA_HOME="$tmp/data" \
+            XDG_CACHE_HOME="$tmp/cache" \
+            "$bin" "$@"
+    }
+
+    # --- cli-version ---
+    rc=0; cli_run "$fresh" --version >"$out" 2>"$err" || rc=$?
+    if [ "$rc" -eq 0 ] && grep -qE '^GameHandler [0-9]+\.[0-9]+\.[0-9]+$' "$out"; then
+        echo "ok   cli-version ($(head -n1 "$out"))"
+    else
+        echo "FAIL cli-version: expected exit 0 and 'GameHandler <x.y.z>', got exit $rc"
+        sed 's/^/     | /' "$out" "$err"
+        failures=$((failures + 1))
+    fi
+
+    # --- cli-list-empty ---
+    #
+    # The library file is absent, which is what a fresh install looks like. The
+    # app's name is NOT restated here: it is `gamehandler_core::APP_NAME`, and a
+    # check that pastes the constant it is checking is the defect D-28 was
+    # written about. The message's shape is pinned instead.
+    rc=0; cli_run "$fresh" --list >"$out" 2>"$err" || rc=$?
+    if [ "$rc" -eq 0 ] && [ "$(wc -l <"$out")" -eq 1 ] \
+        && grep -qE '^[^:]+: the library is empty$' "$out"; then
+        echo "ok   cli-list-empty (exit 0, the empty-library line)"
+    else
+        echo "FAIL cli-list-empty: expected exit 0 and exactly one empty-library line, got exit $rc"
+        sed 's/^/     | /' "$out" "$err"
+        failures=$((failures + 1))
+    fi
+
+    # --- cli-list-non-empty ---
+    #
+    # The check #31 slipped past. Byte-for-byte, both rows, in order.
+    printf '11111111111111111111111111111111\tapple\n22222222222222222222222222222222\tBanana\n' >"$expected"
+    rc=0; cli_run "$two" --list >"$out" 2>"$err" || rc=$?
+    if [ "$rc" -eq 0 ] && cmp -s "$expected" "$out"; then
+        echo "ok   cli-list-non-empty (exit 0, 2 rows id<TAB>name, name-sorted)"
+    else
+        echo "FAIL cli-list-non-empty: a 2-game library at \$XDG_CONFIG_HOME/gamehandler/games.json"
+        echo "     must print its two rows; got exit $rc and:"
+        echo "     --- expected ---"; sed 's/^/     | /' "$expected"
+        echo "     --- stdout ---";   sed 's/^/     | /' "$out"
+        if [ -s "$err" ]; then echo "     --- stderr ---"; sed 's/^/     | /' "$err"; fi
+        failures=$((failures + 1))
+    fi
+
+    # --- cli-launch-unknown ---
+    rc=0; cli_run "$two" --launch this-id-is-not-in-the-library >"$out" 2>"$err" || rc=$?
+    if [ "$rc" -ne 0 ] && grep -q "no game with id" "$err"; then
+        echo "ok   cli-launch-unknown (exit $rc, reason on stderr)"
+    else
+        echo "FAIL cli-launch-unknown: an unknown id must exit non-zero with the reason on"
+        echo "     stderr; got exit $rc, stderr: $(head -n1 "$err")"
+        failures=$((failures + 1))
+    fi
+
+    rm -rf "$tmp"
+    [ "$failures" -eq 0 ] || return 1
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -367,7 +638,7 @@ stage_oracle() {
     # Both generators, in this order: gen_oracle.py creates fixtures/, which the
     # two redirections below write into. The interpreters are the same python3
     # the rest of the stage uses; neither generator needs aiohttp (that is the
-    # cargo-sources generator, stage 6), the app, or the network.
+    # cargo-sources generator), the app, or the network.
     local rc=0
     (
         cd "$tmp" || exit 1
@@ -625,7 +896,7 @@ stage_desktop_metainfo() {
 # Stage 10 — what the build installs that no validator looks at
 #
 # Stage 9 loads the desktop entry and the metainfo and asks whether they are
-# *well-formed*. Nothing in stages 1-9 asks whether the Flatpak contains them —
+# *well-formed*. Nothing before this stage asks whether the Flatpak contains
 # or the application's own licence, or the Authenticode trust root, or the icon
 # — because none of those files is an input to a validator. That gap is not
 # hypothetical: T-16 moved the build from meson (which ran data/meson.build's
@@ -636,8 +907,9 @@ stage_desktop_metainfo() {
 # and what covers each one before this stage gets to it:
 #
 #   LICENSE, the trust root   nothing at all.
-#   desktop entry, metainfo   stage 9 reads their *content* for well-formedness
-#                             (on the built copy when there is one). Nothing read
+#   desktop entry, metainfo   desktop-metainfo reads their *content* for
+#                             well-formedness (on the built copy when there is
+#                             one). Nothing read
 #                             the manifest to see that they are installed, or
 #                             where. An installed path is a name, and no
 #                             validator compares a name to the app id the window
@@ -648,7 +920,7 @@ stage_desktop_metainfo() {
 #                             desktop file's Icon= resolves to nothing.
 #
 # T-23's commit message ends "The three metadata installs stay covered by stage
-# 9." That is off by one — stage 9 loads two of the three, and never their
+# 9." That is off by one — that stage loads two of the three, and never their
 # installed paths — and it is corrected here, next to the count it gets wrong,
 # rather than rewritten into that message, which is history.
 #
@@ -719,8 +991,8 @@ sys.exit(1)
 #
 # The one thing a hardcoded list cannot do is notice an addition to the thing it
 # lists. This reads the module's own install commands and fails for any
-# destination that is neither in the list nor the binary (which stages 7-8
-# exercise by running it). Called with the destinations as arguments, so the list
+# destination that is neither in the list nor the binary (which the
+# flatpak-build and smoke-test stages exercise by running it). Called with the destinations as arguments, so the list
 # stays the single source of truth for what is covered.
 COMPLETENESS_PY='
 import json, shlex, sys
@@ -805,7 +1077,7 @@ stage_flatpak_contents() {
     local tree="$BUILD_DIR/files"
     if [ ! -d "$tree" ]; then
         echo "no build tree at ${tree#"$ROOT"/}: the installed copies were NOT checked"
-        echo "  run without --skip-flatpak to build one (stages 7-8)"
+        echo "  run without --skip-flatpak to build one (the flatpak-build stage)"
         # 98 = a skip the caller asked for, 99 = one a missing prerequisite
         # forced. Only the second costs a non-zero exit (D-31), and under
         # --skip-flatpak the absent tree is the flag's own consequence — the same
@@ -859,6 +1131,14 @@ STATUS_BEFORE="$(git status --porcelain 2>/dev/null)"
 
 run_stage() {
     local name="$1" fn="$2"
+    # A typo here would otherwise surface as "command not found" (127) and be
+    # reported as a failing stage, which sends the reader looking at the code
+    # under test rather than at this line.
+    if ! declare -F "$fn" >/dev/null; then
+        printf 'verify.sh: stage %s names %s, which is not a function in this script\n' \
+            "$name" "$fn" >&2
+        exit 2
+    fi
     begin "$name"
     local rc=0
     "$fn" >"$STAGE_LOG" 2>&1 || rc=$?
@@ -880,21 +1160,24 @@ run_stage() {
 run_stage build             stage_build
 run_stage clippy            stage_clippy
 run_stage test              stage_test
+run_stage cli               stage_cli
 run_stage oracle-freshness  stage_oracle
 run_stage python-tests      stage_python
 run_stage cargo-sources     stage_cargo_sources
 
 # Everything from here to `release_flatpak_lock` is one critical section over
-# build-flatpak/ — stages 7-10, whether they build, run or merely read it. The
+# build-flatpak/ — the four locked stages, whether they build, run or merely
+# read it. The
 # trap is the backstop for the paths that exit from inside it (finish_fail
 # exits when --keep-going is off); the explicit release afterwards hands the
 # lock back before the summary so a waiter is not held while we print.
 trap release_flatpak_lock EXIT
 if ! acquire_flatpak_lock; then
     printf 'FAIL %s\n' "flatpak-lock"
-    printf '     could not take %s — stages 7-10 were not run\n' "${FLATPAK_LOCK#"$ROOT"/}"
+    printf '     could not take %s — the build-flatpak/ stages were not run\n' "${FLATPAK_LOCK#"$ROOT"/}"
     FAILED+=("flatpak-lock")
     release_flatpak_lock
+    STOPPED="the Flatpak build lock could not be taken"
     summary
     exit 1
 fi
@@ -951,7 +1234,8 @@ fi
 # prerequisite* is different in kind — the caller asked for a full verification
 # and did not get one. Exiting 0 there is how "scripts/verify.sh passes from a
 # clean checkout" (PLAN.md §9) becomes satisfiable by a run that never built or
-# inspected the Flatpak: absent flatpak-builder, stage 7 skips, stage 10 loses
+# inspected the Flatpak: absent flatpak-builder, flatpak-build skips,
+# flatpak-contents loses
 # its installed-copies half, and the whole thing reports success.
 #
 # A distinct code rather than 1, so a reader (and CI) can tell "a stage failed"
