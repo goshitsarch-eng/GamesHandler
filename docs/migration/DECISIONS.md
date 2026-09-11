@@ -2726,3 +2726,87 @@ hand-copied at either end.
 Related: `#55`, `#65`, `#66`, `#68`, `#71`, `D-50` (a dependency stated only in
 a commit message is invisible to every gate — this is the same invisibility
 applied to a *task's own scope*), [[verification-defect-class]].
+
+## D-53. The installer download must see the final URL after redirects — the allowlist is a security control and is not simplified away
+
+**The control, in the reference.** `installers.py:555-558`:
+
+    def _validate_download_origin(installer, final_url):
+        parsed = urlparse(final_url)
+        host = (parsed.hostname or "").lower()
+        allowed = {item.lower() for item in installer.allowed_hosts}
+        if parsed.scheme.lower() != "https" or host not in allowed:
+            raise RuntimeError(...)
+
+and it is called as `_validate_download_origin(installer, resp.geturl())`
+(`:619`) — **`resp.geturl()`, the URL the response actually came from**, after
+any redirects. `tests/test_installers.py:113`
+(`test_untrusted_redirect_is_rejected_and_removed`) pins it.
+
+**Why it cannot be checked earlier, and why that matters.** `allowed_hosts` is
+an allowlist of download origins. Validating the *requested* URL and not the
+*final* one admits a redirect: a host on the allowlist answers `302` to a host
+that never was, and the bytes come from somewhere the allowlist never approved.
+This is a **download-and-execute** path — the installer is fetched and run — so
+the check is load-bearing rather than defensive.
+
+**The seam cannot express it today.** D-26's `HttpClient` abstraction carries
+`ResponseHead { content_length, .. }` and **not** the final URL. So T-34's
+download half requires extending a landed T-03 contract (`runners/proton.rs`)
+and its implementation (`crates/app/src/http.rs`).
+
+**Decision.** `ResponseHead` **gains the final URL**, and the port keeps the
+check **failing closed**, with the test ported alongside it. Two conditions,
+both stated because either can be lost without a red suite:
+
+1. **Fail closed.** A redirect to a host outside `allowed_hosts`, or a non-HTTPS
+   scheme, must abort the download and remove any partial file — the reference's
+   test asserts the removal as well as the rejection.
+2. **Port the test, not just the code.** A ported check with no test is a comment
+   that reverts silently; this project has recorded that class repeatedly. The
+   test is what makes it a control.
+
+**The general rule this is an instance of:** when a port cannot express a
+control because a seam was drawn too narrow, the seam is what changes. Dropping
+the control to fit the seam is how a security property becomes a TODO nobody
+re-opened — and `ResponseHead` looked sufficient until a caller needed the one
+field it lacked.
+
+Related: D-26 (the seam), T-34, [[verification-defect-class]].
+
+## D-54. The `.desktop` writer deliberately diverges from the reference on `id_prefix` — a path traversal is not "parity"
+
+**The reference has a defect, and the port does not reproduce it.** `runners.py:1453`:
+
+    path = apps / f"gamehandler-{game.id[:8]}-{slug or 'game'}.desktop"
+
+`game.id[:8]` is interpolated **unvalidated**. With an id such as `a/../../b`,
+the first eight characters introduce path separators, so the resulting path is
+not a child of `directory` — measured against the real applications directory,
+`~/.local/share/-evil.desktop`. Not remotely triggerable (it needs an
+intermediate directory to already exist, and ids are UUIDs in practice), but
+reachable from a hand-edited `games.json`.
+
+**The port.** `crates/core/src/runners/desktop.rs:138`'s `id_prefix` maps any
+character outside `[0-9A-Za-z]` to `-`. A UUID's first eight characters are hex,
+so **every id this program generates produces a filename byte-identical to
+Python's** — the divergence is invisible in normal operation and only differs on
+ids the reference mishandles.
+
+**Decision: keep the divergence, and record it here rather than leaving it as a
+silent difference in a 605-line file.** The reasoning is the tie-break rule
+applied in order: feature parity is *not* "byte-identical to a program with a
+path-traversal bug"; working in the sandbox is unaffected; and a `.desktop`
+writer that can be steered outside the directory it was asked to write into is a
+worse artefact than one that cannot. **The parity claim for P-71 is scoped
+accordingly: the port matches the reference on every id the reference handles
+correctly, and differs only where the reference is unsafe.**
+
+**Why this needs a decision entry at all.** A future reader diffing the two
+implementations will find the difference. Without this record, the obvious
+reading is a porting mistake, and the obvious repair is to restore "parity" —
+reintroducing the traversal. **A deliberate divergence that is not written down
+is indistinguishable from an accident, and gets corrected back into a bug.**
+
+Related: P-71, T-29, D-52 (a fact recorded only in the code is invisible to the
+reader who needs it).
