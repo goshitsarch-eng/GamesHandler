@@ -1670,10 +1670,12 @@ mod tests {
     /// separate reader, and nothing about the reap implies the reader has seen
     /// the last bytes. The join is the whole fix.
     ///
-    /// `wait_with_output()` is the stdlib spelling of the same idea and is used
-    /// by `launch.rs`; this hand-built version exists so the test can assert on
-    /// the ordering directly rather than trusting that a combined call orders
-    /// it correctly.
+    /// `wait_with_output()` is the stdlib spelling of the same idea, and it is
+    /// what the production caller already uses: `WineRunner::run_version`
+    /// above. This hand-built version exists so the test can assert on the
+    /// ordering directly rather than trusting that a combined call orders it
+    /// correctly — the whole of B-07 is that the ordering is easy to get
+    /// wrong, so the test for it does not delegate the thing under test.
     fn capture_stderr_joined(child: &mut std::process::Child) -> (std::process::ExitStatus, String) {
         use std::io::Read;
 
