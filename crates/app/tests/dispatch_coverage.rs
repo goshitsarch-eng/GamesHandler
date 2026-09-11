@@ -198,15 +198,27 @@ const KNOWN_DEAD: [(&str, &str, &str); 1] = [(
     // variant, module, why — the task that owns it
     "FetchCoverForForm",
     "form",
-    "#80 / T-11. **Not debt: a false positive the guard cannot model, with a \
-     structural disclosure elsewhere.** `view/form.rs:731` constructs it, but only inside \
+    "#80 / T-11. **Not debt: a false positive the guard cannot model, and one the tree \
+     already couples shut.** `view/form.rs` constructs it, but only inside \
      `if !COVER_FETCH_MISSING` — the flag is `true`, so the FIND COVER button is not drawn and \
      nothing is reachable. This guard reads source as text and cannot see the flag, so it \
-     reports the emission. The coupling is enforced rather than promised: \
-     `main.rs:3355` asserts `button_on_screen == !COVER_FETCH_MISSING`, so the button cannot \
-     reappear without the arm being handled, and the arm cannot be handled while the button is \
-     hidden. Delete this entry when `COVER_FETCH_MISSING` becomes `false` and \
-     `main.rs:1339` stops being `{}`.",
+     reports the emission. That is a limit of the scan, not a defect in the tree, which is why \
+     this entry sits in the deferral list rather than in a bug report. \
+     \
+     **The deletion condition is enforced, twice, and the first time as a compile error — it \
+     is not the prose sentence it reads as.** `main.rs`'s \
+     `the_find_cover_button_is_drawn_iff_its_message_is_handled` carries \
+     `const { assert!(COVER_FETCH_MISSING, …) }`, so flipping the flag does not fail a test a \
+     reader has to find — it fails the *build*, measured: `E0080: evaluation panicked: this \
+     reached the state the constant exists for`. The same test asserts \
+     `handled == !COVER_FETCH_MISSING` in both directions, so the flag cannot go `false` while \
+     the arm is `{}`. And the moment the arm is handled, the staleness assertion below fires \
+     and demands this entry's deletion — that is this list's own rule, doing its job. There is \
+     no state in which this entry quietly defers a live control. \
+     \
+     Cite those two by name if you touch them: the previous text here gave `main.rs:1339` and \
+     `main.rs:3355`, and a line number in a comment is the hand-copied fact this file's header \
+     warns about — `1339` was `1043` when the entry was first written.",
 )];
 
 /// The repository root, derived rather than hardcoded.
