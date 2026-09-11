@@ -51,8 +51,13 @@
 //! variant and a handler, both of which live in `main.rs`, and this page is
 //! landing in a window where `main.rs` is held by another task. So it is a
 //! recorded interim rather than a silent one: see [`LINKS_OPEN`], which is the
-//! value [`the_links_are_still_unwired`] reads, and which fails the day the
+//! value `the_links_are_still_unwired` reads, and which fails the day the
 //! message lands so that this note cannot outlive the gap it describes.
+//!
+//! (`the_links_are_still_unwired` is a code span and not a link on purpose: it
+//! is a `#[cfg(test)]` item, so rustdoc can never resolve it and writing it as
+//! `[`…`]` produced a broken-intra-doc-link warning rather than a pointer. Same
+//! for the test named in [`crate::view::form`], which lives in `main.rs`.)
 
 use cosmic::iced::Length;
 use cosmic::widget::{Column, Row, button, container, scrollable, text};
@@ -117,7 +122,7 @@ pub const FOOTER_TAIL: &str = " — GPL-3.0-or-later. Proton and Wine builds are
 /// a `Message::OpenUrl`, which does not exist in this application yet.
 ///
 /// This constant exists so that "the links do not open" is a fact a test reads
-/// rather than a sentence a reader has to trust. [`the_links_are_still_unwired`]
+/// rather than a sentence a reader has to trust. `the_links_are_still_unwired`
 /// asserts both that it is `false` **and** that `main.rs` still has no
 /// `OpenUrl`, so the day the message lands the test fails and points at this
 /// constant. Deleting the record is part of wiring the links, exactly as

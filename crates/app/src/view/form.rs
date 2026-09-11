@@ -138,8 +138,12 @@ pub const VIRTUAL_DESKTOP_TOGGLE: &str = "virtual_desktop";
 /// `true` means it cannot: [`Message::FetchCoverForForm`] is an empty arm, so a
 /// button sending it would visibly do nothing. The day that arm is written this
 /// becomes `false` and
-/// [`the_find_cover_button_is_drawn_iff_its_message_is_handled`] fails, so the
+/// `the_find_cover_button_is_drawn_iff_its_message_is_handled` fails, so the
 /// note cannot outlive the gap.
+///
+/// That test's name is a code span rather than a link because it lives in
+/// `main.rs`'s `mod tests`, which rustdoc does not see — the bracket form
+/// emitted a broken-intra-doc-link warning instead of a pointer.
 ///
 /// [`Message::FetchCoverForForm`]: crate::Message::FetchCoverForForm
 pub const COVER_FETCH_MISSING: bool = true;
