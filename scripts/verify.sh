@@ -1616,8 +1616,21 @@ release_flatpak_lock
 STATUS_AFTER="$(git status --porcelain 2>/dev/null)"
 summary
 if [ "$STATUS_BEFORE" != "$STATUS_AFTER" ]; then
-    printf '\nNOTE: the working tree changed during this run. verify.sh must be\n'
-    printf 'read-only with respect to tracked files — please investigate:\n'
+    printf '\nNOTE: the working tree changed during this run.\n'
+    printf 'The likely cause is another agent editing this shared checkout while the run\n'
+    printf 'was in flight — four agents work in this one tree (D-49), so this fires on\n'
+    printf 'ordinary work rather than on a fault. The diff below names the paths, and\n'
+    printf 'the paths are what identify who changed them.\n'
+    printf '\n'
+    printf 'verify.sh is separately required to be read-only with respect to tracked\n'
+    printf 'files (T-17). Read that as the check, not as the verdict: a path below that\n'
+    printf 'verify.sh writes is a violation of it; a path it never touches belongs to\n'
+    printf 'whoever else was editing, and this note is then telling you the run raced\n'
+    printf 'them rather than that the gate wrote outside itself.\n'
+    printf '\n'
+    printf 'Either way the result is provisional. A run over a tree that moved is not\n'
+    printf 'attributable to any single tree state (D-45), so re-run on a still tree\n'
+    printf 'before quoting it:\n'
     diff <(printf '%s\n' "$STATUS_BEFORE") <(printf '%s\n' "$STATUS_AFTER") | sed 's/^/  /'
 fi
 
