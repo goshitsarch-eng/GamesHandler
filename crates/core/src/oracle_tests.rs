@@ -876,12 +876,24 @@ fn constants_match_the_python_module_level_values() {
 
 #[test]
 fn floats_survive_a_roundtrip_numerically_though_the_exponent_is_spelled_differently() {
-    // DECISIONS D-15, FINDINGS F-F. Python routes f64 through C's `%g`
-    // (`1e-07`, `10000000.0`); Rust routes it through Ryu (`1e-7`, `1e7`).
-    // Both are valid JSON and reparse to the same f64, so the check here is
-    // numeric equality after reparse rather than byte equality. Emulating
-    // `printf` would be a bug, not fidelity — `floats.out.json` is Python's
-    // spelling and the port is expected to differ.
+    // DECISIONS D-15, FINDINGS F-F — whose table is narrower than it first
+    // read, so this note records the measured divergence rather than repeating
+    // the original claim.
+    //
+    // Python writes f64 through C's `%g`, which pads a *negative* exponent to
+    // at least two digits: `1e-07`. Rust's serializer does not: `1e-7`. That is
+    // the whole of it. `1e7` is **not** an example — Python writes `10000000.0`
+    // and so does this port. Positive exponents agree in full, `+` sign
+    // included (`1e+23`, `1e+308`), as do ordinary decimals and subnormals.
+    // These fourteen fixture values were compared one by one, and `1e-7` is the
+    // only one spelled differently. (The formatter is `zmij`, not `ryu`; there
+    // is no `ryu` in `Cargo.lock` for serde_json 1.0.151.)
+    //
+    // Both spellings are valid JSON and reparse to the same f64, so the check
+    // here is numeric equality after reparse rather than byte equality.
+    // Emulating `printf` would be a bug, not fidelity — `floats.out.json` is
+    // Python's spelling and the port is expected to differ, there and only
+    // there.
     let oracle = oracle();
     let float_format = &oracle["float_format"];
     let library = Library::new_at(Some(fixtures_dir().join("floats.in.json")), FROZEN_NOW);
@@ -944,6 +956,27 @@ fn floats_survive_a_roundtrip_numerically_though_the_exponent_is_spelled_differe
                 ours.trim_start().starts_with("\"added\"")
                     || ours.trim_start().starts_with("\"last_played\""),
                 "only the float fields may be spelled differently, but this line differs:\n\
+                 rust:   {ours}\n\
+                 python: {theirs}"
+            );
+
+            // And the difference is specifically Python zero-padding a
+            // single-digit negative exponent. Asserting *which* divergence is
+            // allowed is what keeps a real formatting regression from arriving
+            // as a new line here and being waved through as "the exponent
+            // thing" — the same problem F-F's own table had.
+            let ours_value = ours.trim().trim_end_matches(',');
+            let theirs_value = theirs.trim().trim_end_matches(',');
+            assert!(
+                ours_value.contains("e-") && !ours_value.contains("e-0"),
+                "a differing line must be a negative exponent that Python pads, \
+                 but this one is not:\n\
+                 rust:   {ours}\n\
+                 python: {theirs}"
+            );
+            assert!(
+                theirs_value.contains("e-0"),
+                "Python should pad the exponent to two digits, but it did not:\n\
                  rust:   {ours}\n\
                  python: {theirs}"
             );
