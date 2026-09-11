@@ -3,9 +3,11 @@
 GameHandler is a modern game manager for Linux, focused on running **Windows games**
 via **Wine** and **Proton**.
 
-Current release: **0.7.2**. This patch fixes package-aware test discovery on
-hosts without PySide6: the test-only Kirigami stub now loads Qt types lazily,
-so the core tests run and the optional QML smoke test skips as intended.
+Current release: **0.8.0**. This release ports the interface from Python +
+Qt 6/Kirigami to Rust + libcosmic (the COSMIC desktop toolkit). The previous
+release, 0.7.2, fixed package-aware test discovery on hosts without PySide6:
+the test-only Kirigami stub now loads Qt types lazily, so the core tests run
+and the optional QML smoke test skips as intended.
 
 > **This branch is porting the interface to Rust.** GameHandler is being
 > rewritten from Python 3 + PySide6/QML (Qt 6, styled with Kirigami) to **Rust**
@@ -174,7 +176,7 @@ application is not packaged here any more; run it from source as above.
 
 ```bash
 ./build-aux/flatpak/build.sh
-flatpak --user install --reinstall dist/gamehandler-0.7.2.flatpak
+flatpak --user install --reinstall dist/gamehandler-0.8.0.flatpak
 flatpak run com.goshapps.GameHandler
 ```
 

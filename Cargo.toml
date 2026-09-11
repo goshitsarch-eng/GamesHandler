@@ -15,7 +15,7 @@ resolver = "3"
 members = ["crates/app", "crates/core"]
 
 [workspace.package]
-version = "0.7.2"
+version = "0.8.0"
 edition = "2024"
 # libcosmic's own floor (its Cargo.toml declares rust-version = "1.93"), and
 # therefore ours. Rust 1.98.1 is what the Flatpak rust-stable extension ships

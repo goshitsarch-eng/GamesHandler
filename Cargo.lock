@@ -350,6 +350,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-fs"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8034a681df4aed8b8edbd7fbe472401ecf009251c8b40556b304567052e294c5"
+dependencies = [
+ "async-lock",
+ "blocking",
+ "futures-lite",
+]
+
+[[package]]
 name = "async-io"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1840,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "gamehandler"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "clap",
  "gamehandler-core",
@@ -1849,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "gamehandler-core"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "bzip2",
  "flate2",
@@ -1908,6 +1919,16 @@ name = "gif"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ae047235e33e2829703574b54fdec96bfbad892062d97fed2f76022287de61b"
+dependencies = [
+ "color_quant",
+ "weezl",
+]
+
+[[package]]
+name = "gif"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
 dependencies = [
  "color_quant",
  "weezl",
@@ -2531,6 +2552,9 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif 0.14.2",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png 0.18.1",
@@ -2846,6 +2870,7 @@ source = "git+https://github.com/pop-os/libcosmic.git?rev=a401af8b1c54a8abd393b8
 dependencies = [
  "apply",
  "ashpd 0.12.3",
+ "async-fs",
  "auto_enums",
  "build_helpers",
  "cosmic-client-toolkit",
@@ -4109,7 +4134,7 @@ version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8928798c0a55e03c9ca6c4c6846f76377427d2c1e1f7e6de3c06ae57942df43"
 dependencies = [
- "gif",
+ "gif 0.13.3",
  "image-webp",
  "log",
  "pico-args",
