@@ -212,7 +212,7 @@ const DISPLAY_VARS: [&str; 3] = ["WAYLAND_DISPLAY", "WAYLAND_SOCKET", "DISPLAY"]
 ///
 /// This must not be stricter than winit, or the port would refuse to start on
 /// a machine where the window would have opened. winit's rule is
-/// `winit/src/platform_impl/linux/mod.rs:87-96`: `WAYLAND_DISPLAY` or
+/// `winit/src/platform_impl/linux/mod.rs:89-95`: `WAYLAND_DISPLAY` or
 /// `WAYLAND_SOCKET` (set *and* non-empty) selects Wayland, `DISPLAY` (set and
 /// non-empty) selects X11, and either is enough. All three are read with
 /// `env::var`, and an empty value counts as unset — winit's own comment above
@@ -250,12 +250,103 @@ fn display_present(env: impl Fn(&str) -> Option<String>) -> bool {
 /// `.desktop` shortcut invokes.
 fn no_display_hint() -> String {
     format!(
-        "  WAYLAND_DISPLAY, WAYLAND_SOCKET and DISPLAY are all unset or empty.\n\
-         \x20 Run this inside a graphical session to use the interface.\n\
+        "  WAYLAND_DISPLAY, WAYLAND_SOCKET and DISPLAY are all unset or empty,\n\
+         \x20 so no window can be opened. Run this inside a graphical session.\n\
          \x20 These commands need no display:\n\
          \x20   {APP_NAME} --list\n\
          \x20   {APP_NAME} --launch <game id>"
     )
+}
+
+/// Refuse to start the interface when there is no display, and say why.
+///
+/// Returns `true` when it refused. Writes the whole diagnostic to `out` — the
+/// one line naming the failure and the hint block under it — and writes nothing
+/// when a display is present, which is itself asserted: a function that printed
+/// the refusal to a working session would be a bug no test of the string alone
+/// could see.
+///
+/// `out` is a parameter rather than `std::io::stderr()` captured inside so this
+/// is testable without a display and without capturing the process's stderr,
+/// which the test runner shares with every other test in the binary.
+fn display_refusal(env: impl Fn(&str) -> Option<String>, out: &mut impl std::io::Write) -> bool {
+    if display_present(env) {
+        return false;
+    }
+    // The write failure is ignored on purpose: this is the last thing the
+    // process does, and a broken stderr is not a reason to change the exit code
+    // that a `.desktop` shortcut or a script reads.
+    let _ = writeln!(
+        out,
+        "{APP_NAME}: cannot open the interface — no display is available."
+    );
+    let _ = writeln!(out, "{}", no_display_hint());
+    true
+}
+
+/// What came of asking the interface to start.
+///
+/// A value rather than an [`ExitCode`], so the three outcomes can be told apart:
+/// `std::process::ExitCode` is opaque and cannot be compared in a test, and
+/// "failed" and "refused" both exit non-zero — but only one of them means the
+/// event loop was never reached, which is the thing `run_gui`'s doc comment
+/// spends a paragraph on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GuiStart {
+    /// No display: nothing was attempted, and the diagnostic was written.
+    NoDisplay,
+    /// The interface ran and closed normally.
+    Ran,
+    /// The interface could not start; the reason was written as well as
+    /// returned.
+    Failed(String),
+}
+
+impl GuiStart {
+    /// The status a shell or a `.desktop` shortcut sees.
+    ///
+    /// A `u8` rather than an [`ExitCode`] because `ExitCode` is opaque and
+    /// cannot be compared in a test, which would leave this decision — the one
+    /// a script branches on — unwatched. `run_gui` converts with
+    /// `ExitCode::from`, so what is untested is std's conversion and nothing of
+    /// ours.
+    fn exit_status(&self) -> u8 {
+        match self {
+            // `Ran` is the only outcome where the interface was actually shown.
+            GuiStart::Ran => 0,
+            GuiStart::NoDisplay | GuiStart::Failed(_) => 1,
+        }
+    }
+}
+
+/// Decide, and report, what starting the interface does.
+///
+/// The environment, the writer and the starter are all parameters so the whole
+/// of `run_gui` outside its three wiring lines is reachable from a test — in
+/// particular the case a display-free machine hits, which is the case the
+/// application's own N-01 diagnostic exists for and which no test could reach
+/// while the prints lived inside `run_gui`.
+fn start_gui(
+    env: impl Fn(&str) -> Option<String>,
+    out: &mut impl std::io::Write,
+    start: impl FnOnce() -> Result<(), String>,
+) -> GuiStart {
+    if display_refusal(env, out) {
+        return GuiStart::NoDisplay;
+    }
+    match start() {
+        Ok(()) => GuiStart::Ran,
+        Err(error) => {
+            // A failure to start is reported here rather than by the caller, so
+            // there is one place that decides what a user sees and one place
+            // that can be tested for it.
+            let _ = writeln!(
+                out,
+                "{APP_NAME}: could not start the interface: {error}"
+            );
+            GuiStart::Failed(error)
+        }
+    }
 }
 
 /// Start the graphical interface. Reached only when no CLI flag was given.
@@ -263,7 +354,7 @@ fn no_display_hint() -> String {
 /// # Why the check is here and not around `run()`
 ///
 /// winit *does* detect this and returns a `NotSupportedError`
-/// (`winit/src/platform_impl/linux/mod.rs:106-117`), but that error never
+/// (`winit/src/platform_impl/linux/mod.rs:116`), but that error never
 /// reaches the `Err` arm below: iced_winit consumes it one call later with
 /// `EventLoop::new().expect("Create event loop")`
 /// (`iced/winit/src/lib.rs:92`), which panics with a raw traceback and an
@@ -282,20 +373,29 @@ fn no_display_hint() -> String {
 /// `var_os` here would accept a value winit rejects, and this guard would then
 /// pass a display through to the panic it exists to prevent.
 fn run_gui() -> ExitCode {
-    if !display_present(|name| std::env::var(name).ok()) {
-        eprintln!("{APP_NAME}: cannot open the interface — no display is available.");
-        eprintln!("{}", no_display_hint());
-        return ExitCode::FAILURE;
-    }
+    // Everything this function decides is decided by `start_gui`, which takes
+    // the environment, the writer and the starter as parameters so a test can
+    // supply its own. What is left here is the three things a test cannot
+    // supply: the process's environment, its stderr, and the real event loop.
+    //
+    // That split is not tidiness. With the prints inline here, the tests could
+    // only call `no_display_hint` and check the string it returns — so deleting
+    // both `eprintln!`s, the whole user-visible half of N-01, failed nothing.
+    // The same was true of the `Err` arm, which had no test at all: a start
+    // that failed said nothing to anyone.
+    let outcome = start_gui(
+        |name| std::env::var(name).ok(),
+        &mut std::io::stderr(),
+        || {
+            let settings =
+                cosmic::app::Settings::default().size(cosmic::iced::Size::new(1200.0, 800.0));
+            // `String` rather than the framework's error type so the seam does
+            // not depend on it; the message is all that is used.
+            cosmic::app::run::<App>(settings, ()).map_err(|error| error.to_string())
+        },
+    );
 
-    let settings = cosmic::app::Settings::default().size(cosmic::iced::Size::new(1200.0, 800.0));
-    match cosmic::app::run::<App>(settings, ()) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("{APP_NAME}: could not start the interface: {error}");
-            ExitCode::FAILURE
-        }
-    }
+    ExitCode::from(outcome.exit_status())
 }
 
 /// Messages handled by [`App::update`].
@@ -560,13 +660,28 @@ fn activate_page(model: &mut nav_bar::Model, page: Page) -> bool {
     model.activate_position(position as u16)
 }
 
-/// The application state.
+/// The application: the COSMIC [`cosmic::Core`] plus a [`Shell`].
 ///
-/// Holds the COSMIC `Core` (window and theme) and the ported [`State`]. The
-/// split is the framework's, not ours: `Core` is what `cosmic::Application`
-/// requires, and `State` is what `bridge.py`'s `Backend` fields became.
+/// The split is not cosmetic. `Core` is what [`cosmic::Application`] requires
+/// (window, theme, header bar) and it can only be built by the framework, so an
+/// `App` cannot be constructed in a test — which is exactly why every handler
+/// lives on [`Shell`] instead, and why [`App`] is three delegations and a
+/// `Quit`.
 pub struct App {
     core: cosmic::Core,
+    shell: Shell,
+}
+
+/// Everything the shell does that is not the framework's.
+///
+/// [`App`] is this plus a [`cosmic::Core`], and the split is deliberate: `Core`
+/// can only be built by the framework (it owns the window, and
+/// [`cosmic::Core::default`] leaves `main_window` as `None`), so an `App` cannot
+/// be constructed in a test — and a handler that only touches these two fields
+/// does not need one. [`App::update`] is a delegation to [`Shell::update`], so
+/// the handlers a test calls are the same ones the running app calls, down to
+/// the match arms.
+pub struct Shell {
     state: State,
     /// The sidebar, drawn by the framework from [`cosmic::Application::nav_model`].
     ///
@@ -574,123 +689,140 @@ pub struct App {
     /// the first, because the framework wants a model it can read while
     /// rendering and `State` is not ours to restructure. Two records that must
     /// agree is a defect waiting to happen, so they are written together in
-    /// exactly one place — [`App::go_to`] — and the tests below check that
-    /// every page survives the round trip.
+    /// exactly one place — [`Shell::show_page`] — and the checks below are what
+    /// keep that true rather than merely stated.
     nav_model: nav_bar::Model,
 }
 
-impl App {
+impl Shell {
+    /// A shell over a real library, settings and runner manager, the way
+    /// [`App::init`] builds one — but with no window, so a test can have one.
+    #[cfg(test)]
+    fn new() -> Self {
+        Self {
+            state: State::new(
+                Library::new(None),
+                Settings::load(None),
+                RunnerManager::new(&SystemLaunchEnv),
+            ),
+            nav_model: build_nav_model(),
+        }
+    }
+
     /// The one place the current page changes.
     ///
     /// Both halves move together: `state.page`, which the pages read, and the
     /// sidebar's selection, which the framework draws. A write to `state.page`
     /// anywhere else is how these two drift — a sidebar showing one page while
     /// the body shows another, which no test of either half alone would catch.
-    fn go_to(&mut self, page: Page) {
+    ///
+    /// # The invariant is checked, not merely written down
+    ///
+    /// That paragraph used to be the whole of the guarantee, and it was not one.
+    /// Nothing in the framework closes this: `Action::NavBar` reaches
+    /// [`cosmic::Application::on_nav_select`], and the nav bar widget only
+    /// *publishes* a selection — it never calls `model.activate` itself — so the
+    /// model's selection is whatever this function last set it to. And
+    /// `State::page` is a public field, so any handler may assign it directly,
+    /// compile, leave the panel showing the previous page, and fail nothing.
+    ///
+    /// Two structures close it, and neither is a comment:
+    ///
+    /// - the `debug_assert!` below, which fires when this function fails to move
+    ///   the sidebar — `activate_page` answering `false` because the model does
+    ///   not carry the page, i.e. `build_nav_model` and [`Page::ALL`] having
+    ///   diverged. It is deliberately *not* able to see a handler that assigned
+    ///   `state.page` directly: this function writes both records before
+    ///   checking them, so a later call repairs such a write before the check
+    ///   runs. That is why the second structure exists.
+    /// - `no_handler_leaves_the_sidebar_out_of_step`, which drives every message
+    ///   through [`Shell::update`] and checks the two agree afterwards, so a
+    ///   handler that writes `state.page` directly fails a test rather than
+    ///   confusing a user.
+    ///
+    /// Making `State::page` private with a setter would close it once more, and
+    /// is a T-09 decision rather than a T-08 fix: T-09 is where handlers start
+    /// setting pages from page content, and the right shape depends on how many
+    /// of them there turn out to be. Until then the field stays public and the
+    /// two checks above are what make the invariant real.
+    fn show_page(&mut self, page: Page) {
         self.state.page = page;
         activate_page(&mut self.nav_model, page);
-    }
-}
-
-/// The body of a page that has not been ported yet.
-///
-/// T-08 is the shell: the sidebar, the routing and the toaster. Each page's own
-/// content is a later task, and the task is named **on screen** as well as in
-/// the code so the shell cannot be mistaken for a finished interface — a page
-/// that renders an empty body reads as a bug in the shell, which is the wrong
-/// thing to go looking for. The Library page is T-09, so that arm is the first
-/// to be replaced.
-fn pending_page(page: Page, task: &str) -> cosmic::Element<'_, Message> {
-    container(
-        cosmic::widget::column::with_capacity(2)
-            .push(text::title2(page.label()))
-            .push(text::body(format!("This page has not been ported yet ({task}).")))
-            .spacing(12),
-    )
-    .center(cosmic::iced::Length::Fill)
-    .into()
-}
-
-impl cosmic::Application for App {
-    /// The tokio-backed executor, as in libcosmic's own application example.
-    type Executor = cosmic::executor::Default;
-
-    /// No startup arguments yet; the library and settings are read from disk
-    /// rather than passed on the command line.
-    type Flags = ();
-
-    type Message = Message;
-
-    const APP_ID: &'static str = APP_ID;
-
-    fn core(&self) -> &cosmic::Core {
-        &self.core
+        debug_assert!(
+            self.pages_agree(),
+            "the sidebar shows {:?} while `state.page` is {:?}: `show_page` is \
+             the only writer of the pair, and this fires when something else \
+             assigned `state.page` directly",
+            self.nav_model.active_data::<Page>(),
+            self.state.page,
+        );
     }
 
-    fn core_mut(&mut self) -> &mut cosmic::Core {
-        &mut self.core
-    }
-
-    fn init(core: cosmic::Core, _flags: Self::Flags) -> (Self, cosmic::app::Task<Self::Message>) {
-        // The two loads are the only filesystem work done at startup, and
-        // neither is fallible: `Settings.load` and `Library.load` degrade to
-        // defaults rather than raising (D-20, `models.py`).
-        let settings = Settings::load(None);
-        let library = Library::new(None);
-        let runners = RunnerManager::new(&SystemLaunchEnv);
-        let mut app = App {
-            core,
-            state: State::new(library, settings, runners),
-            nav_model: build_nav_model(),
-        };
-
-        // `Main.qml:11` (`title: "GameHandler"`) and the drawer's own
-        // `title` at `:63` — one constant, the application's name. It is
-        // deliberately **not** the current page: the reference's window title
-        // does not change as the user navigates, and libcosmic's header bar
-        // would otherwise start out empty, since `Core` defaults
-        // `header_title` to `""` (`core.rs:161`) while showing the bar
-        // (`core.rs:167`, `show_headerbar: true`).
-        //
-        // `set_window_title` takes a window id because this build has the
-        // `multi-window` feature on — not by choice but as a consequence:
-        // libcosmic's `wayland` feature implies it (`Cargo.toml:85-95`), and
-        // this app needs `wayland`. The main window exists by the time `init`
-        // runs, so the id is available; `None` is handled rather than
-        // `expect`ed because a missing window is not worth taking the process
-        // down for.
-        app.set_header_title(APP_NAME.to_string());
-        let title = match app.core().main_window_id() {
-            Some(id) => app.set_window_title(APP_NAME.to_string(), id),
-            None => cosmic::task::none(),
-        };
-
-        (app, title)
-    }
-
-    /// The sidebar.
+    /// The body under the sidebar, for whichever page is showing.
     ///
-    /// libcosmic draws the nav panel from this model itself
-    /// (`src/app/mod.rs:398-417`, the default `nav_bar`), so returning `Some`
-    /// here is the whole of "there is a sidebar", and a click arrives back as
-    /// [`cosmic::Application::on_nav_select`].
-    fn nav_model(&self) -> Option<&nav_bar::Model> {
-        Some(&self.nav_model)
-    }
-
-    /// A sidebar row was clicked.
+    /// This is the page dispatch: one arm per [`Page`], and the arms that call
+    /// `pending_page` are the pages that have not been ported. Two things about
+    /// its shape are load-bearing and neither is cosmetic.
     ///
-    /// The page comes out of the *row's own data* rather than from its
-    /// position: positions are an implementation detail of the model, and a row
-    /// inserted in the wrong place would then select the wrong page silently.
-    fn on_nav_select(&mut self, id: nav_bar::Id) -> cosmic::app::Task<Self::Message> {
-        if let Some(page) = self.nav_model.data::<Page>(id).copied() {
-            self.go_to(page);
+    /// # It is a method on `Shell`, not a free function and not a method on `App`
+    ///
+    /// - Not on [`App`], because `App` cannot be built without a display
+    ///   ([`cosmic::Core`] is only ever constructed by the framework), so a
+    ///   method there could not be called from a test at all. Everything the
+    ///   body reads is in `State`, and `Shell` is a `State` with a sidebar.
+    /// - Not a free function over `&State`, because
+    ///   `crates/app/tests/pending_pages.rs` — Packaging's pin on the set of
+    ///   unported pages — parses this dispatch out of the source text and is
+    ///   anchored on `match self.state.page`. A free function's `match
+    ///   state.page` is a shape it does not know, and it fails loudly rather
+    ///   than asserting over an empty list (which is its own guard working as
+    ///   designed). Renaming the parameter to keep the anchor would be a lie
+    ///   told to a parser; the method is the honest form of it.
+    ///
+    /// # The arms are written out
+    ///
+    /// There is no wildcard arm, so adding a [`Page`] is a compile error until
+    /// it is given a body. Each unported arm names the task that will build it,
+    /// on screen as well as in the code, so a page that has not landed says so.
+    fn view_body(&self) -> cosmic::Element<'_, Message> {
+        match self.state.page {
+            // TODO(T-09): the grid and list, with search, sort and the category
+            // filter (`LibraryPage.qml`).
+            Page::Library => pending_page(Page::Library, "T-09"),
+            // TODO(T-12): the release list and the install progress.
+            Page::Installers => pending_page(Page::Installers, "T-12"),
+            // TODO(T-11): the runner manager's page.
+            Page::Runners => pending_page(Page::Runners, "T-11"),
+            // TODO(T-13): the plugin list.
+            Page::Plugins => pending_page(Page::Plugins, "T-13"),
+            // TODO(T-13): about and credits.
+            Page::Credits => pending_page(Page::Credits, "T-13"),
+            // TODO(T-13): the settings form.
+            Page::Settings => pending_page(Page::Settings, "T-13"),
         }
-        cosmic::task::none()
+    }
+
+    /// Whether the two records of the current page agree.
+    fn pages_agree(&self) -> bool {
+        self.nav_model.active_data::<Page>().copied() == Some(self.state.page)
+    }
+
+    /// The page the sidebar draws as selected.
+    #[cfg(test)]
+    fn sidebar_page(&self) -> Option<Page> {
+        self.nav_model.active_data::<Page>().copied()
     }
 
     /// Handle one message.
+    ///
+    /// # Why this is on `Shell` and not on `App`
+    ///
+    /// A handler whose whole effect is on [`State`] does not need a window, and
+    /// `App` cannot exist without one. Putting the dispatcher here is what makes
+    /// the handlers testable: `Shell::new()` builds one with no `Core`, so a
+    /// test calls the same match the running application calls. The previously
+    /// untested arms — all five of them — were untested only because the test
+    /// would have had to construct an `App`.
     ///
     /// # Every arm is written out, and none of them is a wildcard
     ///
@@ -704,11 +836,23 @@ impl cosmic::Application for App {
     /// # What the placeholders do, and do not, mean
     ///
     /// A `Task::none()` below means *nothing has been implemented yet* — it
-    /// does not mean the message is a no-op by design. The three that carry a
-    /// real body are [`Message::NavigateTo`], [`Message::DismissToast`] and
-    /// [`Message::Quit`], because they are the ones the shell in T-08 needs to
-    /// be usable at all.
-    fn update(&mut self, message: Self::Message) -> cosmic::app::Task<Self::Message> {
+    /// does not mean the message is a no-op by design. The **five** that carry
+    /// a real body are [`Message::NavigateTo`], [`Message::CloseDialog`],
+    /// [`Message::DismissToast`], [`Message::Notify`] and [`Message::Quit`]:
+    /// they are the ones the shell in T-08 needs in order to be usable at all —
+    /// navigation, the two ways a dialog closes, the toaster the whole app
+    /// reports through, and quitting.
+    ///
+    /// That count is not a comment. `only_the_written_handlers_change_anything`
+    /// drives every message in [`Message::ALL`] through this function and
+    /// requires the set that has any effect to be exactly those four (plus
+    /// `Quit`, which needs the window and so is [`App::update`]'s one arm). A
+    /// handler that regresses to `{}` shrinks that set and fails; a sixth
+    /// handler landing grows it and fails until it is added deliberately. The
+    /// earlier version of this paragraph said "three" and named three, omitting
+    /// `CloseDialog` and `Notify` — in the sentence a reviewer trusts to know
+    /// what is live.
+    fn update(&mut self, message: Message) -> cosmic::app::Task<Message> {
         match message {
             // ---- Navigation and dialogs -----------------------------------
             // The route used by everything that is not the sidebar itself — a
@@ -716,7 +860,7 @@ impl cosmic::Application for App {
             // `go_to` so the sidebar's selection moves with it; see that
             // function for why the two must not be written separately.
             Message::NavigateTo(page) => {
-                self.go_to(page);
+                self.show_page(page);
             }
             // TODO(T-09): build a `GameForm` from `newGameTemplate` — the
             // settings-derived toggle defaults are `GameForm::TOGGLE_NAMES`
@@ -746,16 +890,11 @@ impl cosmic::Application for App {
             Message::DismissToast(id) => {
                 self.state.toasts.remove(id);
             }
-            // The other handler that already works, because a Quit that did
-            // nothing would be a lie about the state of the app. `Core` tracks
-            // the main window id, and iced's `window::close` is the supported
-            // way to end it — the same path the window manager's own close
-            // button takes, so no `std::process::exit` shortcut.
-            Message::Quit => {
-                if let Some(id) = self.core.main_window_id() {
-                    return cosmic::iced::window::close(id);
-                }
-            }
+            // `Quit` is handled by [`App::update`] rather than here: it closes
+            // the window, which is the framework's, and this shell has none. It
+            // is matched there rather than here so this function stays a
+            // function of `State` alone — see [`Shell`].
+            Message::Quit => {}
 
             // ---- Settings --------------------------------------------------
             // TODO(T-13): validate against the allowed sets before storing —
@@ -880,6 +1019,229 @@ impl cosmic::Application for App {
         }
         cosmic::task::none()
     }
+}
+
+/// The pages whose body is still a placeholder: the task that will build each.
+///
+/// # Why this exists
+///
+/// T-08 is the shell: the sidebar, the routing and the toaster. Each page's own
+/// content is a later task, and until it lands that page's body says so **on
+/// screen** as well as in the code — a page that rendered an empty body would
+/// read as a bug in the shell, which is the wrong thing to go looking for.
+///
+/// The danger in a placeholder is not that it is wrong but that it is
+/// **invisible**: it compiles, it renders, and it satisfies every test that
+/// checks the process came up. `gui-stays-up` in `scripts/smoke-test.sh` asserts
+/// exactly that and nothing more, so a build whose whole interface is six
+/// placeholders passes the gate suite. This list is what makes the placeholders
+/// countable, and `the_pending_pages_are_exactly_the_ones_whose_body_says_so`
+/// is what counts them — against the rendered body, not against this list.
+///
+/// # Landing a page is one deletion
+///
+/// This is a slice, not a `[(Page, &str); N]`, and that is deliberate: a
+/// fixed-length array would make removing a line a two-part edit — delete the
+/// line, then correct the length — and the second part is mechanical. A
+/// mechanical edit forced by a failure message that says the count is pinned
+/// "deliberately" is how a gate stops meaning anything: the reader learns to
+/// clear red by editing a constant. With a slice, the one edit is the one that
+/// carries the meaning, and the test above is what holds the other half — it
+/// reads what `view_body` actually draws.
+///
+/// **T-19's acceptance is that this is empty**, at which point the placeholder
+/// function goes with the last entry.
+#[cfg(test)]
+const PENDING_PAGES: &[(Page, &str)] = &[
+    (Page::Library, "T-09"),
+    (Page::Installers, "T-12"),
+    (Page::Runners, "T-11"),
+    (Page::Plugins, "T-13"),
+    (Page::Credits, "T-13"),
+    (Page::Settings, "T-13"),
+];
+
+/// The task that will build `page`, or `None` once its body has landed.
+#[cfg(test)]
+fn pending_task(page: Page) -> Option<&'static str> {
+    PENDING_PAGES
+        .iter()
+        .find(|(pending, _)| *pending == page)
+        .map(|(_, task)| *task)
+}
+
+/// The body of a page that has not been ported yet.
+///
+/// The task is named on screen as well as in the code. See [`PENDING_PAGES`].
+fn pending_page(page: Page, task: &str) -> cosmic::Element<'_, Message> {
+    container(
+        cosmic::widget::column::with_capacity(2)
+            .push(text::title2(page.label()))
+            .push(text::body(format!("This page has not been ported yet ({task}).")))
+            .spacing(12),
+    )
+    .center(cosmic::iced::Length::Fill)
+    .into()
+}
+
+/// What one message does to a shell, as far as a test can see it.
+///
+/// Two observations, not one, because an arm can do its work in either place:
+///
+/// - `state`, read by diffing `Debug` before and after the call. [`State`] and
+///   everything under it derive `Debug`, so this sees every field a handler
+///   writes and nothing else — it is coarse, but it cannot be gamed by a
+///   handler that writes a field no test inspects;
+/// - `task_units`, the size of the [`cosmic::Task`] the arm returned, via
+///   iced's public [`Task::units`]. `Task::none()` is zero units, so this is
+///   what tells a real `Task` from an empty arm — and it is why a handler whose
+///   whole effect is the task it returns (`Message::X(_) => some_task()`, which
+///   is the shape `FetchCover` will take) is not silently counted as a
+///   placeholder. A `let _ = …` on the returned task would have hidden exactly
+///   that.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+struct Effect {
+    /// The state was different afterwards.
+    state_changed: bool,
+    /// How many units of work the arm asked the runtime for; `0` for
+    /// `Task::none()`.
+    task_units: usize,
+}
+
+/// Run `message` through the real dispatcher and report what it did.
+///
+/// This is the whole instrument behind the handler tests: it calls
+/// [`Shell::update`] — the same match the running application calls — rather
+/// than inspecting the source, so a mutation that empties an arm is observed
+/// as a change in behaviour rather than as a change in text.
+#[cfg(test)]
+fn observe(shell: &mut Shell, message: Message) -> Effect {
+    let before = format!("{:?}", shell.state);
+    let task = shell.update(message);
+    Effect {
+        state_changed: format!("{:?}", shell.state) != before,
+        task_units: task.units(),
+    }
+}
+
+/// Did `message` do anything at all?
+///
+/// "Anything" is deliberately the union of both observations: a handler that
+/// only speaks to the runtime counts, even though it writes no state, because
+/// that is a written handler and misreporting it as a placeholder is the
+/// inverse of the failure these tests exist to catch.
+#[cfg(test)]
+fn is_handled(shell: &mut Shell, message: Message) -> bool {
+    let effect = observe(shell, message);
+    effect.state_changed || effect.task_units > 0
+}
+
+impl cosmic::Application for App {
+
+    /// The tokio-backed executor, as in libcosmic's own application example.
+    type Executor = cosmic::executor::Default;
+
+    /// No startup arguments yet; the library and settings are read from disk
+    /// rather than passed on the command line.
+    type Flags = ();
+
+    type Message = Message;
+
+    const APP_ID: &'static str = APP_ID;
+
+    fn core(&self) -> &cosmic::Core {
+        &self.core
+    }
+
+    fn core_mut(&mut self) -> &mut cosmic::Core {
+        &mut self.core
+    }
+
+    fn init(core: cosmic::Core, _flags: Self::Flags) -> (Self, cosmic::app::Task<Self::Message>) {
+        // The two loads are the only filesystem work done at startup, and
+        // neither is fallible: `Settings.load` and `Library.load` degrade to
+        // defaults rather than raising (D-20, `models.py`).
+        let settings = Settings::load(None);
+        let library = Library::new(None);
+        let runners = RunnerManager::new(&SystemLaunchEnv);
+        let mut app = App {
+            core,
+            shell: Shell {
+                state: State::new(library, settings, runners),
+                nav_model: build_nav_model(),
+            },
+        };
+
+        // `Main.qml:11` (`title: "GameHandler"`) and the drawer's own
+        // `title` at `:63` — one constant, the application's name. It is
+        // deliberately **not** the current page: the reference's window title
+        // does not change as the user navigates, and libcosmic's header bar
+        // would otherwise start out empty, since `Core` defaults
+        // `header_title` to `""` (`core.rs:161`) while showing the bar
+        // (`core.rs:167`, `show_headerbar: true`).
+        //
+        // `set_window_title` takes a window id because this build has the
+        // `multi-window` feature on — not by choice but as a consequence:
+        // libcosmic's `wayland` feature implies it (`Cargo.toml:85-95`), and
+        // this app needs `wayland`. The main window exists by the time `init`
+        // runs, so the id is available; `None` is handled rather than
+        // `expect`ed because a missing window is not worth taking the process
+        // down for.
+        app.set_header_title(APP_NAME.to_string());
+        let title = match app.core().main_window_id() {
+            Some(id) => app.set_window_title(APP_NAME.to_string(), id),
+            None => cosmic::task::none(),
+        };
+
+        (app, title)
+    }
+
+    /// The sidebar.
+    ///
+    /// libcosmic draws the nav panel from this model itself
+    /// (`src/app/mod.rs:398-417`, the default `nav_bar`), so returning `Some`
+    /// here is the whole of "there is a sidebar", and a click arrives back as
+    /// [`cosmic::Application::on_nav_select`].
+    fn nav_model(&self) -> Option<&nav_bar::Model> {
+        Some(&self.shell.nav_model)
+    }
+
+    /// A sidebar row was clicked.
+    ///
+    /// The page comes out of the *row's own data* rather than from its
+    /// position: positions are an implementation detail of the model, and a row
+    /// inserted in the wrong place would then select the wrong page silently.
+    fn on_nav_select(&mut self, id: nav_bar::Id) -> cosmic::app::Task<Self::Message> {
+        if let Some(page) = self.shell.nav_model.data::<Page>(id).copied() {
+            self.shell.show_page(page);
+        }
+        cosmic::task::none()
+    }
+
+    /// Handle one message.
+    ///
+    /// Two things happen here and nothing else: `Quit` is answered with the
+    /// window the framework owns, and everything else is delegated to
+    /// [`Shell::update`]. The delegation is not a convenience — it is what makes
+    /// the handlers testable, since [`App`] cannot be built off a display.
+    ///
+    /// Adding a variant to [`Message`] is still a compile error until it is
+    /// listed, because [`Shell::update`]'s match is exhaustive and has no
+    /// wildcard arm; the guarantee is unchanged, it has only moved.
+    fn update(&mut self, message: Self::Message) -> cosmic::app::Task<Self::Message> {
+        // The one handler that needs the framework: `Core` tracks the main
+        // window id, and iced's `window::close` is the supported way to end it —
+        // the same path the window manager's own close button takes, so no
+        // `std::process::exit` shortcut.
+        if matches!(&message, Message::Quit) {
+            return match self.core.main_window_id() {
+                Some(id) => cosmic::iced::window::close(id),
+                None => cosmic::task::none(),
+            };
+        }
+        self.shell.update(message)
+    }
 
     /// The explicit `'_` is load-bearing: omitting it trips
     /// `mismatched_lifetime_syntaxes`, which `-D warnings` turns into a build
@@ -890,27 +1252,12 @@ impl cosmic::Application for App {
     /// whatever this returns, so a page can neither forget the sidebar nor draw
     /// a second one.
     fn view(&self) -> cosmic::Element<'_, Self::Message> {
-        let body = match self.state.page {
-            // TODO(T-09): the grid and list, with search, sort and the category
-            // filter (`LibraryPage.qml`).
-            Page::Library => pending_page(Page::Library, "T-09"),
-            // TODO(T-12): the release list and the install progress.
-            Page::Installers => pending_page(Page::Installers, "T-12"),
-            // TODO(T-11): the runner manager's page.
-            Page::Runners => pending_page(Page::Runners, "T-11"),
-            // TODO(T-13): the plugin list.
-            Page::Plugins => pending_page(Page::Plugins, "T-13"),
-            // TODO(T-13): about and credits.
-            Page::Credits => pending_page(Page::Credits, "T-13"),
-            // TODO(T-13): the settings form.
-            Page::Settings => pending_page(Page::Settings, "T-13"),
-        };
-
         // Every failure path in `bridge.py` ends in the `notify` signal, so the
         // toaster is wrapped around the whole body rather than placed inside a
         // page: a toast raised by one page must survive a navigation to another,
-        // and `Toasts` lives in `State` for exactly that reason.
-        toaster(&self.state.toasts, body)
+        // and `Toasts` lives in `State` for exactly that reason. The body itself
+        // is [`view_body`], which a test can call without an `App`.
+        toaster(&self.shell.state.toasts, self.shell.view_body())
     }
 }
 
@@ -1088,7 +1435,7 @@ mod tests {
     /// `WAYLAND_SOCKET`. Measured, not imagined — that mutation survived until
     /// this constant was added.
     ///
-    /// `winit/src/platform_impl/linux/mod.rs:87-96`.
+    /// `winit/src/platform_impl/linux/mod.rs:89-95`.
     const WINIT_READS: [&str; 3] = ["WAYLAND_DISPLAY", "WAYLAND_SOCKET", "DISPLAY"];
 
     /// The guard checks **exactly** the variables winit reads: no fewer, and no
@@ -1130,7 +1477,7 @@ mod tests {
     /// **The subtlety that makes this worth a function.** A variable that is
     /// *set but empty* counts as unset, which is winit's
     /// `.filter(|var| !var.is_empty())`
-    /// (`winit/src/platform_impl/linux/mod.rs:88-95`). `DISPLAY=""` is not
+    /// (`winit/src/platform_impl/linux/mod.rs:89-95`). `DISPLAY=""` is not
     /// hypothetical: it is what remains when a launcher or a unit file forwards
     /// a display variable that was never set.
     #[test]
@@ -1197,6 +1544,12 @@ mod tests {
     /// The hint has to be actionable, so it names every variable that was
     /// checked and both commands that work without a display. A message that
     /// merely said "no display" would satisfy N-02 and fail N-01's purpose.
+    ///
+    /// This is a test of the *words*, and on its own it proves nothing about
+    /// behaviour: `no_display_hint` is only reachable through
+    /// [`display_refusal`], and
+    /// `a_displayless_start_is_refused_with_the_diagnostic_on_stderr` is what
+    /// checks the words reach stderr.
     #[test]
     fn the_hint_names_the_variables_and_the_headless_commands() {
         let hint = no_display_hint();
@@ -1210,6 +1563,161 @@ mod tests {
              path that must never need a display"
         );
         assert!(hint.contains(APP_NAME), "the hint should name the program");
+    }
+
+    /// **The displayless path writes the diagnostic and refuses.**
+    ///
+    /// This is the half the string tests cannot reach. `no_display_hint` is a
+    /// pure function of nothing, so a test of its output says only that the
+    /// sentence exists — it was satisfied by a version where the two
+    /// `eprintln!`s that print it had been deleted, which is the entire
+    /// user-visible part of N-01.
+    ///
+    /// Here the writer is a `Vec<u8>`, so the bytes are the assertion: the
+    /// refusal line, the hint, and no output at all when a display is present.
+    #[test]
+    fn a_displayless_start_is_refused_with_the_diagnostic_on_stderr() {
+        let mut printed = Vec::new();
+        let refused = display_refusal(|_| None, &mut printed);
+        let printed = String::from_utf8(printed).expect("the diagnostic is UTF-8");
+
+        assert!(refused, "no display must refuse to start");
+        assert!(
+            printed.contains(APP_NAME) && printed.contains("no display"),
+            "the first line must name the program and the problem; got {printed:?}"
+        );
+        assert!(
+            printed.contains("--launch") && printed.contains("--list"),
+            "the hint must be printed too, not merely available; got {printed:?}"
+        );
+        assert_eq!(
+            printed.lines().count(),
+            no_display_hint().lines().count() + 1,
+            "the output is the refusal line plus the whole hint block and              nothing else; got {printed:?}"
+        );
+    }
+
+    /// **A displayless start never reaches the event loop.**
+    ///
+    /// This is the behaviour `run_gui`'s doc comment is about: winit's own
+    /// detection exists but iced_winit consumes it in an `expect`, so the
+    /// process panics with a raw traceback unless this path refuses first. The
+    /// starter is a closure here, so "never reached the event loop" is
+    /// observed rather than assumed — the closure records that it ran.
+    ///
+    /// It also pins the wiring that the earlier version of these tests could
+    /// not: `run_gui` discarding `start_gui`'s answer and starting anyway is
+    /// exactly this assertion failing.
+    #[test]
+    fn a_displayless_start_never_reaches_the_event_loop() {
+        let mut printed = Vec::new();
+        let mut started = false;
+        let outcome = start_gui(
+            |_| None,
+            &mut printed,
+            || {
+                started = true;
+                Ok(())
+            },
+        );
+
+        assert_eq!(outcome, GuiStart::NoDisplay);
+        assert!(
+            !started,
+            "the starter must not be called without a display: on this path the \
+             framework's own error handling panics rather than returning, so \
+             the guard is the only thing standing between the user and a \
+             traceback"
+        );
+        assert!(
+            String::from_utf8_lossy(&printed).contains("--launch"),
+            "and the refusal must say what to do instead; got {:?}",
+            String::from_utf8_lossy(&printed)
+        );
+    }
+
+    /// **A start that fails says why.**
+    ///
+    /// The `Err` arm of the run had no test before this one, so a failure to
+    /// open a window — a broken GPU driver, a missing Wayland socket that the
+    /// guard let through — printed nothing at all and exited 1.
+    #[test]
+    fn a_start_that_fails_reports_the_reason() {
+        let mut printed = Vec::new();
+        let outcome = start_gui(
+            |name| (name == "WAYLAND_DISPLAY").then(|| "wayland-0".to_string()),
+            &mut printed,
+            || Err("no DRM device".to_string()),
+        );
+
+        assert_eq!(outcome, GuiStart::Failed("no DRM device".to_string()));
+        let printed = String::from_utf8_lossy(&printed);
+        assert!(
+            printed.contains("no DRM device"),
+            "the framework's reason must reach the user, not only the caller's \
+             exit code; got {printed:?}"
+        );
+        assert!(printed.contains(APP_NAME), "got {printed:?}");
+    }
+
+    /// **Only a start that actually showed the interface exits zero.**
+    ///
+    /// The status is what a script or a `.desktop` shortcut branches on, and it
+    /// is the one part of `run_gui` no other test can reach: `ExitCode` is
+    /// opaque, so the decision is taken as a `u8` here and converted with
+    /// `ExitCode::from` at the one place that needs the type.
+    #[test]
+    fn only_a_start_that_ran_exits_zero() {
+        assert_eq!(GuiStart::Ran.exit_status(), 0);
+        assert_eq!(
+            GuiStart::NoDisplay.exit_status(),
+            1,
+            "a refused start must be a failure: a shortcut that treats it as \
+             success reports the game as launched"
+        );
+        assert_eq!(GuiStart::Failed("no DRM device".into()).exit_status(), 1);
+    }
+
+    /// A start that succeeds writes nothing and says so.
+    ///
+    /// The guard for the two above: an implementation that wrote the failure
+    /// line unconditionally would pass both of them.
+    #[test]
+    fn a_start_that_succeeds_writes_nothing() {
+        let mut printed = Vec::new();
+        let outcome = start_gui(
+            |name| (name == "DISPLAY").then(|| ":0".to_string()),
+            &mut printed,
+            || Ok(()),
+        );
+
+        assert_eq!(outcome, GuiStart::Ran);
+        assert!(
+            printed.is_empty(),
+            "a session that opens must not print a diagnostic; got {:?}",
+            String::from_utf8_lossy(&printed)
+        );
+    }
+
+    /// **A display that is present writes nothing.**
+    ///
+    /// The vacuity guard for the test above: a `display_refusal` that always
+    /// printed and always refused would satisfy every assertion there, and would
+    /// break every graphical session.
+    #[test]
+    fn a_present_display_is_not_refused_and_says_nothing() {
+        let mut printed = Vec::new();
+        let refused = display_refusal(
+            |name| (name == "WAYLAND_DISPLAY").then(|| "wayland-0".to_string()),
+            &mut printed,
+        );
+
+        assert!(!refused, "a Wayland session must start");
+        assert!(
+            printed.is_empty(),
+            "nothing may be written when the interface is going to open; got {:?}",
+            String::from_utf8_lossy(&printed)
+        );
     }
 
     /// Every line of the hint is indented to the same depth, so it reads as one
@@ -1327,6 +1835,669 @@ mod tests {
             seen.push(name);
         }
         assert_eq!(seen.len(), Page::ALL.len());
+    }
+
+
+    /// Every message the application can receive, once each.
+    ///
+    /// A function rather than a `const` because some payloads have no literal
+    /// form. It is written out variant by variant rather than derived from the
+    /// enum, because Rust cannot enumerate a type's variants.
+    ///
+    /// # How this stays in step with [`Message`]
+    ///
+    /// Nothing forces a variant into this list — that is not achievable, and
+    /// pretending otherwise would be worse than saying so. What is achievable is
+    /// making the omission *fail*:
+    ///
+    /// - `Shell::update`'s match and [`variant_name`] below are both exhaustive
+    ///   with no wildcard arm, so adding a variant to `Message` is a compile
+    ///   error in two places that both have to be opened;
+    /// - [`every_variant_of_message_is_in_the_list`] pins this list's length, so
+    ///   once the enum compiles again that test is red until the new variant is
+    ///   also driven here.
+    ///
+    /// The order is the enum's own declaration order, so the two are read side
+    /// by side.
+    fn every_message() -> Vec<Message> {
+        vec![
+            Message::NavigateTo(Page::Settings),
+            Message::OpenNewGameForm,
+            Message::OpenEditGameForm("g".to_string()),
+            Message::CloseDialog,
+            Message::ConfirmDeleteGame("g".to_string()),
+            Message::DeleteGameConfirmed("g".to_string()),
+            Message::PickExeFile { field: ExeField::Exe },
+            Message::ExeFileChosen {
+                field: ExeField::Prefix,
+                path: Some("/tmp/g.exe".to_string()),
+            },
+            Message::PickCoverFile,
+            Message::CoverFileChosen(Some("/tmp/c.png".to_string())),
+            Message::DismissToast(cosmic::widget::toaster::ToastId::default()),
+            Message::Quit,
+            Message::SetColorScheme("dark".to_string()),
+            Message::SetViewMode("grid".to_string()),
+            Message::SetSortMode("name".to_string()),
+            Message::SetDefaultRunner("proton-ge".to_string()),
+            Message::SetCloseOnLaunch(true),
+            Message::SetDefaultToggle {
+                name: "mangohud".to_string(),
+                value: true,
+            },
+            Message::SetSearchText("half".to_string()),
+            Message::SetCategoryFilter("Action".to_string()),
+            Message::SaveGameForm(GameForm::default()),
+            Message::LaunchGame("g".to_string()),
+            Message::LaunchWatchFinished {
+                game_id: "g".to_string(),
+                reason: None,
+            },
+            Message::RunPrefixTool {
+                game_id: "g".to_string(),
+                tool: PrefixTool::WineCfg,
+            },
+            Message::OpenPrefixFolder("g".to_string()),
+            Message::CreateDesktopShortcut("g".to_string()),
+            Message::FetchCover("g".to_string()),
+            Message::CoverFetchFinished {
+                game_id: "g".to_string(),
+                result: Ok(CoverHit::from_steam(
+                    0,
+                    "Half-Life 2".to_string(),
+                    "Action".to_string(),
+                    PathBuf::from("/tmp/cover.png"),
+                    "https://example.invalid/cover.png".to_string(),
+                )),
+            },
+            Message::FetchCoverForForm {
+                token: 1,
+                game_id: "g".to_string(),
+                name: "Half-Life 2".to_string(),
+                exe: "/tmp/g.exe".to_string(),
+            },
+            Message::FormCoverFetchFinished {
+                token: 1,
+                result: Err("lookup failed".to_string()),
+            },
+            Message::FetchReleases {
+                family: "proton-ge".to_string(),
+            },
+            Message::ReleasesFetchFinished {
+                family: "proton-ge".to_string(),
+                result: Ok(vec![ReleaseInfo::new("v1.0", "GE-Proton", "https://x/y", 1)]),
+            },
+            Message::InstallRunner {
+                tag: "v1.0".to_string(),
+            },
+            Message::RunnerProgress(0.5),
+            Message::RunnerInstallFinished(Ok("v1.0".to_string())),
+            Message::UninstallRunner("v1.0".to_string()),
+            Message::SetInstallerSearch("steam".to_string()),
+            Message::SetInstallerCategory("launchers".to_string()),
+            Message::StartEasyInstall {
+                installer_id: "steam".to_string(),
+                runner_id: "proton-ge".to_string(),
+            },
+            Message::EasyInstallProgress(0.5),
+            Message::EasyInstallWizardFinished {
+                found: Some(PathBuf::from("/tmp/g.exe")),
+                returncode: 0,
+            },
+            Message::CompleteEasyInstall {
+                token: "t".to_string(),
+                path: Some("/tmp/g.exe".to_string()),
+            },
+            Message::CancelEasyInstall("t".to_string()),
+            Message::EasyInstallFinished {
+                game_id: "g".to_string(),
+                message: "installed".to_string(),
+            },
+            Message::RefreshPlugins,
+            Message::InstallPlugin("p".to_string()),
+            Message::PluginInstallFinished {
+                plugin_id: "p".to_string(),
+                result: Ok(true),
+            },
+            Message::Notify("something happened".to_string()),
+            Message::LaunchWatchTick,
+        ]
+    }
+
+    /// A message's variant name, without its payload.
+    ///
+    /// The exhaustive match is the point: it is the second place (with
+    /// `Shell::update`) where adding a variant to [`Message`] is a compile
+    /// error, and it is what makes [`every_message`] a list somebody has to
+    /// revisit rather than a list that silently goes stale.
+    fn variant_name(message: &Message) -> &'static str {
+        match message {
+            Message::NavigateTo(_) => "NavigateTo",
+            Message::OpenNewGameForm => "OpenNewGameForm",
+            Message::OpenEditGameForm(_) => "OpenEditGameForm",
+            Message::CloseDialog => "CloseDialog",
+            Message::ConfirmDeleteGame(_) => "ConfirmDeleteGame",
+            Message::DeleteGameConfirmed(_) => "DeleteGameConfirmed",
+            Message::PickExeFile { .. } => "PickExeFile",
+            Message::ExeFileChosen { .. } => "ExeFileChosen",
+            Message::PickCoverFile => "PickCoverFile",
+            Message::CoverFileChosen(_) => "CoverFileChosen",
+            Message::DismissToast(_) => "DismissToast",
+            Message::Quit => "Quit",
+            Message::SetColorScheme(_) => "SetColorScheme",
+            Message::SetViewMode(_) => "SetViewMode",
+            Message::SetSortMode(_) => "SetSortMode",
+            Message::SetDefaultRunner(_) => "SetDefaultRunner",
+            Message::SetCloseOnLaunch(_) => "SetCloseOnLaunch",
+            Message::SetDefaultToggle { .. } => "SetDefaultToggle",
+            Message::SetSearchText(_) => "SetSearchText",
+            Message::SetCategoryFilter(_) => "SetCategoryFilter",
+            Message::SaveGameForm(_) => "SaveGameForm",
+            Message::LaunchGame(_) => "LaunchGame",
+            Message::LaunchWatchFinished { .. } => "LaunchWatchFinished",
+            Message::RunPrefixTool { .. } => "RunPrefixTool",
+            Message::OpenPrefixFolder(_) => "OpenPrefixFolder",
+            Message::CreateDesktopShortcut(_) => "CreateDesktopShortcut",
+            Message::FetchCover(_) => "FetchCover",
+            Message::CoverFetchFinished { .. } => "CoverFetchFinished",
+            Message::FetchCoverForForm { .. } => "FetchCoverForForm",
+            Message::FormCoverFetchFinished { .. } => "FormCoverFetchFinished",
+            Message::FetchReleases { .. } => "FetchReleases",
+            Message::ReleasesFetchFinished { .. } => "ReleasesFetchFinished",
+            Message::InstallRunner { .. } => "InstallRunner",
+            Message::RunnerProgress(_) => "RunnerProgress",
+            Message::RunnerInstallFinished(_) => "RunnerInstallFinished",
+            Message::UninstallRunner(_) => "UninstallRunner",
+            Message::SetInstallerSearch(_) => "SetInstallerSearch",
+            Message::SetInstallerCategory(_) => "SetInstallerCategory",
+            Message::StartEasyInstall { .. } => "StartEasyInstall",
+            Message::EasyInstallProgress(_) => "EasyInstallProgress",
+            Message::EasyInstallWizardFinished { .. } => "EasyInstallWizardFinished",
+            Message::CompleteEasyInstall { .. } => "CompleteEasyInstall",
+            Message::CancelEasyInstall(_) => "CancelEasyInstall",
+            Message::EasyInstallFinished { .. } => "EasyInstallFinished",
+            Message::RefreshPlugins => "RefreshPlugins",
+            Message::InstallPlugin(_) => "InstallPlugin",
+            Message::PluginInstallFinished { .. } => "PluginInstallFinished",
+            Message::Notify(_) => "Notify",
+            Message::LaunchWatchTick => "LaunchWatchTick",
+        }
+    }
+
+    /// A shell with something for each of the written handlers to act on.
+    ///
+    /// Built rather than defaulted: `CloseDialog` is a no-op on a shell with no
+    /// open form and no pending delete, so a default shell would report it as a
+    /// placeholder for the wrong reason.
+    fn shell_with_work_to_do() -> Shell {
+        let mut shell = Shell::new();
+        // Start somewhere other than the page every message navigates to, so
+        // `NavigateTo` has an effect to observe.
+        shell.show_page(Page::Library);
+        shell.state.game_form = Some(GameForm::default());
+        shell.state.confirm_delete = Some("g".to_string());
+        shell
+    }
+
+    /// **The set of messages that do anything at all is the set of written
+    /// handlers, and nothing else.**
+    ///
+    /// This is the check that was missing. All five real arms of `update` were
+    /// replaced with inert bodies and all five survived, because nothing ever
+    /// called them: `App` cannot be built without a display, so no test could.
+    /// Moving the dispatcher onto [`Shell`] is what makes the arms callable, and
+    /// this drives every one of the forty-nine messages through the real match
+    /// and requires the set that has an effect to be exactly the written
+    /// handlers.
+    ///
+    /// Both directions are pinned. A handler that regresses to `{}` disappears
+    /// from this list; a sixth handler landing appears in it. Neither can pass
+    /// unnoticed, which is what keeps the `T-0x` markers honest.
+    ///
+    /// # The one blind spot, and the one exclusion
+    ///
+    /// - **`Quit`** is excluded by name. It is handled by [`App::update`] and
+    ///   not by [`Shell::update`], because it closes the framework's window;
+    ///   `Shell`'s arm for it is deliberately empty, so counting it here would
+    ///   mean counting an empty arm as a handler.
+    /// - **`DismissToast`** is *not* excluded, but it *is* invisible: the arm is
+    ///   real (`toasts.remove(id)`) and no test can build an id naming a live
+    ///   toast, so it cannot be told apart from `{}` — see
+    ///   [`a_test_cannot_observe_which_toast_was_dismissed`], which measures
+    ///   that rather than asserting it. The list below therefore names three
+    ///   handlers where four bodies are written, and says which is which.
+    ///
+    /// [`observe`] counts a returned [`cosmic::Task`] as well as a state
+    /// change, so the *other* class of invisible handler — one whose only
+    /// effect is the task it returns, which is the shape T-09's `FetchCover`
+    /// will take — is caught here rather than declared away.
+    #[test]
+    fn only_the_written_handlers_change_anything() {
+        let mut changed: Vec<&str> = every_message()
+            .into_iter()
+            // `Quit` is `App::update`'s arm, so `Shell::update`'s body for it is
+            // deliberately empty and it is not part of the claim.
+            .filter(|message| !matches!(message, Message::Quit))
+            .filter(|message| {
+                let mut shell = shell_with_work_to_do();
+                is_handled(&mut shell, message.clone())
+            })
+            .map(|message| variant_name(&message))
+            .collect();
+
+        let mut expected: Vec<&str> = vec!["NavigateTo", "CloseDialog", "Notify"];
+        // `DismissToast` is written and cannot be observed; see the doc above.
+        expected.sort_unstable();
+        changed.sort_unstable();
+
+        assert_eq!(
+            changed,
+            expected,
+            "these are the arms of `Shell::update` that do anything, and the \
+             list is now checked rather than described. `Quit` is excluded \
+             because `App::update` owns it; `DismissToast` is written but \
+             unobservable, and `a_test_cannot_observe_which_toast_was_dismissed` \
+             is the evidence. The doc comment on `Shell::update` said \"three\" \
+             and named three — omitting `CloseDialog` and `Notify` — in the \
+             sentence a reviewer trusts to know what is live"
+        );
+    }
+
+    /// **`DismissToast`'s arm cannot be told apart from an empty one by a
+    /// test.**
+    ///
+    /// The arm is written — `self.state.toasts.remove(id)` — and it is the one
+    /// written handler that no test can exercise, because exercising it needs a
+    /// [`ToastId`](cosmic::widget::toaster::ToastId) that names a live toast and
+    /// libcosmic's `Toasts` exposes no way to obtain one: `push` returns only
+    /// the `Task` that schedules the expiry, the slot map and its queue are
+    /// private, and the only `ToastId` a test can build is
+    /// `Default::default()`, whose key names no slot.
+    ///
+    /// So this measures the gap rather than asserting it. It is not a test of
+    /// the handler; it is the evidence for excluding the handler, written down
+    /// where the exclusion is made so that the next reader does not have to
+    /// rediscover it. If a future libcosmic gives `Toasts` an accessor, this
+    /// test's second assertion goes red and points at the gap to close.
+    #[test]
+    fn a_test_cannot_observe_which_toast_was_dismissed() {
+        // A toast really is live, so the no-op below is not "nothing to remove".
+        let mut shell = shell_with_work_to_do();
+        let _ = shell.update(Message::Notify("a toast worth dismissing".to_string()));
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("num_elems: 1"),
+            "the fixture should have pushed exactly one toast"
+        );
+
+        let id = cosmic::widget::toaster::ToastId::default();
+        let effect = observe(&mut shell, Message::DismissToast(id));
+        assert!(
+            !effect.state_changed && effect.task_units == 0,
+            "if this ever fails, a `ToastId` a test can construct now names a \
+             live toast — which means `Toasts` grew the accessor this test was \
+             written without, and `DismissToast` can be covered for real"
+        );
+    }
+
+    /// Every variant of [`Message`] is in [`every_message`].
+    ///
+    /// [`variant_name`] matches every variant exhaustively, so adding a variant
+    /// breaks the compile there **and** in `Shell::update`. This is the third
+    /// edit: the length is pinned, so once the enum compiles again this fails
+    /// until the new variant is also driven through the dispatcher. That is the
+    /// instrument that keeps "a variant that exists is a variant that is
+    /// driven" true by construction rather than by upkeep.
+    #[test]
+    fn every_variant_of_message_is_in_the_list() {
+        assert_eq!(
+            every_message().len(),
+            49,
+            "`Message` has 49 variants. If you added one, add it to \
+             `every_message` too — otherwise the handler tests stop covering it \
+             and nothing else says so"
+        );
+        let names: Vec<&str> = every_message().iter().map(variant_name).collect();
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "`every_message` lists a variant twice, so some other variant is \
+             missing: {names:?}"
+        );
+    }
+
+    /// **`NavigateTo` moves both records of the current page.**
+    ///
+    /// It is the route everything that is not the sidebar itself takes — a
+    /// page's own buttons, a shortcut — and the two records drifting apart is
+    /// the desync that shows one page in the panel and another in the body.
+    #[test]
+    fn navigate_to_moves_both_records_of_the_current_page() {
+        let mut shell = Shell::new();
+        assert_eq!(shell.state.page, Page::Library, "the reference's start page");
+
+        let _ = shell.update(Message::NavigateTo(Page::Plugins));
+
+        assert_eq!(shell.state.page, Page::Plugins, "`state.page` must move");
+        assert_eq!(
+            shell.sidebar_page(),
+            Some(Page::Plugins),
+            "the sidebar must move with it, or the panel highlights one page \
+             while the body draws another"
+        );
+        assert!(shell.pages_agree());
+    }
+
+    /// `CloseDialog` clears both of the things a dialog can be: the game form
+    /// and the pending delete.
+    ///
+    /// Asserted on both, because the arm writes two fields and dropping either
+    /// one is invisible in the other's check.
+    #[test]
+    fn closing_the_dialog_clears_the_form_and_the_delete_confirmation() {
+        let mut shell = shell_with_work_to_do();
+
+        let _ = shell.update(Message::CloseDialog);
+
+        assert!(shell.state.game_form.is_none(), "the form must be closed");
+        assert!(
+            shell.state.confirm_delete.is_none(),
+            "a pending delete must not survive the dialog closing"
+        );
+    }
+
+    /// `Notify` pushes a toast. Every failure path in `bridge.py` ends here, so
+    /// an inert `Notify` would make the whole interface report nothing.
+    #[test]
+    fn notifying_pushes_a_toast() {
+        let mut shell = Shell::new();
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("num_elems: 0"),
+            "a new shell has no toasts"
+        );
+
+        let effect = observe(&mut shell, Message::Notify("the launch failed".to_string()));
+
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("num_elems: 1"),
+            "`Notify` must leave a toast behind: it is the channel every \
+             failure path in the reference reports through"
+        );
+        assert!(
+            effect.task_units > 0,
+            "`Toasts::push` returns the task that schedules the toast's expiry, \
+             and `Notify` returns it. Returning `Task::none()` here would push \
+             the toast and never expire it — a toast that is drawn and then \
+             stays on screen forever, which is why this asserts the task is not \
+             empty rather than only that the toast exists"
+        );
+    }
+
+    /// **No handler can leave the sidebar showing a different page from the
+    /// body.**
+    ///
+    /// `State::page` is a public field, so a handler may assign it directly,
+    /// compile, and leave the panel on the previous page. The `debug_assert!`
+    /// in [`Shell::show_page`] fires at the moment of such a write when the
+    /// handler goes through `show_page` first; this drives every message
+    /// through the real dispatcher and requires the two records to agree
+    /// afterwards, which is what covers a write that happens with the assert
+    /// compiled out or that comes after a navigation.
+    ///
+    /// This is the T-08 decision on the invariant: checked by structure rather
+    /// than by convention, without making the field private (that is T-09's
+    /// call, when it is clear how many handlers set pages).
+    #[test]
+    fn no_handler_leaves_the_sidebar_out_of_step() {
+        for message in every_message() {
+            let name = variant_name(&message);
+            let mut shell = shell_with_work_to_do();
+            let _ = shell.update(message);
+            assert_eq!(
+                shell.sidebar_page(),
+                Some(shell.state.page),
+                "after {name} the sidebar shows {:?} while `state.page` is {:?}",
+                shell.sidebar_page(),
+                shell.state.page
+            );
+        }
+    }
+
+    /// **`show_page` panics rather than leaving the sidebar behind.**
+    ///
+    /// What the `debug_assert!` in [`Shell::show_page`] actually catches is
+    /// worth writing down, because the first version of this test asserted
+    /// something it cannot do. It does **not** catch a handler that assigns
+    /// `state.page` directly: `show_page` writes both records before checking
+    /// them, so a later call overwrites the bad write and the pair agrees
+    /// again. What it catches is a `show_page` that *cannot* move the sidebar —
+    /// `activate_page` answering `false`, which happens when the nav model does
+    /// not carry the page, i.e. when `build_nav_model` and [`Page::ALL`] have
+    /// diverged. That failure would otherwise be silent: the body would show one
+    /// page and the panel another.
+    ///
+    /// The direct-write case is caught by
+    /// [`no_handler_leaves_the_sidebar_out_of_step`] instead, which is why both
+    /// exist.
+    #[test]
+    #[should_panic(expected = "the sidebar shows")]
+    fn a_sidebar_that_cannot_show_the_page_trips_the_invariant() {
+        let mut shell = Shell::new();
+        assert!(shell.pages_agree(), "the shell starts in agreement");
+
+        // A sidebar built from something other than `Page::ALL`: one row.
+        let mut stub = nav_bar::Model::default();
+        stub.insert().text(Page::Library.label()).data(Page::Library);
+        assert!(stub.activate_position(0));
+        shell.nav_model = stub;
+
+        // `Page::Settings` is the sixth page, and this model has one row.
+        shell.show_page(Page::Settings);
+    }
+
+    /// **The pages whose body is a placeholder are exactly the ones the table
+    /// lists, checked against the body itself.**
+    ///
+    /// The failure this exists for: `view_body` returns a placeholder for every
+    /// page, `scripts/smoke-test.sh`'s `gui-stays-up` only checks that the
+    /// process is alive, and so the repository's whole gate suite passes on a
+    /// build whose entire interface is six "not been ported yet" notices.
+    ///
+    /// # Why this renders instead of comparing two lists
+    ///
+    /// `pending_task` reads [`PENDING_PAGES`], so comparing a list of pages
+    /// derived from that function against `PENDING_PAGES` is the same list
+    /// against itself — it cannot fail and would not be a test. The thing that
+    /// can be wrong is the *other* half: `view_body`'s arms, which carry the
+    /// task string as a literal. So this calls `view_body` and reads the text it
+    /// actually draws, which makes the check falsifiable in all four directions:
+    ///
+    /// - a page the table calls pending whose body is real fails;
+    /// - a page the table calls pending whose body names a *different* task
+    ///   fails;
+    /// - a page the table calls done whose body still says "not been ported"
+    ///   fails;
+    /// - a page removed from the table without its body landing fails.
+    ///
+    /// The render is what makes the claim about `include_str!` unnecessary
+    /// here: matching this file's own text with `include_str!` would match the
+    /// assertion's own literals, so the claim is made against the rendered
+    /// element instead.
+    ///
+    /// **T-19's acceptance is that [`PENDING_PAGES`] is empty**, at which point
+    /// this test asserts that no page draws a placeholder and `pending_page` is
+    /// deleted with the last entry.
+    #[test]
+    fn the_pending_pages_are_exactly_the_ones_whose_body_says_so() {
+        let mut shell = Shell::new();
+        for page in Page::ALL {
+            shell.show_page(page);
+            let drawn = drawn_strings(shell.view_body());
+
+            let says_pending = drawn.iter().any(|text| text.contains("has not been ported yet"));
+
+            match pending_task(page) {
+                Some(task) => {
+                    assert!(
+                        says_pending,
+                        "{page:?} is listed in PENDING_PAGES as {task} but its \
+                         body does not draw the placeholder; drawn: {drawn:?}"
+                    );
+                    assert!(
+                        drawn.iter().any(|text| text.contains(task)),
+                        "{page:?} should name the task that builds it ({task}) \
+                         on screen as well as in the code; drawn: {drawn:?}"
+                    );
+                }
+                None => assert!(
+                    !says_pending,
+                    "{page:?} is no longer listed as pending, so its body must \
+                     be real — it is still drawing the placeholder: {drawn:?}"
+                ),
+            }
+        }
+    }
+
+    /// The strings a real element hands the operation traversal.
+    ///
+    /// The same mechanism `crate::view::widgets`'s tests use, and for the same
+    /// reason: iced exposes no downcast, so the text a widget draws is reachable
+    /// only through `Widget::operate`.
+    fn drawn_strings<M: Clone + 'static>(mut element: cosmic::Element<'_, M>) -> Vec<String> {
+        use cosmic::iced::advanced::widget::{Operation, Tree};
+        use cosmic::iced::advanced::{layout::Limits, Layout};
+        use cosmic::iced::{Font, Pixels, Rectangle, Size};
+
+        #[derive(Default)]
+        struct Texts(Vec<String>);
+        impl Operation for Texts {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
+                self.0.push(text.to_string());
+            }
+        }
+
+        // `layout` and `operate` take the renderer by shared reference; passing
+        // it by `&mut` is `clippy::unnecessary_mut_passed`.
+        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
+        let mut tree = Tree::new(element.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let node = element.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let mut texts = Texts::default();
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
+        texts.0
+    }
+
+    /// Labels where the port and the reference disagree: `(page, what
+    /// `Main.qml` says, what this port says today)`.
+    ///
+    /// A record of an unfixed divergence, not an allowance, and it is meant to
+    /// empty. Every entry is a live, user-visible parity difference — the
+    /// drawer in the real application says something this port does not — and
+    /// the fix is to change [`Page::label`], not to edit this.
+    ///
+    /// # Why both sides are written down
+    ///
+    /// An entry that recorded only the reference's wording would let the port's
+    /// label drift to anything at all on that page and stay green — which is the
+    /// defect this whole test was rewritten to remove. Recording both means each
+    /// field is checked against an independent source: the first against the QML
+    /// on disk, the second against [`Page::label`]. Neither is compared to the
+    /// other, so neither can be satisfied by an identity.
+    ///
+    /// **Empty is the target.** See P-65.
+    const KNOWN_LABEL_DIVERGENCE: [(Page, &str, &str); 1] =
+        [(Page::Credits, "About & Credits", "Credits")];
+
+    /// **The shell's labels are the reference drawer's labels, read off the
+    /// QML.**
+    ///
+    /// The previous version of this check built its `expected` from
+    /// `page.label()` and compared it against rows that `build_nav_model` also
+    /// set from `page.label()` — an identity, not a comparison. Three mutations
+    /// survived it, including one that moved every label to its neighbour.
+    ///
+    /// This reads `Main.qml` instead, which is the port's specification and is
+    /// still in the tree. That is what makes it falsifiable: `Main.qml:94` says
+    /// **"About & Credits"** where `Page::label` says "Credits", and
+    /// [`KNOWN_LABEL_DIVERGENCE`] is where that is recorded rather than hidden.
+    #[test]
+    fn the_shells_labels_are_the_reference_drawers_labels_in_order() {
+        let main_qml =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../gamehandler/qml/Main.qml");
+        let text = std::fs::read_to_string(&main_qml).unwrap_or_else(|err| {
+            panic!(
+                "{} should be readable: {err}\n\
+                 It is the reference this shell was ported from, and the port's \
+                 own tests read it. If it has been moved, this check needs a new \
+                 path — and so does every citation in docs/migration/.",
+                main_qml.display()
+            )
+        });
+
+        // Slice to the drawer's `actions: [...]` block first. The file has other
+        // `text:` properties — the drawer's own content area at `:111`, the
+        // window's `title:` — and matching those would compare the wrong list.
+        let actions = text
+            .split_once("        actions: [")
+            .and_then(|(_, rest)| rest.split_once("\n        ]"))
+            .map(|(block, _)| block)
+            .expect("Main.qml should have a drawer `actions: [...]` block");
+
+        let labels: Vec<&str> = actions
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("text:"))
+            .filter_map(|rest| rest.trim().strip_prefix('"'))
+            .filter_map(|rest| rest.split_once('"').map(|(label, _)| label))
+            .collect();
+
+        assert_eq!(
+            labels.len(),
+            Page::ALL.len(),
+            "the drawer should name one label per page, in nav order; found \
+             {labels:?}. If a page gained or lost an action in the QML, this \
+             shell and the reference have diverged."
+        );
+
+        for (qml_label, page) in labels.iter().zip(Page::ALL) {
+            let ours = page.label();
+            match KNOWN_LABEL_DIVERGENCE.iter().find(|(p, _, _)| *p == page) {
+                Some((_, reference_wording, port_wording)) => {
+                    assert_eq!(
+                        qml_label, reference_wording,
+                        "the recorded divergence for {page:?} is stale: `Main.qml` \
+                         now says {qml_label:?}"
+                    );
+                    assert_eq!(
+                        ours, *port_wording,
+                        "the port's label for {page:?} is not the one this \
+                         divergence records. If you changed `Page::label`, \
+                         either update this record or — if it now matches the \
+                         reference — delete it (P-65)"
+                    );
+                    assert_ne!(
+                        ours, *qml_label,
+                        "{page:?} now matches the reference, so the \
+                         KNOWN_LABEL_DIVERGENCE entry is fixed — delete it \
+                         (P-65). Leaving it recorded would hide the next \
+                         divergence on this page"
+                    );
+                }
+                None => assert_eq!(
+                    ours, *qml_label,
+                    "the shell's labels must be the reference's, in the \
+                     reference's order: {page:?} is {ours:?} here and \
+                     {qml_label:?} in `Main.qml`. A mismatch is a live parity \
+                     divergence (P-65), not cosmetics."
+                ),
+            }
+        }
     }
 
     /// The icon names are the reference drawer's, checked against `Main.qml`
