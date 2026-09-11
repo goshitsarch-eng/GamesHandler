@@ -1276,6 +1276,12 @@ verify something says so in its exit code, not only in its prose.
 but `main.rs` never declares `mod view;`. Wire it in now, or leave it unwired
 until T-09 starts calling the components?
 
+*(Count note, added later: the module carries **45** tests as of `e75454f`, which
+added `the_plate_shade_defers_to_core` when `accent_index` moved into core. The
+44 above was measured at `3083011` and was true then; every number in this entry
+is a measurement at that commit, not a standing claim. The move strengthens the
+argument rather than weakening it — 45 assertions run nowhere, not 44.)*
+
 **Options considered.**
 1. Leave it undeclared. The module and its 44 tests run nowhere until T-09.
 2. Declare it now with a scoped `#[allow(dead_code)]`, removed at T-09.
@@ -1322,3 +1328,68 @@ therefore the same blue. This is a real parity gap against `accent_index`
 that fails the day it changes, and it is Architecture's to close by exposing
 `accent_index` from core's `covers` module. It is recorded here so it does not
 read as an oversight in the T-14 diff.
+
+## D-33. Reading a test failure that "cannot happen": two mechanisms, one question
+
+**Question.** A test fails in a way that contradicts the code you just read. How
+do you tell a real defect from noise, without discarding genuine findings?
+
+**Context — the rule this replaces.** The lead's first guidance to the advocate
+was *"an impossible test failure is probably a stale artifact."* That is **too
+broad and it is wrong in the direction that matters**: it treats every
+unexplained failure as something a rebuild will clear, so a real defect is
+discarded precisely because it looks impossible. It was retracted the same
+session, before any finding was acted on under it.
+
+**There are two mechanisms, and they are distinguished by one question.**
+
+| | Stale / foreign artifact | Feature unification |
+|---|---|---|
+| Reproduces? | No | **Yes** |
+| Flips with build scope? | No | **Yes** |
+| Cleared by `touch` + rebuild? | **Yes** | No |
+| Verdict | Noise | **Real defect** |
+
+**The question is therefore not "is this failure real?" but "does it reproduce,
+and does it flip with the build scope?"** Yes to either → real.
+
+**The mechanism, verified.** `cosmic-theme` enables `serde_json/preserve_order`,
+and Cargo **feature-unifies** across a build, so the feature is on workspace-wide
+and **off** under `cargo test -p gamehandler-core`. `serde_json::Map` is
+consequently a `BTreeMap` (alphabetical) in the narrow build and
+insertion-ordered in the wide one. `cargo tree -p gamehandler-core -e features -i
+serde_json` → not enabled; the workspace tree → enabled. Same source, two
+behaviours, decided by how you invoked `cargo`.
+
+**This is not a new discovery — it is a new rule about an old one.** The same
+mechanism produced D-21: the oracle's `deep_nesting` fixture **aborted the
+process** under a workspace-wide `cargo test` while `cargo test -p
+gamehandler-core` passed all 87 tests. It has now bitten a second time, on
+`84e3a1d`'s vector case #485 (passing narrow, failing wide), which is what
+forced the general rule.
+
+**What is *not* affected — checked, not assumed.** Production serialization is
+feature-independent: `json::to_python_string` calls `value.serialize()` on the
+typed value rather than materialising a `serde_json::Map`, so `Library::save` and
+`Settings::save` write identical bytes in both configurations. The exposure is
+test-side `to_value` only. This matters because "the oracle disagrees with itself
+across scopes" would otherwise read as a product bug; it is a test-harness bug.
+
+**Consequences, both mandatory.**
+
+1. **Never answer mechanism (a) without testing for mechanism (b) first.** A
+   rebuild cannot clear (b), so "just rebuild it" destroys exactly the findings
+   that are hardest to rediscover.
+2. **A verdict without its build scope is not evidence.** Every test result and
+   every mutation verdict must state the invocation — `-p gamehandler-core` or
+   workspace-wide — the way it already states the commit. Two configurations that
+   can disagree are two gates, and reporting one as though it were both is the
+   same defect class as #20, #22 and #29: **a check that passes without
+   inspecting what it claims.** Task #27 exists to close the gate; this entry
+   governs what to do while it is still open.
+
+**Why this way round.** The costs are asymmetric. A false positive costs a few
+minutes of a teammate's time. A swallowed finding ships a defect, and this
+particular mechanism is invisible to every intuition we have: the code is
+correct in one build and wrong in the other, and the *narrower* invocation — the
+one that looks more targeted, more careful — is the one that hides it.
