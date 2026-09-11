@@ -179,6 +179,21 @@ pub const SECTION_SHORTCUTS: &str = "Keyboard shortcuts";
 
 /// The close-on-launch switch's label and explanation,
 /// `SettingsPage.qml:120-125`.
+///
+/// The two are the reference's two different strings on one control — its
+/// `FormData.label` and its `text` — and they are drawn in two different ways,
+/// which matters for what can check them:
+///
+/// * [`CLOSE_ON_LAUNCH_LABEL`] goes to [`row`], so it becomes a `text::body`
+///   child and **is** visible to a render-level assertion;
+/// * [`CLOSE_ON_LAUNCH_EXPLANATION`] goes to the `Toggler`'s own label, which is
+///   painted with a direct `text::draw` and is visible to no tree walk.
+///
+/// The label previously reached neither: it was declared here and referenced
+/// nowhere, so the reference's form label was absent from the page while this
+/// constant sat in the source looking like it was drawn. `the_close_on_launch_
+/// switch_carries_the_references_two_strings` reads both out of the QML and is
+/// what stops that recurring.
 pub const CLOSE_ON_LAUNCH_LABEL: &str = "Hide window when launching:";
 pub const CLOSE_ON_LAUNCH_EXPLANATION: &str =
     "Keeps the launcher out of the way while a game starts";
@@ -466,14 +481,31 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
     }
 
     // ---- Behavior ----------------------------------------------------------
+    //
+    // The reference's close-on-launch control is a `QQC2.Switch` with **two**
+    // strings on it (`SettingsPage.qml:120-125`): `FormData.label` — the form
+    // label, "Hide window when launching:" — and `text`, which is what the
+    // switch itself renders. This port had the `text` half only, so the label
+    // was declared, passed nothing, and drawn nowhere; `row()` is what the
+    // three appearance rows already use for a form label, so this is the same
+    // shape rather than a new one.
+    //
+    // It also puts one of this page's fourteen previously-unobservable strings
+    // back inside the render instrument: a `Toggler`'s own label is painted with
+    // a direct `text::draw` and reaches no `Text` widget (see the note on the
+    // drawn-strings test), but a label passed to `row()` is a real `text::body`
+    // child and `drawn_strings` sees it. The explanation stays on the toggler,
+    // where the reference puts it.
     body = body
         .push(section(SECTION_BEHAVIOR))
-        .push(
+        .push(row(
+            CLOSE_ON_LAUNCH_LABEL,
             toggler(page.settings.close_on_launch)
                 .label(CLOSE_ON_LAUNCH_EXPLANATION.to_string())
                 .on_toggle(Message::SetCloseOnLaunch)
-                .width(Length::Fill),
-        )
+                .width(Length::Fill)
+                .into(),
+        ))
         .push(section(SECTION_SHORTCUTS));
 
     for (keys, what) in SHORTCUTS {
@@ -703,6 +735,365 @@ mod tests {
             toggle_label("Enable MangoHud by default", ""),
             "Enable MangoHud by default",
             "a subtitle-less row is the label alone, with no trailing separator"
+        );
+    }
+
+    /// The strings **this page**, as actually built, hands the operation
+    /// traversal.
+    ///
+    /// A deliberate second copy of `main.rs`'s `drawn_strings` in the test module
+    /// beside the claim it serves, and not a shared helper: the point of the two
+    /// tests below is to measure *this* page rather than a hand-built widget, and
+    /// `main.rs`'s copy is private to its own test module — which T-27 is
+    /// forbidden from editing. If a third caller ever appears, the right move is
+    /// a shared `#[cfg(test)]` helper, not a third copy.
+    ///
+    /// The renderer is `iced_tiny_skia`, pure software, so this needs no display
+    /// and draws nothing; it is asked only to lay the tree out.
+    fn drawn_strings(element: cosmic::Element<'_, Message>) -> Vec<String> {
+        use cosmic::iced::advanced::widget::{Operation, Tree};
+        use cosmic::iced::advanced::{layout::Limits, Layout};
+        use cosmic::iced::{Font, Pixels, Rectangle, Size};
+
+        #[derive(Default)]
+        struct Texts(Vec<String>);
+        impl Operation for Texts {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
+                self.0.push(text.to_string());
+            }
+        }
+
+        let mut element = element;
+        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
+        let mut tree = Tree::new(element.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let node = element.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let mut texts = Texts::default();
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
+        texts.0
+    }
+
+    /// This page, built the way the shell builds it.
+    fn page_strings() -> Vec<String> {
+        let settings = Settings::default();
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+        drawn_strings(view(SettingsPage {
+            settings: &settings,
+            runners: &runners,
+        }))
+    }
+
+    /// `SettingsPage.qml`, as text — the independent source three of the tests
+    /// below read their expectations out of.
+    fn settings_qml() -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../gamehandler/qml/SettingsPage.qml");
+        std::fs::read_to_string(&path).unwrap_or_else(|err| {
+            panic!(
+                "{} should be readable: {err}\n\
+                 It is the reference this page was ported from. If it has been \
+                 moved, this check needs a new path.",
+                path.display()
+            )
+        })
+    }
+
+    /// The reference's `defaultRows` as `(key, label, subtitle)` triples.
+    ///
+    /// Read from the QML rather than restated, for the reason every other
+    /// transcription check in this port gives: a list compared against a second
+    /// copy of itself cannot detect a wrong list. The block is a line per row —
+    /// `{ key: "…", label: "…", subtitle: "…" },` — and neither a label nor a
+    /// subtitle contains a `"`, so the three components come out by successive
+    /// `split_once`.
+    fn reference_toggle_rows() -> Vec<(String, String, String)> {
+        let text = settings_qml();
+        let block = text
+            .split_once("readonly property var defaultRows: [")
+            .and_then(|(_, rest)| rest.split_once("\n    ]"))
+            .map(|(block, _)| block)
+            .expect("SettingsPage.qml should have a `defaultRows` block");
+
+        let rows: Vec<(String, String, String)> = block
+            .lines()
+            .filter(|line| line.contains("key: \""))
+            .filter_map(|line| {
+                let (_, after_key) = line.split_once("key: \"")?;
+                let (key, after_key) = after_key.split_once('"')?;
+                let (_, after_label) = after_key.split_once("label: \"")?;
+                let (label, after_label) = after_label.split_once('"')?;
+                let (_, after_subtitle) = after_label.split_once("subtitle: \"")?;
+                let (subtitle, _) = after_subtitle.split_once('"')?;
+                Some((key.to_string(), label.to_string(), subtitle.to_string()))
+            })
+            .collect();
+
+        assert!(
+            !rows.is_empty(),
+            "the `defaultRows` block parsed to nothing, so every assertion \
+             built on it would pass vacuously"
+        );
+        rows
+    }
+
+    /// **The whole row is the reference's — key, label and subtitle.**
+    ///
+    /// This is the check T-27 found missing. The test above compares **keys
+    /// only**: it parses `key: "…"` out of the QML and stops, so a typo'd label,
+    /// a dropped subtitle, or two rows' subtitles swapped were all invisible to
+    /// the entire suite. That is not hypothetical bookkeeping — the strings are
+    /// what the user reads on every switch, and the page's own drawn-strings
+    /// test cannot see them either, because a `Toggler` paints its label without
+    /// building a `Text` child (see that test's note). So before this test the
+    /// thirteen labels and subtitles rested on *nothing*: the formatting test
+    /// above exercises `toggle_label` with two strings of its own invention, and
+    /// never asks whether the table holds the reference's words.
+    ///
+    /// Equality, not containment, and therefore two-way: a row the port invented
+    /// fails here as loudly as one it dropped.
+    #[test]
+    fn the_toggle_rows_carry_the_references_wording() {
+        let reference = reference_toggle_rows();
+        let ours: Vec<(String, String, String)> = DEFAULT_TOGGLES
+            .iter()
+            .map(|(key, label, subtitle)| {
+                ((*key).to_string(), (*label).to_string(), (*subtitle).to_string())
+            })
+            .collect();
+
+        assert_eq!(
+            reference, ours,
+            "the port's thirteen rows must be the reference's, wording included \
+             (P-66): the keys are the model's field names and the label and \
+             subtitle are the text the user reads"
+        );
+        assert_eq!(ours.len(), 13, "the reference ships thirteen default rows");
+    }
+
+    /// **Every row's drawn label is the reference's own expression**, not just
+    /// the two rows the formatting test happens to name.
+    ///
+    /// The reference builds a switch's text with a ternary
+    /// (`SettingsPage.qml:104-106`):
+    ///
+    /// ```text
+    /// text: modelData.subtitle
+    ///     ? modelData.label + " — " + modelData.subtitle
+    ///     : modelData.label
+    /// ```
+    ///
+    /// Both branches are asserted here for **all thirteen rows**, which is the
+    /// strengthening: the existing test covers one row with a subtitle and one
+    /// without, so a `toggle_label` rewritten as an unconditional
+    /// `format!("{label} — {subtitle}")` would have passed it while putting a
+    /// dangling `" — "` on the **seven** subtitle-less rows. The reference's
+    /// ternary is the whole reason that cannot happen, and seven failures is
+    /// what it costs to break it.
+    ///
+    /// The separator is compared as the reference writes it — an em dash between
+    /// two spaces — so a hyphen or a bare dash fails on the six rows that carry a
+    /// subtitle.
+    #[test]
+    fn every_toggle_rows_label_is_the_references_own_expression() {
+        let mut with_subtitle = 0;
+        let mut without_subtitle = 0;
+
+        for (key, label, subtitle) in reference_toggle_rows() {
+            let drawn = toggle_label(&label, &subtitle);
+
+            if subtitle.is_empty() {
+                without_subtitle += 1;
+                assert_eq!(
+                    drawn, label,
+                    "{key}: the reference's ternary yields the label alone when \
+                     there is no subtitle, so a separator here is a dangling \
+                     `\" — \"` on a row that has nothing to separate"
+                );
+            } else {
+                with_subtitle += 1;
+                assert_eq!(
+                    drawn,
+                    format!("{label} — {subtitle}"),
+                    "{key}: the reference joins label and subtitle with an em \
+                     dash between two spaces (SettingsPage.qml:104-106)"
+                );
+                assert_ne!(drawn, label, "{key}: the subtitle was dropped");
+            }
+        }
+
+        // Both branches must be exercised, or "the ternary holds" is a claim
+        // about whichever branch the table happens to contain — and a table that
+        // lost every subtitle would pass the subtitle branch vacuously.
+        //
+        // The floor is "each branch is non-empty", *not* a hardcoded count of
+        // how many rows carry a subtitle: that number is the reference's content
+        // and it is already pinned, row by row, by
+        // [`the_toggle_rows_carry_the_references_wording`]. Writing it a second
+        // time here would be a hand-copied fact that no assertion keeps true —
+        // and this test's first draft did exactly that, asserting 7 and 6 from
+        // memory where the measured split is 8 and 5.
+        assert!(
+            with_subtitle > 0,
+            "no row carries a subtitle, so the separator branch is untested"
+        );
+        assert!(
+            without_subtitle > 0,
+            "every row carries a subtitle, so the reference's bare-label branch \
+             is untested — and it is the branch that catches an unconditional \
+             separator"
+        );
+        assert_eq!(
+            with_subtitle + without_subtitle,
+            13,
+            "every row must take exactly one branch"
+        );
+    }
+
+    /// **The close-on-launch switch carries the reference's two strings**, read
+    /// out of the QML.
+    ///
+    /// The reference puts two different strings on that one control
+    /// (`SettingsPage.qml:120-125`): `FormData.label`, which is the form label,
+    /// and `text`, which is what the switch itself renders. `CLOSE_ON_LAUNCH_LABEL`
+    /// was declared in this module and referenced **nowhere** — not by the view,
+    /// not by any test — so the reference's form label was simply absent from
+    /// the page while the constant sat in the source. This test is what found
+    /// that, and it is why the constant is now passed to `row()`.
+    ///
+    /// The two are asserted separately rather than as a pair, because they are
+    /// drawn by different mechanisms and can fail independently: the explanation
+    /// reaches a `Toggler` label and no tree walk sees it, while the label goes
+    /// to `row()` and becomes a `text::body` child that does. Asserting them
+    /// together would hide which one moved.
+    #[test]
+    fn the_close_on_launch_switch_carries_the_references_two_strings() {
+        let text = settings_qml();
+        // Anchored on `backend.closeOnLaunch`, which appears on that switch and
+        // nowhere else, rather than on the label text: an anchor that is also the
+        // value under test can only agree with itself. The first draft searched
+        // for the label it was looking for and then searched again inside the
+        // result, which walked past the switch and picked up the *next* form
+        // label in the file — `Keyboard shortcuts`.
+        let block = text
+            .split("QQC2.Switch {")
+            .find(|chunk| chunk.contains("backend.closeOnLaunch"))
+            .expect(
+                "SettingsPage.qml should still have a close-on-launch `QQC2.Switch` \
+                 bound to `backend.closeOnLaunch`; if it was renamed, this anchor \
+                 and the two constants below must move together",
+            );
+
+        let (_, after) = block
+            .split_once("Kirigami.FormData.label: \"")
+            .expect("the switch's `FormData.label`");
+        let (qml_label, after) = after.split_once('"').expect("a closing quote");
+        let (_, after) = after
+            .split_once("text: \"")
+            .expect("the switch's own `text`");
+        let (qml_text, _) = after.split_once('"').expect("a closing quote");
+
+        assert_eq!(
+            qml_label, CLOSE_ON_LAUNCH_LABEL,
+            "the form label is the reference's, verbatim"
+        );
+        assert_eq!(
+            qml_text, CLOSE_ON_LAUNCH_EXPLANATION,
+            "the switch's own text is the reference's, verbatim"
+        );
+        assert_ne!(
+            qml_label, qml_text,
+            "the two are different strings in the reference; a port that \
+             collapsed them would satisfy both assertions above with one value"
+        );
+    }
+
+    /// **The close-on-launch label is drawn; the explanation is not
+    /// observable — measured on the real page, in the same assertion.**
+    ///
+    /// This is T-27's answer stated as a measurement rather than as prose, and
+    /// the two halves are deliberately in one test because the *contrast* is the
+    /// finding:
+    ///
+    /// * the label goes through `row()` → `text::body`, which is a real child
+    ///   widget, so `drawn_strings` sees it. That is what makes routing it
+    ///   through `row()` a fix and not merely a rearrangement — and it is the
+    ///   assertion that fails if someone moves it back onto the toggler;
+    /// * the explanation is the `Toggler`'s own `.label(...)`, painted with a
+    ///   direct `iced_widget::text::draw` (`libcosmic src/widget/toggler.rs:316`),
+    ///   so it reaches no `Text` widget and is absent from the same list.
+    ///
+    /// A reader who assumes both are covered because they sit on one control is
+    /// exactly who this test is for.
+    #[test]
+    fn the_close_on_launch_label_is_drawn_and_its_explanation_is_not_observable() {
+        let drawn = page_strings();
+
+        assert!(
+            drawn.iter().any(|text| text == CLOSE_ON_LAUNCH_LABEL),
+            "the reference's form label for the close-on-launch switch must be on \
+             the page as a real `Text` child. It reaches the traversal through \
+             `row()`, so its absence means it stopped being drawn at all — which \
+             is the state this test was written to catch. Drawn: {drawn:?}"
+        );
+        assert!(
+            !drawn.iter().any(|text| text == CLOSE_ON_LAUNCH_EXPLANATION),
+            "if this now lists the explanation, `Toggler` gained a child text \
+             widget: update the note on `the_settings_page_draws_the_settings_\
+             and_not_the_placeholder` in `main.rs` and this test with it. \
+             Drawn: {drawn:?}"
+        );
+    }
+
+    /// **The thirteen toggle labels are drawn and reach no text operation** —
+    /// the bound, measured against the page this time.
+    ///
+    /// T-27's question was whether the thirteen labels need a second,
+    /// non-render assertion. The answer is **yes**, and this test is the reason
+    /// that answer is not simply "the render check is missing": a render check
+    /// is not *missing*, it is *impossible* for these strings, and this is the
+    /// measurement that says so. `the_toggle_rows_carry_the_references_wording`
+    /// and `every_toggle_rows_label_is_the_references_own_expression` are that
+    /// missing check's replacement — table-level assertions over the data the
+    /// widget is built from.
+    ///
+    /// It is a second measurement rather than a restatement of `main.rs`'s pin:
+    /// that one builds a bare `toggler()` and asserts the operation is empty,
+    /// which bounds the *widget*. This one renders **the page** and asserts the
+    /// thirteen composed labels are absent from it, which bounds the *page* —
+    /// and would fail if a future port drew the labels a second time as ordinary
+    /// text, which the bare-widget pin cannot see.
+    ///
+    /// Both directions are asserted: the labels are absent *and* an observable
+    /// string is present, so a `view` that returned an empty element — the
+    /// cheapest way to satisfy an "is absent" claim — fails here.
+    #[test]
+    fn the_toggle_labels_reach_no_text_operation_on_the_real_page() {
+        let drawn = page_strings();
+        let mut composed = 0;
+
+        for (key, label, subtitle) in DEFAULT_TOGGLES {
+            let text = toggle_label(label, subtitle);
+            composed += 1;
+            assert!(
+                !drawn.contains(&text),
+                "{key}: the composed label reached a `Text` widget. That is not a \
+                 failure of the page — it means `Toggler` now builds a child text \
+                 and these labels ARE render-observable, so the note in \
+                 `main.rs` and the bound on this test are both stale. Drawn: \
+                 {drawn:?}"
+            );
+        }
+        assert_eq!(composed, 13, "all thirteen rows were measured");
+
+        assert!(
+            drawn.iter().any(|text| text == SECTION_APPEARANCE),
+            "the page drew nothing this traversal can see, so the absences above \
+             prove nothing — this is the anti-vacuity half. Drawn: {drawn:?}"
         );
     }
 
