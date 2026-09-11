@@ -182,6 +182,7 @@ STOPPED=""
 STAGES=(
     "build|stage_build|the workspace builds"
     "clippy|stage_clippy|cargo clippy --all-targets -- -D warnings (workspace root ONLY, D-08)"
+    "doc|stage_doc|rustdoc resolves every intra-doc link (-D rustdoc::broken_intra_doc_links, task #75)"
     "test|stage_test|the test suite, in BOTH feature configurations (task #27)"
     "cli|stage_cli|the headless CLI --list/--launch/--version, against a library it must read"
     "oracle-freshness|stage_oracle|the checked-in fixtures equal what the Python generators produce"
@@ -533,6 +534,34 @@ stage_build() {
 # ---------------------------------------------------------------------------
 stage_clippy() {
     cargo clippy --all-targets -- -D warnings
+}
+
+# ---------------------------------------------------------------------------
+# Stage: doc — rustdoc resolves every intra-doc link (task #75)
+#
+# The lint is denied BY NAME, not by turning on `-D warnings`, and that is the
+# decision rather than an oversight. The same run emits 14 `links to private
+# item` warnings, and a doc comment that names a private helper is sometimes
+# exactly the right thing to write — this project's doc comments cite test
+# functions and private constants deliberately, as the evidence for a claim
+# about them. Denying every rustdoc warning would fail those and teach the next
+# author to delete the citation, which loses the evidence to save the lint.
+#
+# What it gates is the failure that is silent in the other direction: a broken
+# intra-doc link degrades to an unlinked code span, so the rendered page reads
+# correctly and only the author's intent is lost. `cargo doc` ran in no stage at
+# all, so links that stopped resolving when their targets moved were invisible
+# (#75). This stage runs the tool rather than grepping its output, because when
+# it was written two of the ten errors it reported said `X is both a module and
+# a macro` and not `unresolved link` — a grep for one diagnostic string is blind
+# to the next class, which is the finding this stage exists to close. The ten
+# were fixed before it landed (#75 and T-35); the count is not restated here,
+# because a number in this comment is stale the moment the next author edits a
+# doc comment, and this project has already filed that shape twice.
+# ---------------------------------------------------------------------------
+stage_doc() {
+    RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" \
+        cargo doc --workspace --no-deps
 }
 
 # ---------------------------------------------------------------------------
@@ -1614,6 +1643,7 @@ run_stage() {
 
 run_stage build
 run_stage clippy
+run_stage doc
 run_stage test
 run_stage cli
 run_stage oracle-freshness
