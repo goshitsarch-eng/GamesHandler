@@ -2027,3 +2027,59 @@ the untouched call site at all.
 Related: D-40, D-43, [[verification-defect-class]] — and the project's standing
 method, which is that **every one of these was found by running something and
 none by reading.**
+
+## D-45. A count is evidence only with the commit *and* the build it came from
+
+**Decision.** A test-suite count is not admissible as evidence in this project
+unless it is reported as **N, at commit X, with `Compiling <crate>` observed** —
+or with an explicit statement that the binary was forced (`touch`, `cargo clean
+-p`). A bare count plus a commit hash is **two independent things that can
+disagree silently**, and this project has now had them disagree twice in one day.
+
+**Why the clause is the whole entry.** The advocate measured the mechanism rather
+than arguing it (details in VERIFY-FINDINGS §3): a test appended to
+`installers.rs`, that file's mtime backdated to 2025-08-07, then
+`cargo test -p gamehandler` —
+
+```
+'Compiling gamehandler' present: False
+running 147 tests
+test result: ok. 147 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+probe test seen in output: False
+```
+
+Cargo reused the stale binary, ran 147 tests, and printed a clean green summary.
+The probe test was not among them and **nothing in the output said so.** The
+count was reported accurately and referred to a binary that was not the source.
+
+**This is why the existing rule did not catch it.** §3's rule ("a failure that
+contradicts the code is more likely a stale artifact than a bug") guards the
+false-*failure* direction, and it works because a contradiction prompts a check.
+The false-*pass* direction is strictly worse: **a green count prompts nothing.**
+The failure mode of the project's own primary instrument is invisible in exactly
+the case where it is trusted. `rsync -a` preserves mtimes, so the hazard is a
+side effect of ordinary work, and D-33's "test feature unification too" does not
+cover it — the mechanism is mtime skew, not build scope.
+
+**The rule, stated generally.** Evidence is a *pair*: the claim and the thing the
+claim was measured against. Naming the commit fixes the source; it does not fix
+the binary, and those are different objects. So:
+
+* Report counts as **N at commit X with the build observed**, or force the build
+  and say so.
+* Treat any claim whose measurement instrument is itself mutating state (a build
+  cache, a scratch tree, a shared `CARGO_TARGET_DIR`) as requiring the
+  instrument's identity to be reported, not just the result.
+* When a count is quoted onward, quote the build with it. A count loses its
+  provenance the moment it is copied without one — and this project copied one
+  twice, which is how the same number came to be wrong in two separate rows.
+
+**The instrument that found this was also wrong, in the same family.** The
+advocate's printer read `npass[0]`, the *first* `test result: ok` line, rather
+than the app harness's; and separate runs printed an unreproducible `145` against
+`147/3/2` on byte-identical files. Both are recorded rather than smoothed over,
+because the lesson of this file is that the failure is usually in the instrument
+and the instrument is usually the last place anyone looks.
+
+Related: D-33 (build scope), D-41 (per-mechanism answers), D-44 (a count is a
+property of a commit, not of a repository), [[verification-defect-class]].

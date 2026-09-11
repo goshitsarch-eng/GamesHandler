@@ -108,6 +108,39 @@ in the repo and reused.
 current: `touch` the source or `cargo clean -p <crate>` and re-run. **A failure
 that contradicts the code is more likely a stale artifact than a bug.**
 
+**The rule above guards the false-failure direction. The false-pass direction is
+worse and was unguarded — this is #50.** Measured by the advocate, not reasoned:
+a test was appended to `installers.rs`, that file's mtime was backdated to
+2025-08-07, and `cargo test -p gamehandler` was run.
+
+```
+'Compiling gamehandler' present: False
+running 147 tests
+test result: ok. 147 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+probe test seen in output: False
+```
+
+Cargo did not rebuild. It ran the **stale binary** and printed a clean green
+summary. The probe test was absent from the run and nothing in the output said
+so. **A failure contradiction prompts a check; a green count prompts nothing** —
+which is why every count recorded in this project was exposed to this and the
+guard, until now, existed only for the direction nobody is tempted to trust.
+
+`rsync -a` preserves mtimes, so this is reachable by the ordinary act of syncing
+a scratch tree, and D-33's "test feature unification too" does not cover it: the
+mechanism is mtime skew, not build scope.
+
+**Clause, now required of every count reported in this project:** give the count
+**with the commit named and `Compiling <crate>` observed** (or state that the
+binary was forced with `touch`/`cargo clean -p`). A bare count plus a commit hash
+is **two independent things that can disagree silently** — it is not a receipt.
+
+The same lesson landed on the instrument that found it: the advocate's own
+printer read `npass[0]`, the *first* `test result: ok` line, rather than the app
+harness's, and separately printed an unreproducible `145` against `147/3/2` on
+byte-identical files. Both faults were the advocate's, both are reported rather
+than smoothed, and both are now fixed in the harness.
+
 Two mechanisms, and they need different handling — this is D-33:
 
 | | stale artifact | real defect |
@@ -236,6 +269,15 @@ bin-only crate like `crates/app`. The answerable form names the mechanism:
   distinguish "failed" from "produced no parsable line" — the defect class of
   this file, committed while writing it. Architecture's file; the next step is
   the whole `--lib` suite under load, not the isolated test.
+- **#50 is open** — **a stale test binary prints a green count, and `cargo test`
+  says nothing.** Found by the advocate while checking the count-reporting rule;
+  the measurement and the required clause are in **§3**. Repair belongs to
+  Packaging in `scripts/verify.sh`: the `test` stage should either force the
+  binary (`touch` the crate sources / `cargo clean -p`) or assert that
+  `Compiling gamehandler` appeared in the output, so a run that reused a stale
+  artifact cannot report green. **Do not accept a count as evidence until this
+  lands** — every count written into PLAN and this file before today was exposed
+  to it.
 - **N-01** — the no-display panic, assigned to T-08; `smoke-test`'s only failing
   check.
 - **`run_stage` → `finish_fail` exits by default: contract, not defect.** Settled
