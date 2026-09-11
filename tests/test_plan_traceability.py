@@ -199,11 +199,13 @@ MIN_TAG_IDS = 2
 MIN_TAG_FILES = 2
 
 # Floors for the table direction, set below the pair's total for the same
-# reason. Today, counting only runs that are actually tables: PLAN.md 15 tables
-# / 144 body rows, VERIFY-FINDINGS.md 2 / 34 — 17 and 178 together. The
-# remaining 4 runs (55 lines) are not tables at all and are named in
-# [`MALFORMED_RUNS`]; they were counted here before `tables()` learned to ask
-# for a delimiter row, which is why these floors sit below the earlier numbers.
+# reason. Measured at `f051b82`, counting only runs that are actually tables:
+# PLAN.md 15 tables / 144 body rows, VERIFY-FINDINGS.md 2 / 34 — **17 tables and
+# 178 rows** together. The other 4 runs, 56 lines, are not tables at all and are
+# named in [`MALFORMED_RUNS`]; under the earlier rule that called every run a
+# table these parsed as 230 rows (171 + 59), and the comment here used to say
+# 264. That 264 is not reproducible and was carried for several commits without
+# being re-measured, which is why the numbers above name the sha they came from.
 MIN_TABLES = 12
 MIN_TABLE_ROWS = 150
 
