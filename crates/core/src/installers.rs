@@ -1154,7 +1154,67 @@ use crate::runners::{wine_prefix_root, USER_AGENT};
 ///   of which mean `allowed.example.` is a *different* host from
 ///   `allowed.example`, so a host that merely looks like an allowed one fails
 ///   closed.
-fn url_scheme_and_host(url: &str) -> (String, Option<String>) {
+pub(crate) struct UrlParts {
+    /// `urlsplit(url).scheme`, lowercased.
+    pub scheme: String,
+    /// The raw netloc, exactly as CPython keeps it — case preserved, and `""`
+    /// when there is no `//`. Kept because `bool(parsed.netloc)` is what
+    /// `netpaths.is_remote_url` tests, and that is **not** the same question as
+    /// "is there a hostname": `smb:///x` has a scheme and no netloc, and
+    /// `//host/x` has a netloc and no scheme.
+    pub netloc: String,
+    /// `urlsplit(url).hostname`, lowercased, or `None` when empty.
+    pub host: Option<String>,
+    /// `urlsplit(url).username` — **not** percent-decoded, because CPython's is
+    /// not; `netpaths` decodes it itself with `unquote`.
+    pub user: Option<String>,
+    /// `urlsplit(url).port`, or `None`. See this function's note on the one
+    /// case where CPython raises instead.
+    pub port: Option<u32>,
+    /// `urlsplit(url).path` — the path component only, with any `?query` and
+    /// `#fragment` already removed.
+    pub path: String,
+}
+
+/// `urlsplit()`'s five components (`urlparse` in `installers.py:552`,
+/// `urlsplit` in `netpaths.py`), in one place because there is only one
+/// CPython URL parser worth having a fidelity opinion about.
+///
+/// # Why this is one function and not two
+///
+/// It used to return `(scheme, Option<host>)`, which is all the download
+/// origin allowlist needs. `netpaths` needs the username, port and path as
+/// well, and the tempting move is to parse again inside `netpaths`. That would
+/// be two independent ports of `urlsplit` for one behaviour: two fidelities,
+/// only one of which the vector battery below exercises, and the unexercised
+/// one is the copy that rots. So the components were added here instead, and
+/// the battery was extended over all five rather than a second one started.
+///
+/// **The widening is return-type-only.** Every caller that read
+/// `(scheme, host)` before still reads exactly that and nothing else —
+/// [`validate_download_origin`] is the one that matters, and the security
+/// property is untouched by construction because widening what a parser
+/// *returns* cannot change what a caller *reads*. The 27 allowlist vectors are
+/// the evidence that it did not.
+///
+/// # The rules, all of them measured against CPython rather than recalled
+///
+/// See the notes on the scheme, netloc, userinfo and host rules that were
+/// already here; the additions are that the username is the text before the
+/// **first** `:` of the userinfo (which was itself split at the **last** `@`,
+/// so `a@b@host` has the username `a@b`), and that `port` is `None` both when
+/// the port is absent or empty and when it is not a number.
+///
+/// That last one is a **divergence**, and a deliberate one: CPython's `.port`
+/// property raises `ValueError` on a non-numeric port, so
+/// `netpaths.as_local_path("sftp://host:abc/x")` raises out of the reference
+/// and takes the caller with it. Returning `None` here cannot crash, and the
+/// difference is observable only on a URL the reference cannot handle at all.
+/// (CPython's `int(port, 10)` also accepts surrounding whitespace and internal
+/// underscores, so `:8_0` is port 80 to the reference and `None` here. That one
+/// is recorded rather than replicated because it is a URL no picker produces,
+/// and the crash-free behaviour above is the part worth keeping.)
+fn url_parts(url: &str) -> UrlParts {
     /// CPython's `_WHATWG_C0_CONTROL_OR_SPACE`.
     fn is_c0_control_or_space(character: char) -> bool {
         character == ' ' || (character as u32) <= 0x1f
@@ -1187,39 +1247,76 @@ fn url_scheme_and_host(url: &str) -> (String, Option<String>) {
         }
     }
 
-    let Some(netloc_and_rest) = rest.strip_prefix("//") else {
-        return (scheme, None);
+    // `_splitnetloc`: the netloc runs from just after the `//` to the first
+    // `/`, `?` or `#`. When there is no `//` there is no netloc but there is
+    // still a path — `https:/host/x` keeps `/host/x` — so this cannot return
+    // early the way the two-component version did.
+    let (netloc, after_netloc) = match rest.strip_prefix("//") {
+        Some(remainder) => {
+            let end = remainder.find(['/', '?', '#']).unwrap_or(remainder.len());
+            (&remainder[..end], &remainder[end..])
+        }
+        None => ("", rest),
     };
-    let end = netloc_and_rest
-        .find(['/', '?', '#'])
-        .unwrap_or(netloc_and_rest.len());
-    let netloc = &netloc_and_rest[..end];
+    // Fragment first, then query — CPython's order, and the two are equivalent
+    // for the path only because neither can contain the other's delimiter.
+    let path = after_netloc.split('#').next().unwrap_or("");
+    let path = path.split('?').next().unwrap_or("");
 
-    // `netloc.rpartition('@')`: everything after the last `@`, or the whole
-    // thing when there is none.
-    let hostinfo = match netloc.rfind('@') {
+    // `_userinfo`, then `_hostinfo`: both split at the **last** `@`.
+    let at = netloc.rfind('@');
+    let user = at.map(|at| {
+        let userinfo = &netloc[..at];
+        // `userinfo.partition(':')` — the **first** colon, and a username with
+        // no colon at all is the whole thing.
+        let end = userinfo.find(':').unwrap_or(userinfo.len());
+        userinfo[..end].to_string()
+    });
+    let hostinfo = match at {
         Some(at) => &netloc[at + 1..],
         None => netloc,
     };
 
-    let hostname = match hostinfo.find('[') {
+    let (hostname, port_text) = match hostinfo.find('[') {
         Some(open) => {
             let bracketed = &hostinfo[open + 1..];
             match bracketed.find(']') {
-                Some(close) => &bracketed[..close],
-                None => bracketed,
+                // The port, when there is one, is after the `]` — so
+                // `[::1]:8080` reports `::1` and `8080`, and `[::1]` reports
+                // no port rather than a port of `:1`.
+                Some(close) => {
+                    let tail = &bracketed[close + 1..];
+                    (&bracketed[..close], tail.strip_prefix(':').unwrap_or(""))
+                }
+                None => (bracketed, ""),
             }
         }
         None => match hostinfo.find(':') {
-            Some(colon) => &hostinfo[..colon],
-            None => hostinfo,
+            Some(colon) => (&hostinfo[..colon], &hostinfo[colon + 1..]),
+            None => (hostinfo, ""),
         },
     };
 
-    if hostname.is_empty() {
-        return (scheme, None);
+    let host = if hostname.is_empty() {
+        None
+    } else {
+        Some(hostname.to_lowercase())
+    };
+    // `0..=65535` is CPython's own range check; anything else it would raise
+    // on, and this returns `None` instead. See this function's note.
+    let port = port_text
+        .parse::<u32>()
+        .ok()
+        .filter(|port| *port <= 65_535);
+
+    UrlParts {
+        scheme,
+        netloc: netloc.to_string(),
+        host,
+        user,
+        port,
+        path: path.to_string(),
     }
-    (scheme, Some(hostname.to_lowercase()))
 }
 
 /// Refuse a response that did not come from where the recipe says it may come
@@ -1236,7 +1333,11 @@ pub fn validate_download_origin(
     installer: &Installer,
     final_url: &str,
 ) -> Result<(), InstallerError> {
-    let (scheme, host) = url_scheme_and_host(final_url);
+    // Reads the scheme and the host and **nothing else**. The parser was
+    // widened to five components for `netpaths`; this caller's inputs are
+    // unchanged, which is what makes the widening unable to affect it.
+    let parts = url_parts(final_url);
+    let (scheme, host) = (parts.scheme, parts.host);
     let allowed = installer
         .allowed_hosts
         .iter()
@@ -2873,48 +2974,75 @@ mod tests {
     ///   stricter than the reference.
     #[test]
     fn the_url_parser_matches_cpython() {
-        let vectors: [(&str, &str, Option<&str>); 27] = [
-            (
-                "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe",
-                "https",
-                Some("cdn.akamai.steamstatic.com"),
-            ),
-            ("HTTPS://CDN.AKAMAI.STEAMSTATIC.COM/x", "https", Some("cdn.akamai.steamstatic.com")),
-            ("https://cdn.akamai.steamstatic.com:443/x", "https", Some("cdn.akamai.steamstatic.com")),
-            ("https://user:pw@cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com")),
-            ("http://cdn.akamai.steamstatic.com/x", "http", Some("cdn.akamai.steamstatic.com")),
-            ("https://evil.example/SteamSetup.exe", "https", Some("evil.example")),
-            ("//cdn.akamai.steamstatic.com/x", "", Some("cdn.akamai.steamstatic.com")),
-            ("cdn.akamai.steamstatic.com/x", "", None),
-            ("https://cdn.akamai.steamstatic.com./x", "https", Some("cdn.akamai.steamstatic.com.")),
-            ("https://cdn.akamai.steamstatic.com@evil.example/x", "https", Some("evil.example")),
-            ("https://evil.example@cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com")),
-            ("https://a@b@cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com")),
-            ("https://[2001:db8::1]/x", "https", Some("2001:db8::1")),
-            ("https://cdn.akamai.steamstatic.com:notaport/x", "https", Some("cdn.akamai.steamstatic.com")),
-            ("https:///x", "https", None),
-            ("https://", "https", None),
-            ("", "", None),
-            ("https://cdn.akamai.steamstatic.com\t/x", "https", Some("cdn.akamai.steamstatic.com")),
-            (" https://cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com")),
-            ("https://\tcdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com")),
-            ("ftp://cdn.akamai.steamstatic.com/x", "ftp", Some("cdn.akamai.steamstatic.com")),
-            (
-                "https://cdn.akamai.steamstatic.com.evil.example/x",
-                "https",
-                Some("cdn.akamai.steamstatic.com.evil.example"),
-            ),
-            ("https://cdn.akamai.steamstatic.com?x=1", "https", Some("cdn.akamai.steamstatic.com")),
-            ("https://cdn.akamai.steamstatic.com#frag", "https", Some("cdn.akamai.steamstatic.com")),
-            ("1https://cdn.akamai.steamstatic.com/x", "", None),
-            ("https:/cdn.akamai.steamstatic.com/x", "https", None),
-            ("https://cdn.akamai.steamstatic.com:80/x", "https", Some("cdn.akamai.steamstatic.com")),
+        // **47 vectors, and the count went up for a reason worth naming.** The
+        // first 27 are the allowlist's own and every one of them was generated
+        // by running CPython's `urlsplit` on this machine, not written from
+        // memory. `netpaths` then needed the username, port and path as well,
+        // so the *same* battery was extended over all five components rather
+        // than a second one started — one parser, one fidelity, one table.
+        //
+        // Each tuple is `(url, scheme, host, user, port, path, netloc)` and
+        // every value in it came out of `urlsplit(...)`, so a disagreement here
+        // is a disagreement with CPython and not with a prior reading of it.
+        let vectors: [(&str, &str, Option<&str>, Option<&str>, Option<u32>, &str, &str); 47] = [
+            ("https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/client/installer/SteamSetup.exe", "cdn.akamai.steamstatic.com"),
+            ("HTTPS://CDN.AKAMAI.STEAMSTATIC.COM/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "CDN.AKAMAI.STEAMSTATIC.COM"),
+            ("https://cdn.akamai.steamstatic.com:443/x", "https", Some("cdn.akamai.steamstatic.com"), None, Some(443), "/x", "cdn.akamai.steamstatic.com:443"),
+            ("https://user:pw@cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), Some("user"), None, "/x", "user:pw@cdn.akamai.steamstatic.com"),
+            ("http://cdn.akamai.steamstatic.com/x", "http", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
+            ("https://evil.example/SteamSetup.exe", "https", Some("evil.example"), None, None, "/SteamSetup.exe", "evil.example"),
+            ("//cdn.akamai.steamstatic.com/x", "", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
+            ("cdn.akamai.steamstatic.com/x", "", None, None, None, "cdn.akamai.steamstatic.com/x", ""),
+            ("https://cdn.akamai.steamstatic.com./x", "https", Some("cdn.akamai.steamstatic.com."), None, None, "/x", "cdn.akamai.steamstatic.com."),
+            ("https://cdn.akamai.steamstatic.com@evil.example/x", "https", Some("evil.example"), Some("cdn.akamai.steamstatic.com"), None, "/x", "cdn.akamai.steamstatic.com@evil.example"),
+            ("https://evil.example@cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), Some("evil.example"), None, "/x", "evil.example@cdn.akamai.steamstatic.com"),
+            ("https://a@b@cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), Some("a@b"), None, "/x", "a@b@cdn.akamai.steamstatic.com"),
+            ("https://[2001:db8::1]/x", "https", Some("2001:db8::1"), None, None, "/x", "[2001:db8::1]"),
+            ("https://cdn.akamai.steamstatic.com:notaport/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com:notaport"),
+            ("https:///x", "https", None, None, None, "/x", ""),
+            ("https://", "https", None, None, None, "", ""),
+            ("", "", None, None, None, "", ""),
+            ("https://cdn.akamai.steamstatic.com\t/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
+            (" https://cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
+            ("https://\tcdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
+            ("ftp://cdn.akamai.steamstatic.com/x", "ftp", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
+            ("https://cdn.akamai.steamstatic.com.evil.example/x", "https", Some("cdn.akamai.steamstatic.com.evil.example"), None, None, "/x", "cdn.akamai.steamstatic.com.evil.example"),
+            ("https://cdn.akamai.steamstatic.com?x=1", "https", Some("cdn.akamai.steamstatic.com"), None, None, "", "cdn.akamai.steamstatic.com"),
+            ("https://cdn.akamai.steamstatic.com#frag", "https", Some("cdn.akamai.steamstatic.com"), None, None, "", "cdn.akamai.steamstatic.com"),
+            ("1https://cdn.akamai.steamstatic.com/x", "", None, None, None, "1https://cdn.akamai.steamstatic.com/x", ""),
+            ("https:/cdn.akamai.steamstatic.com/x", "https", None, None, None, "/cdn.akamai.steamstatic.com/x", ""),
+            ("https://cdn.akamai.steamstatic.com:80/x", "https", Some("cdn.akamai.steamstatic.com"), None, Some(80), "/x", "cdn.akamai.steamstatic.com:80"),
+            ("smb://server/share/game.exe", "smb", Some("server"), None, None, "/share/game.exe", "server"),
+            ("smb://user@server/share/game.exe", "smb", Some("server"), Some("user"), None, "/share/game.exe", "user@server"),
+            ("smb://user:pw@SERVER/Share/dir/game.exe", "smb", Some("server"), Some("user"), None, "/Share/dir/game.exe", "user:pw@SERVER"),
+            ("smb://server:445/share/game.exe", "smb", Some("server"), None, Some(445), "/share/game.exe", "server:445"),
+            ("sftp://host/pub/game.exe", "sftp", Some("host"), None, None, "/pub/game.exe", "host"),
+            ("ssh://host/pub/game.exe", "ssh", Some("host"), None, None, "/pub/game.exe", "host"),
+            ("ftp://host/pub/game.exe", "ftp", Some("host"), None, None, "/pub/game.exe", "host"),
+            ("ftps://host/pub/game.exe", "ftps", Some("host"), None, None, "/pub/game.exe", "host"),
+            ("dav://host/pub/game.exe", "dav", Some("host"), None, None, "/pub/game.exe", "host"),
+            ("davs://host/pub/game.exe", "davs", Some("host"), None, None, "/pub/game.exe", "host"),
+            ("nfs://host/export/game.exe", "nfs", Some("host"), None, None, "/export/game.exe", "host"),
+            ("sftp://user@host:2222/pub/x.exe", "sftp", Some("host"), Some("user"), Some(2222), "/pub/x.exe", "user@host:2222"),
+            ("smb://server/share/a%20b.exe", "smb", Some("server"), None, None, "/share/a%20b.exe", "server"),
+            ("smb://us%40er@server/share/x.exe", "smb", Some("server"), Some("us%40er"), None, "/share/x.exe", "us%40er@server"),
+            ("smb:///nohost/x.exe", "smb", None, None, None, "/nohost/x.exe", ""),
+            ("file:///home/u/game.exe", "file", None, None, None, "/home/u/game.exe", ""),
+            ("file://host/home/u/game.exe", "file", Some("host"), None, None, "/home/u/game.exe", "host"),
+            ("https://host/x?q=1#f", "https", Some("host"), None, None, "/x", "host"),
+            ("smb://[fe80::1]/share/x.exe", "smb", Some("fe80::1"), None, None, "/share/x.exe", "[fe80::1]"),
+            ("http://host/pub/x.exe", "http", Some("host"), None, None, "/pub/x.exe", "host"),
         ];
-        for (url, scheme, host) in vectors {
-            let (actual_scheme, actual_host) = url_scheme_and_host(url);
-            assert_eq!(actual_scheme, scheme, "scheme of {url:?}");
-            assert_eq!(actual_host.as_deref(), host, "host of {url:?}");
+        for (url, scheme, host, user, port, path, netloc) in vectors {
+            let parts = url_parts(url);
+            assert_eq!(parts.scheme, scheme, "scheme of {url:?}");
+            assert_eq!(parts.host.as_deref(), host, "host of {url:?}");
+            assert_eq!(parts.user.as_deref(), user, "user of {url:?}");
+            assert_eq!(parts.port, port, "port of {url:?}");
+            assert_eq!(parts.path, path, "path of {url:?}");
+            assert_eq!(parts.netloc, netloc, "netloc of {url:?}");
         }
+
     }
 
     /// The allowlist check itself, on the two arms that matter.
