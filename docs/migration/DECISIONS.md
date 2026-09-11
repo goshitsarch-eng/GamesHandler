@@ -2556,3 +2556,53 @@ non-current tree (#60) — and it was volunteered by the person the finding was
 Related: D-45 (evidence only in the form the check reads), D-46 clause 2 (the
 repair is a new commit, not an amend, because the commit had landed), #60 and #61
 in VERIFY-FINDINGS, [[libcosmic-migration-project]].
+
+## D-51. One file, one writer — and the blocked agent gets work in a file nobody holds
+
+**The situation, measured 2026-09-11.** Three of the four agents need
+`crates/app/src/main.rs` at the same time: Architecture for the T-11/T-12
+wiring (`Shell::show_page`, the fetch/install handlers, and the two dispatch
+arms); UX for T-24 (P-67 theming), T-25 (P-68 shortcuts) and the arms for a
+new page; and any page that lands needs its dispatch arm there. It is the
+single most contended file in the project, and it is on the critical path for
+almost everything.
+
+**Why "whoever gets there first" is not available.** Both of the project's
+process defects came from exactly this collision. #56: a bare `git commit`
+swept a teammate's staging, because two agents had work in one index. D-50:
+the lead drew an ownership boundary for `crates/core/src/lib.rs` and recorded
+the dependency **only in a commit message**, which no gate reads. Neither was
+a mistake in anyone's code. Both were a *file* with more than one writer and
+no one arbitrating.
+
+**The rule.** When a file is contended, the lead assigns **one writer** and an
+**order**, and the order follows the project's own tie-break rules — feature
+parity, then working in the Flatpak sandbox, then accessibility, then
+simplicity/maintainability, then COSMIC conventions. Applied here, that
+resolves to: **whatever shrinks `PINNED_PENDING` and unblocks T-19 goes
+first**, because T-19 is the gate on the project's definition of done and
+`PINNED_PENDING` is the only structural measure of how much of the app is
+still scaffold.
+
+**The order decided (2026-09-11).**
+
+| Agent | Holds | Work |
+|---|---|---|
+| Architecture | `crates/app/src/main.rs` **exclusively** | T-11/T-12 wiring — removes 2 of the 3 placeholders |
+| UX | new modules only | `view/credits.rs` (removes the 3rd placeholder), then `view/form.rs` (#65) |
+| Packaging | `tests/`, `scripts/` | the #64 guard message, then the dispatch-keyed dead-handler guard |
+
+**The part that generalises, and the reason this is a decision rather than a
+note.** The blocked agents are not idle, and that is not luck: **a file nobody
+has claimed has no writer, so a new module is always available work.** When
+the lead sequences a contended file, the second half of the job is finding the
+blocked agent work in a file no one holds — `view/credits.rs` was chosen over
+the game form precisely because it removes a placeholder *and* collides with
+nothing. Leaving an agent idle until a file frees up is a scheduling failure
+dressed as a plan.
+
+**And the handoff is a commit, not an intention.** "`main.rs` is free now" is
+knowable only from a sha that has landed; an agent that says it is nearly done
+has not freed the file. This is why the writer is asked for the sha its commit
+prints — the same reason D-49 exists. Until then the file stays held.
+
