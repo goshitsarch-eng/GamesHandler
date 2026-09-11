@@ -68,10 +68,12 @@ use std::path::{Path, PathBuf};
 /// test fails until you make it, and names the page when it does. This is the
 /// only hand-maintained copy of the fact, and it is hand-maintained on purpose.
 ///
-/// Source: `crates/app/src/main.rs`'s `view` arms, at the time of writing
-/// `Library`→T-09, `Installers`→T-12, `Runners`→T-11, `Plugins`/`Credits`/
-/// `Settings`→T-13. The task ids are recorded in that file's comments and are
-/// not pinned here, so reassigning a task does not break this test.
+/// The set this must equal is parsed out of the page dispatch in
+/// `crates/app/src/main.rs` — `view_body`'s `match self.state.page` — so it is
+/// not restated here. The page→task mapping lives in that file too, and is
+/// deliberately not copied: an earlier version of this comment listed it, and
+/// the list went stale while the test beside it stayed correct. A hand-copied
+/// fact that no assertion reads has nothing to keep it honest.
 const PINNED_PENDING: [&str; 5] = [
     "Installers",
     "Runners",
