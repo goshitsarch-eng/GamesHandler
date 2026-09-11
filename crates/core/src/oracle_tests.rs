@@ -835,11 +835,32 @@ fn floats_survive_a_roundtrip_numerically_though_the_exponent_is_spelled_differe
         }
     }
 
-    // The byte-level difference must be confined to exponent spelling: every
-    // differing line has to be one of the two float fields, and the two
-    // documents must otherwise have the same shape. Asserting the *shape* of
-    // the divergence keeps a real formatting regression from hiding inside an
-    // accepted one.
+    // The byte-level difference must be confined to how an f64 is *spelled*:
+    // every differing line has to be one of the two float fields, and the two
+    // values must be the same double after reparse. Asserting which divergence
+    // is allowed is what keeps a real formatting regression from arriving as a
+    // new line here and being waved through as "the exponent thing" — the same
+    // problem F-F's own table had.
+    //
+    // # Why the predicate is numeric rather than textual
+    //
+    // An earlier version asserted the differing line was a negative exponent
+    // that Python pads — `contains("e-") && !contains("e-0")`. That is true for
+    // `1e-7` vs `1e-07` and **false for the whole notation band**, where the two
+    // writers disagree about *whether to use an exponent at all*:
+    //
+    //     value       this port     Python      divergence
+    //     1e-4        0.0001        0.0001      none
+    //     1e-5        0.00001       1e-05       NOTATION
+    //     1.2345e-5   0.000012345   1.2345e-05  NOTATION
+    //     1e-6        1e-6          1e-06       padding
+    //
+    // So the old guard rejected a divergence the writer genuinely produces. It
+    // only survived because this fixture's 14 values happen to sit above and
+    // below the band rather than inside it — a test that cannot see a case is
+    // not the same as a case that cannot happen. Found by adversarial review;
+    // `exp_notation_boundary` is the fixture added to cover the band, and
+    // `the_notation_band_diverges_only_in_spelling` runs it.
     assert_eq!(
         produced.lines().count(),
         python_bytes.lines().count(),
@@ -857,23 +878,28 @@ fn floats_survive_a_roundtrip_numerically_though_the_exponent_is_spelled_differe
                  python: {theirs}"
             );
 
-            // And the difference is specifically Python zero-padding a
-            // single-digit negative exponent. Asserting *which* divergence is
-            // allowed is what keeps a real formatting regression from arriving
-            // as a new line here and being waved through as "the exponent
-            // thing" — the same problem F-F's own table had.
-            let ours_value = ours.trim().trim_end_matches(',');
-            let theirs_value = theirs.trim().trim_end_matches(',');
-            assert!(
-                ours_value.contains("e-") && !ours_value.contains("e-0"),
-                "a differing line must be a negative exponent that Python pads, \
-                 but this one is not:\n\
-                 rust:   {ours}\n\
-                 python: {theirs}"
-            );
-            assert!(
-                theirs_value.contains("e-0"),
-                "Python should pad the exponent to two digits, but it did not:\n\
+            let ours_value: f64 = ours
+                .trim()
+                .trim_start_matches('"')
+                .split(": ")
+                .nth(1)
+                .expect("a `\"key\": value,` line")
+                .trim_end_matches(',')
+                .parse()
+                .unwrap_or_else(|error| panic!("our line is not an f64: {ours}: {error}"));
+            let theirs_value: f64 = theirs
+                .trim()
+                .trim_start_matches('"')
+                .split(": ")
+                .nth(1)
+                .expect("a `\"key\": value,` line")
+                .trim_end_matches(',')
+                .parse()
+                .unwrap_or_else(|error| panic!("Python's line is not an f64: {theirs}: {error}"));
+            assert_eq!(
+                ours_value.to_bits(),
+                theirs_value.to_bits(),
+                "a differently spelled float must still be the same double:\n\
                  rust:   {ours}\n\
                  python: {theirs}"
             );
@@ -884,6 +910,129 @@ fn floats_survive_a_roundtrip_numerically_though_the_exponent_is_spelled_differe
         "the exponent divergence should be observable in this fixture, otherwise it no \
          longer tests anything"
     );
+
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn the_notation_band_diverges_only_in_spelling() {
+    // The fixture `exp_notation_boundary`, added after the review that found the
+    // predicate above to be narrower than the writer. Values in
+    // `[1e-5, 1e-4)` reparse to the same double but are *spelled* differently —
+    // `0.00001` here, `1e-05` in Python — so this is the band the old textual
+    // guard could not describe.
+    //
+    // What this test is for: stating that the divergence is bounded to
+    // spelling. Every value must round-trip to the same bits, and the only
+    // lines that may differ are the two float fields. A real regression — a
+    // value that changes, or a line of a different shape — fails here.
+    let oracle = oracle();
+    let case = oracle
+        .get("exp_notation_boundary")
+        .expect("the boundary fixture is declared in gen_oracle.py");
+    let library = Library::new_at(
+        Some(fixtures_dir().join("exp_notation_boundary.in.json")),
+        FROZEN_NOW,
+    );
+
+    let directory = scratch("notation-band");
+    let written = directory.join("exp_notation_boundary.out.json");
+    library.save_to(&written).expect("save should succeed");
+    let python_bytes = expected_output(case, "exp_notation_boundary");
+
+    // Every case's bits survive, which is the property that actually matters:
+    // the file is hand-edited, but it must not be *corrupted* by a load/save.
+    let declared = case["bit_patterns_be_hex"]
+        .as_object()
+        .expect("gen_oracle.py records the bit patterns");
+    let ours = read(&written);
+    assert_eq!(ours.lines().count(), python_bytes.lines().count());
+
+    // The two documents differ only on float lines, and each pair of values is
+    // the same double.
+    let mut differing = 0usize;
+    let mut saw_notation_divergence = false;
+    for (ours_line, theirs_line) in ours.lines().zip(python_bytes.lines()) {
+        if ours_line == theirs_line {
+            continue;
+        }
+        differing += 1;
+        assert!(
+            ours_line.trim_start().starts_with("\"added\"")
+                || ours_line.trim_start().starts_with("\"last_played\""),
+            "only the float fields may be spelled differently, but this line differs:\n\
+             rust:   {ours_line}\n\
+             python: {theirs_line}"
+        );
+        let ours_value: f64 = ours_line
+            .trim()
+            .split(": ")
+            .nth(1)
+            .unwrap()
+            .trim_end_matches(',')
+            .parse()
+            .expect("our float line");
+        let theirs_value: f64 = theirs_line
+            .trim()
+            .split(": ")
+            .nth(1)
+            .unwrap()
+            .trim_end_matches(',')
+            .parse()
+            .expect("Python's float line");
+        assert_eq!(
+            ours_value.to_bits(),
+            theirs_value.to_bits(),
+            "the divergence must be spelling only:\n\
+             rust:   {ours_line}\n\
+             python: {theirs_line}"
+        );
+        // Compare the *value* text, not the line — the key `"added"` contains an
+        // `e`, which is exactly the kind of detail that makes a substring test
+        // silently never fire.
+        let ours_text = ours_line.trim().split(": ").nth(1).unwrap_or("");
+        let theirs_text = theirs_line.trim().split(": ").nth(1).unwrap_or("");
+        if !ours_text.contains(['e', 'E']) && theirs_text.contains("e-0") {
+            saw_notation_divergence = true;
+        }
+    }
+
+    // The point of the fixture: at least one case diverges by *notation*, which
+    // is the class the narrow guard could not describe. If this stops being
+    // true — because a serde_json upgrade changes the threshold — the fixture
+    // has stopped testing the band and should be re-derived rather than left
+    // green.
+    assert!(
+        saw_notation_divergence,
+        "expected at least one case where this port writes a fixed-point literal \
+         and Python writes an exponent; the fixture no longer covers the notation band"
+    );
+    assert!(differing > 0, "the fixture should produce some divergence at all");
+
+    // And the declared bit patterns are the ones on disk, so a change to the
+    // fixture regeneration cannot silently move them. Every declared value must
+    // appear in our output with exactly those bits — including the ones Python
+    // spells differently, which is the pairing this fixture exists to make.
+    let produced_bits: Vec<u64> = ours
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .split(": ")
+                .nth(1)?
+                .trim_end_matches(',')
+                .parse::<f64>()
+                .ok()
+                .map(f64::to_bits)
+        })
+        .collect();
+    for (label, pattern) in declared {
+        let raw = pattern.as_str().expect("a hex bit pattern").to_string();
+        let want = u64::from_str_radix(&raw, 16).expect("hex");
+        assert!(
+            produced_bits.contains(&want),
+            "{label} ({raw}) should appear in the output with those exact bits"
+        );
+    }
 
     let _ = std::fs::remove_dir_all(&directory);
 }

@@ -295,6 +295,72 @@ results["float_roundtrip"] = {
     "out_sha256_note": "regression guard; the byte-level check reads out_file",
 }
 
+# ------------------------------------------- 7b-ii. the exponent-notation band
+# The 300 realistic timestamps above sit in the 1e9 range, where the only
+# divergence is Python zero-padding a negative exponent (`1e-07` vs `1e-7`) and
+# the values agree after reparse. That is NOT the only way the two writers can
+# disagree, and the discovery is worth recording because the first predicate
+# written against it was too narrow to see the difference.
+#
+# `repr(float)` switches between fixed and exponential notation at a different
+# threshold than `serde_json` does. Measured on the pinned serde_json 1.0.151:
+#
+#     value       serde_json     Python repr      divergence
+#     1e-4        0.0001         0.0001           none
+#     1e-5        0.00001        1e-05            NOTATION
+#     2.5e-5      0.000025       2.5e-05          NOTATION
+#     1.2345e-5   0.000012345    1.2345e-05       NOTATION
+#     1e-6        1e-6           1e-06            padding only
+#     1e-7        1e-7           1e-07            padding only
+#     1e7         10000000.0     10000000.0       none
+#
+# So `1e-5 <= |x| < 1e-4` diverges by *notation*, not by padding: the port
+# writes a fixed-point literal where Python writes an exponential one. Both are
+# valid JSON and reparse to the same double, so this is not a correctness bug,
+# but "the port cannot byte-round-trip a file in this band" is a real parity
+# limitation and belongs in REPORT.md rather than in a test's blind spot.
+#
+# Reachability is bounded and worth stating: `added`/`last_played` carry
+# `time.time()` values in the 1e9 range, and every other float field is written
+# by us, so a file in this band is hand-edited or third-party. The band is
+# covered here so the class is *known* rather than latent.
+_boundary = [
+    ("exp_agrees_at_1e-4", 1e-4),
+    ("exp_notation_at_1e-5", 1e-5),
+    ("exp_notation_at_2_5e-5", 2.5e-5),
+    ("exp_notation_at_1_2345e-5", 1.2345e-5),
+    ("exp_notation_at_9_99e-5", 9.99e-5),
+    ("exp_padding_at_1e-6", 1e-6),
+    ("exp_padding_at_1e-7", 1e-7),
+    ("exp_agrees_at_1e7", 1e7),
+    ("exp_agrees_at_zero", 0.0),
+]
+_boundary_entries = [
+    {"id": "%032x" % (0xB0 + i), "name": label, "added": value, "last_played": value}
+    for i, (label, value) in enumerate(_boundary)
+]
+p = OUT / "exp_notation_boundary.in.json"
+p.write_text(json.dumps(_boundary_entries, indent=2), encoding="utf-8")
+_lib = Library(path=p)
+out = OUT / "exp_notation_boundary.out.json"
+_lib.path = out
+_lib.save()
+results["exp_notation_boundary"] = {
+    "note": (
+        "The band where serde_json and Python choose different float NOTATION. "
+        "Values in [1e-5, 1e-4) reparse identically but are spelled differently: "
+        "the port writes 0.00001 where Python writes 1e-05. Only `1e-6`/`1e-7` are "
+        "padding-only. A test that admits any differing float line must reparse "
+        "before comparing, because the guard `ours.contains('e-')` is false for "
+        "`0.00001`."
+    ),
+    "cases": {label: value for label, value in _boundary},
+    "bit_patterns_be_hex": {label: struct.pack(">d", value).hex() for label, value in _boundary},
+    "in_file": "exp_notation_boundary.in.json",
+    "out_file": "exp_notation_boundary.out.json",
+    "out_sha256": _sha(out),
+}
+
 # ---------------------------------------------- 7c. wrong-typed / hostile fields
 # Only `added`/`last_played` are validated by from_dict; every other field is
 # stored as-is. `{"name": 123}` is MORE reachable than the null-timestamp bug:

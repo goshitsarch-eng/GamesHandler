@@ -396,13 +396,59 @@ mod tests {
         // Python lets `UnicodeDecodeError` escape `Settings.load`, which
         // `Backend.__init__` calls — the app dies at startup on one bad byte.
         // The port returns the defaults (see the module note).
+        //
+        // **Two byte positions, and the second is the one with teeth.** The
+        // first draft had only `between_string_and_brace`, which passes for two
+        // independent reasons and so could not fail for its own: after lossy
+        // decoding the text is still unparseable *and* the corrupted
+        // `color_scheme` is not in `COLOR_SCHEMES`. Swapping the
+        // `read_to_string` guard for `read` + `from_utf8_lossy` left the whole
+        // suite green — the mutation survived.
+        //
+        // `inside_a_free_field_value` closes it. `default_runner` is a free
+        // field with no allowlist, so lossy decoding parses cleanly and yields
+        // `/usr/bin/lig\u{fffd}ht` — silently accepting a corrupted path where
+        // the defaults are correct. That case fails under the mutation. Verified
+        // both ways: Python raises `UnicodeDecodeError` for the 0xff byte in
+        // *either* position, and the divergence is therefore about position, not
+        // about which byte.
+        let cases: &[(&str, &[u8])] = &[
+            (
+                "between_string_and_brace",
+                b"{\"color_scheme\": \"light\"\xff}",
+            ),
+            (
+                "inside_a_free_field_value",
+                b"{\"default_runner\": \"/usr/bin/lig\xffht\"}",
+            ),
+        ];
+
         let directory = std::env::temp_dir().join(format!("gh-settings-utf8-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).unwrap();
-        let path = directory.join("settings.json");
-        std::fs::write(&path, b"{\"color_scheme\": \"light\"\xff}").unwrap();
 
-        assert_eq!(Settings::load(Some(path)), Settings::default());
+        for (label, bytes) in cases {
+            let path = directory.join(format!("{label}.json"));
+            std::fs::write(&path, bytes).unwrap();
+            let loaded = Settings::load(Some(path));
+            assert_eq!(
+                loaded,
+                Settings::default(),
+                "load({label}) should fall back to the defaults"
+            );
+            // The specific field, asserted separately: the whole-struct compare
+            // above is what fails under the mutation, but naming the field here
+            // says *why* the case exists — this is the value that lossy decoding
+            // would quietly produce.
+            assert_eq!(
+                loaded.default_runner, SYSTEM_WINE,
+                "load({label}) must not accept a corrupted default_runner"
+            );
+            assert!(
+                !loaded.default_runner.contains('\u{fffd}'),
+                "load({label}) produced a replacement character"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&directory);
     }

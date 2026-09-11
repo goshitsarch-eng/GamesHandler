@@ -1435,6 +1435,34 @@
     "out_sha256": "903bef5e948fa92f8519993fd822d2c017a1a795c86b50d65fdabe3fff07e52d",
     "out_sha256_note": "regression guard; the byte-level check reads out_file"
   },
+  "exp_notation_boundary": {
+    "note": "The band where serde_json and Python choose different float NOTATION. Values in [1e-5, 1e-4) reparse identically but are spelled differently: the port writes 0.00001 where Python writes 1e-05. Only `1e-6`/`1e-7` are padding-only. A test that admits any differing float line must reparse before comparing, because the guard `ours.contains('e-')` is false for `0.00001`.",
+    "cases": {
+      "exp_agrees_at_1e-4": 0.0001,
+      "exp_notation_at_1e-5": 1e-05,
+      "exp_notation_at_2_5e-5": 2.5e-05,
+      "exp_notation_at_1_2345e-5": 1.2345e-05,
+      "exp_notation_at_9_99e-5": 9.99e-05,
+      "exp_padding_at_1e-6": 1e-06,
+      "exp_padding_at_1e-7": 1e-07,
+      "exp_agrees_at_1e7": 10000000.0,
+      "exp_agrees_at_zero": 0.0
+    },
+    "bit_patterns_be_hex": {
+      "exp_agrees_at_1e-4": "3f1a36e2eb1c432d",
+      "exp_notation_at_1e-5": "3ee4f8b588e368f1",
+      "exp_notation_at_2_5e-5": "3efa36e2eb1c432d",
+      "exp_notation_at_1_2345e-5": "3ee9e3abe16fc70d",
+      "exp_notation_at_9_99e-5": "3f1a302cee759401",
+      "exp_padding_at_1e-6": "3eb0c6f7a0b5ed8d",
+      "exp_padding_at_1e-7": "3e7ad7f29abcaf48",
+      "exp_agrees_at_1e7": "416312d000000000",
+      "exp_agrees_at_zero": "0000000000000000"
+    },
+    "in_file": "exp_notation_boundary.in.json",
+    "out_file": "exp_notation_boundary.out.json",
+    "out_sha256": "3cedf8990c89e36a6f99ca7e74b073b976a3d4b9fed8b8ef7d221ab0dbc2177b"
+  },
   "wrong_types": {
     "name_is_int": {
       "count": 1,

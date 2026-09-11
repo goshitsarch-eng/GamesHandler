@@ -1,0 +1,56 @@
+[
+  {
+    "id": "000000000000000000000000000000b0",
+    "name": "exp_agrees_at_1e-4",
+    "added": 0.0001,
+    "last_played": 0.0001
+  },
+  {
+    "id": "000000000000000000000000000000b1",
+    "name": "exp_notation_at_1e-5",
+    "added": 1e-05,
+    "last_played": 1e-05
+  },
+  {
+    "id": "000000000000000000000000000000b2",
+    "name": "exp_notation_at_2_5e-5",
+    "added": 2.5e-05,
+    "last_played": 2.5e-05
+  },
+  {
+    "id": "000000000000000000000000000000b3",
+    "name": "exp_notation_at_1_2345e-5",
+    "added": 1.2345e-05,
+    "last_played": 1.2345e-05
+  },
+  {
+    "id": "000000000000000000000000000000b4",
+    "name": "exp_notation_at_9_99e-5",
+    "added": 9.99e-05,
+    "last_played": 9.99e-05
+  },
+  {
+    "id": "000000000000000000000000000000b5",
+    "name": "exp_padding_at_1e-6",
+    "added": 1e-06,
+    "last_played": 1e-06
+  },
+  {
+    "id": "000000000000000000000000000000b6",
+    "name": "exp_padding_at_1e-7",
+    "added": 1e-07,
+    "last_played": 1e-07
+  },
+  {
+    "id": "000000000000000000000000000000b7",
+    "name": "exp_agrees_at_1e7",
+    "added": 10000000.0,
+    "last_played": 10000000.0
+  },
+  {
+    "id": "000000000000000000000000000000b8",
+    "name": "exp_agrees_at_zero",
+    "added": 0.0,
+    "last_played": 0.0
+  }
+]
