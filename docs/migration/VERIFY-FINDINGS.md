@@ -138,11 +138,56 @@ bin-only crate like `crates/app`. The answerable form names the mechanism:
   `crates/app/src/main.rs` is in none of the five `FLATPAK_CONTENTS` entries — so
   the byte-identity checks stay green over a stub. The failure text now
   distinguishes the two cases.
-- **#28** — nine mutation survivors in `view/widgets.rs`.
-- **#33** — `update()` coverage, qualified by #38 (redundant length assertion),
-  #39 (a new `Message` variant need not be added to `every_message`) and #40
-  (`message_changes_state` observes only `State`, so a `Task`-only handler reads
-  as a placeholder).
+- **#28** — nine mutation survivors in `view/widgets.rs`. **CLOSED (`ee18527`)**,
+  by rendering rather than by a seam: the builders now destructure their spec
+  (`let spec = card_cover_spec(); cover_box(game, spec)`), so nothing restates a
+  number, and the tests read what is observable — widget `Id`s through a real
+  `Tree`/`Operation` traversal, and the laid-out `layout::Node` — under the
+  software renderer, so no display is needed. Two `CoverSpec` readers were
+  removed as dead. 26 mutations, and the two behavioural survivors are caught.
+  **Verified by the author, not yet independently reproduced by the lead** — the
+  94-test run above is the lead's, and it passes, but that is not the same claim.
+
+- **#33 — CLOSED for the variants that exist today; #39 keeps it open for the
+  ones T-09…T-15 will add.** `253498d` moved the dispatcher to `Shell` (whose
+  `update` a test *can* call, `App` holding a `Core` that only the framework can
+  build) and pinned the written handlers in both directions. The four emptiable
+  arms are now caught. `#38` (the redundant length assertion) and `#40`
+  (`message_changes_state` observing only `State`, so a `Task`-only handler reads
+  as a placeholder) were **closed with it**: `observe` now reports a `Debug`-diff
+  of `State` **and** `task.units()`, and a mutation making `FetchCover` return a
+  task is caught. That last one is #40's inverse — a *written* handler read as a
+  placeholder — which is the shape #32 is about, one level down.
+
+  One blind spot was measured rather than declared and is worth keeping: a
+  `ToastId` a test can construct cannot name a live toast (`push` returns only
+  the expiry `Task`; the slot map and queue are private), so `DismissToast` is
+  written but unobservable. `a_test_cannot_observe_which_toast_was_dismissed`
+  measures that and goes red if libcosmic ever grows an accessor — which is the
+  right shape: the gap is asserted at the point it would close, not papered over.
+
+- **#39 — RE-MEASURED, and the claim of closure is false.** The doc comment on
+  `every_message` (`main.rs:1858-1865`) says the length pin means "once the enum
+  compiles again that test is red until the new variant is also driven here".
+  It is not. Probe, run by the lead against the committed tree: add
+  `Message::LeadProbe(String)` to the enum, an arm to `variant_name` and a real
+  handler arm to `Shell::update` (both compile-forced — no wildcard in either),
+  and deliberately **not** to `every_message`. Result: **94 passed, 0 failed.**
+  Nothing anywhere noticed. The pin is `assert_eq!(every_message().len(), 49)`
+  and the hand-written list has 49 entries, so a *missing* entry keeps the count
+  correct; the pin only catches the other direction (someone appends to the list
+  and forgets to bump the number). So a new variant is driven by no test, and
+  `only_the_written_handlers_change_anything` cannot see it either — it iterates
+  `every_message`, so the variant is outside its universe.
+
+  **This is the one to fix before the pages land, not after.** T-09…T-15 add
+  variants; each one added without an `every_message` entry is a handler covered
+  by nothing, and the suite stays green while it is. The class-removing fix is a
+  single source of truth — declare the enum through a macro that also emits
+  `variant_name` and the sample list, so adding a variant is one edit and drift
+  is unrepresentable. The cheaper interim is to keep the list and pin its length
+  against a constant that is itself compile-forced, which buys a reminder rather
+  than a guarantee. Filed to UX; **not yet decided.**
 - **N-01** — the no-display panic, assigned to T-08; `smoke-test`'s only failing
   check.
 - **`run_stage` → `finish_fail` exits by default: contract, not defect.** Settled
