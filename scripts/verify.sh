@@ -32,6 +32,13 @@
 #                            the GPL text turned out to be missing from the
 #                            Flatpak with every one of stages 1-9 green.
 #
+# Stages 7-10 are one critical section under a `flock`, because all four read or
+# write build-flatpak/ and stage 7 writes it destructively. The lock note above
+# `acquire_flatpak_lock` explains why the lock spans the group rather than each
+# stage; the short version is that a released lock in the middle is a window for
+# another run to swap the tree, and the reader would then validate a different
+# revision with every line still saying "ok".
+#
 # Output contract (packaging.md §6): one machine-greppable line per stage on
 # stdout — `ok <stage>`, `FAIL <stage>`, `SKIP <stage>` — and every stage is
 # preceded by `### <stage>`. Full tool output goes to
@@ -164,6 +171,66 @@ finish_fail() {
         summary
         exit 1
     fi
+}
+
+# ---------------------------------------------------------------------------
+# The Flatpak build lock
+#
+# Stages 7-10 all touch build-flatpak/: 7 writes it destructively (--force-clean
+# erases the tree), 8 runs the app out of it, and 9 and 10 read the installed
+# copies from it. Two verify.sh runs in one checkout therefore corrupt each
+# other — one wipes the tree while the other is reading it, which makes
+# flatpak-contents report SKIP. That is the worst possible shape for this
+# harness: the reader concludes the check does not work, when what actually
+# happened is that it was raced. A result that depends on who else is running is
+# not a gate.
+#
+# ONE lock spans the whole group, and that is the load-bearing detail. Taking
+# and releasing per stage would leave a window between "I built it" and "I read
+# it" in which the other run completes its own build, so the reader validates a
+# tree belonging to a different revision while every line of output still says
+# "ok" — silent, and worse than the SKIP it replaces. The lock has to span
+# "built it" through "read it", not each stage separately.
+#
+# The lockfile is under target/, which is gitignored, and specifically NOT under
+# build-flatpak/ or .flatpak-builder/: flatpak-builder --force-clean removes
+# those itself, and deleting a lock file defeats the lock, because a later run
+# then locks a fresh inode and both proceed.
+# ---------------------------------------------------------------------------
+FLATPAK_LOCK="$ROOT/target/verify-flatpak.lock"
+FLATPAK_LOCK_FD=""
+
+acquire_flatpak_lock() {
+    mkdir -p "$(dirname "$FLATPAK_LOCK")" || return 1
+    if ! command -v flock >/dev/null 2>&1; then
+        # Reported rather than fatal, and reported rather than silent: the run
+        # can still do its work, but its result now depends on who else is
+        # running, and a reader has to be told that to interpret it. Failing
+        # hard here would take stages 1-6 down with it on a box without
+        # util-linux, which would be a worse trade — those stages are unaffected
+        # by this hazard.
+        echo "flock is not installed, so stages 7-10 are NOT serialised against"
+        echo "  another verify.sh in this checkout. If none is running, the result"
+        echo "  is sound; if one is, build-flatpak/ may have been swapped underneath"
+        echo "  this run. Install util-linux (flock) to remove the caveat."
+        return 0
+    fi
+    exec {FLATPAK_LOCK_FD}>>"$FLATPAK_LOCK" || return 1
+    # Non-blocking first, purely so that contention can be *reported*. These
+    # stages take minutes, so a silent wait is indistinguishable from a hang.
+    if ! flock -n "$FLATPAK_LOCK_FD"; then
+        printf '     waiting for the Flatpak build lock (%s)\n' "${FLATPAK_LOCK#"$ROOT"/}"
+        printf '     another verify.sh is building or reading build-flatpak/; resuming when it releases\n'
+        flock "$FLATPAK_LOCK_FD" || return 1
+    fi
+    return 0
+}
+
+# Idempotent, and safe to call from the EXIT trap as well as directly.
+release_flatpak_lock() {
+    [ -n "$FLATPAK_LOCK_FD" ] || return 0
+    eval "exec ${FLATPAK_LOCK_FD}>&-"
+    FLATPAK_LOCK_FD=""
 }
 
 # A missing tool is reported with instructions, never as an obscure failure
@@ -618,6 +685,21 @@ run_stage oracle-freshness  stage_oracle
 run_stage python-tests      stage_python
 run_stage cargo-sources     stage_cargo_sources
 
+# Everything from here to `release_flatpak_lock` is one critical section over
+# build-flatpak/ — stages 7-10, whether they build, run or merely read it. The
+# trap is the backstop for the paths that exit from inside it (finish_fail
+# exits when --keep-going is off); the explicit release afterwards hands the
+# lock back before the summary so a waiter is not held while we print.
+trap release_flatpak_lock EXIT
+if ! acquire_flatpak_lock; then
+    printf 'FAIL %s\n' "flatpak-lock"
+    printf '     could not take %s — stages 7-10 were not run\n' "${FLATPAK_LOCK#"$ROOT"/}"
+    FAILED+=("flatpak-lock")
+    release_flatpak_lock
+    summary
+    exit 1
+fi
+
 if [ "$SKIP_FLATPAK" -eq 1 ]; then
     begin flatpak-build; finish_skip "--skip-flatpak"
 elif require_tool flatpak-builder "from flatpak-builder"; then
@@ -643,6 +725,9 @@ fi
 # is precisely the half that catches a deleted install line. It reports SKIP on
 # its own when there is no tree to inspect.
 run_stage flatpak-contents  stage_flatpak_contents
+
+# End of the build-flatpak/ critical section (see the lock note above).
+release_flatpak_lock
 
 # The repository must be as clean after a run as before it (T-17 constraint).
 STATUS_AFTER="$(git status --porcelain 2>/dev/null)"
