@@ -239,6 +239,31 @@ Legend: **☐** not started · **~** in progress · **☑** done+verified
 | P-76 | Categories list with Uncategorized last | — | order check |
 | P-77 | Duplicate game ids: last write wins | — | duplicate entries |
 | P-78 | Flatpak: Gamescope extension PATH, Steam read-only path, Wine BaseApp | pkg §3 | documented install works |
+### Non-regression: bugs the Python app has, which the port must NOT copy
+| ID | Item | Source | How to verify |
+|---|---|---|---|
+| **B-01** | A wrong-typed scalar in one entry does not break the library (D-18) | F-I | `{"name": 123}` in `games.json`; app opens, all three sorts work |
+| **B-02** | `added: null` does not make `recent`/`added` sorts throw (D-14) | F-B | hand-edit `"added": null`; no crash in any sort |
+| **B-03** | `settings.json` with an invalid byte does not prevent startup (D-20) | F-J | inject `0xff`; app opens with defaults |
+| **B-04** | A BOM'd or deeply-nested `games.json` loads instead of being emptied (D-21) | F-K/F-L | BOM'd file whose games survive the next save |
+| **B-05** | Timestamps survive a save unchanged at the bit level (D-19) | F-H | save a library the Rust app loaded; bytes match Python's |
+
+A separate category from the parity checklist above, and not to be confused with
+section H below. Every P-item says *"behave like the Qt app"*; every B-item says
+**"do not"** — each corresponds to a defect verified by running the real Python
+implementation (`oracle/FINDINGS.md` §1 and §4).
+
+They are checklist items rather than footnotes because *"the port does not
+reproduce this bug"* is a claim worth nothing unless it is demonstrated in the
+running Flatpak. Asserting it in a document, or showing it passes a unit test,
+does not establish it — T-19 walks each one by hand-editing the file named in
+the verification column and confirming the real app survives.
+
+B-01, B-02 and B-03 are the ones a user can hit **without doing anything
+unusual**: no setting needs changing and no exotic input is required, just a
+`games.json` or `settings.json` that something other than this app wrote.
+B-05 is the one that is silent — it produces no crash at all, only bytes that
+slowly drift. See R-12.
 
 ### H. New items (not in the Qt app — added by this migration)
 | ID | Item | Why |
@@ -294,7 +319,7 @@ same file (D-05).
 | T-16 | Flatpak: new manifest, `cargo-sources.json`, `build.sh` | Pkg | Removes PySide6/llvm21/PYTHONPATH. Keeps Wine base, osslsigncode, DXVK. |
 | T-17 | `scripts/verify.sh` + headless smoke test | Pkg | 7 stages per `packaging.md` §6. |
 | T-18 | Metadata: desktop file, metainfo, README, version bump to 0.8.0 | Pkg + UX | Version-lockstep test. |
-| T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. Include F-B/F-I/F-J/F-K as **explicit non-regression cases**: hand-craft a `games.json` / `settings.json` containing each defect's trigger and confirm the Rust app survives it, since "the port does not copy the bug" is a claim that needs demonstrating, not asserting. |
+| T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. Walk **B-01…B-05** — hand-edit the file named for each and confirm the real app survives it. "The port does not copy the bug" is a claim that needs demonstrating, not asserting. |
 | T-20 | `docs/migration/REPORT.md` | Lead | Final deliverable. |
 
 Ordering rationale: logic (`T-02`–`T-06`) lands before UI, so the UI is built
