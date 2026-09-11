@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use cosmic::widget::toaster::Toasts;
-use gamehandler_core::models::Library;
+use gamehandler_core::models::{Game, Library, SYSTEM_WINE, UNCATEGORIZED};
 use gamehandler_core::plugins::{self, PluginEnv, PluginRow};
 use gamehandler_core::runners::families::ReleaseInfo;
 use gamehandler_core::runners::RunnerManager;
@@ -265,6 +265,18 @@ pub struct GameForm {
     /// the form is opened, not when it is saved, so an edit and an add are the
     /// same shape.
     pub game_id: Option<GameId>,
+    /// Which form this is — the reference's `isNew` property
+    /// (`GameFormPage.qml:12`), set by whoever pushed the layer and read only by
+    /// the title and the confirming action's label.
+    ///
+    /// **Not derivable from [`Self::game_id`]**, which is `Some` on both forms:
+    /// `newGameTemplate` generates the id when the form opens (`bridge.py:384`),
+    /// and that is what keeps a new game's identity stable across a save the name
+    /// check rejects. Nor from whether the library holds the id — the reference
+    /// decides add-vs-update that way (`bridge.py:406`) and the port does too, but
+    /// a game deleted in another window between the form opening and Save would
+    /// then flip the title with it.
+    pub is_new: bool,
     pub name: String,
     pub exe_path: String,
     pub arguments: String,
@@ -304,6 +316,403 @@ impl GameForm {
         "gamescope",
         "virtual_desktop",
     ];
+
+    /// The template `newGameTemplate()` builds (`bridge.py:382-399`).
+    ///
+    /// The id is generated here, when the form opens, rather than at save —
+    /// which is what makes "add" and "edit" the same shape, and what keeps a
+    /// game's identity stable across a save the name check rejects and the user
+    /// has to retry.
+    pub fn new_template(settings: &Settings, game_id: GameId) -> Self {
+        let mut form = Self {
+            game_id: Some(game_id),
+            is_new: true,
+            runner: settings.default_runner.clone(),
+            category: UNCATEGORIZED.to_string(),
+            virtual_desktop_size: DEFAULT_DESKTOP_SIZE.to_string(),
+            ..Self::default()
+        };
+        for name in Self::TOGGLE_NAMES {
+            form.toggles
+                .insert(name.to_string(), default_toggle(settings, name));
+        }
+        form
+    }
+
+    /// The form that edits `game` — the `getGame(id)` map (`bridge.py:356-379`)
+    /// as a [`GameForm`].
+    ///
+    /// The inverse of [`Self::apply`], and deliberately not written as one: the
+    /// reference's two directions are `getGame` and `saveGame`, which are not
+    /// symmetric — `getGame` hands back `display_category` (blanks already
+    /// folded) and an integer `steamAppid`, where `saveGame` takes the raw text
+    /// of a text field. An `apply`/`invert` pair would have to pick one
+    /// spelling and be wrong about the other.
+    pub fn from_game(game: &Game) -> Self {
+        let mut form = Self {
+            game_id: Some(game.id.clone()),
+            is_new: false,
+            name: game.name.clone(),
+            exe_path: game.exe_path.clone(),
+            arguments: game.arguments.clone(),
+            working_directory: game.working_directory.clone(),
+            is_linux: game.is_linux(),
+            runner: game.runner.clone(),
+            prefix_path: game.prefix_path.clone(),
+            additional_app: game.additional_app.clone(),
+            environment: game.environment.clone(),
+            category: game.display_category().to_string(),
+            virtual_desktop_size: game.virtual_desktop_size.clone(),
+            cover_path: game.cover_path.clone(),
+            steam_appid: game.steam_appid.to_string(),
+            toggles: BTreeMap::new(),
+        };
+        for (name, value) in toggle_values(game) {
+            form.toggles.insert(name.to_string(), value);
+        }
+        form
+    }
+
+    /// The current text of `field`.
+    ///
+    /// Read and write are a pair addressed by [`FormField`] rather than twelve
+    /// pairs of public fields, for the reason [`Self::TOGGLE_NAMES`] is a table:
+    /// it is what makes the field set a value in one place rather than a shape
+    /// spread across a struct, a widget builder and a message handler.
+    pub fn field(&self, field: FormField) -> &str {
+        match field {
+            FormField::Name => &self.name,
+            FormField::ExePath => &self.exe_path,
+            FormField::Arguments => &self.arguments,
+            FormField::WorkingDirectory => &self.working_directory,
+            FormField::Runner => &self.runner,
+            FormField::PrefixPath => &self.prefix_path,
+            FormField::AdditionalApp => &self.additional_app,
+            FormField::Environment => &self.environment,
+            FormField::Category => &self.category,
+            FormField::VirtualDesktopSize => &self.virtual_desktop_size,
+            FormField::CoverPath => &self.cover_path,
+            FormField::SteamAppid => &self.steam_appid,
+        }
+    }
+
+    /// Write `field`, storing the value **as typed**.
+    ///
+    /// No trimming or folding happens here, and that is deliberate: those are
+    /// `saveGame`'s rules and they belong to [`Self::apply`], which is where the
+    /// reference applies them. A field that normalised on every keystroke could
+    /// not hold a half-typed path.
+    pub fn set_field(&mut self, field: FormField, value: String) {
+        match field {
+            FormField::Name => self.name = value,
+            FormField::ExePath => self.exe_path = value,
+            FormField::Arguments => self.arguments = value,
+            FormField::WorkingDirectory => self.working_directory = value,
+            FormField::Runner => self.runner = value,
+            FormField::PrefixPath => self.prefix_path = value,
+            FormField::AdditionalApp => self.additional_app = value,
+            FormField::Environment => self.environment = value,
+            FormField::Category => self.category = value,
+            FormField::VirtualDesktopSize => self.virtual_desktop_size = value,
+            FormField::CoverPath => self.cover_path = value,
+            FormField::SteamAppid => self.steam_appid = value,
+        }
+    }
+
+    /// The stored value of the toggle named `name`, or `None` when `name` is not
+    /// one of [`Self::TOGGLE_NAMES`].
+    ///
+    /// `None` rather than `false` because the two are different answers: a
+    /// switch for a name the model does not have is a table disagreeing with the
+    /// map, and a caller that reads `false` cannot tell that from a switch that
+    /// is off.
+    pub fn toggle(&self, name: &str) -> Option<bool> {
+        self.toggles.get(name).copied()
+    }
+
+    /// Write the toggle named `name`; `false` when `name` is not in the map.
+    ///
+    /// Refuses to *create* the entry, so an unknown name cannot grow the map
+    /// into a set the reference does not have.
+    pub fn set_toggle(&mut self, name: &str, value: bool) -> bool {
+        match self.toggles.get_mut(name) {
+            Some(slot) => {
+                *slot = value;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Port of `saveGame`'s body (`bridge.py:404-446`): the name check, the
+    /// normalisation, and the field-for-field copy onto a [`Game`].
+    ///
+    /// `Ok` is the game to store. Which `Library` call stores it is the caller's
+    /// decision and is made from whether `existing` was `Some` — the reference's
+    /// own `existing is None` test — so the add/update branch is not duplicated
+    /// here.
+    ///
+    /// `Err` is the one thing the reference refuses on: an empty name, whose
+    /// message is [`NAME_REQUIRED`] verbatim, because it is user-visible and the
+    /// reference's wording is the specification.
+    ///
+    /// # The one place this is not yet faithful
+    ///
+    /// `exePath` and `workingDirectory` are trimmed here where the reference
+    /// calls `as_local_path` (`netpaths.py:144-160`) on them. That function —
+    /// `file://` unwrapping, then mapping a network-share URL onto its GVFS
+    /// mount — is not ported, and the two differ only for inputs nothing in this
+    /// form can produce today: the Browse buttons behind both fields are
+    /// `Message::PickExeFile`'s still-empty arm, so the text is hand-typed. A URL
+    /// pasted into either field is therefore stored verbatim instead of being
+    /// unwrapped, and losing that is this line, not a design choice.
+    pub fn apply(&self, existing: Option<&Game>) -> Result<Game, String> {
+        let name = self.name.trim();
+        if name.is_empty() {
+            return Err(NAME_REQUIRED.to_string());
+        }
+
+        let mut game = match existing {
+            Some(game) => game.clone(),
+            None => Game::new_named(""),
+        };
+        // The id is the *form's*, which `newGameTemplate` generated when the
+        // form opened (`bridge.py:384`) — not the existing game's, and not a
+        // fresh one. An edit therefore cannot rename a game's identity, and a
+        // new game's id is stable across a retry after a rejected save.
+        if let Some(id) = &self.game_id {
+            game.id = id.clone();
+        }
+
+        game.name = name.to_string();
+        game.exe_path = self.exe_path.trim().to_string();
+        game.arguments = self.arguments.trim().to_string();
+        game.working_directory = self.working_directory.trim().to_string();
+        game.kind = if self.is_linux { "linux" } else { "windows" }.to_string();
+        // Both branches collapse onto System Wine: a Linux game never uses a
+        // runner, and a Windows game with no runner chosen falls back to it.
+        // `bridge.py:410-412` states them as two separate expressions.
+        game.runner = if self.is_linux {
+            SYSTEM_WINE.to_string()
+        } else {
+            let chosen = self.runner.trim();
+            if chosen.is_empty() {
+                SYSTEM_WINE.to_string()
+            } else {
+                chosen.to_string()
+            }
+        };
+        game.prefix_path = self.prefix_path.trim().to_string();
+        game.additional_app = self.additional_app.trim().to_string();
+        game.environment = self.environment.trim().to_string();
+        game.category = {
+            let chosen = self.category.trim();
+            if chosen.is_empty() {
+                UNCATEGORIZED.to_string()
+            } else {
+                chosen.to_string()
+            }
+        };
+        // `strip() or "1920x1080"`, which is **not**
+        // `launch_opts::normalize_desktop_size`: a malformed size is stored as
+        // typed and rejected at launch, and folding the two would move that
+        // rejection to save time.
+        game.virtual_desktop_size = {
+            let chosen = self.virtual_desktop_size.trim();
+            if chosen.is_empty() {
+                DEFAULT_DESKTOP_SIZE.to_string()
+            } else {
+                chosen.to_string()
+            }
+        };
+        // Not trimmed. `bridge.py:429-432` reads this one with `str(...)` and no
+        // `.strip()`, unlike the ten above it.
+        game.cover_path = self.cover_path.clone();
+        // An unparseable appid is zero, not an error: the reference wraps this in
+        // `try`/`except (TypeError, ValueError)` and a text field is what feeds
+        // it.
+        game.steam_appid = self.steam_appid.trim().parse().unwrap_or(0);
+
+        for toggle in Self::TOGGLE_NAMES {
+            if let Some(value) = self.toggle(toggle) {
+                write_toggle(&mut game, toggle, value);
+            }
+        }
+
+        Ok(game)
+    }
+}
+
+/// The user-visible message `saveGame` refuses an empty name with
+/// (`bridge.py:407-409`).
+pub const NAME_REQUIRED: &str = "A game needs a name";
+
+/// The desktop-size fallback `saveGame` and `newGameTemplate` both use
+/// (`bridge.py:394`, `:426`). See [`GameForm::apply`] for why this is not
+/// `launch_opts::normalize_desktop_size`.
+pub const DEFAULT_DESKTOP_SIZE: &str = "1920x1080";
+
+/// `Game`'s fifteen toggles, by name, as writable slots.
+///
+/// `Game` addresses its toggles as fifteen named fields where `GameForm` uses a
+/// map — the reference's own split, which is why `setattr(game, name, …)` over
+/// `_TOGGLE_FIELDS` (`bridge.py:434-436`) needs no function there and does here.
+///
+/// These live beside [`GameForm::apply`] rather than on `Game` because the name
+/// set is the *form's* ([`GameForm::TOGGLE_NAMES`]), and a table on `Game` would
+/// put the form's list in the model. The cost of the split is that a name here
+/// that the form does not have is a silent non-write, which is what
+/// `the_toggle_tables_are_the_forms_own_names` is for: it compares both tables
+/// against `TOGGLE_NAMES` rather than trusting this comment.
+fn toggle_fields(game: &mut Game) -> [(&'static str, &mut bool); 15] {
+    [
+        ("mangohud", &mut game.mangohud),
+        ("gamemode", &mut game.gamemode),
+        ("prefer_sdl", &mut game.prefer_sdl),
+        ("wayland", &mut game.wayland),
+        ("hdr", &mut game.hdr),
+        ("esync", &mut game.esync),
+        ("fsync", &mut game.fsync),
+        ("dxvk", &mut game.dxvk),
+        ("vkd3d", &mut game.vkd3d),
+        ("nvapi", &mut game.nvapi),
+        ("fsr", &mut game.fsr),
+        ("battleye", &mut game.battleye),
+        ("eac", &mut game.eac),
+        ("gamescope", &mut game.gamescope),
+        ("virtual_desktop", &mut game.virtual_desktop),
+    ]
+}
+
+/// The same fifteen, read-only, for [`GameForm::from_game`].
+fn toggle_values(game: &Game) -> [(&'static str, bool); 15] {
+    [
+        ("mangohud", game.mangohud),
+        ("gamemode", game.gamemode),
+        ("prefer_sdl", game.prefer_sdl),
+        ("wayland", game.wayland),
+        ("hdr", game.hdr),
+        ("esync", game.esync),
+        ("fsync", game.fsync),
+        ("dxvk", game.dxvk),
+        ("vkd3d", game.vkd3d),
+        ("nvapi", game.nvapi),
+        ("fsr", game.fsr),
+        ("battleye", game.battleye),
+        ("eac", game.eac),
+        ("gamescope", game.gamescope),
+        ("virtual_desktop", game.virtual_desktop),
+    ]
+}
+
+/// Write one of `Game`'s toggles by name; `false` for a name that is not one of
+/// them.
+fn write_toggle(game: &mut Game, name: &str, value: bool) -> bool {
+    for (field, slot) in toggle_fields(game) {
+        if field == name {
+            *slot = value;
+            return true;
+        }
+    }
+    false
+}
+
+/// `Settings`'s per-toggle defaults, by name.
+///
+/// Thirteen of the fifteen. `wayland` and `hdr` have no default in the reference
+/// either: `_DEFAULTED_TOGGLES` is filtered by `hasattr` (`bridge.py:79-82`), and
+/// `newGameTemplate` falls back to the `Game` dataclass default for them, which
+/// is `false` (`bridge.py:396-398`, `models.py:36`, `:38`).
+fn settings_toggle_defaults(settings: &Settings) -> [(&'static str, bool); 13] {
+    [
+        ("mangohud", settings.default_mangohud),
+        ("gamemode", settings.default_gamemode),
+        ("prefer_sdl", settings.default_prefer_sdl),
+        ("esync", settings.default_esync),
+        ("fsync", settings.default_fsync),
+        ("dxvk", settings.default_dxvk),
+        ("vkd3d", settings.default_vkd3d),
+        ("nvapi", settings.default_nvapi),
+        ("fsr", settings.default_fsr),
+        ("battleye", settings.default_battleye),
+        ("eac", settings.default_eac),
+        ("gamescope", settings.default_gamescope),
+        ("virtual_desktop", settings.default_virtual_desktop),
+    ]
+}
+
+/// The value a new form's toggle named `name` starts at:
+/// `getattr(self.settings, f"default_{name}", Game.__dataclass_fields__[name].default)`
+/// (`bridge.py:396-398`).
+fn default_toggle(settings: &Settings, name: &str) -> bool {
+    settings_toggle_defaults(settings)
+        .into_iter()
+        .find(|(field, _)| *field == name)
+        .map(|(_, value)| value)
+        .unwrap_or(false)
+}
+
+/// One field of the add/edit form that a message can write.
+///
+/// The reference's form is a `QVariantMap` the QML mutates by key and hands to
+/// `saveGame` whole (`GameFormPage.qml:40-51`). A key that stops matching what
+/// `saveGame` reads is a field that silently stops saving, and nothing on either
+/// side is a compile error — so here the key set is an enum, for the reason
+/// [`ExeField`]'s doc gives.
+///
+/// [`Self::form_key`] is the `bridge.py` spelling, and it is pinned against that
+/// file rather than trusted, because it is also the wire format `getGame` and
+/// `saveGame` use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FormField {
+    Name,
+    ExePath,
+    Arguments,
+    WorkingDirectory,
+    Runner,
+    PrefixPath,
+    AdditionalApp,
+    Environment,
+    Category,
+    VirtualDesktopSize,
+    CoverPath,
+    SteamAppid,
+}
+
+impl FormField {
+    /// Every field, once each.
+    pub const ALL: [FormField; 12] = [
+        FormField::Name,
+        FormField::ExePath,
+        FormField::Arguments,
+        FormField::WorkingDirectory,
+        FormField::Runner,
+        FormField::PrefixPath,
+        FormField::AdditionalApp,
+        FormField::Environment,
+        FormField::Category,
+        FormField::VirtualDesktopSize,
+        FormField::CoverPath,
+        FormField::SteamAppid,
+    ];
+
+    /// This field's name in the map `saveGame` reads.
+    pub fn form_key(self) -> &'static str {
+        match self {
+            FormField::Name => "name",
+            FormField::ExePath => "exePath",
+            FormField::Arguments => "arguments",
+            FormField::WorkingDirectory => "workingDirectory",
+            FormField::Runner => "runner",
+            FormField::PrefixPath => "prefixPath",
+            FormField::AdditionalApp => "additionalApp",
+            FormField::Environment => "environment",
+            FormField::Category => "category",
+            FormField::VirtualDesktopSize => "virtualDesktopSize",
+            FormField::CoverPath => "coverPath",
+            FormField::SteamAppid => "steamAppid",
+        }
+    }
 }
 
 /// Everything the interface reads or writes.
@@ -569,5 +978,471 @@ mod tests {
         let idle: Option<f32> = None;
         let started: Option<f32> = Some(0.0);
         assert_ne!(idle, started);
+    }
+
+    // ---- The add/edit form -------------------------------------------------
+
+    /// The checkout's copy of a file the reference lives in.
+    ///
+    /// Read at test time rather than pasted, so the assertion is against the
+    /// reference's current text and not against a snapshot of it taken when the
+    /// test was written. The three-marker probe is `pending_pages.rs`'s: a
+    /// `target/` directory shared between two checkouts hands cargo a binary
+    /// compiled in one and run in the other, and a test that reads files would
+    /// then assert against the wrong tree — which passes, silently.
+    fn read_repo_file(relative: &str) -> String {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("crates/app sits two levels below the repository root")
+            .to_path_buf();
+        for marker in ["Cargo.toml", "build-aux", "data"] {
+            assert!(
+                root.join(marker).exists(),
+                "this test was compiled in {}, which is not the GameHandler checkout: \
+                 {marker} is not there. A `target/` directory shared between checkouts hands \
+                 cargo a test binary built in the other one.",
+                root.display()
+            );
+        }
+        let path = root.join(relative);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
+    }
+
+    /// One method's source text, from `def name(` to the next method.
+    ///
+    /// Indentation, not brace counting: the next `def` or `@Slot` at the class's
+    /// own indent is the end, and Python has no braces to count.
+    fn python_method<'a>(source: &'a str, name: &str) -> &'a str {
+        let anchor = format!("def {name}(");
+        let start = source
+            .find(&anchor)
+            .unwrap_or_else(|| panic!("bridge.py has no `{anchor}`"));
+        let rest = &source[start..];
+        let end = rest[1..]
+            .find("\n    def ")
+            .or_else(|| rest[1..].find("\n    @"))
+            .map(|at| at + 1)
+            .unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    /// Every `values.get("K")` key in `body`, once each.
+    fn python_values_keys(body: &str) -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        let mut cursor = body;
+        while let Some(at) = cursor.find("values.get(\"") {
+            cursor = &cursor[at + "values.get(\"".len()..];
+            let key: String = cursor.chars().take_while(|c| *c != '"').collect();
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        keys
+    }
+
+    /// The keys of the `data = { … }` literal in `body`, once each.
+    fn python_literal_keys(body: &str) -> Vec<String> {
+        let start = body.find("data = {").map_or(0, |at| at + "data = {".len());
+        let rest = &body[start..];
+        let block = &rest[..rest.find("\n        }").unwrap_or(rest.len())];
+        let mut keys: Vec<String> = Vec::new();
+        for line in block.lines() {
+            let line = line.trim();
+            let Some(after) = line.strip_prefix('"') else {
+                continue;
+            };
+            let Some((key, _)) = after.split_once("\": ") else {
+                continue;
+            };
+            if !keys.contains(&key.to_string()) {
+                keys.push(key.to_string());
+            }
+        }
+        keys
+    }
+
+    /// **`FormField` is exactly the key set `getGame` writes and `saveGame`
+    /// reads.**
+    ///
+    /// `FormField::form_key` is the wire format between this crate and
+    /// `bridge.py`'s two map functions. Nothing on either side is a compile
+    /// error, so a rename on one side is a field that silently stops saving —
+    /// which is the whole reason the enum exists, and it would be worth nothing
+    /// if its own strings were unchecked.
+    ///
+    /// Two keys in both functions are deliberately **not** [`FormField`]s and
+    /// are named here rather than filtered away quietly: `gameId`, which is the
+    /// form's identity rather than a text field, and `isLinux`, which is the
+    /// Type selector and reaches the model as the `bool` field `GameForm::is_linux`.
+    /// Listing them means a third exception has to be added on purpose.
+    #[test]
+    fn the_form_field_keys_are_the_ones_get_game_and_save_game_use() {
+        let bridge = read_repo_file("gamehandler/bridge.py");
+
+        let mut ours: Vec<String> = FormField::ALL
+            .iter()
+            .map(|field| field.form_key().to_string())
+            .collect();
+        assert_eq!(ours.len(), 12, "a field is listed twice in `FormField::ALL`");
+        ours.push("gameId".to_string());
+        ours.push("isLinux".to_string());
+        ours.sort();
+
+        let mut saved = python_values_keys(python_method(&bridge, "saveGame"));
+        saved.sort();
+        assert_eq!(
+            saved, ours,
+            "`saveGame`'s `values.get(...)` keys and `FormField` disagree. A field \
+             named on one side only is a value the form never collects or a value \
+             the model never stores, and neither is a compile error."
+        );
+
+        let mut got = python_literal_keys(python_method(&bridge, "getGame"));
+        got.sort();
+        assert_eq!(
+            got, ours,
+            "`getGame`'s map keys and `FormField` disagree, so the edit form and \
+             the save path do not describe the same game."
+        );
+    }
+
+    /// The read and write pair addresses one slot each, and every key is its own.
+    #[test]
+    fn every_form_field_reads_back_what_was_written() {
+        let mut seen: Vec<&str> = Vec::new();
+        for field in FormField::ALL {
+            assert!(
+                !seen.contains(&field.form_key()),
+                "two fields share the key {}",
+                field.form_key()
+            );
+            seen.push(field.form_key());
+
+            let mut form = GameForm::default();
+            assert_eq!(form.field(field), "", "a default form is empty");
+            let written = format!("value for {}", field.form_key());
+            form.set_field(field, written.clone());
+            assert_eq!(
+                form.field(field),
+                written,
+                "`{}` did not read back what `set_field` wrote",
+                field.form_key()
+            );
+        }
+    }
+
+    /// **Every name in the two projection tables is the form's name, in the
+    /// form's order.**
+    ///
+    /// `toggle_fields` and `toggle_values` restate `TOGGLE_NAMES` as Rust field
+    /// pairs, because `Game` has fifteen fields where `GameForm` has a map. A
+    /// name that drifts there is a toggle that silently stops being applied — the
+    /// silent non-write a `match` with a `_ => {}` arm would also have — and no
+    /// value-based test can see a *missing* entry for one of the nine toggles
+    /// whose `Game` default is `false`.
+    #[test]
+    fn the_toggle_tables_are_the_forms_own_names() {
+        let mut game = Game::new_named("x");
+        let written: Vec<&str> = toggle_fields(&mut game)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let read: Vec<&str> = toggle_values(&Game::new_named("x"))
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(written, GameForm::TOGGLE_NAMES, "the write table");
+        assert_eq!(read, GameForm::TOGGLE_NAMES, "the read table");
+
+        // The settings table is thirteen of the fifteen, and which two are
+        // missing is the reference's own `hasattr` filter, not an oversight.
+        let mut defaulted: Vec<&str> = settings_toggle_defaults(&Settings::default())
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        defaulted.push("wayland");
+        defaulted.push("hdr");
+        defaulted.sort_unstable();
+        let mut all = GameForm::TOGGLE_NAMES.to_vec();
+        all.sort_unstable();
+        assert_eq!(defaulted, all, "the settings table");
+    }
+
+    /// **Every toggle reaches the `Game` field with its own name.**
+    ///
+    /// The read-back is written out here field by field rather than taken from
+    /// `toggle_values`, and that is the point: a table shared with the code
+    /// under test cannot disagree with it, so it could not fail. Each name is
+    /// asserted with **both** values, because the fifteen `Game` defaults are
+    /// not all the same — six of them are `true` — so one direction alone would
+    /// leave those six unchecked.
+    #[test]
+    fn every_toggle_the_form_holds_reaches_its_own_game_field() {
+        let mut form = GameForm::new_template(&Settings::default(), "id".to_string());
+        form.set_field(FormField::Name, "Half-Life 2".to_string());
+
+        for wanted in [true, false] {
+            for name in GameForm::TOGGLE_NAMES {
+                assert!(
+                    form.set_toggle(name, wanted),
+                    "`{name}` is a toggle of the form but not of its map"
+                );
+            }
+            let game = form.apply(None).expect("the name is set above");
+            for (name, value) in [
+                ("mangohud", game.mangohud),
+                ("gamemode", game.gamemode),
+                ("prefer_sdl", game.prefer_sdl),
+                ("wayland", game.wayland),
+                ("hdr", game.hdr),
+                ("esync", game.esync),
+                ("fsync", game.fsync),
+                ("dxvk", game.dxvk),
+                ("vkd3d", game.vkd3d),
+                ("nvapi", game.nvapi),
+                ("fsr", game.fsr),
+                ("battleye", game.battleye),
+                ("eac", game.eac),
+                ("gamescope", game.gamescope),
+                ("virtual_desktop", game.virtual_desktop),
+            ] {
+                assert_eq!(
+                    value, wanted,
+                    "the form set `{name}` to {wanted} and the game's `{name}` is \
+                     {value} — the form's name for this toggle is not the game's"
+                );
+            }
+        }
+    }
+
+    /// **Every toggle the game holds reaches the form field with its own name.**
+    ///
+    /// The other direction, against a `Game` whose toggles alternate, so that no
+    /// two *adjacent* entries share a value and a swapped pair in
+    /// `toggle_values` fails. What this cannot see is a swap between two entries
+    /// that happen to hold the same value — with fifteen booleans at least seven
+    /// share a value — which `the_toggle_tables_are_the_forms_own_names` bounds
+    /// from the other side by pinning the list's order.
+    #[test]
+    fn every_toggle_the_game_holds_reaches_its_own_form_field() {
+        let mut game = Game::new_named("x");
+        for (index, (_, slot)) in toggle_fields(&mut game).into_iter().enumerate() {
+            *slot = index % 2 == 0;
+        }
+
+        let form = GameForm::from_game(&game);
+        for (index, (name, value)) in toggle_values(&game).into_iter().enumerate() {
+            assert_eq!(
+                form.toggle(name),
+                Some(value),
+                "the game's `{name}` is {value} and the form's is {:?}",
+                form.toggle(name)
+            );
+            assert_eq!(
+                value,
+                index % 2 == 0,
+                "`{name}` is not the field this test wrote for it, so the \
+                 assertion above is comparing two wrong readings"
+            );
+        }
+    }
+
+    /// An empty name is the one refusal, with the reference's own sentence.
+    #[test]
+    fn a_game_needs_a_name_and_the_sentence_is_the_references() {
+        let mut form = GameForm::new_template(&Settings::default(), "id".to_string());
+        assert_eq!(form.apply(None), Err(NAME_REQUIRED.to_string()));
+        form.set_field(FormField::Name, "   ".to_string());
+        assert_eq!(
+            form.apply(None),
+            Err(NAME_REQUIRED.to_string()),
+            "the reference strips before testing, so spaces are empty too \
+             (`bridge.py:406-408`)"
+        );
+        form.set_field(FormField::Name, "  Half-Life 2  ".to_string());
+        assert_eq!(
+            form.apply(None).expect("a name with text in it").name,
+            "Half-Life 2",
+            "and the stored name is the stripped one"
+        );
+
+        let bridge = read_repo_file("gamehandler/bridge.py");
+        let save = python_method(&bridge, "saveGame");
+        assert!(
+            save.contains(&format!("\"{NAME_REQUIRED}\"")),
+            "`{NAME_REQUIRED}` is no longer the wording `saveGame` refuses with"
+        );
+    }
+
+    /// Both `kind` branches and the runner collapse behind them.
+    #[test]
+    fn a_linux_game_is_system_wine_and_a_windows_game_keeps_its_runner() {
+        let mut form = GameForm::new_template(&Settings::default(), "id".to_string());
+        form.set_field(FormField::Name, "Hades".to_string());
+        form.set_field(FormField::Runner, "GE-Proton9-1".to_string());
+
+        form.is_linux = false;
+        let windows = form.apply(None).expect("named");
+        assert_eq!(windows.kind, "windows");
+        assert_eq!(windows.runner, "GE-Proton9-1", "a chosen runner is kept");
+
+        form.is_linux = true;
+        let linux = form.apply(None).expect("named");
+        assert_eq!(linux.kind, "linux");
+        assert_eq!(
+            linux.runner, SYSTEM_WINE,
+            "a Linux game runs natively, so the runner is forced back \
+             (`bridge.py:410-412`)"
+        );
+
+        form.is_linux = false;
+        form.set_field(FormField::Runner, "   ".to_string());
+        assert_eq!(
+            form.apply(None).expect("named").runner,
+            SYSTEM_WINE,
+            "and a Windows game with no runner falls back to System Wine"
+        );
+    }
+
+    /// The three blanks the reference fills in, and the one it does not.
+    ///
+    /// The expected values here are **literals, not the constants the code
+    /// uses**, and that is not a style choice. The first version of this test
+    /// asserted `game.virtual_desktop_size == DEFAULT_DESKTOP_SIZE`, which is
+    /// the constant compared against itself: changing that constant to
+    /// `"1280x720"` left the suite green. It was caught by mutation rather than
+    /// by reading, and fixed by writing the value out and tying it to the
+    /// reference's own text below — so the literal cannot drift either.
+    #[test]
+    fn the_blank_fields_fold_to_the_references_fallbacks() {
+        let mut form = GameForm::new_template(&Settings::default(), "id".to_string());
+        form.set_field(FormField::Name, "Hades".to_string());
+
+        // `newGameTemplate` already seeds the category and the desktop size, so
+        // this is the *edited* form being blanked, which is the reachable case:
+        // the category field is editable and the size field is a text field.
+        form.set_field(FormField::Category, "   ".to_string());
+        form.set_field(FormField::VirtualDesktopSize, "  ".to_string());
+        let game = form.apply(None).expect("named");
+        assert_eq!(game.category, "Uncategorized");
+        assert_eq!(game.virtual_desktop_size, "1920x1080");
+
+        let bridge = read_repo_file("gamehandler/bridge.py");
+        let save = python_method(&bridge, "saveGame");
+        assert!(
+            save.contains("or \"1920x1080\""),
+            "`saveGame` no longer falls back to 1920x1080 for a blank desktop size"
+        );
+        assert!(
+            save.contains("or \"Uncategorized\""),
+            "`saveGame` no longer folds a blank category to Uncategorized"
+        );
+
+        // A size the reference stores as typed and rejects at launch. This is
+        // the difference from `launch_opts::normalize_desktop_size`, which
+        // would have rewritten it here.
+        form.set_field(FormField::VirtualDesktopSize, "wide".to_string());
+        assert_eq!(
+            form.apply(None).expect("named").virtual_desktop_size,
+            "wide"
+        );
+
+        // The cover path is the one field `saveGame` does *not* strip
+        // (`bridge.py:429-432`), so spaces in it survive to the model and the
+        // file it names does not exist.
+        form.set_field(FormField::CoverPath, " /tmp/a.png ".to_string());
+        assert_eq!(
+            form.apply(None).expect("named").cover_path,
+            " /tmp/a.png "
+        );
+    }
+
+    /// An appid that is not a number is zero, not a refusal.
+    #[test]
+    fn an_unparseable_appid_is_zero() {
+        let mut form = GameForm::new_template(&Settings::default(), "id".to_string());
+        form.set_field(FormField::Name, "Portal 2".to_string());
+        for (typed, expected) in [("", 0), ("  620  ", 620), ("half", 0), ("-1", -1)] {
+            form.set_field(FormField::SteamAppid, typed.to_string());
+            assert_eq!(
+                form.apply(None).expect("named").steam_appid,
+                expected,
+                "typed {typed:?}"
+            );
+        }
+    }
+
+    /// An edit keeps the identity; a new game gets one, and it is the form's.
+    #[test]
+    fn the_form_supplies_the_id_and_an_edit_keeps_the_rest() {
+        let original = Game::new_named("Doom");
+        let form = GameForm::from_game(&original);
+        let saved = form.apply(Some(&original)).expect("the name is carried over");
+        assert_eq!(saved.id, original.id, "an edit cannot rename the identity");
+        assert_eq!(saved.added, original.added, "nor restamp it");
+        assert_eq!(saved, original, "and nothing else moved either");
+
+        // A new game takes the form's id — generated when the form opened, not
+        // now — so a save the user has to retry keeps the same identity.
+        let mut fresh = GameForm::new_template(&Settings::default(), "form-id".to_string());
+        fresh.set_field(FormField::Name, "Portal 2".to_string());
+        assert_eq!(fresh.apply(None).expect("named").id, "form-id");
+        assert_eq!(
+            fresh.game_id.as_deref(),
+            Some("form-id"),
+            "and the form still holds it, so a second save is the same game"
+        );
+    }
+
+    /// An unknown toggle name is refused rather than added.
+    #[test]
+    fn an_unknown_toggle_name_writes_nothing() {
+        let mut form = GameForm::new_template(&Settings::default(), "id".to_string());
+        assert_eq!(form.toggle("not-a-toggle"), None);
+        assert!(!form.set_toggle("not-a-toggle", true));
+        assert_eq!(form.toggle("not-a-toggle"), None, "and does not create it");
+        assert_eq!(
+            form.toggles.len(),
+            GameForm::TOGGLE_NAMES.len(),
+            "the map is still exactly the fifteen"
+        );
+    }
+
+    /// The template is `newGameTemplate`'s, including where its values come
+    /// from.
+    #[test]
+    fn a_new_form_is_the_reference_template() {
+        let settings = Settings {
+            default_runner: "proton-ge".to_string(),
+            default_mangohud: true,
+            default_fsync: false,
+            close_on_launch: true,
+            ..Settings::default()
+        };
+        let form = GameForm::new_template(&settings, "id".to_string());
+
+        assert_eq!(form.game_id.as_deref(), Some("id"));
+        assert_eq!(form.runner, "proton-ge", "the runner is the stored default");
+        // Literals, not the constants — see
+        // `the_blank_fields_fold_to_the_references_fallbacks` for why.
+        assert_eq!(form.category, "Uncategorized");
+        assert_eq!(form.virtual_desktop_size, "1920x1080");
+        assert!(!form.is_linux);
+        assert_eq!(form.name, "");
+        assert_eq!(form.field(FormField::Runner), form.runner);
+
+        assert_eq!(form.toggle("mangohud"), Some(true), "from the setting");
+        assert_eq!(form.toggle("fsync"), Some(false), "also from the setting");
+        // `wayland` and `hdr` have no setting, so the `Game` dataclass default
+        // decides — `false` for both.
+        assert_eq!(form.toggle("wayland"), Some(false));
+        assert_eq!(form.toggle("hdr"), Some(false));
+        assert_eq!(
+            form.toggles.len(),
+            GameForm::TOGGLE_NAMES.len(),
+            "the template seeds every toggle, not only the defaulted thirteen"
+        );
     }
 }
