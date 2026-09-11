@@ -61,6 +61,28 @@ and a general claim about a build flag is made from one measured mechanism
 | 43 | The source-side pending-page test was **a tautology**: it asserted `pending == PENDING_PAGES.to_vec()`, where `pending` was computed by `filter_map` over `pending_task` — and `pending_task` *reads* `PENDING_PAGES`. The same list against itself | Packaging, building the complementary half and finding it green while the page was ported | UX refactored (`PENDING_PAGES` became a slice, the redundant `len()==6` went, and the test now renders `view_body` and asserts the drawn strings) | Lead reproduced: porting `Page::Library`'s arm while leaving it pinned FAILS with `Library is listed in PENDING_PAGES as T-09 but its body does not draw the placeholder; drawn: ["Library"]` |
 | 42 | `verify.sh:517` asserted the `cli` stage "is RED until #31 lands. That is intended". The line was **born false** — `e9ecf5e` (#31's fix) is an ancestor of `398a7c0`, the commit that wrote it | `git log -S` + `git merge-base --is-ancestor` | `50798f9` — replaced, not deleted, because the danger was the *forward* instruction; the replacement says in as many words that **a red cli stage is a defect** | Read at `:530-538`; the replacement states the born-false history and the exception (a missing binary) explicitly |
 
+### 2.1 What #32's guards still do not catch
+
+Stated by the author of the primary half, and worth keeping because it bounds
+what the three halves above actually establish. **Both source-side tests classify
+a page by whether its dispatch arm calls `pending_page`** — Packaging's by parsing
+the arm, UX's by checking the drawn strings and the table. So a page "ported" by a
+*second placeholder mechanism under another name* still reads as ported to both.
+Only the artifact half would notice, and only if the new mechanism's text differs
+from the string `verify.sh` greps for — which it would.
+
+The division of labour is nonetheless real and each half covers what the other
+cannot:
+
+- **Parsed arm** (Packaging) catches a page whose arm still renders the
+  placeholder while the bookkeeping says otherwise. A table-driven test cannot
+  catch this, because the table is the thing that agrees with itself.
+- **Rendered strings** (UX) catches a table entry claiming a page is done whose
+  body does not actually draw real content.
+- **Artifact cross-check** (`verify.sh`) catches a shipped binary that disagrees
+  with the source about whether any placeholder exists at all — the only half that
+  looks inside the artefact the tag ships.
+
 ## 3. The hazard: stale test binaries
 
 **This is the highest-risk item for T-19's mutation work.** Concurrent editing
