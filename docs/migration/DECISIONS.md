@@ -1252,3 +1252,58 @@ run's result be believed?" — and they must not contradict each other:
 **Consequence.** "`verify.sh` passes from a clean checkout" now means every
 stage either passed or was skipped by explicit request. A run that could not
 verify something says so in its exit code, not only in its prose.
+
+---
+
+## D-32. `mod view;` lands now, behind a `dead_code` allow that T-09 deletes
+
+**Question.** `crates/app/src/view/` (T-14) is finished and carries **44 tests**,
+but `main.rs` never declares `mod view;`. Wire it in now, or leave it unwired
+until T-09 starts calling the components?
+
+**Options considered.**
+1. Leave it undeclared. The module and its 44 tests run nowhere until T-09.
+2. Declare it now with a scoped `#[allow(dead_code)]`, removed at T-09.
+3. Declare it now and drop the `-D warnings` gate until T-09.
+
+**Choice.** Option 2 — declare it now, with one `#[allow(dead_code)]` on the
+`mod view;` line and a comment naming T-09 as its removal point.
+
+**Why.** Option 1 was the initial instinct, and it is wrong for the reason #21
+exists: a test that does not execute is not a test. The module's whole
+justification is that the row/subtitle/gradient logic moved out of QML into
+headlessly-testable code, and under Option 1 that claim is false in the tree —
+44 assertions, none of them running, while `cargo test` reports green and 44
+tests short. That is the same defect as #21 one layer down, just less visible.
+
+Option 3 trades a real gate for a temporary absence of one. Option 2 costs a
+single attribute.
+
+**Measured, not assumed** — this was verified on a pristine `git archive HEAD`
+in a scratch tree before the decision was taken, not reasoned about:
+
+- Declaring `mod view;` alone: clippy reports **45 error lines, of which every
+  one is `dead_code`** (23 functions, 18 constants, 1 enum, 1 associated-items
+  group, plus 2 "could not compile" summaries that are not lints). **Zero
+  non-`dead_code` lints** — the module is clean apart from being uncalled.
+- Declaring it with the scoped allow: `cargo clippy --workspace --all-targets --
+  -D warnings` → **exit 0**.
+- `cargo test -p gamehandler --bin gamehandler` → **49 passed, 0 failed**, of
+  which **44 are `view::`**. So the tests are real and green, and wiring adds 44
+  to a workspace count that currently excludes them.
+
+**The cost, stated honestly.** An `#[allow(dead_code)]` is a suppression, and a
+suppression that outlives its reason is how a gate quietly stops gating. The
+mitigation is that it is one line at the declaration site, it names T-09, and
+**removing it is part of T-09's definition of done** — not a follow-up. If T-09
+closes without deleting the attribute, that is a defect in T-09, and T-19's
+verification pass checks for it.
+
+**Not decided here.** `accent_of` (`view/cover.rs:198`) returns a constant shade
+for every seed, because the hash it needs is `pub(crate)` in core
+(`hash.rs:20`, `mod hash;` private at `lib.rs:43`). Every placeholder tile is
+therefore the same blue. This is a real parity gap against `accent_index`
+(`covers.py:107-110`), it is already documented in the code and pinned by a test
+that fails the day it changes, and it is Architecture's to close by exposing
+`accent_index` from core's `covers` module. It is recorded here so it does not
+read as an oversight in the T-14 diff.
