@@ -15,6 +15,7 @@ Source documents:
 | `architecture.md` | Architecture | Module mapping, workspace layout, `Message`/`State`/`update`, async, persistence, CLI |
 | `packaging.md` | Packaging/QA | Flatpak design, vendoring, finish-args, portals, test plan, `verify.sh` |
 | `review-phase1.md` | Devil's advocate | Premise audit, independent 78-item checklist, risk register, kill criteria |
+| `T19-PARITY-WALK.md` | Devil's advocate | The 78-item walk: 52 met with the assertion named, 4 needing a window, 22 unmet |
 | `DECISIONS.md` | Lead | The 12 decisions made so far, with alternatives and reasons |
 
 ---
