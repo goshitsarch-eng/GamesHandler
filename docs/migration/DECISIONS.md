@@ -499,20 +499,46 @@ loads (matching Python's tolerance, F-D/F-G/F-J). Dropped: the specific value
 surviving untyped into a field that later crashes the view.
 
 **Consequence.** `rust_divergences` gains a third case so that a test author
-cannot mistake the Python result for the expected one. The coercions must be
-chosen deliberately and documented in `core::models`, because "coerce" is
-undefined for, e.g., `name: {}` — the rule is: use the string form where one
-exists, otherwise the default.
+cannot mistake the Python result for the expected one.
+
+**Correction (found while implementing it).** The rule as first written —
+*"use the string form where one exists, otherwise the default"* — does not
+describe what the port does, and the `rust_divergences` entry could not be
+implemented from it. There is a **third** behaviour, which the option set above
+never named: for an array or object the name has no usable string form, the
+field stays empty, and `Library.load` **skips the unnamed entry entirely**.
+
+```
+input:  {"name": ["x"]}     Python: count 1, every sort raises AttributeError
+                            port:   count 0 — the game is dropped
+input:  {"name": null}      Python: count 0 (same reason, `if game.name:`)
+```
+
+Dropping is the right answer — the alternative is carrying an entry with no
+name into a UI that must display one — but it is a *third option*, not the
+"otherwise the default" case, because for `["x"]` a string form arguably does
+exist (`Value::to_string` gives `["x"]`). The distinction only shows up for
+non-scalar names, which is exactly why it was missed. Both the coercion rule and
+this drop case are now recorded in `rust_divergences`, and the drop is pinned by
+`an_entry_with_no_usable_name_is_dropped`.
 
 ---
 
 ## D-19. `serde_json` is required with `float_roundtrip`
 
 **Question.** `serde_json`'s default `f64` reader computes `mantissa * 10^exp`
-in `f64`, which is not correctly rounded. Measured over 20 000 realistic
-`time.time()`-shaped values: **4070 (20.35%) are changed by a parse→serialize
-round-trip.** The `float_roundtrip` feature performs the conversion correctly
-(**0/20000**).
+in `f64`, which is not correctly rounded.
+
+**Measured on the committed fixture, so anyone can reproduce it:**
+`floats_roundtrip.in.json` holds 300 realistic `time.time()`-shaped values, and
+**58 of them (19.3%) come back one ULP off** through the default reader. With
+`float_roundtrip` enabled: **0 of 300**.
+
+An earlier version of this decision quoted "4070/20000 (20.35%)" from a
+throwaway corpus whose seed and generator were never recorded. The order of
+magnitude is right and was independently reproduced (4095/20000 on a different
+LCG), but an unreproducible figure has no place in a document whose purpose is
+to justify a pin — the 58/300 count is backed by a committed file.
 
 **Options considered.**
 1. Accept the default reader; write the round-trip test against the existing
@@ -537,7 +563,15 @@ because it is the single highest-value change to come out of the review.
 
 **Implementation note.** Pinned by oracle section `floats_roundtrip`: 300 seeded
 realistic timestamps with their IEEE-754 bit patterns, asserting the re-saved
-bytes are identical. The test compares **bits**, not decimal text, so it cannot
+bytes are identical. **The pin was mutation-verified:** removing the feature
+fails three tests — `realistic_timestamps_round_trip_bit_for_bit` (431/2000),
+`realistic_timestamps_survive_a_load_and_save_with_their_bits_intact` (58/300),
+and `a_value_the_default_reader_gets_wrong_is_read_correctly`, which names a
+single value (`1836229572.9881566`) whose bit pattern flips. The last one exists
+because the feature changes no API a compiler could check — unlike
+`unbounded_depth`, whose removal fails to compile — so the named value *is* the
+guard. Every fixture that predated these three passed with the feature off,
+which is the whole point. The test compares **bits**, not decimal text, so it cannot
 be satisfied by a writer that merely formats prettily. **Any future change to
 the `serde_json` dependency must not drop this feature** — a bare `"1"` in
 `crates/core/Cargo.toml` reintroduces the bug silently, which is why the reason
@@ -601,8 +635,38 @@ data that Python keeps:
 - **Nesting.** (a) Raise the recursion limit to Python's tolerance. (b) Skip
   unparsed unknown values without recursing.
 
-**Choice.** BOM: **(c) strip it**. Nesting: **(b) skip discarded values**, with
-**(a) as fallback** if the parser cannot easily skip.
+**Choice.** BOM: **(c) strip it**. Nesting: **(b) skip discarded values**.
+
+**Correction (found while implementing it) — the fallback was unsafe, not
+merely worse.** Option (a) "raise the recursion limit" was offered as an
+acceptable fallback. It is not: `unbounded_depth` +
+`disable_recursion_limit` parses with stack proportional to nesting depth, and
+on a 2 MiB stack a **1 500-deep document overflows the stack and aborts the
+process** — `fatal runtime error: stack overflow`, SIGABRT, uncatchable, in the
+process that owns the user's window. That is strictly worse than rejecting the
+file. The margin was not theoretical even at the tolerated 1 000: enabling
+`serde_json/preserve_order` — which **`cosmic-theme` does, and Cargo feature-
+unifies it into our workspace build** — was enough to abort on the oracle's own
+`deep_nesting` fixture. It surfaced only because a workspace-wide `cargo test`
+died while `cargo test -p gamehandler-core` passed all 87 tests. Removing
+option (a) from consideration; there is no safe recursive path here.
+
+**What the port actually does (a mechanism neither option named).** `json.rs`
+runs a **textual pre-pass** (`clamp_depth`) that finds values nested past 64
+levels by counting brackets without descending, and replaces them with `null`
+before `serde_json` ever sees them. So nothing recurses, and `unbounded_depth`
+has been **removed from `Cargo.toml`** — which is a net gain: if the clamp ever
+regresses, serde_json's own 128-level limit turns the input into a *catchable*
+error instead of an abort.
+
+This makes D-21 a **fourth** case the divergence list has to carry, because it
+alters a value rather than merely accepting the file: for a *known* key the
+"unknown keys are discarded" argument of F-D does not apply. The oracle's
+`deep_nesting` fixture cannot see the difference, since it nests under a junk
+key and every depth from 64 to 10 000 produces the same bytes — so the boundary
+is pinned instead by `a_pathologically_deep_document_does_not_overflow_the_stack`
+(20 000 deep, past where the old code aborted). The test *is* the assertion,
+because a stack overflow cannot be caught.
 
 **Why.** Both are cases where the *only* thing Python's behaviour preserves is a
 way to lose data, so "match Python" and "do not lose the user's library" point
@@ -643,13 +707,19 @@ file. So the user's sync silently stops working after the first save.
 
 **Choice.** Option 2 — **keep it, document it, and do not diverge**.
 
-**Why.** The atomic write is worth more than the symlink. Temp-file-then-replace
-is what makes an interrupted save leave the old file intact, and neither option 1
-nor option 3 is clearly correct: option 1 changes where the bytes land (a user
-relying on the link being replaced — unlikely, but not impossible — would see a
-different result), and option 3 gives up atomicity to preserve a link, trading a
-guaranteed property for a convenience. Option 2 also keeps the Rust and Python
-implementations observably identical, which is the whole point of D-06.
+**Why.** Stated plainly: **the port is choosing byte-for-byte parity with Python
+over preserving the symlink.** Option 1 does *not* give up atomicity — it
+resolves the path and then does the same temp-file-and-replace at the resolved
+target, so an interrupted save is still safe. The only thing it gives up is
+observable identity with the Python implementation, which is what D-06 exists to
+protect: a `games.json` written by the port must be indistinguishable from one
+Python wrote.
+
+(An earlier version of this reasoning argued that option 1 "changes where the
+bytes land, and a user might rely on the link being replaced". That is not a
+credible user and it is not the real reason; the real reason is parity, and the
+parity cost is small but real.) Option 3 is genuinely worse — it trades the
+atomicity guarantee for a convenience — so it is rejected on its merits.
 
 So this is recorded as a **known limitation** rather than a divergence: the port
 inherits it rather than introducing it. It is listed in REPORT.md alongside the

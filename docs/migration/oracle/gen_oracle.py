@@ -331,9 +331,16 @@ for label, text, gid, expect_survives in _typed:
     )
     notes = {"count": len(lib), "entry_survives": game is not None}
     if game is not None:
+        # Record the Python type *and* the value separately. The earlier
+        # single-string form was ambiguous in exactly the case that matters:
+        # `name_is_int` stores the int 123, which renders as "123" — byte
+        # identical to how a genuine string would render, so the one field
+        # whose whole point is "Python let a non-string through" read as if it
+        # had not. A test author consumed it as data and asserted on the
+        # prefix instead of the type. `python_type` is the fact; `repr` is the
+        # rendering.
         notes["stored"] = {
-            k: f"{type(v).__name__}:{v!r}" if not isinstance(v, (int, float, bool))
-            else repr(v)
+            k: {"python_type": type(v).__name__, "repr": repr(v)}
             for k, v in [("name", game.name), ("steam_appid", game.steam_appid),
                          ("category", game.category), ("exe_path", game.exe_path),
                          ("mangohud", game.mangohud)]
@@ -448,6 +455,17 @@ results["rust_divergences"] = {
         },
         {
             "id": "wrong_typed_scalars_coerced",
+            # Note the *third* rule, discovered while implementing this: a value
+            # with no usable string form (an array, an object) leaves the name
+            # empty, and Library.load skips an unnamed entry — so the game is
+            # dropped. Python keeps it and then fails every sort on it. The
+            # option set in D-18 named only "hold the raw value" and "coerce";
+            # dropping is a third behaviour and is recorded here so a test
+            # author does not expect the entry to appear.
+            "also_affects_count": (
+                "name:[\"x\"] — Python keeps the entry (count 1) and every sort "
+                "raises AttributeError; the port drops it (count 0)"
+            ),
             "decision": "D-18",
             "python": {
                 "input": '{"id": "a"*32, "name": 123}',
@@ -484,9 +502,15 @@ results["rust_divergences"] = {
         {
             "id": "float_exponent_spelling",
             "decision": "D-15",
-            "python": {"observed": "1e-07 and 10000000.0 (C printf %g rules)"},
+            "python": {"observed": "1e-07 (C printf %g pads the exponent to 2 digits)"},
             "rust": {
-                "expected": "1e-7 and 1e7 (serde_json/Ryu)",
+                # Measured on the pinned serde_json 1.0.151, which writes
+                # floats via `zmij`, not `ryu`. Only the *negative* single-digit
+                # exponent differs; `1e7` renders as `10000000.0` on both sides.
+                # An earlier version of this entry claimed "1e7" — a spelling
+                # the port never produces, so a test written from it could not
+                # pass. Corrected after adversarial review.
+                "expected": "1e-7 (the only divergent case in the fixture)",
                 "rationale": (
                     "Both are valid JSON and reparse identically. Byte-equality is not "
                     "required here; assert numeric equality after reparse instead of "

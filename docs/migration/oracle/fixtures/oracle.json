@@ -1440,11 +1440,26 @@
       "count": 1,
       "entry_survives": true,
       "stored": {
-        "name": "123",
-        "steam_appid": "0",
-        "category": "str:'Uncategorized'",
-        "exe_path": "str:''",
-        "mangohud": "False"
+        "name": {
+          "python_type": "int",
+          "repr": "123"
+        },
+        "steam_appid": {
+          "python_type": "int",
+          "repr": "0"
+        },
+        "category": {
+          "python_type": "str",
+          "repr": "'Uncategorized'"
+        },
+        "exe_path": {
+          "python_type": "str",
+          "repr": "''"
+        },
+        "mangohud": {
+          "python_type": "bool",
+          "repr": "False"
+        }
       },
       "sorts": {
         "name": "AttributeError: 'int' object has no attribute 'lower'",
@@ -1460,11 +1475,26 @@
       "count": 1,
       "entry_survives": true,
       "stored": {
-        "name": "list:['x']",
-        "steam_appid": "0",
-        "category": "str:'Uncategorized'",
-        "exe_path": "str:''",
-        "mangohud": "False"
+        "name": {
+          "python_type": "list",
+          "repr": "['x']"
+        },
+        "steam_appid": {
+          "python_type": "int",
+          "repr": "0"
+        },
+        "category": {
+          "python_type": "str",
+          "repr": "'Uncategorized'"
+        },
+        "exe_path": {
+          "python_type": "str",
+          "repr": "''"
+        },
+        "mangohud": {
+          "python_type": "bool",
+          "repr": "False"
+        }
       },
       "sorts": {
         "name": "AttributeError: 'list' object has no attribute 'lower'",
@@ -1476,11 +1506,26 @@
       "count": 1,
       "entry_survives": true,
       "stored": {
-        "name": "str:'G'",
-        "steam_appid": "str:'42'",
-        "category": "str:'Uncategorized'",
-        "exe_path": "str:''",
-        "mangohud": "False"
+        "name": {
+          "python_type": "str",
+          "repr": "'G'"
+        },
+        "steam_appid": {
+          "python_type": "str",
+          "repr": "'42'"
+        },
+        "category": {
+          "python_type": "str",
+          "repr": "'Uncategorized'"
+        },
+        "exe_path": {
+          "python_type": "str",
+          "repr": "''"
+        },
+        "mangohud": {
+          "python_type": "bool",
+          "repr": "False"
+        }
       },
       "sorts": {
         "name": "ok",
@@ -1492,11 +1537,26 @@
       "count": 1,
       "entry_survives": true,
       "stored": {
-        "name": "str:'G'",
-        "steam_appid": "10000000000000000000000000000000000000000",
-        "category": "str:'Uncategorized'",
-        "exe_path": "str:''",
-        "mangohud": "False"
+        "name": {
+          "python_type": "str",
+          "repr": "'G'"
+        },
+        "steam_appid": {
+          "python_type": "int",
+          "repr": "10000000000000000000000000000000000000000"
+        },
+        "category": {
+          "python_type": "str",
+          "repr": "'Uncategorized'"
+        },
+        "exe_path": {
+          "python_type": "str",
+          "repr": "''"
+        },
+        "mangohud": {
+          "python_type": "bool",
+          "repr": "False"
+        }
       },
       "sorts": {
         "name": "ok",
@@ -1508,11 +1568,26 @@
       "count": 1,
       "entry_survives": true,
       "stored": {
-        "name": "str:'G'",
-        "steam_appid": "inf",
-        "category": "str:'Uncategorized'",
-        "exe_path": "str:''",
-        "mangohud": "False"
+        "name": {
+          "python_type": "str",
+          "repr": "'G'"
+        },
+        "steam_appid": {
+          "python_type": "float",
+          "repr": "inf"
+        },
+        "category": {
+          "python_type": "str",
+          "repr": "'Uncategorized'"
+        },
+        "exe_path": {
+          "python_type": "str",
+          "repr": "''"
+        },
+        "mangohud": {
+          "python_type": "bool",
+          "repr": "False"
+        }
       },
       "sorts": {
         "name": "ok",
@@ -1524,11 +1599,26 @@
       "count": 1,
       "entry_survives": true,
       "stored": {
-        "name": "str:'G'",
-        "steam_appid": "0",
-        "category": "42",
-        "exe_path": "str:''",
-        "mangohud": "False"
+        "name": {
+          "python_type": "str",
+          "repr": "'G'"
+        },
+        "steam_appid": {
+          "python_type": "int",
+          "repr": "0"
+        },
+        "category": {
+          "python_type": "int",
+          "repr": "42"
+        },
+        "exe_path": {
+          "python_type": "str",
+          "repr": "''"
+        },
+        "mangohud": {
+          "python_type": "bool",
+          "repr": "False"
+        }
       },
       "sorts": {
         "name": "ok",
@@ -1540,11 +1630,26 @@
       "count": 1,
       "entry_survives": true,
       "stored": {
-        "name": "str:'G'",
-        "steam_appid": "0",
-        "category": "str:'Uncategorized'",
-        "exe_path": "NoneType:None",
-        "mangohud": "False"
+        "name": {
+          "python_type": "str",
+          "repr": "'G'"
+        },
+        "steam_appid": {
+          "python_type": "int",
+          "repr": "0"
+        },
+        "category": {
+          "python_type": "str",
+          "repr": "'Uncategorized'"
+        },
+        "exe_path": {
+          "python_type": "NoneType",
+          "repr": "None"
+        },
+        "mangohud": {
+          "python_type": "bool",
+          "repr": "False"
+        }
       },
       "sorts": {
         "name": "ok",
@@ -1556,11 +1661,26 @@
       "count": 1,
       "entry_survives": true,
       "stored": {
-        "name": "str:'G'",
-        "steam_appid": "0",
-        "category": "str:'Uncategorized'",
-        "exe_path": "str:''",
-        "mangohud": "str:'yes'"
+        "name": {
+          "python_type": "str",
+          "repr": "'G'"
+        },
+        "steam_appid": {
+          "python_type": "int",
+          "repr": "0"
+        },
+        "category": {
+          "python_type": "str",
+          "repr": "'Uncategorized'"
+        },
+        "exe_path": {
+          "python_type": "str",
+          "repr": "''"
+        },
+        "mangohud": {
+          "python_type": "str",
+          "repr": "'yes'"
+        }
       },
       "sorts": {
         "name": "ok",
@@ -1627,6 +1747,7 @@
       },
       {
         "id": "wrong_typed_scalars_coerced",
+        "also_affects_count": "name:[\"x\"] \u2014 Python keeps the entry (count 1) and every sort raises AttributeError; the port drops it (count 0)",
         "decision": "D-18",
         "python": {
           "input": "{\"id\": \"a\"*32, \"name\": 123}",
@@ -1643,10 +1764,10 @@
         "id": "float_exponent_spelling",
         "decision": "D-15",
         "python": {
-          "observed": "1e-07 and 10000000.0 (C printf %g rules)"
+          "observed": "1e-07 (C printf %g pads the exponent to 2 digits)"
         },
         "rust": {
-          "expected": "1e-7 and 1e7 (serde_json/Ryu)",
+          "expected": "1e-7 (the only divergent case in the fixture)",
           "rationale": "Both are valid JSON and reparse identically. Byte-equality is not required here; assert numeric equality after reparse instead of emulating printf."
         }
       }
