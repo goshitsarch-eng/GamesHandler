@@ -45,7 +45,7 @@
 use cosmic::iced::Length;
 use cosmic::widget::{Column, Row, button, container, scrollable, text, text_input};
 use cosmic::Element;
-use gamehandler_core::models::{Game, Library};
+use gamehandler_core::models::{Game, Library, format_last_played};
 use gamehandler_core::runners::RunnerManager;
 
 use crate::Message;
@@ -250,6 +250,19 @@ pub struct LibraryPage<'a> {
     /// it is not in this slice, and it is named here rather than left for a
     /// reader to discover.
     pub runners: &'a RunnerManager,
+    /// The instant every row's last-played label is computed against.
+    ///
+    /// **One value for the whole page, not one per row.** `format_last_played`
+    /// takes `now` as a parameter precisely so this is possible: a row reading
+    /// the clock itself would make two rows of the same age render
+    /// `"Played 1 day ago"` and `"Played 2 days ago"` depending on which side of
+    /// midnight the loop reached first, and a test could not pin either without
+    /// also freezing the clock it cannot see. Taking it here makes the whole
+    /// page's timestamps a function of `(library, now)`, which is what the
+    /// oracle's frozen-clock cases assume.
+    ///
+    /// The caller supplies [`gamehandler_core::models::now`].
+    pub now: f64,
 }
 
 /// The page.
@@ -326,7 +339,7 @@ pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
         }
         EmptyState::None => {
             body = body.push(if page.view_mode == LIST {
-                list_body(&shown, page.runners)
+                list_body(&shown, page.runners, page.now)
             } else {
                 grid_body(&shown, page.runners)
             });
@@ -336,14 +349,56 @@ pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
     container(scrollable(body)).padding(18).into()
 }
 
-/// The list: one row per game.
-fn list_body<'a>(games: &[&'a Game], runners: &'a RunnerManager) -> Element<'a, Message> {
+/// The list: one row per game, each with its last-played label.
+///
+/// `now` is the page's single instant, passed down rather than read here; see
+/// [`LibraryPage::now`]. The last-played half is why this is not
+/// [`grid_body`]'s twin: `LibraryPage.qml` draws the two delegates with
+/// different text, and only the row carries the timestamp (`:269` against the
+/// card's `:192`).
+fn list_body<'a>(
+    games: &[&'a Game],
+    runners: &'a RunnerManager,
+    now: f64,
+) -> Element<'a, Message> {
     let mut body = Column::new().spacing(6).width(Length::Fill);
     for game in games {
-        let label = widgets::resolved_runner_label(runners, game);
-        body = body.push(widgets::row(game, &label));
+        // Both strings are resolved here, where the row data is assembled, and
+        // carried as data — `resolved_runner_label`'s doc explains why the
+        // manager must not be reached from inside the builder.
+        let (runner, last_played) = row_labels(game, runners, now);
+        let labels = widgets::RowLabels {
+            runner: &runner,
+            last_played: &last_played,
+        };
+        body = body.push(widgets::row(game, &labels));
     }
     body.into()
+}
+
+/// The two labels one list row is built from: the runner, and the last-played
+/// string.
+///
+/// # Why this is a function and not two lines in the loop
+///
+/// Because the loop builds `Element`s, and an assertion cannot read a built
+/// row's text back out — the wall #46, #51 and #57 each hit, and the reason
+/// `view/widgets.rs` has a `traversal` helper at all and this module has none.
+/// Extracting the pair makes *the values* checkable even though the *call site*
+/// is not, which is the honest split `view/runners.rs` and
+/// `view/installers.rs` already record for their own extractions.
+///
+/// **Measured, not assumed:** with this function inlined back into the loop,
+/// replacing `game.last_played` with `0.0` leaves the whole suite green — every
+/// row would read `"Never played"` and nothing would notice. With it extracted,
+/// [`tests::a_rows_labels_carry_the_games_own_timestamp`] fails on that
+/// mutation. The call-site mutation that remains is `list_body` passing the
+/// wrong `now`, which is unobservable for the reason above.
+fn row_labels(game: &Game, runners: &RunnerManager, now: f64) -> (String, String) {
+    (
+        widgets::resolved_runner_label(runners, game),
+        format_last_played(game.last_played, now),
+    )
 }
 
 /// The grid: the cards, wrapped.
@@ -377,6 +432,65 @@ mod tests {
     fn sort_keys_are_the_ones_the_settings_accept() {
         let keys: Vec<&str> = SORT_OPTIONS.iter().map(|(key, _)| *key).collect();
         assert_eq!(keys, SORT_MODES.to_vec());
+    }
+
+    /// A row's labels carry the game's **own** timestamp and the page's **one**
+    /// instant. Parity item P-02/P-16.
+    ///
+    /// This test exists because of a measured gap, not a hypothetical one: with
+    /// [`row_labels`] inlined back into [`list_body`]'s loop, replacing
+    /// `game.last_played` with `0.0` — so every row in the library reads
+    /// "Never played" — leaves the entire suite green. Nothing else asserts
+    /// what a row's timestamp is, because `list_body` builds `Element`s and
+    /// this module has no traversal helper to read them back out.
+    ///
+    /// Two games with deliberately different timestamps, so a `row_labels` that
+    /// ignored its argument and returned one constant string for both fails
+    /// here rather than passing on a single-game fixture.
+    #[test]
+    fn a_rows_labels_carry_the_games_own_timestamp() {
+        let runners = RunnerManager::at("/nonexistent");
+        let now = 1_700_000_000.0;
+
+        let mut recent = Game::new_named("Recent");
+        recent.kind = "windows".into();
+        recent.last_played = now - 3.0 * 3600.0;
+
+        let mut old = Game::new_named("Old");
+        old.kind = "windows".into();
+        old.last_played = now - 40.0 * 86_400.0;
+
+        let (recent_runner, recent_played) = row_labels(&recent, &runners, now);
+        let (old_runner, old_played) = row_labels(&old, &runners, now);
+
+        assert_eq!(recent_played, "Played 3 hours ago");
+        assert_eq!(old_played, "Played 1 month ago");
+        assert_ne!(
+            recent_played, old_played,
+            "two games of different ages rendered the same last-played label — \
+             the timestamp is not reaching the row"
+        );
+        // The runner half is resolved here too, and for a Windows game with no
+        // runner directory it is the fallback rather than an empty string.
+        assert_eq!(recent_runner, "System Wine");
+        assert_eq!(old_runner, "System Wine");
+    }
+
+    /// A game that has never been played still gets a label, and the page's
+    /// `now` is what makes it deterministic.
+    ///
+    /// `format_last_played(0.0, _)` is `"Never played"` whatever the instant,
+    /// which is the branch a zero timestamp takes rather than the arithmetic —
+    /// asserted beside the arithmetic case above so that "no timestamp" and
+    /// "an old timestamp" are not confused for one another.
+    #[test]
+    fn an_unplayed_games_labels_say_never_played() {
+        let runners = RunnerManager::at("/nonexistent");
+        let game = Game::new_named("Mystery");
+        assert_eq!(game.last_played, 0.0);
+
+        let (_, played) = row_labels(&game, &runners, 1_700_000_000.0);
+        assert_eq!(played, "Never played");
     }
 
     /// **The two empty states are not the same state.**

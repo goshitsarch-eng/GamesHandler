@@ -275,13 +275,23 @@ pub fn cover_box<M: Clone + 'static>(game: &Game, spec: CoverSpec) -> Element<'_
 /// `label` is the game's resolved runner label for the subtitle; see
 /// [`subtitle_of`]. It is data rather than a manager, and the caller resolves
 /// it when it builds the row — never here.
+///
+/// # The card has no last-played label, and that is the reference's asymmetry
+///
+/// `LibraryPage.qml` draws the grid and the list with two separate delegates,
+/// and they do **not** show the same text. The card is `subtitle` alone
+/// (`:192`); the row is `subtitle + " · " + lastPlayed` (`:269`). So "add the
+/// timestamp to the game widgets" is the wrong reading of P-02/P-16 — it is the
+/// *list row* that gained it, and a card that showed it too would render a
+/// string the reference never renders. T-30 is scoped to the row for this
+/// reason; see [`row`].
 pub fn card<'a, M: Clone + 'static>(game: &'a Game, label: &str) -> Element<'a, M> {
     let (cell_w, cell_h) = metrics::GRID_CELL;
     let spec = card_cover_spec();
 
     let body = Column::new()
         .push(cover_box(game, spec))
-        .push(name_and_subtitle(game, label))
+        .push(name_and_subtitle(game, subtitle_of(game, label)))
         .spacing(metrics::CARD_MARGIN)
         .width(Length::Fill);
 
@@ -295,20 +305,46 @@ pub fn card<'a, M: Clone + 'static>(game: &'a Game, label: &str) -> Element<'a, 
         .into()
 }
 
-/// A list row: the cover, the name and the subtitle, laid out horizontally.
+/// The two strings a **list row** resolves for a game, carried together.
+///
+/// A struct rather than two `&str` parameters because both are `&str` and
+/// adjacent: transposing them would produce a row reading
+/// `"System Wine · Shooter"`, which compiles, renders, and is wrong. The same
+/// hazard the installers page records for its `(installer_id, runner_id)`
+/// payload, answered the same way — the type is what makes the swap
+/// unrepresentable rather than a reviewer catching it.
+///
+/// Both fields are resolved by the caller, for the reason
+/// [`resolved_runner_label`] gives: the runner label walks the filesystem and
+/// must not be resolved per frame per game.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowLabels<'a> {
+    /// [`resolved_runner_label`]'s result for this game.
+    pub runner: &'a str,
+    /// [`meta::row_subtitle`]'s third part: `format_last_played` for this game,
+    /// evaluated against the page's **single** instant — the reason that
+    /// function takes `now` as a parameter rather than reading the clock.
+    ///
+    /// [`format_last_played`]: gamehandler_core::models::format_last_played
+    pub last_played: &'a str,
+}
+
+/// A list row: the cover, the name and the subtitle followed by the
+/// last-played label, laid out horizontally.
 ///
 /// The cover's box comes from [`row_cover_spec`] — the fixed strip, not the
 /// tile aspect. A row is a fixed-height line whose text must not move when one
 /// game's art is a different shape from the next, so the cover is fitted *into*
 /// the row rather than setting its height.
 ///
-/// `label` is the game's resolved runner label for the subtitle; see
-/// [`subtitle_of`].
-pub fn row<'a, M: Clone + 'static>(game: &'a Game, label: &str) -> Element<'a, M> {
+/// `labels` carries both resolved strings; see [`RowLabels`] and
+/// [`subtitle_of`]. The composition itself is [`meta::row_subtitle`]'s, so the
+/// row and any future caller of it cannot disagree about the separator.
+pub fn row<'a, M: Clone + 'static>(game: &'a Game, labels: &RowLabels<'_>) -> Element<'a, M> {
     container(
         Row::new()
             .push(cover_box(game, row_cover_spec()))
-            .push(name_and_subtitle(game, label))
+            .push(name_and_subtitle(game, row_subtitle_of(game, labels)))
             .spacing(metrics::CARD_MARGIN)
             .align_y(Alignment::Center),
     )
@@ -370,13 +406,15 @@ pub fn title_of(game: &Game) -> String {
 
 /// The name over the subtitle, as every game-shaped widget shows them.
 ///
-/// The subtitle comes from [`meta`] rather than being composed here — that is
-/// the whole point of the module — and the two widgets that show it are
-/// therefore guaranteed to show the same string.
-fn name_and_subtitle<'a, M: Clone + 'static>(game: &'a Game, label: &str) -> Element<'a, M> {
+/// `subtitle` is passed in already composed rather than resolved here, because
+/// the card and the row show *different* strings — the row appends the
+/// last-played label and the card does not (see [`card`]) — and a helper that
+/// picked one would have to know which caller it had. Both compositions live in
+/// [`meta`], which is the module whose job that is.
+fn name_and_subtitle<'a, M: Clone + 'static>(game: &'a Game, subtitle: String) -> Element<'a, M> {
     Column::new()
         .push(text(title_of(game)).size(14.0))
-        .push(text(subtitle_of(game, label)).size(11.0))
+        .push(text(subtitle).size(11.0))
         .spacing(2.0)
         .width(Length::Fill)
         .into()
@@ -441,8 +479,34 @@ pub fn resolved_runner_label(manager: &RunnerManager, game: &Game) -> String {
 /// passed in both the fixed and the unfixed state — the defect D-34 names.
 ///
 /// A Linux game is unaffected by `label`: [`meta::runner_label`] discards it.
+///
+/// This is the **card's** subtitle, and it stops at [`meta::subtitle`]. The
+/// list row's line is [`row_subtitle_of`], which is this plus the last-played
+/// part — see [`card`] for why the two widgets deliberately differ.
 fn subtitle_of(game: &Game, label: &str) -> String {
     meta::subtitle(game.display_category(), &meta::runner_label(game.is_linux(), label))
+}
+
+/// The **list row's** line: [`subtitle_of`]'s string, then the last-played
+/// label. Parity items P-02 and P-16.
+///
+/// The composition is [`meta::row_subtitle`]'s and not this function's, for the
+/// reason that module exists: the rule that an absent part is omitted rather
+/// than left as a dangling separator is a rule, and it belongs where a test can
+/// call it directly. This function only supplies the three inputs — and it
+/// resolves the runner label through [`meta::runner_label`] exactly as
+/// [`subtitle_of`] does, so a Linux game discards `labels.runner` here too.
+///
+/// `labels.last_played` is `format_last_played`'s result and is never empty,
+/// so the row always shows a fifth-of-a-line timestamp; the absent case the
+/// composer handles is for callers other than this one. See
+/// [`meta::row_subtitle`] for why that branch is written anyway.
+fn row_subtitle_of(game: &Game, labels: &RowLabels<'_>) -> String {
+    meta::row_subtitle(
+        game.display_category(),
+        &meta::runner_label(game.is_linux(), labels.runner),
+        labels.last_played,
+    )
 }
 
 /// A cover image in a box of exactly `spec`'s size, inset by `inset`.
@@ -583,7 +647,17 @@ mod tests {
     use cosmic::iced::advanced::image::Renderer as _;
     use cosmic::iced::{Font, Pixels, Radius, Rectangle, Size};
     use cosmic::widget::Id;
-    use gamehandler_core::models::Game;
+    use gamehandler_core::models::{Game, format_last_played};
+
+    /// The instant the last-played tests are evaluated against.
+    ///
+    /// Spelled out rather than taken from the clock, because the whole reason
+    /// `format_last_played` takes `now` as a parameter is that a label computed
+    /// from an ambient read is untestable — and worse, flaky at a boundary. The
+    /// value is the same frozen epoch the oracle's `format_last_played` corpus
+    /// uses (`1700000000.0`), so a label asserted here and a label asserted
+    /// there are the same label.
+    const FROZEN_NOW: f64 = 1_700_000_000.0;
 
     /// The subtitle a widget shows, reached through the same path the widgets
     /// use. These are the strings a user reads, so they are asserted as
@@ -700,6 +774,14 @@ mod tests {
     /// observed at the level a user sees it. The label passed here is the one
     /// [`resolved_runner_label`] produces for this game, so the assertion is
     /// about the shipped path rather than a hand-picked string.
+    ///
+    /// **The card and the row do not draw the same third string, and this test
+    /// is where that is visible.** `LibraryPage.qml` gives each delegate its
+    /// own text: the card is `subtitle` (`:192`) and the row is
+    /// `subtitle + " · " + lastPlayed` (`:269`). So the row has a *fourth*
+    /// string and the card has three — asserted separately rather than as one
+    /// list, because a shared expectation is what would let the card grow a
+    /// timestamp the reference never draws.
     #[test]
     fn a_card_and_a_row_draw_the_initials_and_never_the_pickers_words() {
         let game = Game::new_named("Half-Life 2");
@@ -712,8 +794,95 @@ mod tests {
             ["HL", "Half-Life 2", "System Wine"]
         );
 
-        let mut row: Element<'_, ()> = row(&game, &label);
-        assert_eq!(texts(&traversal(&mut row)), ["HL", "Half-Life 2", "System Wine"]);
+        let played = format_last_played(0.0, FROZEN_NOW);
+        let labels = RowLabels {
+            runner: &label,
+            last_played: &played,
+        };
+        let mut row: Element<'_, ()> = row(&game, &labels);
+        assert_eq!(
+            texts(&traversal(&mut row)),
+            ["HL", "Half-Life 2", "System Wine · Never played"]
+        );
+    }
+
+    /// The list row shows the last-played label composed with the subtitle, and
+    /// the grid card does not — the reference's asymmetry, asserted as a
+    /// difference rather than as two independent expectations.
+    ///
+    /// This is P-02/P-16's acceptance at the widget level: the timestamp is
+    /// **in the row** and **not in the card**. Written as one test because the
+    /// failure it prevents is exactly a change that makes them equal — wiring
+    /// the timestamp into `name_and_subtitle` instead of into the row would
+    /// satisfy a "the row shows it" assertion and quietly put it on every card.
+    #[test]
+    fn the_row_carries_the_last_played_label_and_the_card_does_not() {
+        let mut game = Game::new_named("Celeste");
+        game.category = "Platformer".into();
+        game.kind = "linux".into();
+        // Two days before the frozen instant, so the label is a real one and
+        // not the `"Never played"` this test's sibling already covers.
+        game.last_played = FROZEN_NOW - 2.0 * 86_400.0;
+
+        let manager = RunnerManager::at("/nonexistent");
+        let label = resolved_runner_label(&manager, &game);
+        let played = format_last_played(game.last_played, FROZEN_NOW);
+        assert_eq!(played, "Played 2 days ago");
+
+        let labels = RowLabels {
+            runner: &label,
+            last_played: &played,
+        };
+        let mut row: Element<'_, ()> = row(&game, &labels);
+        let row_seen = traversal(&mut row);
+        let row_texts = texts(&row_seen);
+        assert_eq!(
+            row_texts,
+            ["CE", "Celeste", "Platformer · Linux native · Played 2 days ago"]
+        );
+
+        let mut card: Element<'_, ()> = card(&game, &label);
+        let card_seen = traversal(&mut card);
+        let card_texts = texts(&card_seen);
+        assert_eq!(card_texts, ["CE", "Celeste", "Platformer · Linux native"]);
+
+        // The asymmetry itself, so a change that added the label to the card
+        // fails here with a message saying why rather than with a diff.
+        assert!(
+            !card_texts.iter().any(|text| text.contains("Played")),
+            "the card must not draw a last-played label: LibraryPage.qml:192 \
+             draws `subtitle` alone, and only the list delegate (:269) appends \
+             the timestamp. Got {card_texts:?}"
+        );
+    }
+
+    /// A quiet game — one that has never been played — still shows a label, and
+    /// it is the reference's `"Never played"` rather than a suppressed line.
+    ///
+    /// `bridge.py:311` computes `lastPlayed` for every row with no test, and
+    /// the QML concatenates it unconditionally, so a port that hid the part for
+    /// an unplayed game would render `"Shooter · System Wine"` where the
+    /// reference renders three parts.
+    #[test]
+    fn an_unplayed_row_shows_never_played_rather_than_omitting_the_part() {
+        let mut game = Game::new_named("Mystery");
+        game.category = "Shooter".into();
+        // `Game::new_named` leaves this at 0.0, the value `format_last_played`
+        // maps to "Never played"; asserted so the fixture is what it claims.
+        assert_eq!(game.last_played, 0.0);
+
+        let played = format_last_played(game.last_played, FROZEN_NOW);
+        assert_eq!(played, "Never played");
+        let labels = RowLabels {
+            runner: "System Wine",
+            last_played: &played,
+        };
+        let mut row: Element<'_, ()> = row(&game, &labels);
+
+        assert_eq!(
+            texts(&traversal(&mut row)),
+            ["MY", "Mystery", "Shooter · System Wine · Never played"]
+        );
     }
 
     /// A card's cover box is the one the metrics module computes, and a card
@@ -801,7 +970,14 @@ mod tests {
         );
 
         let game = Game::new_named("Halo");
-        let mut row: Element<'_, ()> = row(&game, "");
+        // This test is about the text *sizes*, so the two labels are empty —
+        // the row still draws its last-played line, but as an empty string it
+        // contributes no glyphs to measure.
+        let labels = RowLabels {
+            runner: "",
+            last_played: "",
+        };
+        let mut row: Element<'_, ()> = row(&game, &labels);
         let seen = traversal(&mut row);
         let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
 

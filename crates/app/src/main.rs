@@ -920,6 +920,11 @@ impl Shell {
                     sort_mode: &self.state.settings.sort_mode,
                     view_mode: &self.state.settings.view_mode,
                     runners: &self.state.runners,
+                    // Read once per frame, so every row's "Played … ago" is
+                    // computed against the same instant. `format_last_played`
+                    // takes `now` as a parameter for exactly this; see
+                    // `LibraryPage::now`.
+                    now: gamehandler_core::models::now(),
                 };
                 view::library::view(page)
             }
