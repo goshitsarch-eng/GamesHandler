@@ -40,7 +40,7 @@ mod state;
 mod view;
 
 pub use state::{
-    CoverHit, ExeField, FormToken, GameForm, GameId, Page, PendingInstall, PrefixTool,
+    CoverHit, ExeField, FormField, FormToken, GameForm, GameId, Page, PendingInstall, PrefixTool,
     ReleasesStatus, State,
 };
 
@@ -491,6 +491,17 @@ pub enum Message {
     /// Save the open form — add or update, decided by the form's game id.
     /// `saveGame()`; validates the name and normalises the paths.
     SaveGameForm(GameForm),
+    /// One of the form's text fields changed. The reference has one
+    /// `QVariantMap` the QML writes by key; this is that key and its new value.
+    FormFieldChanged { field: FormField, value: String },
+    /// One of the form's fifteen switches changed, addressed by its
+    /// `_TOGGLE_FIELDS` name.
+    FormToggleChanged { name: String, value: bool },
+    /// The form's Type selector. `bridge.py` reads `isLinux` off the combo's
+    /// index at save time (`GameFormPage.qml:16`, `:44`); this writes it when it
+    /// changes, so the rows the reference disables for a Linux game follow the
+    /// selector rather than waiting until Save.
+    SetFormLinux(bool),
     /// Start a title. `playGame()`; marks it played and begins the grace watch.
     LaunchGame(GameId),
     /// The grace watch ended.
@@ -957,6 +968,37 @@ impl Shell {
         self.nav_model.active_data::<Page>().copied() == Some(self.state.page)
     }
 
+    /// The page body, with anything open **above** it.
+    ///
+    /// The reference pushes the game form as a layer over the pages
+    /// (`GameFormPage.qml:1`), so it is not a [`Page`] and the dispatch above
+    /// knows nothing about it. This is where the two meet.
+    ///
+    /// # The layer replaces the page rather than being stacked on it
+    ///
+    /// `none` is drawn, not `Stack`: a pushed page covers the one beneath it, and
+    /// a composition that drew both would let a test find the form's strings and
+    /// the library's in the same body — which cannot tell a layer from a merge.
+    /// It is also what the reference does: `Kirigami.ScrollablePage` under a
+    /// pushed page is not painted.
+    ///
+    /// # Why this is separate from [`Self::view_body`]
+    ///
+    /// `view_body` is the *page*, and every page test drives it — they are about
+    /// the dispatch arm and must not start depending on whether a form happens to
+    /// be open. The overlay is a second question with its own tests, and this is
+    /// the function they drive.
+    fn view_with_overlays(&self) -> cosmic::Element<'_, Message> {
+        match &self.state.game_form {
+            Some(form) => view::form::view(view::form::GameFormView {
+                form,
+                library: &self.state.library,
+                runners: &self.state.runners,
+            }),
+            None => self.view_body(),
+        }
+    }
+
     /// The page the sidebar draws as selected.
     #[cfg(test)]
     fn sidebar_page(&self) -> Option<Page> {
@@ -1021,15 +1063,21 @@ impl Shell {
     /// unwritten arm produce the same silence — the D-34 shape, in the samples
     /// rather than in the handler.
     ///
-    /// That count is not a comment. `only_the_written_handlers_change_anything`
+    /// That list is not a comment. `only_the_written_handlers_change_anything`
     /// drives every message in `every_message` through this function and
-    /// requires the set that has any effect to be exactly those fifteen (plus
-    /// `Quit`, which needs the window and so is `App::update`'s one arm, and
-    /// `DismissToast`, whose arm is real but unobservable). A handler that
-    /// regresses to `{}` shrinks that set and fails; a new handler landing grows
-    /// it and fails until it is added deliberately. The earlier version of this
-    /// paragraph said "three" and named three, omitting `CloseDialog` and
-    /// `Notify` — in the sentence a reviewer trusts to know what is live.
+    /// requires the set that has any effect to be exactly the handlers named
+    /// there (plus `Quit`, which needs the window and so is `App::update`'s one
+    /// arm, and `DismissToast`, whose arm is real but unobservable). A handler
+    /// that regresses to `{}` shrinks that set and fails; a new handler landing
+    /// grows it and fails until it is added deliberately.
+    ///
+    /// This paragraph used to carry its own count — "those fifteen" — beside
+    /// the list's, and the two disagreed: T-11 grew the list to twenty-two and
+    /// the number here was left at fifteen, in the sentence a reviewer trusts
+    /// to know what is live. Before that it said "three" and named three,
+    /// omitting `CloseDialog` and `Notify`. The number is gone rather than
+    /// corrected: the list is the authority and a second number describing it
+    /// is a thing that can disagree with it silently.
     fn update(&mut self, message: Message) -> cosmic::app::Task<Message> {
         match message {
             // ---- Navigation and dialogs -----------------------------------
@@ -1040,12 +1088,31 @@ impl Shell {
             Message::NavigateTo(page) => {
                 return self.show_page(page);
             }
-            // TODO(T-09): build a `GameForm` from `newGameTemplate` — the
-            // settings-derived toggle defaults are `GameForm::TOGGLE_NAMES`
-            // crossed with `Settings::default_*`.
-            Message::OpenNewGameForm => {}
-            // TODO(T-09): load the game into a `GameForm`.
-            Message::OpenEditGameForm(_game_id) => {}
+            // `newGameTemplate()` (`bridge.py:382-399`): a fresh id, the stored
+            // default runner, and the fifteen toggles from
+            // `Settings::default_*` where a setting exists and the `Game`
+            // dataclass default where one does not. `GameForm::new_template` is
+            // that whole function, tested without a display.
+            Message::OpenNewGameForm => {
+                let id = gamehandler_core::models::new_id();
+                self.state.game_form = Some(GameForm::new_template(
+                    &self.state.settings,
+                    id,
+                ));
+                self.state.confirm_delete = None;
+            }
+            // `getGame(id)` + push (`bridge.py:356-379`). An id the library does
+            // not hold opens nothing rather than an empty form: the reference's
+            // `getGame` returns `{}` and the QML's `gameData` would then be a map
+            // whose every read falls through to its `|| ""`, which draws a blank
+            // Add form under an "Edit Game" title. Doing nothing is the honest
+            // version of that.
+            Message::OpenEditGameForm(game_id) => {
+                if let Some(game) = self.state.library.get(&game_id) {
+                    self.state.game_form = Some(GameForm::from_game(game));
+                    self.state.confirm_delete = None;
+                }
+            }
             Message::CloseDialog => {
                 self.state.game_form = None;
                 self.state.confirm_delete = None;
@@ -1160,9 +1227,90 @@ impl Shell {
             }
 
             // ---- Library: the games themselves -----------------------------
-            // TODO(T-09): validate, normalise the paths, then `Library::add` or
-            // `update`, persist, and kick off a cover fetch when empty.
-            Message::SaveGameForm(_form) => {}
+            // `saveGame` (`bridge.py:404-446`). `GameForm::apply` is the whole of
+            // the validation and normalisation, tested without a display; this
+            // arm is the persistence and the report.
+            //
+            // # The one place the sequence differs from the QML's
+            //
+            // `GameFormPage.qml:51-52` calls `backend.saveGame(gameData)` and then
+            // `closeForm()` unconditionally, so a save the name check rejects
+            // closes the form and throws the user's typing away — the toast
+            // (`bridge.py:407-409`) is the only trace of it. Here the form stays
+            // open on a rejection, which is the reference's own dialog
+            // behaviour applied one level up: nothing is destroyed on a refusal.
+            //
+            // That branch is **unreachable from the drawn form**, and this is the
+            // honest reading rather than a claim: `enabled: nameField.text.trim()
+            // .length > 0` (`:34`) means the button cannot be pressed with an
+            // empty name, and `view::form::can_save` enforces the same gate on
+            // the message. It is kept because `SaveGameForm` is a message any
+            // caller can send — the CLI and the tests do — and because a form
+            // that closed on a rejection would be a worse bug than an
+            // unreachable arm.
+            //
+            // `Library::add`/`update` return `io::Result` and a write failure is
+            // not the user's to fix, so it is reported rather than raised, the
+            // same way every other store in this shell reports one.
+            Message::SaveGameForm(form) => {
+                // The reference's add-vs-update test (`bridge.py:406`): whether the
+                // library already holds this id, not what the form says it is.
+                let existing = self
+                    .state
+                    .library
+                    .get(form.game_id.as_deref().unwrap_or_default());
+                match form.apply(existing) {
+                    Err(message) => return self.state.toast_task(message),
+                    Ok(game) => {
+                        let is_new = existing.is_none();
+                        let name = game.name.clone();
+                        let stored = if is_new {
+                            self.state.library.add(game)
+                        } else {
+                            self.state.library.update(game)
+                        };
+                        if let Err(error) = stored {
+                            return self.state.toast_task(format!(
+                                "Could not save “{name}”: {error}"
+                            ));
+                        }
+                        // The two sentences are the reference's, em dashes and
+                        // all (`bridge.py:439`, `:442`).
+                        self.state.game_form = None;
+                        let notice = if is_new {
+                            format!("Added “{name}”")
+                        } else {
+                            format!("Updated “{name}”")
+                        };
+                        return self.state.toast_task(notice);
+                    }
+                }
+            }
+            // The form's text fields. Twelve of them through one variant, because
+            // the reference has one `QVariantMap` and the alternative is twelve
+            // near-identical arms.
+            Message::FormFieldChanged { field, value } => {
+                if let Some(form) = self.state.game_form.as_mut() {
+                    form.set_field(field, value);
+                }
+            }
+            // The form's switches, addressed by `_TOGGLE_FIELDS` name. Refused for
+            // a name the form does not hold, which is `GameForm::set_toggle`'s
+            // `false` — see that method for why an unknown name writes nothing
+            // rather than creating the entry.
+            Message::FormToggleChanged { name, value } => {
+                if let Some(form) = self.state.game_form.as_mut() {
+                    form.set_toggle(&name, value);
+                }
+            }
+            // The Type selector. `bridge.py` derives `isLinux` from the combo's
+            // index at save time; this writes it as it changes, which is what
+            // makes the rows gated on `!isLinux` follow the selector.
+            Message::SetFormLinux(is_linux) => {
+                if let Some(form) = self.state.game_form.as_mut() {
+                    form.is_linux = is_linux;
+                }
+            }
             // TODO(T-10): `mark_played`, spawn the grace watch, and honour
             // `close_on_launch`.
             Message::LaunchGame(_game_id) => {}
@@ -1306,6 +1454,26 @@ impl Shell {
             Message::LaunchWatchTick => {}
         }
         cosmic::task::none()
+    }
+}
+
+impl State {
+    /// A toast, as the [`Task`](cosmic::Task) the application trait wants.
+    ///
+    /// `Toasts::push` returns a task of its own — it is what schedules the
+    /// toast's expiry — so a handler cannot both push a toast and finish with
+    /// `Task::none()`: the toast would appear and never leave. This is the
+    /// mapping, in one place rather than repeated in each of the handlers that
+    /// report something.
+    ///
+    /// [`Message::Notify`] does the same thing and is the route a *view* takes,
+    /// because a view can only return a message. This is the route an
+    /// `update` arm takes, where the text is already in hand and routing it
+    /// through the enum would mean a second pass through the match.
+    fn toast_task(&mut self, text: String) -> cosmic::app::Task<Message> {
+        self.toasts
+            .push(cosmic::widget::toaster::Toast::new(text))
+            .map(cosmic::Action::App)
     }
 }
 
@@ -1544,8 +1712,10 @@ impl cosmic::Application for App {
         // toaster is wrapped around the whole body rather than placed inside a
         // page: a toast raised by one page must survive a navigation to another,
         // and `Toasts` lives in `State` for exactly that reason. The body itself
-        // is [`view_body`], which a test can call without an `App`.
-        toaster(&self.shell.state.toasts, self.shell.view_body())
+        // is [`Shell::view_with_overlays`], which a test can call without an
+        // `App` and which falls through to [`Shell::view_body`] when nothing is
+        // open above it.
+        toaster(&self.shell.state.toasts, self.shell.view_with_overlays())
     }
 }
 
@@ -2299,7 +2469,37 @@ mod tests {
         Message::SetSearchText(_) => ("SetSearchText", Message::SetSearchText("half".to_string())),
         Message::SetCategoryFilter(_) => ("SetCategoryFilter", Message::SetCategoryFilter("Action".to_string())),
         Message::ClearFilters => ("ClearFilters", Message::ClearFilters),
-        Message::SaveGameForm(_) => ("SaveGameForm", Message::SaveGameForm(GameForm::default())),
+        // A **named** form, not the empty one. `shell_with_work_to_do` holds an
+        // empty template, whose name is `""` and which `GameForm::apply` refuses
+        // — so `SaveGameForm(GameForm::default())` writes nothing and returns no
+        // task, and the handler would be reported here as an unwritten arm. The
+        // sample has to be a value the handler acts on, which is the same rule
+        // the search-text and category fixtures state above.
+        //
+        // This is the one sample in this list that is also state: driving it
+        // closes the form, which the arm after it relies on. See
+        // `only_the_written_handlers_change_anything` for how the order is held.
+        Message::SaveGameForm(_) => ("SaveGameForm", {
+                            let mut form = GameForm::new_template(
+                                &Settings::default(),
+                                "sample-game".to_string(),
+                            );
+                            form.set_field(crate::state::FormField::Name, "Half-Life 2".to_string());
+                            Message::SaveGameForm(form)
+                        }),
+        // `Category`, whose fixture value is `"Uncategorized"` — writing
+        // `"Uncategorized"` again would be a write of what is already there.
+        Message::FormFieldChanged { .. } => ("FormFieldChanged", Message::FormFieldChanged {
+                            field: crate::state::FormField::Category,
+                            value: "Action".to_string(),
+                        }),
+        // `mangohud`, which the default template seeds `false`, so `true` is a
+        // write that shows.
+        Message::FormToggleChanged { .. } => ("FormToggleChanged", Message::FormToggleChanged {
+                            name: "mangohud".to_string(),
+                            value: true,
+                        }),
+        Message::SetFormLinux(_) => ("SetFormLinux", Message::SetFormLinux(true)),
         Message::LaunchGame(_) => ("LaunchGame", Message::LaunchGame("g".to_string())),
         Message::LaunchWatchFinished { .. } => ("LaunchWatchFinished", Message::LaunchWatchFinished {
                             game_id: "g".to_string(),
@@ -2409,11 +2609,67 @@ mod tests {
         let mut shell = Shell::new();
         // Start somewhere other than the page every message navigates to, so
         // `NavigateTo` has an effect to observe.
-// The entry task is dropped: these tests are about the two records
+        // The entry task is dropped: these tests are about the two records
         // `show_page` writes, both of which are written before the task is
         // built. Driving it would reach the network.
         let _ = shell.show_page(Page::Library);
-        shell.state.game_form = Some(GameForm::default());
+        // A library holding the two ids the samples use, at its **own temp path**.
+        //
+        // `Shell::new` opens the real one, and a fixture that added a game to it
+        // would write the user's `games.json`. `library_with` is not reused here
+        // because it keys its directory on the label and the process id alone:
+        // this fixture is built by every test that calls this function, so those
+        // calls run concurrently and would `remove_dir_all` each other's library
+        // mid-save. Measured — that is exactly what the first version did, and it
+        // failed ten tests with `left: 1, right: 0` in ones that never touch a
+        // form. The counter is what makes the path unique per call.
+        //
+        // The ids are the samples': `OpenEditGameForm("g")` needs a game to find
+        // or its arm is reported as unwritten, and `SaveGameForm`'s update branch
+        // needs `"sample-game"` to exist.
+        shell.state.library = {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "gh-form-fixture-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            let mut library = Library::new_at(Some(root.join("games.json")), 0.0);
+            for (id, name) in [("g", "Fixture"), ("sample-game", "Sample")] {
+                let mut game = Game::new_named(name);
+                game.id = id.to_string();
+                library.add(game).unwrap();
+            }
+            library
+        };
+        // The form: a **new template for a game that really is in the library**,
+        // which is the fixture every form handler needs.
+        //
+        // Not `GameForm::default()`, for the same reason the search text is not
+        // the sample value: `default()` has `is_new: false` and an empty name, so
+        // `SaveGameForm`'s sample would be refused by `apply` and the arm would
+        // be reported here as unwritten. The id is the one the library holds, so
+        // the sample *updates* rather than adds — which is the branch that leaves
+        // `form.game_form` as the sample's own value and lets
+        // `only_the_written_handlers_change_anything` drive `SaveGameForm` after
+        // the two form-field handlers without either of them hiding the other.
+        //
+        // `is_new: true` with a library id is not a contradiction: the reference
+        // decides add-versus-update from the library (`bridge.py:406`) and only
+        // the *title* from `isNew`, which is exactly what this fixture is.
+        shell.state.game_form = Some(GameForm {
+            game_id: Some("fixture-game".to_string()),
+            is_new: true,
+            name: "Fixture".to_string(),
+            toggles: GameForm::TOGGLE_NAMES
+                .iter()
+                .map(|name| ((*name).to_string(), false))
+                .collect::<std::collections::BTreeMap<_, _>>(),
+            ..GameForm::default()
+        });
         shell.state.confirm_delete = Some("g".to_string());
         // A search and a filter that are *not* the defaults — and, just as
         // importantly, not the *sample* values either. `SetSearchText`'s sample
@@ -2447,8 +2703,14 @@ mod tests {
     /// replaced with inert bodies and all five survived, because nothing ever
     /// called them: `App` cannot be built without a display, so no test could.
     /// Moving the dispatcher onto [`Shell`] is what makes the arms callable, and
-    /// this drives every one of the fifty messages through the real match and
-    /// requires the set that has an effect to be exactly the written handlers.
+    /// this drives every message `every_message` knows about through the real
+    /// match and requires the set that has an effect to be exactly the written
+    /// handlers. Completeness is the macro's job, not a number's: `message_variants!`
+    /// generates `every_message` from one list with an exhaustive match and no
+    /// wildcard, so a variant with no sample does not compile. That paragraph
+    /// used to say "fifty", which was a count of the macro's own list written
+    /// down outside it — the same drift that got the count removed from
+    /// [`Shell::update`]'s doc comment.
     ///
     /// Both directions are pinned. A handler that regresses to `{}` disappears
     /// from this list; a new handler landing appears in it. Neither can pass
@@ -2464,8 +2726,12 @@ mod tests {
     ///   real (`toasts.remove(id)`) and no test can build an id naming a live
     ///   toast, so it cannot be told apart from `{}` — see
     ///   [`a_test_cannot_observe_which_toast_was_dismissed`], which measures
-    ///   that rather than asserting it. The list below therefore names fifteen
-    ///   handlers where sixteen bodies are written, and says which is which.
+    ///   that rather than asserting it. The list below therefore names every
+    ///   written handler but that one — and the list itself is the count. It
+    ///   used to say "fifteen handlers where sixteen bodies are written", which
+    ///   was a second number describing the first and went stale at T-11
+    ///   without anything failing; the sentence a reviewer trusts to know what
+    ///   is live is the list, so there is no longer a number beside it.
     ///
     /// [`observe`] counts a returned [`cosmic::Task`] as well as a state
     /// change, so the *other* class of invisible handler — one whose only
@@ -2531,6 +2797,27 @@ mod tests {
             // task *and* whose handler was empty would be a page that never
             // learns what is installed.
             "RunnersRefreshed",
+            // T-10's six. Live because the form is a layer over the current
+            // page, not a page of its own: the Library's add button and the row
+            // menu open it, and the controls it draws produce the other four.
+            //
+            // `OpenNewGameForm` was the one entry in `dispatch_coverage`'s
+            // `KNOWN_DEAD` deferral while its arm was `{}` — a *dispatched* page
+            // emitting a message nothing handled. Landing the arm is what
+            // retired that entry, and the guard said so by failing on it.
+            //
+            // `SaveGameForm` reaches its `update` branch here only because
+            // `shell_with_work_to_do`'s library already holds the id its sample
+            // carries: the `add` branch would `save()` to the path the fixture
+            // was built with either way, and a sample naming an id the library
+            // does not hold is what once wrote a real `games.json` — see that
+            // fixture's doc.
+            "OpenNewGameForm",
+            "OpenEditGameForm",
+            "SaveGameForm",
+            "FormFieldChanged",
+            "FormToggleChanged",
+            "SetFormLinux",
         ];
         // `DismissToast` is written and cannot be observed; see the doc above.
         expected.sort_unstable();
@@ -2599,9 +2886,25 @@ mod tests {
     /// Both directions: the assert on the drawn strings would pass for an empty
     /// body, so `NO_GAMES_TITLE` and the button are required to be *present*,
     /// not merely the placeholder required to be absent.
+    ///
+    /// # The library is set, not inherited
+    ///
+    /// This read `Shell::new()` and asserted *its* library was empty, which is a
+    /// claim about the machine the suite runs on rather than about the dispatch
+    /// arm: `Shell::new()` opens the real `$XDG_CONFIG_HOME/gamehandler/games.json`,
+    /// so the test passed only for a developer who does not use the app and
+    /// failed for one who does. It failed here for exactly that reason, after a
+    /// sample in this file wrote the real file — the empty library is now given
+    /// to the shell the way its sibling test gives one, so what is under test is
+    /// the arm and only the arm. The path is never written to, so unlike
+    /// `shell_with_work_to_do`'s it needs no per-call counter.
     #[test]
     fn the_library_page_draws_the_library_and_not_the_placeholder() {
-        let shell = Shell::new();
+        let mut shell = Shell::new();
+        shell.state.library = Library::new_at(
+            Some(std::env::temp_dir().join("gh-empty-library/games.json")),
+            0.0,
+        );
         assert_eq!(shell.state.library.len(), 0, "this fixture is the empty library");
         let drawn = drawn_strings(shell.view_body());
 
@@ -2897,25 +3200,258 @@ mod tests {
         );
     }
 
+    /// A shell with the game form open over `Page::Library`.
+    ///
+    /// `is_new` picks `newGameTemplate` or `getGame` — the two the message arms
+    /// use — because the layer's title and action label are read from it, and a
+    /// fixture that only ever opened the add form would let an edit form draw
+    /// "Add" forever.
+    fn shell_with_form_open(is_new: bool, is_linux: bool) -> Shell {
+        let mut shell = shell_with_work_to_do();
+        let _ = shell.show_page(Page::Library);
+        let mut form = if is_new {
+            GameForm::new_template(&shell.state.settings, "layer-game".to_string())
+        } else {
+            GameForm::from_game(
+                shell
+                    .state
+                    .library
+                    .get("g")
+                    .expect("the fixture holds `g`"),
+            )
+        };
+        form.is_new = is_new;
+        form.is_linux = is_linux;
+        shell.state.game_form = Some(form);
+        shell
+    }
+
+    /// **The form is a layer above the page, and it replaces what is under it.**
+    ///
+    /// All four directions, because each of them is a way this could look right
+    /// and be wrong:
+    ///
+    /// - the layer draws the form — its title and a row label the page could not
+    ///   produce;
+    /// - the layer does **not** draw the page, which is what makes it a layer
+    ///   rather than a merge and is why `view_with_overlays` returns one or the
+    ///   other instead of stacking them;
+    /// - with nothing open, the same function is the page, so the fall-through is
+    ///   checked rather than assumed;
+    /// - and the page's own body does not know about the form at all — a
+    ///   `view_body` that had started drawing the layer would make every page test
+    ///   above depend on whether a form happened to be open.
+    ///
+    /// The form's strings are `view::form`'s own constants rather than literals,
+    /// so this cannot pass against a page that happens to say "Add Game".
+    #[test]
+    fn the_form_is_a_layer_over_the_page_it_replaces() {
+        let shell = shell_with_form_open(true, false);
+        let layer = drawn_strings(shell.view_with_overlays());
+
+        for expected in [
+            crate::view::form::TITLE_ADD,
+            crate::view::form::LABEL_TYPE,
+            crate::view::form::SECTION_ADVANCED,
+            crate::view::form::ACTION_CANCEL,
+        ] {
+            assert!(
+                layer.iter().any(|text| text == expected),
+                "the open form should draw {expected:?}; drawn: {layer:?}"
+            );
+        }
+        assert!(
+            !layer
+                .iter()
+                .any(|text| text == crate::view::library::ADD_FIRST_GAME),
+            "the page is still drawn under the form, so this is a merge and not a layer; \
+             drawn: {layer:?}"
+        );
+
+        // The page's own body is unchanged by the form being open. Asserted as an
+        // *equality* against the same shell with the form closed rather than
+        // against a string the page happens to draw: this shell has a search
+        // filter on it, so the page's empty state is the filtered one, and naming
+        // a string here would be asserting the fixture rather than the property.
+        // The property is that `view_body` does not read `game_form` at all.
+        let mut closed = shell_with_form_open(true, false);
+        closed.state.game_form = None;
+        assert_eq!(
+            drawn_strings(shell.view_body()),
+            drawn_strings(closed.view_body()),
+            "`view_body` draws differently depending on whether a layer is open, so \
+             every page test above now depends on the form"
+        );
+
+        // Nothing open: the same call is the page, with no form in it.
+        let fallthrough = drawn_strings(closed.view_with_overlays());
+        assert!(
+            fallthrough.iter().any(|text| text == crate::view::library::NO_MATCHES_TITLE),
+            "the fall-through is not the page; drawn: {fallthrough:?}"
+        );
+        assert!(!fallthrough.iter().any(|text| text == crate::view::form::TITLE_ADD));
+    }
+
+    /// **The edit form draws the edit form**, not the add form with values in it.
+    ///
+    /// `isNew` drives the title and the confirming action (`GameFormPage.qml:18`,
+    /// `:32`) and is *not* derivable from the form having a `game_id` — both forms
+    /// have one. A fixture that only built the add form would leave `TITLE_EDIT`
+    /// and `ACTION_SAVE` unreachable from any test.
+    #[test]
+    fn the_edit_form_draws_its_own_title_and_action() {
+        let shell = shell_with_form_open(false, false);
+        let drawn = drawn_strings(shell.view_with_overlays());
+
+        for expected in [
+            crate::view::form::TITLE_EDIT,
+            crate::view::form::ACTION_SAVE,
+        ] {
+            assert!(
+                drawn.iter().any(|text| text == expected),
+                "the edit form should draw {expected:?}; drawn: {drawn:?}"
+            );
+        }
+        for absent in [crate::view::form::TITLE_ADD, crate::view::form::ACTION_ADD] {
+            assert!(
+                !drawn.iter().any(|text| text == absent),
+                "the edit form drew the add form's {absent:?}; drawn: {drawn:?}"
+            );
+        }
+    }
+
+    /// **Find cover is drawn exactly when its message is handled.**
+    ///
+    /// [`crate::view::form::COVER_FETCH_MISSING`] is the port's statement that
+    /// `FetchCoverForForm`'s arm is still empty, and it is read here rather than
+    /// left as prose: the day the arm is written, this test fails until the
+    /// constant is flipped, and flipping it puts the button on screen.
+    ///
+    /// Both directions, so neither "always draw it" nor "never draw it" passes:
+    /// the button's label is absent exactly while the constant is `true`, and its
+    /// message is handled exactly when the constant is `false`. Today that is
+    /// absent-and-unhandled, and the assertion below names which of the two it is
+    /// so a failure says what changed rather than only that something did.
+    #[test]
+    fn the_find_cover_button_is_drawn_iff_its_message_is_handled() {
+        let handled = is_handled(
+            &mut shell_with_work_to_do(),
+            Message::FetchCoverForForm {
+                token: 0,
+                game_id: "g".to_string(),
+                name: "Fixture".to_string(),
+                exe: String::new(),
+            },
+        );
+        let drawn = drawn_strings(shell_with_form_open(true, false).view_with_overlays());
+        let button_on_screen = drawn.iter().any(|text| text == crate::view::form::FIND_COVER);
+
+        assert_eq!(
+            button_on_screen, !crate::view::form::COVER_FETCH_MISSING,
+            "the button is drawn from `COVER_FETCH_MISSING` and nothing else"
+        );
+        assert_eq!(
+            handled, !crate::view::form::COVER_FETCH_MISSING,
+            "the reference's Find cover (`GameFormPage.qml:151-158`) is on screen only \
+             while its message does nothing: button on screen = {button_on_screen}, \
+             `FetchCoverForForm` handled = {handled}, `COVER_FETCH_MISSING` = {}. When \
+             the arm lands, set the constant to `false` in the same change.",
+            crate::view::form::COVER_FETCH_MISSING
+        );
+        // A *compile-time* assertion, because that is the strongest form this can
+        // take: flipping `COVER_FETCH_MISSING` to `false` without drawing the
+        // button breaks the build with this message rather than failing one test
+        // a reader has to find. Clippy's `assertions_on_constants` is what asks
+        // for the const block, and it is right to.
+        const {
+            assert!(
+                crate::view::form::COVER_FETCH_MISSING,
+                "this reached the state the constant exists for; delete the note in \
+                 `view/form.rs` with it"
+            )
+        };
+    }
+
+    /// **The runner row is hidden exactly when it cannot be drawn disabled.**
+    ///
+    /// The reference's runner combo is `enabled: !form.isLinux`
+    /// (`GameFormPage.qml:175`), libcosmic's `Dropdown` has no disabled state, and
+    /// [`crate::view::form::RUNNER_ROW_HIDDEN_FOR_LINUX`] records the departure.
+    /// This reads it: the row is on a Windows form and off a Linux one, and when
+    /// the constant flips the second assertion is what fails.
+    ///
+    /// The *value* is still on screen in the other direction, which is why the
+    /// Linux half asserts on the row's label rather than on the runner's name.
+    #[test]
+    fn the_runner_row_is_hidden_exactly_when_it_cannot_be_disabled() {
+        let windows = drawn_strings(shell_with_form_open(true, false).view_with_overlays());
+        assert!(
+            windows.iter().any(|text| text == crate::view::form::LABEL_RUNNER),
+            "a Windows game has a runner to choose; drawn: {windows:?}"
+        );
+
+        let linux = drawn_strings(shell_with_form_open(true, true).view_with_overlays());
+        assert_eq!(
+            linux.iter().any(|text| text == crate::view::form::LABEL_RUNNER),
+            !crate::view::form::RUNNER_ROW_HIDDEN_FOR_LINUX,
+            "a Linux game's runner row: the reference disables it (`:175`), and \
+             `RUNNER_ROW_HIDDEN_FOR_LINUX` = {}",
+            crate::view::form::RUNNER_ROW_HIDDEN_FOR_LINUX
+        );
+        // Compile-time, for the reason the Find-cover guard above gives.
+        const {
+            assert!(
+                crate::view::form::RUNNER_ROW_HIDDEN_FOR_LINUX,
+                "libcosmic gained a disabled dropdown; draw the row and set the \
+                 constant to `false`"
+            )
+        };
+
+        // Everything else is still drawn on the Linux form — a layer that drew
+        // nothing would satisfy the assertion above.
+        for expected in [
+            crate::view::form::TITLE_ADD,
+            crate::view::form::TEXT_ROWS[4].label,
+            crate::view::form::SECTION_COMPAT,
+        ] {
+            assert!(
+                linux.iter().any(|text| text == expected),
+                "the Linux form should still draw {expected:?}; drawn: {linux:?}"
+            );
+        }
+    }
+
     /// **The toggles' labels are drawn and are not observable** — the limit
     /// [`the_settings_page_draws_the_settings_and_not_the_placeholder`]
     /// documents, pinned so it cannot quietly stop being true.
     ///
-    /// If a future libcosmic makes `Toggler` build a child text widget, this
-    /// test fails and the doc above becomes wrong — which is the point. Until
-    /// then it is the reason the fourteen toggle strings rest on pure functions
-    /// rather than on a render.
+    /// The label it hands the `Toggler` is **one of the form's own subtitles**
+    /// rather than a string invented for the test, so what is measured is the
+    /// claim `view/form.rs`'s `field_row` note makes about *this* page: that a
+    /// switch's subtitle reaches no `Text` operation, which is why the form's
+    /// toggle copy rests on [`view::form`]'s table and cannot be asserted from a
+    /// render.
+    ///
+    /// If a future libcosmic makes `Toggler` build a child text widget, this test
+    /// fails and that note becomes wrong — which is the point.
     #[test]
     fn the_toggler_labels_do_not_reach_the_text_operation() {
         use cosmic::widget::toggler;
-        let drawn = drawn_strings::<Message>(
-            toggler(true).label("A LABEL THAT IS DRAWN".to_string()).into(),
+        let subtitle = view::form::LAUNCH_TOGGLES
+            .first()
+            .expect("the form has launch toggles")
+            .subtitle;
+        assert!(
+            !subtitle.is_empty(),
+            "the row picked names no subtitle, so this measures nothing"
         );
+        let drawn =
+            drawn_strings::<Message>(toggler(true).label(subtitle.to_string()).into());
         assert!(
             drawn.is_empty(),
-            "if this now lists the label, `Toggler` gained a child text widget — \
-             update the note on the dispatch test and assert the thirteen toggle \
-             labels there. Drawn: {drawn:?}"
+            "if this now lists {subtitle:?}, `Toggler` gained a child text widget \
+             — update the note on the form's `field_row` and on this test's \
+             callers. Drawn: {drawn:?}"
         );
     }
 
