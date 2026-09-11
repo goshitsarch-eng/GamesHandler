@@ -46,6 +46,7 @@ pub mod credits;
 pub mod installers;
 pub mod json;
 pub mod models;
+pub mod netpaths;
 pub mod paths;
 pub mod plugins;
 pub mod runners;

@@ -1213,7 +1213,7 @@ pub(crate) struct UrlParts {
 /// reference cannot handle at all. The accepted *text*, though, is reproduced
 /// exactly — see the ASCII-digit guard in the body, which is why `+8` and
 /// `8_0` are `None` here as well as a raise there, and not `8`.
-fn url_parts(url: &str) -> UrlParts {
+pub(crate) fn url_parts(url: &str) -> UrlParts {
     /// CPython's `_WHATWG_C0_CONTROL_OR_SPACE`.
     fn is_c0_control_or_space(character: char) -> bool {
         character == ' ' || (character as u32) <= 0x1f
@@ -2965,6 +2965,21 @@ mod tests {
     // `urllib.parse` — the allowlist's host parser
     // -----------------------------------------------------------------------
 
+    /// One row of the battery: `(url, scheme, host, user, port, path, netloc)`.
+    ///
+    /// A named alias rather than the tuple spelled out at the array, because
+    /// clippy's `type_complexity` fires on the literal form and the gate is
+    /// `-D warnings` — and because the row is easier to read named.
+    type UrlVector<'a> = (
+        &'a str,
+        &'a str,
+        Option<&'a str>,
+        Option<&'a str>,
+        Option<u32>,
+        &'a str,
+        &'a str,
+    );
+
     /// The vector battery was produced by running CPython's `urllib.parse` on
     /// this machine and copying its output, then checked line by line.
     ///
@@ -3002,7 +3017,7 @@ mod tests {
         // Each tuple is `(url, scheme, host, user, port, path, netloc)` and
         // every value in it came out of `urlsplit(...)`, so a disagreement here
         // is a disagreement with CPython and not with a prior reading of it.
-        let vectors: [(&str, &str, Option<&str>, Option<&str>, Option<u32>, &str, &str); 58] = [
+        let vectors: [UrlVector; 58] = [
             ("https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/client/installer/SteamSetup.exe", "cdn.akamai.steamstatic.com"),
             ("HTTPS://CDN.AKAMAI.STEAMSTATIC.COM/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "CDN.AKAMAI.STEAMSTATIC.COM"),
             ("https://cdn.akamai.steamstatic.com:443/x", "https", Some("cdn.akamai.steamstatic.com"), None, Some(443), "/x", "cdn.akamai.steamstatic.com:443"),

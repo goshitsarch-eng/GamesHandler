@@ -97,12 +97,17 @@ const SHLEX_WHITESPACE: [char; 4] = [' ', '\t', '\r', '\n'];
 /// breaks in `str.splitlines()` but not in `str.split("\n")`. They are the one
 /// place Python's text handling diverges from the obvious Rust call, so they
 /// get named in both places rather than approximated in either.
-fn python_is_space(character: char) -> bool {
+///
+/// `pub(crate)` because [`crate::netpaths`] needs the same predicate for
+/// `str.strip()` on a picker result. A second copy there would be a second
+/// fidelity for one rule, and this is the copy the test at the foot of this
+/// file already pins.
+pub(crate) fn python_is_space(character: char) -> bool {
     character.is_whitespace() || matches!(character, '\u{1c}'..='\u{1f}')
 }
 
 /// Python's `str.strip()` with no argument.
-fn python_trim(value: &str) -> &str {
+pub(crate) fn python_trim(value: &str) -> &str {
     value.trim_matches(python_is_space)
 }
 
