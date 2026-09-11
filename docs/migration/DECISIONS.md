@@ -1705,3 +1705,53 @@ the *composition*. Faithfulness means reproducing both, so the right question
 about a strange-looking delimiter is not "is this tidy?" but "which stage put it
 there, and does Python's stage do the same?" — and the answer here is that both
 stages do.
+
+## D-39. A green `cargo test` is not evidence about the clippy stage, and the two can disagree on one tree
+
+**What happened.** On a single working tree, measured within the same minute:
+
+```
+cargo build  --workspace                          -> exit 0
+cargo test   --workspace                          -> 312 passed; 0 failed; exit 0
+cargo clippy --all-targets -- -D warnings         -> exit 101  (2 errors)
+```
+
+Two lints in `crates/app/src/view/widgets.rs` (lines 970 and 1018),
+`clippy::unnecessary_mut_passed` on `&mut renderer` passed to `operate` and
+`layout`. Both sites are in test-harness code.
+
+**Why both are true at once.** The flagged code is *valid Rust*. The lint is
+clippy-only, and `-D warnings` is what promotes it to an error. `cargo test`
+compiles the same target without clippy's lints and runs it green. So this is
+not one check being wrong; it is two checks measuring different things on the
+same bytes, and the green one is silent about the red one's whole subject.
+
+**This is a new shape for the class.** Every earlier instance in this file is a
+check that passes *without inspecting what it claims*. This one is subtler: the
+green check is honest and its result is true, and the error is inferring that a
+green `test` stage covers the `clippy` stage's territory because they build the
+same target from the same source. Same target, same source, different question.
+The failure is in the *reader*, not in either check.
+
+**How it was found.** By running both stages rather than one and reasoning about
+the other — which is the only technique available, since neither stage's output
+contains any hint that the other exists.
+
+**The operational rule, which is the load-bearing half.** The two lint sites are
+inside the working tree's *uncommitted* changes to `view/widgets.rs`, owned by
+another agent, mid-task, in the exact region they are actively editing. The
+correct handling was therefore **not** to report a regression and **not** to
+edit the file:
+
+* distinguish *in-flight* (uncommitted, inside the recently-edited region) from
+  *landed* (committed) — D-33's discipline, applied to construction rather than
+  to authorship;
+* route the finding to the owner as information, with the measurement, and say
+  explicitly that the file was left alone;
+* state plainly that a green `cargo test` is not evidence their work is
+  complete.
+
+An agent that treats a teammate's mid-edit tree as a reportable defect will
+spend the team's time on states that never existed. An agent that silently
+"fixes" another agent's file mid-edit destroys work and hides the problem. Both
+are worse than the two `mut`s.
