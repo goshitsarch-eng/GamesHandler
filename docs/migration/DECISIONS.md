@@ -1712,9 +1712,20 @@ stages do.
 
 ```
 cargo build  --workspace                          -> exit 0
-cargo test   --workspace                          -> 312 passed; 0 failed; exit 0
+cargo test   --workspace                          -> 414 passed; 0 failed; exit 0
 cargo clippy --all-targets -- -D warnings         -> exit 101  (2 errors)
 ```
+
+`414` is the sum over four test binaries — 78 (`gamehandler`), 3
+(`app_id_lockstep`), 333 (`gamehandler_core`), 0 (doc-tests) — and the
+breakdown is stated rather than only the total, for the reason in the next
+paragraph. It is also a correction: as first written, this entry reported the
+`--workspace` figure as **`312`**, which was `gamehandler_core`'s line alone,
+read out of a `tail -35` the author had truncated themselves and then quoted as
+the suite. The number was never 312-at-the-workspace-scope; it was one binary
+presented as all of them. That is this entry's own subject, committed inside
+this entry, which is the strongest available argument that the failure mode is
+about the reader and not about any check.
 
 Two lints in `crates/app/src/view/widgets.rs` (lines 970 and 1018),
 `clippy::unnecessary_mut_passed` on `&mut renderer` passed to `operate` and
