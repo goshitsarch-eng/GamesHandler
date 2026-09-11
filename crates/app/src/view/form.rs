@@ -1992,6 +1992,83 @@ mod tests {
         );
     }
 
+    /// The other reason `#97` is a defect, and the one neither rule above can see.
+    ///
+    /// `#97` is usually told as two wrongs — the index where a value belongs, and
+    /// the global default where the install belongs. Both are covered above. The
+    /// third is the one the *repair's own reasoning* names and nothing enforced:
+    /// the value has to be a runner **id**.
+    ///
+    /// `RunnerManager::choices` (`core/src/runners/mod.rs:1119`) hands the
+    /// selector `(id, label)` pairs, and for System Wine those differ —
+    /// `("wine-system", "System Wine")`. So a callback that carries the *label*
+    /// reaches the right message, with a value no runner answers to, on that one
+    /// row; `RunnerManager::get` (`mod.rs:1087`) answers an unknown id with System
+    /// Wine **silently**, which is the runner the user picked, so the wrong value
+    /// and the right one produce the same install. Measured: replacing the runner
+    /// call site with `Message::SetInstallRunner(runner_choices[index].1.clone())`
+    /// leaves this binary's 312 tests green — the value is never a runner id in
+    /// any test that reads the call site, because no test reads the call site.
+    ///
+    /// The mapping is a named function so that both halves become checkable, and
+    /// this is the second half: the page's own tests pin what
+    /// `install_runner_selection` returns from an index, and this pins that the
+    /// callbacks *are* that function. Either half alone is a guard with no
+    /// subject — the first because a perfect function nobody calls is dead, the
+    /// second because a call site is not a value.
+    ///
+    /// Both selectors, not the runner's: `#102` was this defect one line down, in
+    /// the same file, and a fix aimed at one dropdown in a file that has two
+    /// leaves the twin live. That is why the rule is a count of two *and* a
+    /// per-callback assertion, rather than one assertion at the runner's call
+    /// site — the count is the half that makes "both" true. Measured, so the
+    /// claim is not assumed: pointing the category's callback at the runner's
+    /// mapping does not compile (`expected &[String], found
+    /// &Vec<(String, String)>`), so "their **own** mapping" is the type system's
+    /// half and this rule only has to say that each callback has one.
+    ///
+    /// What it cannot see: a third selector added to this page, beyond the count
+    /// below. It is a tripwire on the two this tree has, not a proof.
+    #[test]
+    fn both_installers_selectors_are_routed_through_their_own_mapping() {
+        // The two mappings that know what their model holds.
+        const MAPPINGS: [&str; 2] = ["category_selection", "install_runner_selection"];
+
+        let (name, source) = production_sources()
+            .into_iter()
+            .find(|(name, _)| name == "src/view/installers.rs")
+            .expect("the installers page is where both selectors live");
+        let chars: Vec<char> = source.chars().collect();
+        let callbacks = dropdown_callbacks(&chars);
+
+        assert_eq!(
+            callbacks.len(),
+            2,
+            "{name} no longer has the two `widget::dropdown` callbacks this rule \
+             is written for, so its silence below is not evidence: {callbacks:?}"
+        );
+
+        for (_, callback) in &callbacks {
+            let mapped: Vec<&str> = MAPPINGS
+                .iter()
+                .copied()
+                .filter(|mapping| callback.contains(mapping))
+                .collect();
+            assert_eq!(
+                mapped.len(),
+                1,
+                "the callback `{}` in {name} does not go through exactly one of \
+                 the two mappings that know what the model holds. A callback that \
+                 builds its own `Message` has the index, or the label, and there \
+                 is nothing left that can tell: the model holds `(id, label)` \
+                 pairs (`core/src/runners/mod.rs:1119`), so a label reaches the \
+                 right control with a value no runner answers to, and `get` \
+                 (`:1087`) answers it with System Wine *silently*",
+                callback.trim()
+            );
+        }
+    }
+
     /// The other half of `#97`, and the repair `D-55` warns is the plausible one.
     ///
     /// A callback can carry the *right* value to the *wrong* control, and no
