@@ -434,12 +434,71 @@ Reported rather than fixed, because the files are not this task's to edit:
 | Item | Owner | Detail |
 |---|---|---|
 | `.webp` decode | app + packaging | Enable libcosmic's `animated-image` in `crates/app/Cargo.toml`, then regenerate `cargo-sources.json` (12.4). |
-| `APP_ID` is not pinned to its literal | app (`crates/app` or `crates/core`) | `app_id_is_reverse_domain` (`crates/core/src/lib.rs:74-90`) checks the shape only. Add `assert_eq!(APP_ID, "com.goshapps.GameHandler")`, or a test that the desktop file's basename stem matches, so the four-way agreement in 12.2 cannot drift silently. |
-| `data/meson.build` | lead | Still referenced by `meson.build:15` (`subdir('data')`) and read by `tests/test_packaging.py:200,209-222`; it now serves the Python tree only. Deleting it needs both files changed in the same commit, and the LICENSE install it performs has no replacement in the Flatpak manifest. |
-| GPL text missing from the Flatpak | packaging | No source in build-aux/flatpak/com.goshapps.GameHandler.json is the application's own licence, and no `"LICENSE"` path appears in it — only osslsigncode's and DXVK's texts are installed. Before T-16 the Flatpak built the app with `"buildsystem": "meson"` (`b73e492`), which ran `data/meson.build`'s `install_data` and put the GPL text at `/app/share/licenses/com.goshapps.GameHandler/LICENSE`; the cargo build does not, so the licence text was dropped at T-16. Needs an `install -Dm644 LICENSE ...` line alongside the three metadata installs at manifest lines 91-93. |
-| Authenticode trust root | packaging | `data/microsoft-identity-verification-root-ca-2020.pem` is read by `gamehandler/installers.py:534-546` (four candidate paths, one of which is `/app/share/gamehandler/`), and installed by Meson (`gamehandler/meson.build:36-39`). No Rust file references it yet, and the Flatpak manifest does not install it — so the T-04 port needs it and the manifest needs a line for it. |
+| `APP_ID` is not pinned to its literal | app (`crates/app` or `crates/core`) | `app_id_is_reverse_domain` (`crates/core/src/lib.rs:74-90`) checks the shape only, so the four-way agreement in 12.2 can drift silently. **The fix is not `assert_eq!(APP_ID, "com.goshapps.GameHandler")`** — that restates the constant it checks and passes for the wrong reason. It is a test that *reads* one artefact and compares it against the others (desktop stem, `StartupWMClass`, manifest `app-id`, `<launchable>`); confirmed against the five artefacts, which agree today. |
+| `data/meson.build` | lead | Still referenced by `meson.build:15` (`subdir('data')`) and read by `tests/test_packaging.py:200,209-222`; it now serves the Python tree only. Deleting it needs both files changed in the same commit, and the LICENSE install it performs has no replacement in the Flatpak manifest (that replacement landed in T-23 — see 12.9 — so the deletion is now unblocked on that count). |
 | README credits "Platform" | credits / T-06 | The README's credit sections are rendered from `credits.py:377` and pinned verbatim by `tests/test_credits.py:101-110`, so the Qt/Kirigami/PySide6 platform entries cannot be updated in the README alone; they must change in `credits.py` (and the README regenerated) when `core::credits` lands. |
 | Dark-by-default (R4) | lead, D-13 | Untouched here: the README still advertises dark by default. Whatever D-13 decides, the README sentence changes with it. |
+| GUI panics instead of diagnosing, with no display | app | Surfaced once `flatpak-build` started passing and the smoke test could run against a real binary. `no-display-diagnostic` (D-12a/N-01) fails: with neither `WAYLAND_DISPLAY` nor `DISPLAY` set the binary panics — `thread 'main' panicked at …/iced_winit/src/lib.rs:92:39: Create event loop: NotSupported(… "neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set.")` — where the contract is a diagnostic message and a clean exit. `cli-version` (`GameHandler 0.8.0`) and `cli-list` pass, and `gui-stays-up` passes over an ambient Wayland session, so this is specific to the headless GUI path. Not a metadata item; recorded here because T-18's work is what made the build green enough to see it. |
+
+Two rows that stood here — *GPL text missing from the Flatpak* and *Authenticode trust
+root* — were closed by T-23 (§12.9) rather than handed on. Both were things the manifest
+should have been doing and was not, and both were invisible to every validator.
+
+### 12.9 T-23: the two installs, and the check that would have caught them
+
+Both defects were the same shape: a file the build was supposed to install, that no
+validator looks at. Stage 9 of `scripts/verify.sh` asks whether the desktop entry and the
+metainfo are well-formed; nothing asked whether the Flatpak *contains* anything. So the
+fix is two install lines and a new stage 10.
+
+**The installs** (`build-aux/flatpak/com.goshapps.GameHandler.json`, gamehandler module):
+
+| Installed | Why that destination |
+|---|---|
+| `LICENSE` → `share/licenses/com.goshapps.GameHandler/LICENSE` | `Cargo.toml:24` declares `GPL-3.0-or-later` and GPL-3 §4/§6 require the licence to accompany the binary. It sits beside `osslsigncode-LICENSE.txt` and `DXVK.txt`, which the other modules already put there. |
+| `data/microsoft-identity-verification-root-ca-2020.pem` → `share/gamehandler/…` | The fourth candidate path in `gamehandler/installers.py:534-546` is `/app/share/gamehandler/`, and `/app/share/gamehandler/dxvk` already exists, so the directory is not new. No Rust file reads it yet — T-04 will. |
+
+**The check** is stage 10 `flatpak-contents`, in two halves, because they fail
+differently:
+
+1. **The manifest declares both installs** — read out of the JSON, not restated. Needs no
+   build tree, so it still runs when `flatpak-builder` cannot; the check that would have
+   caught the original defect must not be hostage to the build succeeding.
+2. **The installed bytes are identical to the repository's copy** — only when a completed
+   build tree exists.
+
+What it does *not* do, stated so a green run is not read as more than it is: it does not
+check the installed file's mode or owner, and it does not check that the Flatpak's
+exported ostree carries them — only the `build-flatpak/files/` tree that stage 7 exports
+from, which is the same proxy stage 9 uses.
+
+**Evidence it works.** The stage was exercised against the real script (extracted
+verbatim) with a sandbox repo, since the flatpak build cannot complete here (the
+pre-existing `cargo-sources` `bzip2` gap). Eight cases:
+
+| # | Setup | Result |
+|---|---|---|
+| 1 | real manifest, no build tree | SKIP, manifest half green |
+| 2 | real manifest, complete tree | ok |
+| 3 | complete tree with the licence deleted | FAIL |
+| 4 | manifest reverted to the pre-T-23 commit | FAIL — the historical defect, caught by half 1 |
+| 5 | install line copying `COPYING` to the licence path | FAIL |
+| 6 | tree produced by running the manifest's own install commands | ok |
+| 7 | that tree with the licence deleted | FAIL |
+| 8 | licence replaced by an impostor of **the same 35149-byte length**, different content | FAIL — so the comparison is on bytes, not size |
+
+Case 5 is the one that changed the code: the first version of half 1 matched on the
+destination only, so an install line pointing at the *wrong source file* passed. It now
+requires the source path too — and is honest that it is a string match on a command, not
+an execution of it.
+
+**Two things this stage cannot be shown to do here**, and neither is a pass:
+`flatpak-build` and `smoke-test` are skipped/failing on the pre-existing `bzip2`
+vendoring gap, so half 2 has never run against a tree produced by a *successful* real
+build — only against trees built by the manifest's own install commands (cases 6-8) and
+hand-made ones (2-3). And the tree's timestamps are useless for staleness: flatpak-builder
+normalises them, so `build-flatpak/files/` and everything below it are dated 1970. The
+completion marker is `files/bin/gamehandler` instead.
 
 ---
 

@@ -3,9 +3,10 @@
 # GameHandler — the single verification entry point.
 #
 # One command to run before closing a task. Implements the stage list in
-# docs/migration/packaging.md §6, extended with the two checks that doc and
+# docs/migration/packaging.md §6, extended with the three checks that doc and
 # PLAN.md §7 also require (cargo-sources freshness, desktop/metainfo
-# validation). Task T-17.
+# validation, and — T-23 — that the built Flatpak actually carries the files no
+# validator looks at). Task T-17.
 #
 # Stages, in order:
 #
@@ -25,6 +26,11 @@
 #   7  flatpak-build         flatpak-builder builds the manifest
 #   8  smoke-test            scripts/smoke-test.sh — CLI + headless GUI
 #   9  desktop-metainfo      desktop-file-validate + appstreamcli validate
+#  10  flatpak-contents      the built Flatpak carries the files no validator
+#                            looks at: the application's own licence text and
+#                            the Authenticode trust root. Added by T-23, after
+#                            the GPL text turned out to be missing from the
+#                            Flatpak with every one of stages 1-9 green.
 #
 # Output contract (packaging.md §6): one machine-greppable line per stage on
 # stdout — `ok <stage>`, `FAIL <stage>`, `SKIP <stage>` — and every stage is
@@ -81,7 +87,7 @@ usage: scripts/verify.sh [options]
   --hold SECONDS   forward the GUI hold interval to the smoke test
 
 Stages: build, clippy, test, oracle-freshness, python-tests, cargo-sources,
-        flatpak-build, smoke-test, desktop-metainfo
+        flatpak-build, smoke-test, desktop-metainfo, flatpak-contents
 EOF
 }
 
@@ -467,6 +473,125 @@ stage_desktop_metainfo() {
 }
 
 # ---------------------------------------------------------------------------
+# Stage 10 — what the build installs that no validator looks at
+#
+# Stage 9 loads the desktop entry and the metainfo and asks whether they are
+# *well-formed*. Nothing in stages 1-9 asks whether the Flatpak contains them —
+# or the application's own licence, or the Authenticode trust root — because
+# none of those files is an input to a validator. That gap is not hypothetical:
+# T-16 moved the build from meson (which ran data/meson.build's install_data) to
+# cargo, dropped the licence install with it, and every stage stayed green while
+# the Flatpak shipped a GPL-3 binary with no licence. T-23.
+#
+# Two halves, deliberately:
+#
+#   1. the manifest declares an install for each file. This needs no build tree,
+#      so it still runs when flatpak-builder cannot (an offline vendoring gap,
+#      say) — the check that would have caught the original defect must not be
+#      hostage to the build succeeding. It reads the manifest rather than
+#      restating what it says: the assertion is "some command in here installs
+#      to this destination", and it fails if that command is deleted.
+#   2. when a build tree exists, the installed bytes are compared against the
+#      repository's own copy. Byte-identity is the point — an install line that
+#      points at the wrong file passes half 1 and fails here.
+#
+# A missing build tree is reported as SKIP, never as a pass: the sub-check lines
+# still print, so a SKIP that got half-way is legible.
+# ---------------------------------------------------------------------------
+
+# Does any module install <src> to <dest>? Accepts ${FLATPAK_DEST}/... and
+# /app/... spellings by matching on the destination tail, and requires the
+# source too: matching the destination alone passes an install line that copies
+# the wrong file there (found by mutation — `COPYING ${FLATPAK_DEST}/.../LICENSE`
+# passed a destination-only check). `<src> ` is matched with its trailing space
+# so `LICENSE` is not satisfied by the `LICENSE` inside its own destination.
+DECLARES_PY='
+import json, sys
+doc = json.load(open(sys.argv[1]))
+src, dest = sys.argv[2], sys.argv[3]
+for module in doc.get("modules", []):
+    commands = module.get("build-commands", []) + module.get("post-install", [])
+    for command in commands:
+        if dest in command and (src + " ") in command:
+            sys.exit(0)
+sys.exit(1)
+'
+
+# <repository path>|<path under /app> — the files whose absence no validator
+# can see. Kept in step with the manifest by this stage, not by memory.
+FLATPAK_CONTENTS=(
+    "LICENSE|share/licenses/$APP_ID/LICENSE"
+    "data/microsoft-identity-verification-root-ca-2020.pem|share/gamehandler/microsoft-identity-verification-root-ca-2020.pem"
+)
+
+stage_flatpak_contents() {
+    local rc=0 entry src dest
+
+    echo "manifest: ${MANIFEST#"$ROOT"/}"
+    for entry in "${FLATPAK_CONTENTS[@]}"; do
+        src="${entry%%|*}"
+        dest="${entry#*|}"
+        if [ ! -f "$ROOT/$src" ]; then
+            echo "FAIL $src is not in the repository, so the build cannot install it"
+            rc=1
+            continue
+        fi
+        if python3 -c "$DECLARES_PY" "$MANIFEST" "$src" "$dest"; then
+            echo "ok   manifest installs $src to $dest"
+        else
+            echo "FAIL the manifest never installs $src to $dest"
+            rc=1
+        fi
+    done
+
+    # A manifest that does not declare the installs is a failure and must be
+    # reported as one, not downgraded to a SKIP by the missing build tree below.
+    [ "$rc" -eq 0 ] || return 1
+
+    local tree="$BUILD_DIR/files"
+    if [ ! -d "$tree" ]; then
+        echo "no build tree at ${tree#"$ROOT"/}: the installed copies were NOT checked"
+        echo "  run without --skip-flatpak to build one (stages 7-8)"
+        return 99
+    fi
+
+    # Whether this tree was built from the manifest as it stands now cannot be
+    # answered by mtime: flatpak-builder normalises timestamps in the exported
+    # tree, so `files/` and everything under it are dated 1970 (checked). The
+    # marker is the built binary instead — it appears only once the gamehandler
+    # module's build-commands have run, which is the precondition for the
+    # installs below to have run with them. No marker, no evidence: SKIP, and
+    # say which half did run.
+    if [ ! -f "$tree/bin/gamehandler" ]; then
+        echo "no ${tree#"$ROOT"/}/bin/gamehandler, so this is not a completed build of the"
+        echo "  gamehandler module — its installed copies were NOT checked"
+        echo "  (the manifest half above did run, and passed)"
+        return 99
+    fi
+    echo "build tree: ${tree#"$ROOT"/} (completed build of the gamehandler module)"
+
+    local installed
+    for entry in "${FLATPAK_CONTENTS[@]}"; do
+        src="${entry%%|*}"
+        dest="${entry#*|}"
+        installed="$tree/$dest"
+        if [ ! -f "$installed" ]; then
+            echo "FAIL not in the built Flatpak: $dest"
+            rc=1
+        elif [ ! -s "$installed" ]; then
+            echo "FAIL installed but empty: $dest"
+            rc=1
+        elif cmp -s "$ROOT/$src" "$installed"; then
+            echo "ok   installed, byte-identical to $src: $dest ($(stat -c%s "$installed") bytes)"
+        else
+            echo "FAIL installed copy differs from $src: $dest"
+            rc=1
+        fi
+    done
+    return "$rc"
+}
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -513,6 +638,11 @@ if [ "$SKIP_FLATPAK" -eq 1 ] && [ ! -d "$BUILD_DIR/files" ]; then
 else
     run_stage desktop-metainfo stage_desktop_metainfo
 fi
+
+# Runs even under --skip-flatpak: its manifest half needs no build tree, and that
+# is precisely the half that catches a deleted install line. It reports SKIP on
+# its own when there is no tree to inspect.
+run_stage flatpak-contents  stage_flatpak_contents
 
 # The repository must be as clean after a run as before it (T-17 constraint).
 STATUS_AFTER="$(git status --porcelain 2>/dev/null)"

@@ -520,6 +520,26 @@ prints the full table instead, for a diagnostic sweep.
    stage; a *missing* validator reports `SKIP` with install instructions rather
    than `ok`, because the stage did not actually run — silence there would be a
    fake pass.
+10. `flatpak-contents` — added by T-23, later than the rest of this list. Stages
+   1–9 all ask whether a file is *well-formed*; none asked whether the Flatpak
+   *contains* anything, and that gap was real: T-16 moved the build from meson
+   (which ran `data/meson.build`'s `install_data`) to cargo, dropped the
+   application's own licence install with it, and every stage stayed green while
+   the Flatpak shipped a GPL-3 binary with no licence text. This stage holds a
+   short list of (repository file → path under `/app`) pairs — the licence and
+   the Authenticode trust root, neither of which is an input to any validator —
+   and checks it in two halves: that the manifest *declares* an install of that
+   source to that destination (reads the JSON; needs no build tree, so it still
+   runs when `flatpak-builder` cannot, which is the half that would have caught
+   the original defect), and that the installed bytes are byte-identical to the
+   repository's own copy (only when `build-flatpak/files/bin/gamehandler`
+   exists — flatpak-builder normalises timestamps, so mtime cannot date the
+   tree). No completed tree reports `SKIP`, never `ok`, and prints which half
+   did run.
+
+    The list is deliberately short and deliberate: a stage that asserted every
+    installed path would duplicate the manifest's own three metadata installs,
+    which stage 9 already covers by content.
 
 Output contract: one machine-greppable line per stage to stdout — `### <stage>`,
 then `ok|FAIL|SKIP <stage>` — with sub-check lines indented so they never

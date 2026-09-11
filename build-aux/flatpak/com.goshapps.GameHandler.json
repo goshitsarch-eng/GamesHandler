@@ -90,7 +90,9 @@
         "install -Dm0755 target/release/gamehandler ${FLATPAK_DEST}/bin/gamehandler",
         "install -Dm0644 data/com.goshapps.GameHandler.desktop ${FLATPAK_DEST}/share/applications/com.goshapps.GameHandler.desktop",
         "install -Dm0644 data/com.goshapps.GameHandler.metainfo.xml ${FLATPAK_DEST}/share/metainfo/com.goshapps.GameHandler.metainfo.xml",
-        "install -Dm0644 data/icons/hicolor/scalable/apps/com.goshapps.GameHandler.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/com.goshapps.GameHandler.svg"
+        "install -Dm0644 data/icons/hicolor/scalable/apps/com.goshapps.GameHandler.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/com.goshapps.GameHandler.svg",
+        "install -Dm0644 LICENSE ${FLATPAK_DEST}/share/licenses/com.goshapps.GameHandler/LICENSE",
+        "install -Dm0644 data/microsoft-identity-verification-root-ca-2020.pem ${FLATPAK_DEST}/share/gamehandler/microsoft-identity-verification-root-ca-2020.pem"
       ],
       "sources": [
         {
