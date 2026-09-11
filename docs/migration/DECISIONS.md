@@ -2319,3 +2319,81 @@ Related: D-26 (the injected client), D-03 (core stays dependency-free), T-15
 entry is an instance of: **the lead reasoned through four layers of inference to
 the wrong answer, and one `cargo tree -e features` settled it.** D-47's clause
 applied to a decision rather than a bug.
+
+## D-49. A bare `git commit` commits a teammate's staging — and a commit is not evidence of what its message says
+
+Four agents share one working tree **and one `.git/index`**. `git commit` with no
+pathspec commits *the index*, which is not the same thing as *your changes*.
+
+### The incident, exactly
+
+The lead staged one file — `docs/migration/VERIFY-FINDINGS.md` — ran
+`git add <that file> && git commit`, and produced a commit containing **six**
+files: the docs file plus five of Architecture's staged source files
+(`crates/app/src/http.rs`, `crates/app/Cargo.toml`, `crates/app/src/view/runners.rs`,
+`crates/app/src/main.rs`, `Cargo.lock`), 597 insertions, under a docs-only
+message.
+
+The repair raced too. `git reset --soft HEAD~1` followed by
+`git restore --staged` is *two* commands with a window between them, and a
+Packaging commit landed inside that window — carrying the docs file back out
+under *their* message. So the hazard is not confined to a single command; the
+window is the whole multi-step operation.
+
+**Nothing was lost, and that was luck, not design.** Both halves of the
+resulting commit happened to be complete: Packaging's `scripts/verify.sh` change
+parses (`bash -n`) and carries the `: > "$STAGE_LOG"` check at `:330`; the
+docs file is whole. No one ran `git show --stat HEAD` and compared it to the
+intent.
+
+### Why this is the project's defect class, in a new medium
+
+This is #50 and #53 again — **a command that reported success, where
+success was not evidence.** `git commit` exits 0. It exited 0 in every step
+above. The thing that would have caught it is a comparison of the commit's
+*contents* against the commit's *intent*, and no such check existed. The same
+shape as a stale binary printing a green count, and as a truncation whose
+failure nobody read.
+
+### The rule, and the measurement behind it
+
+Always name the paths; never `git add` first:
+
+    git commit -m "..." -- path/one path/two
+
+This was **measured, not assumed.** In a scratch repo with `b.txt` staged,
+`git commit -m "only a" -- a.txt` produced a one-file commit, ignored the staged
+`b.txt` entirely, and **left `b.txt` staged** for its owner. The pathspec form
+is atomic and does not disturb another agent's staging; the `git add` form is
+neither.
+
+Three checks, because the rule alone is a convention and conventions are what
+fail:
+
+1. **Before:** `git status --short` and `git diff --cached --name-only`. A path
+   you do not own that is staged stays staged — do not commit it on their behalf.
+2. **After:** `git show --stat HEAD`. A file you did not touch in the commit you
+   just made is the failure, visible, one command.
+3. **Never** commit a file another agent holds uncommitted edits in; that sweeps
+   their work too.
+
+### Why history was not rewritten
+
+Blast radius was measured: across the last 30 commits, the contaminated commit
+is the **only** mixed one — every other multi-file commit is a single task
+touching its own files, which is what the brief asks for. Both halves being
+complete and correct, rewriting shared history while three agents actively edit
+the tree would risk dropping real work to fix a cosmetic boundary. D-46 clause 2
+also applies: an amend voids a review, so rewriting a commit the advocate had
+seen would cost more than the mislabelled message does. Recorded rather than
+rewritten.
+
+The advocate's standing instruction is amended accordingly: when a task report
+says "committed at `<sha>`", read `git show --stat <sha>` and compare it to what
+the report claims that commit contains. **A commit containing more than its
+message says is the same defect as a stage reporting green without running.**
+
+Related: D-45 (a count is evidence only with the commit it came from — this is
+the same rule applied to the *contents* of the commit rather than to a number),
+D-46 (a review names a commit, so a contaminated commit under review is not
+automatically still-reviewed), [[verification-defect-class]].
