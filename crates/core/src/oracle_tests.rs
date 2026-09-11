@@ -2291,3 +2291,53 @@ fn canonicalising_sorts_objects_without_reordering_arrays() {
         "objects sorted at every depth; the array's own order untouched"
     );
 }
+
+/// The direct **object-in-object** path — an object-valued key, reached without
+/// passing through an array. Issue #37.
+///
+/// The test above nests its inner object inside an array, so it reaches the
+/// inner object through the *array* arm of the recursion; a canonicaliser that
+/// recursed into arrays but passed object values straight through would still
+/// satisfy it. That made "do not recurse into object-valued keys" a mutation
+/// survivor, and the lead's review found it surviving in **both** build scopes.
+///
+/// # What this test can and cannot catch, measured rather than assumed
+///
+/// The `{"outer": {"zulu": …, "alpha": …}}` literal is written with the inner
+/// keys **not** in alphabetical order, which is the most this can do — but
+/// whether that survives to the assertion depends on the build:
+///
+/// * Under `cargo test --workspace`, `serde_json/preserve_order` is unified in
+///   by `cosmic-theme`, `Map` is insertion-ordered, the inner keys really are
+///   `zulu, alpha` on entry, and **only** the recursion can sort them. The
+///   mutation is caught.
+/// * Under `cargo test -p gamehandler-core`, `Map` is a `BTreeMap` and the
+///   parse sorts the inner keys before the canonicaliser ever sees them. The
+///   mutation is then *behaviourally equivalent* — not merely unobserved: the
+///   output is byte-identical either way, in that configuration, for every
+///   input. No assertion on rendered text can separate the two, and a test
+///   claiming to would be claiming something false.
+///
+/// So the honest statement of this test's strength is "non-vacuous where the
+/// canonicaliser does anything at all". That is the same D-33 distinction the
+/// module doc draws, applied to a survivor rather than to a failure: a mutation
+/// that survives in one configuration because the property is *absent* there is
+/// not a gap. It was verified by mutating `canonicalise_object_keys` to pass
+/// object values through unchanged and running both scopes.
+#[test]
+fn canonicalising_recurses_into_object_valued_keys_not_only_into_arrays() {
+    let value: Value =
+        serde_json::from_str(r#"{"outer": {"zulu": 1, "alpha": 2}}"#).expect("valid JSON");
+    assert_eq!(
+        python_answer_text(&value),
+        concat!(
+            "{\n",
+            "  \"outer\": {\n",
+            "    \"alpha\": 2,\n",
+            "    \"zulu\": 1\n",
+            "  }\n",
+            "}"
+        ),
+        "an object nested directly in an object is sorted too"
+    );
+}

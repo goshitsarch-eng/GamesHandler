@@ -69,3 +69,22 @@ tar = "0.4"
 xz2 = "0.1"
 bzip2 = "0.5"
 flate2 = { version = "1", default-features = false, features = ["zlib"] }
+
+# `renameat2(.., RENAME_NOREPLACE)` for the runner install (DECISIONS D-25).
+#
+# The install's atomicity property is that a runner directory is never visible
+# under its final name until every check has passed, and that two installs
+# racing on the same release cannot produce one good tree and one interleaved
+# with the other's files. A plain `rename` would do exactly that, silently, so
+# the `NOREPLACE` flag is the security boundary rather than a convenience.
+#
+# Python reaches it through `ctypes.CDLL(None)` and looks the symbol up at
+# runtime; the workspace denies `unsafe_code`, and an `unsafe` block on a
+# syscall whose error contract matters would need its invariant restated and
+# maintained here. `rustix` already encapsulates it.
+#
+# Version 1 rather than 0.38 on purpose: both are already in the workspace
+# graph, 1.1.4 is the one the newer half of the tree uses, and pinning to the
+# older one would add a second `linux-raw-sys` to the *direct* edge of a crate
+# that is meant to stay small. `fs` is not in `default` (which is only `std`).
+rustix = { version = "1", features = ["fs"] }

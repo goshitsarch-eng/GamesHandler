@@ -2263,4 +2263,90 @@ A=\"quoted; with semicolon\"
         let resolved = resolve_game_paths(&subject, &resolver).unwrap();
         assert_eq!(resolved.exe_path, "/games/x.exe");
     }
+    // -----------------------------------------------------------------
+    // The constants are transcriptions, and transcriptions need pinning
+    // -----------------------------------------------------------------
+
+    /// The four DXVK/WineD3D/VKD3D literals and the marker name, checked
+    /// against `runners.py` itself rather than against a copy of them.
+    ///
+    /// These are transcriptions of Python string literals that appear nowhere
+    /// in the oracle corpus — the advocate byte-searched the fixtures and found
+    /// zero occurrences of `dxgi=n,b`, `d3d9=b`, `d3d12core=b` or
+    /// `gamehandler-dxvk` in either the cases or the answers, because
+    /// `apply_launch_options` and `install_bundled_dxvk` are not oracle ops and
+    /// `merge_dll_overrides` is always called with case-supplied arguments.
+    ///
+    /// That left them pinned only against themselves: every assertion site
+    /// compares a constant to a value derived from that same constant, so
+    /// flipping a literal — swapping `n,b` for `b,n`, dropping `dxgi` from the
+    /// DXVK list, dropping `d3d12core`, renaming the marker — survived the whole
+    /// suite in both build scopes. The values are correct today; the point is
+    /// that they were correct for no reason a test could tell you about.
+    ///
+    /// The Python source is still in the tree as the port's specification, so
+    /// the comparison can be mechanical. This **parses** the literals out of the
+    /// calls rather than searching for the constants' own text, which matters:
+    /// a test that grepped for `"d3d8,d3d9,d3d10core,d3d11,dxgi=n,b"` would just
+    /// be the same transcription written twice, and would go stale in lockstep
+    /// with the constant. Reading the call sites means a Python-side change
+    /// shows up as a failure instead of as nothing at all.
+    #[test]
+    fn the_dll_override_literals_are_the_reference_s_and_not_a_copy_of_ourselves() {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../gamehandler/runners.py");
+        let text = std::fs::read_to_string(&source).unwrap_or_else(|err| {
+            panic!(
+                "{} should be readable: {err}\n\
+                 It is the reference these constants were transcribed from, and \
+                 the port's own tests read it. If it has been moved, this check \
+                 needs a new path — and so does every citation in \
+                 docs/migration/.",
+                source.display()
+            )
+        });
+
+        // `merge_dll_overrides(env, "<literal>")`, in source order.
+        let merged: Vec<&str> = text
+            .lines()
+            .filter_map(|line| line.trim().split_once("merge_dll_overrides(env, \""))
+            .filter_map(|(_head, rest)| rest.split_once('"').map(|(literal, _)| literal))
+            .collect();
+
+        // Three distinct literals, the DXVK one twice — once on the
+        // already-installed fast path and once after the copy. A change to
+        // either call site has to be a change to both, so the count is part of
+        // the assertion and not an incidental detail of the fixture.
+        let mut sorted = merged.clone();
+        sorted.sort_unstable();
+        let mut expected = vec![
+            DXVK_DLL_OVERRIDES,
+            DXVK_DLL_OVERRIDES,
+            WINED3D_DLL_OVERRIDES,
+            VKD3D_DLL_OVERRIDES,
+        ];
+        expected.sort_unstable();
+        assert_eq!(
+            sorted, expected,
+            "the override literals passed to `merge_dll_overrides` in \
+             runners.py, sorted, should be the three constants with DXVK \
+             twice; found {merged:?}. If the reference changed its overrides, \
+             the constants above must change with it."
+        );
+
+        // `marker = prefix / ".gamehandler-dxvk-version"` — the name of the
+        // file `install_bundled_dxvk` writes and re-reads. A copy of the
+        // constant in the Python source is not the thing to compare against,
+        // so this reads the assignment and not a bare mention of the name.
+        let marker = text
+            .lines()
+            .filter_map(|line| line.trim().split_once("marker = prefix / \""))
+            .filter_map(|(_head, rest)| rest.split_once('"').map(|(name, _)| name))
+            .next()
+            .expect("runners.py should assign `marker = prefix / <name>`");
+        assert_eq!(
+            marker, DXVK_MARKER_NAME,
+            "the version marker the reference writes into the prefix"
+        );
+    }
 }

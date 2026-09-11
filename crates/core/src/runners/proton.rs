@@ -3,24 +3,39 @@
 //! class), `_write_metadata` (`runners.py:709`) and `_rename_noreplace`
 //! (`runners.py:663`).
 //!
-//! # What this slice covers, and what lands next
+//! # What this slice covers
 //!
-//! This is the *pure* half: the GitHub payload parser, the header parser, the
-//! installed-build probe, and the injected [`HttpClient`] of D-26. Together
-//! they are everything that can be exercised without a network or a live
-//! install, which is what lets all of it run offline.
+//! Both halves. The *pure* layer — the GitHub payload parser, the header
+//! parser, the installed-build probe, and the injected [`HttpClient`] of D-26 —
+//! is what can be exercised without a network or a live install, and it was
+//! pinned first, so the staging logic below is written against a parser already
+//! known to agree with Python. The *filesystem* half is [`install`],
+//! [`uninstall`], [`resolve_staged`], [`write_metadata`] and
+//! [`rename_noreplace`].
 //!
-//! The filesystem half — `install`, `uninstall`, `_resolve_staged`,
-//! `_write_metadata`, `_rename_noreplace` — is the next increment, for the same
-//! reason `archive.rs` and `families.rs` were split from `mod.rs`: the pure
-//! layer is where the compatibility risk is, and pinning it first means the
-//! staging logic is written against a parser that is already known to agree
-//! with Python. [`MAX_RUNNER_ARCHIVE_BYTES`] and [`extract_archive`] are
-//! already in place for it.
+//! The install is a security boundary and its order is the property, so it is
+//! stated once here: the archive lands in a private `0700` staging directory
+//! **inside** the runners directory, is extracted there, the *extracted tree*
+//! is validated (not the archive), metadata is written into the validated tree,
+//! and only then is the tree renamed into place under a name that cannot
+//! already exist. Nothing attacker-influenced is reachable under its final name
+//! until every check has passed, and no partial state is ever visible there.
+//!
+//! # The two `proton` predicates, which are NOT the same predicate
+//!
+//! `runners.py` spells "is this a runner?" two ways and the difference is
+//! observable, so both are reproduced rather than unified:
+//! [`proton_entry_exists`] (`.exists()`, `runners.py:843`) and
+//! [`is_staged_runner`] (`.is_file()`, `runners.py:855`, `:936`, `:946`,
+//! `:659`). A tree whose `proton` is a **directory** is installed to one and
+//! unresolvable to the other. It looks like an oversight in the reference and
+//! may be one; it is on the path that decides whether the UI offers to install
+//! a build that is already on disk, so it is kept and pinned rather than
+//! tidied.
 //!
 //! # Deliberate divergences
 //!
-//! Four, and each is pinned by a test rather than left to a reader:
+//! Five, and each is pinned by a test rather than left to a reader:
 //!
 //! 1. **`int()` accepts ASCII digits only.** Python's `int()` accepts any
 //!    Unicode `Nd` decimal digit — measured, `int("٣")` is `3` and
@@ -50,17 +65,33 @@
 //!    out of `fetch_available`. The port returns [`RunnerError::Http`]. Same
 //!    class as the DXVK-marker divergence in `launch_opts`: Python's failure is
 //!    a traceback, ours is a message the caller can render.
+//! 5. **The staging name is drawn here, not by `tempfile`.** Python uses
+//!    `TemporaryDirectory(prefix=".install-")`; the port draws the same
+//!    `.install-<8 chars>` shape from the same `[a-z0-9_]` alphabet, from the
+//!    process id and a clock, with no new dependency. The name is transient and
+//!    never observed — it is not read back, matched on, or shown to a user — so
+//!    the entropy source is not part of the contract. What *is* kept is that a
+//!    collision advances to the next name rather than clearing the occupied one:
+//!    the parent directory holds the user's installed runners, and an
+//!    unexpectedly-occupied name may not be ours to delete.
 
-use std::path::Path;
+use std::fs;
+use std::io::Write;
+use std::os::unix::fs::DirBuilderExt;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use rustix::fs::{renameat_with, RenameFlags, CWD};
+use rustix::io::Errno;
 use serde_json::Value;
 
-use super::archive::{safe_install_id, sanitise_release_tag};
+use super::archive::{
+    safe_install_id, sanitise_release_tag, MAX_RUNNER_ARCHIVE_BYTES, METADATA_NAME,
+};
 use super::families::{
     family_by_id, find_wine_binary, is_truthy, pick_asset, python_str, ReleaseInfo, RunnerFamily,
 };
-use super::{read_metadata, RunnerError, USER_AGENT};
+use super::{read_metadata, RunnerError, SYSTEM_WINE, USER_AGENT};
 
 /// The default family, matching Python's `family_by_id("proton-ge")` default
 /// on every entry point that takes a family. A release with no family named is
@@ -93,45 +124,66 @@ pub struct ResponseHead {
 /// A blocking HTTP GET, injected rather than imported (D-26).
 ///
 /// `core` deliberately has no networking dependency, so the concrete client
-/// lives in the binary crate and this trait is the seam. Only one method is
-/// required, because a whole-body fetch is a chunked fetch that happens to
-/// accumulate — which is what keeps a test double from having to implement two
-/// behaviours that could disagree.
+/// lives in the binary crate and this trait is the seam.
 ///
-/// # Why the sink returns a `Result`
+/// # Why the head arrives *before* the body, as its own callback
 ///
-/// `install` must abandon a transfer the moment it exceeds the size cap rather
-/// than buffering a hostile multi-gigabyte body first, so the callback has to
-/// be able to stop the transfer. Python gets this from an exception raised
-/// inside its `while` loop; here it is the sink's `Err`, which the client
-/// propagates unchanged.
+/// The first version of this trait streamed the body through one callback and
+/// returned the [`ResponseHead`] when the transfer completed. That reads
+/// naturally and it **cannot express what `install` does**: Python reads
+/// `Content-Length` off the response *before* the read loop, because it uses it
+/// for two things that both have to happen before any byte is kept —
+///
+/// * `total = declared or release.size`, the denominator of every progress
+///   report, so the percentage is wrong for the whole transfer if it arrives
+///   late; and
+/// * an immediate abort if `declared` exceeds the size cap, which is the cheap
+///   check that makes the expensive one (counting bytes as they arrive)
+///   unnecessary in the case the server is honest about being hostile.
+///
+/// Streaming the body through a callback and returning the head afterwards
+/// makes both impossible, and no amount of care inside `install` fixes it —
+/// the information does not exist yet. So the head is delivered by its own
+/// callback first, and *both* callbacks can return `Err` to abandon the
+/// transfer: `on_head` for a declared length that is already too large, `sink`
+/// for a body that turns out to be. Python gets both from exceptions raised
+/// inside its `with` block; these are the same two exits.
 pub trait HttpClient {
-    /// GET `url`, calling `sink` with each chunk as it arrives.
+    /// GET `url`, then hand the response to two callbacks in order.
     ///
-    /// Returns the response head once the body is complete. A non-success
-    /// status, a transport failure, or an `Err` from `sink` is `Err`.
-    fn get_chunked(
-        &self,
-        url: &str,
-        headers: &[(&str, &str)],
-        timeout: Duration,
-        sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
-    ) -> Result<ResponseHead, RunnerError>;
-
-    /// GET `url` and collect the whole body. Provided, not required.
+    /// `on_head` is called once, before any body byte. `sink` is then called
+    /// with each chunk as it arrives. An `Err` from either abandons the
+    /// transfer and is propagated unchanged, so a caller can stop a download it
+    /// can already tell is unacceptable without receiving the rest of it.
+    ///
+    /// A non-success status or a transport failure is `Err`.
     fn get(
         &self,
         url: &str,
         headers: &[(&str, &str)],
         timeout: Duration,
-    ) -> Result<(ResponseHead, Vec<u8>), RunnerError> {
-        let mut body = Vec::new();
-        let head = self.get_chunked(url, headers, timeout, &mut |chunk| {
-            body.extend_from_slice(chunk);
-            Ok(())
-        })?;
-        Ok((head, body))
-    }
+        on_head: &mut dyn FnMut(&ResponseHead) -> Result<(), RunnerError>,
+        sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
+    ) -> Result<(), RunnerError>;
+}
+
+/// GET `url` and collect the whole body into a `String`, erroring on invalid
+/// UTF-8. The shape both `fetch_available`-style callers want.
+pub fn get_text(
+    client: &dyn HttpClient,
+    url: &str,
+    headers: &[(&str, &str)],
+    timeout: Duration,
+) -> Result<String, RunnerError> {
+    let mut body = Vec::new();
+    client.get(url, headers, timeout, &mut |_head| Ok(()), &mut |chunk| {
+        body.extend_from_slice(chunk);
+        Ok(())
+    })?;
+    String::from_utf8(body).map_err(|_| RunnerError::Http {
+        // Divergence 4: Python raises an uncaught `UnicodeDecodeError`.
+        message: "Unexpected GitHub releases response".to_string(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -477,12 +529,8 @@ pub fn fetch_available(
 ) -> Result<Vec<ReleaseInfo>, RunnerError> {
     let resolved = resolve_family(family)?;
     let headers = release_headers();
-    let (_, body) = client.get(&resolved.releases_url(), &headers, timeout)?;
+    let text = get_text(client, &resolved.releases_url(), &headers, timeout)?;
 
-    let text = String::from_utf8(body).map_err(|_| RunnerError::Http {
-        // Divergence 4: Python raises an uncaught `UnicodeDecodeError` here.
-        message: "Unexpected GitHub releases response".to_string(),
-    })?;
     let data: Value = serde_json::from_str(&text).map_err(|_| RunnerError::Http {
         message: "Unexpected GitHub releases response".to_string(),
     })?;
@@ -542,7 +590,7 @@ pub fn is_installed(runners_directory: &Path, tag: &str, family_id: Option<&str>
         },
     };
 
-    if is_usable_runner(&target) {
+    if proton_entry_exists(&target) {
         return true;
     }
 
@@ -566,7 +614,7 @@ pub fn is_installed(runners_directory: &Path, tag: &str, family_id: Option<&str>
         // from a hand-edited or foreign one.
         let matches_family = matches!(metadata.get("family"), Some(Value::String(text)) if *text == family_id);
         let matches_tag = matches!(metadata.get("tag"), Some(Value::String(text)) if *text == tag);
-        if matches_family && matches_tag && is_usable_runner(&child) {
+        if matches_family && matches_tag && is_staged_runner(&child) {
             return true;
         }
     }
@@ -578,15 +626,472 @@ pub fn is_release_installed(runners_directory: &Path, release: &ReleaseInfo) -> 
     is_installed(runners_directory, &release.tag, Some(&release.family_id))
 }
 
-/// `find_wine_binary(target) is not None or (target / "proton").exists()`.
+/// Was a `proton` entry found by `Path::exists` semantics — i.e. may
+/// `is_installed`'s **first** check accept a tree?
 ///
-/// The `proton` check is `.exists()`, not `.is_file()`, matching Python — a
-/// `proton` entry that is a **broken symlink** therefore counts as usable here.
-/// That is Python's behaviour and it is kept rather than tidied, because this
-/// predicate also decides whether a directory the user can see is offered for
-/// re-installation, and the two implementations must agree on that.
-fn is_usable_runner(path: &Path) -> bool {
+/// Python spells this predicate twice with two different predicates, and the
+/// difference is observable, so it is reproduced rather than unified:
+///
+/// * `runners.py:843` — the tree named by the release's `install_id` — uses
+///   `(target / "proton").exists()`, which **follows symlinks and is false for
+///   a broken one**.
+/// * `runners.py:855` (the legacy-metadata scan), `:936` and `:946`
+///   (`_resolve_staged`) and `:659` (`_validate_staged_runner`) all use
+///   `.is_file()`, which is false for a directory called `proton` and false for
+///   a symlink to a directory.
+///
+/// So a tree whose `proton` is a **directory** is "installed" to the first
+/// check and "not a runner" to the other four. That looks like an oversight and
+/// it may well be one, but it is on the path that decides whether the UI offers
+/// to install a build that is already on disk, and the two readers of this
+/// module must not quietly disagree about it. Both spellings are therefore
+/// kept, with a test pinning each.
+///
+/// `find_wine_binary` is `.exists()`-based in both, so only the `proton` half
+/// differs.
+fn proton_entry_exists(path: &Path) -> bool {
     find_wine_binary(path).is_some() || path.join("proton").exists()
+}
+
+/// Was a `proton` entry found by `Path::is_file` semantics?
+///
+/// The `.is_file()` spelling, used by `_resolve_staged` and the legacy scan.
+/// See [`proton_entry_exists`] for why both exist.
+fn is_staged_runner(path: &Path) -> bool {
+    find_wine_binary(path).is_some() || path.join("proton").is_file()
+}
+
+// ---------------------------------------------------------------------------
+// The filesystem half: stage, validate, rename into place
+// ---------------------------------------------------------------------------
+
+/// A staging directory inside the runners directory that removes itself.
+///
+/// Port of `tempfile.TemporaryDirectory(dir=runners_directory, prefix=".install-")`.
+/// Three properties matter and all three are load-bearing rather than
+/// incidental:
+///
+/// * **It is inside `runners_directory`.** Not tidiness — the final step is a
+///   rename, and a rename across filesystems is not atomic and fails outright
+///   on some pairs. Staging beside the destination is what makes
+///   [`rename_noreplace`] the atomic operation the install relies on.
+/// * **It is removed on every exit path**, including the error ones, which is
+///   what `TemporaryDirectory`'s context manager does and what `Drop` does
+///   here. A failed install must not leave a half-extracted tree behind for the
+///   next `is_installed` scan to find.
+/// * **It is created `0700`.** The tree is attacker-influenced and is validated
+///   *after* extraction, so between those two moments it must not be readable
+///   by anyone else.
+///
+/// The name is `tempfile`'s own `mkdtemp` shape (`.install-<8 random chars>`)
+/// drawn from the same `[a-z0-9_]` alphabet, so an interrupted staging
+/// directory is recognisable to a human reading `runners/` and indistinguishable
+/// from one Python would have left.
+///
+/// **A collision advances to the next name; it never clears the existing
+/// one.** `mkdtemp` retries and eventually raises, and it does not delete
+/// anything on the way — which matters here because the parent directory is
+/// shared with the user's installed runners and a name that is unexpectedly
+/// occupied may not be ours to remove.
+struct StagingDirectory {
+    path: PathBuf,
+}
+
+impl StagingDirectory {
+    fn create(parent: &Path) -> Result<Self, RunnerError> {
+        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789_";
+
+        // `getrandom` is not a dependency and this does not need cryptographic
+        // randomness: the name only has to not collide with a sibling. The
+        // process id and a nanosecond clock are enough to separate concurrent
+        // installs, and the counter separates sequential ones inside a process.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        let mut seed = {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.subsec_nanos() as u64)
+                .unwrap_or(0);
+            (u64::from(std::process::id()) << 32) ^ nanos
+        };
+
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        let mut last_error = None;
+        for _ in 0..1000 {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407)
+                ^ COUNTER.fetch_add(1, Ordering::Relaxed);
+            let suffix: String = (0..8)
+                .map(|index| {
+                    let slot = ((seed >> (index * 6)) & 0x3f) as usize;
+                    ALPHABET[slot % ALPHABET.len()] as char
+                })
+                .collect();
+            let path = parent.join(format!(".install-{suffix}"));
+            match builder.create(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    last_error = Some(error);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(RunnerError::Io(last_error.unwrap_or_else(|| {
+            std::io::Error::other("could not create a staging directory")
+        })))
+    }
+}
+
+impl Drop for StagingDirectory {
+    fn drop(&mut self) {
+        // Best effort: a failure here must not mask the error that caused the
+        // drop, and an install that succeeded has already moved its tree out.
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Atomically rename `source` to `target`, which must not already exist.
+/// `_rename_noreplace` (`runners.py:663`).
+///
+/// `RENAME_NOREPLACE` is the whole point: a plain `rename` replaces an existing
+/// destination *silently*, so two installs racing on the same release would
+/// produce one good tree and one interleaved with the other's files, and a
+/// user's existing runner could be destroyed by a name collision. With
+/// `NOREPLACE` the loser gets `EEXIST` and nothing is lost.
+///
+/// DECISIONS D-25: `rustix::fs::renameat_with` rather than `libc::renameat2`,
+/// because the workspace denies `unsafe_code` and this is a security boundary —
+/// an `unsafe` block here would need its invariant restated and maintained,
+/// where `rustix` already encapsulates it.
+///
+/// Python looks the symbol up at runtime and raises
+/// `"Atomic no-replace runner installation is unavailable"` when `libc` has no
+/// `renameat2`. That arm is unreachable here by construction: `rustix` links
+/// the call, so a kernel without it is a link-time problem rather than a
+/// runtime branch. Recorded rather than ported, because a port of it would be
+/// dead code that no test could reach honestly.
+fn rename_noreplace(source: &Path, target: &Path) -> Result<(), RunnerError> {
+    match renameat_with(CWD, source, CWD, target, RenameFlags::NOREPLACE) {
+        Ok(()) => Ok(()),
+        Err(Errno::EXIST) => Err(RunnerError::AlreadyInstalled {
+            id: target
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        }),
+        Err(error) => Err(std::io::Error::from_raw_os_error(error.raw_os_error()).into()),
+    }
+}
+
+/// Write the metadata a later `is_installed` reads. `_write_metadata`
+/// (`runners.py:709`).
+///
+/// Four fields in this order, `json.dump(.., indent=2)` and a trailing newline,
+/// so the bytes match Python's exactly. The order comes from a struct's
+/// declaration order and **not** from a `serde_json::Map`, which is the trap
+/// D-33 is about: a map's order is alphabetical or insertion-ordered depending
+/// on whether `serde_json/preserve_order` got unified in, so a map here would
+/// write different bytes in the two build configurations.
+///
+/// `asset` and `source` are the *asset* name and the family's `github` slug,
+/// not the runner's directory name — this file describes where the build came
+/// from, which is what makes it usable for the legacy-directory scan in
+/// [`is_installed`].
+///
+/// `open("x")` is exclusive-create, so a second write to the same tree is an
+/// error rather than a silent clobber. The tree is freshly extracted, so that
+/// can only happen if the archive itself contained a `.gamehandler.json` —
+/// which [`super::archive::validate_staged_runner`] rejects first, by name.
+#[derive(serde::Serialize)]
+struct Metadata<'a> {
+    family: &'a str,
+    tag: &'a str,
+    asset: &'a str,
+    source: &'a str,
+}
+
+fn write_metadata(root: &Path, release: &ReleaseInfo) -> Result<(), RunnerError> {
+    // `release.family.github`, and the property **raises** for an unknown
+    // family. So an install of a release from a family this build does not know
+    // fails *here* — after extraction, at metadata time — rather than writing a
+    // metadata file with an empty `source` that the legacy-directory scan would
+    // then match on. Unreachable from the catalogue, which only ever builds
+    // releases from families that exist, but reachable from a caller that
+    // constructs a `ReleaseInfo` by hand, and the two outcomes are not
+    // equivalent: one is a failed install, the other a corrupt record.
+    let family = release.family().map_err(|message| RunnerError::Http { message })?;
+    let payload = Metadata {
+        family: &release.family_id,
+        tag: &release.tag,
+        asset: &release.name,
+        source: family.github,
+    };
+    let mut text = crate::json::to_python_string(&payload)
+        .map_err(|error| RunnerError::Io(std::io::Error::other(error)))?;
+    text.push('\n');
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(root.join(METADATA_NAME))?;
+    file.write_all(text.as_bytes())?;
+    Ok(())
+}
+
+/// Select a usable root from the immediate, non-symlink entries of the staged
+/// archive. `ProtonManager._resolve_staged` (`runners.py:931`).
+///
+/// Three outcomes, and the middle one is the interesting rule:
+///
+/// * The extraction root is **itself** a runner (`bin/wine` somewhere below it,
+///   or a `proton` file at the top) — some Wine archives are rootless — so the
+///   whole extracted tree is kept rather than guessing one child to move.
+/// * Any top-level entry is a **symlink** → refuse. Not because this link
+///   escapes, but because a rootless archive must be moved wholesale and a
+///   symlink among the entries means the "pick one child" path below would be
+///   renaming a link whose target may sit outside the tree. The re-check inside
+///   [`super::archive::validate_staged_runner`] happens against the tree as it
+///   will land; this is the earlier, cheaper refusal.
+/// * Exactly one **directory** that is a runner and whose name is a safe
+///   install id → that directory. More than one is ambiguous, and none is a
+///   failure; both raise rather than guessing, because guessing wrong installs
+///   the wrong tree or an empty one.
+///
+/// The `safe_install_id` call on each directory's name is a *validation*, and
+/// its result is discarded — the name it returns is not the one used. A
+/// directory whose name cannot be an install id (empty, `.`, `..`, containing a
+/// separator, or **starting with a dot**) is therefore a **hard error**, not a
+/// skipped entry: an archive that ships `.wine/bin/wine` alongside a real
+/// `GE-Proton9-5/` fails rather than silently installing the second. Python
+/// raises and so does this. It is easy to "improve" into a `continue` while
+/// porting, and doing so would accept an archive the reference refuses.
+///
+/// The rootless check comes **before** the symlink refusal, which is the order
+/// that matters: a rootless archive whose own top level contains a symlink is
+/// kept wholesale and the links are judged later, by
+/// [`super::archive::validate_staged_runner`], against the tree as it lands.
+pub fn resolve_staged(extraction_root: &Path) -> Result<PathBuf, RunnerError> {
+    let mut entries: Vec<PathBuf> = Vec::new();
+    for entry in fs::read_dir(extraction_root)? {
+        entries.push(entry?.path());
+    }
+    // `sorted(key=lambda path: path.name)` — by file name, not by full path.
+    // Sorting is not cosmetic: it is what makes "exactly one candidate" a
+    // deterministic outcome rather than a filesystem-order one, and the error
+    // for an ambiguous archive reproducible.
+    entries.sort_by_key(|path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+
+    if is_staged_runner(extraction_root) {
+        return Ok(extraction_root.to_path_buf());
+    }
+    if entries.iter().any(|entry| entry.is_symlink()) {
+        return Err(RunnerError::StagedTopLevelLink);
+    }
+
+    let mut candidates = Vec::new();
+    for entry in &entries {
+        // `entry.is_dir()` follows symlinks in Python; the refusal above has
+        // already removed every symlink from consideration, so the two agree.
+        if !entry.is_dir() {
+            continue;
+        }
+        let name = entry
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        safe_install_id(&name)?;
+        if is_staged_runner(entry) {
+            candidates.push(entry.clone());
+        }
+    }
+    match candidates.len() {
+        1 => Ok(candidates.remove(0)),
+        _ => Err(RunnerError::NoUsableRunner),
+    }
+}
+
+/// Download, stage, validate and atomically install a runner build.
+/// `ProtonManager.install` (`runners.py:864`).
+///
+/// The order of operations is the security property, so it is worth stating
+/// plainly: the archive is written to a **private 0700 staging directory
+/// inside the runners directory**, extracted there, the *extracted tree* is
+/// validated (not the archive), metadata is written into the validated tree,
+/// and only then is the whole tree renamed into place under a name that cannot
+/// already exist. Nothing attacker-controlled is reachable under its final name
+/// until every check has passed, and no partial state is ever visible there.
+///
+/// `progress` is called with a fraction in `0.0..=1.0`. Python guards with
+/// `if progress_cb and total`, so the callback is not called at all when the
+/// total is unknown — a caller that needs to know the download started must
+/// read that as "no progress reports yet", not as "zero percent". The final
+/// `1.0` is reported unconditionally, so a caller must tolerate a repeat of the
+/// value it just saw.
+pub fn install(
+    client: &dyn HttpClient,
+    runners_directory: &Path,
+    release: &ReleaseInfo,
+    progress: &dyn Fn(f32),
+    timeout: Duration,
+) -> Result<PathBuf, RunnerError> {
+    install_with(
+        client,
+        runners_directory,
+        release,
+        progress,
+        timeout,
+        MAX_RUNNER_ARCHIVE_BYTES,
+    )
+}
+
+/// [`install`] with an explicit download cap.
+///
+/// The cap is a parameter for the same reason [`extract_archive_with`]'s bounds
+/// are: the default is 2 GiB, and a test that cannot reach a limit can only
+/// assert the code path exists, not that it works. The streaming guard is the
+/// one that matters — a server is free to send `Content-Length: 10` and then
+/// three gigabytes — and with the real constant no honest test could ever
+/// exercise it. `install` delegates with [`MAX_RUNNER_ARCHIVE_BYTES`], so the
+/// production path and the tested path are the same code.
+///
+/// [`extract_archive_with`]: super::archive::extract_archive_with
+pub fn install_with(
+    client: &dyn HttpClient,
+    runners_directory: &Path,
+    release: &ReleaseInfo,
+    progress: &dyn Fn(f32),
+    timeout: Duration,
+    download_cap: u64,
+) -> Result<PathBuf, RunnerError> {
+    fs::create_dir_all(runners_directory)?;
+
+    let install_id = safe_install_id(&release.install_id()?)?;
+    let target = runners_directory.join(&install_id);
+    // `is_symlink` is checked separately because a **broken** symlink is not
+    // `exists()` and would otherwise be silently replaced by the rename —
+    // destroying a link the user made deliberately.
+    if target.exists() || target.is_symlink() {
+        return Err(RunnerError::AlreadyInstalled { id: install_id });
+    }
+    // `release.size < 0 or release.size > MAX_RUNNER_ARCHIVE_BYTES` — a
+    // **negative** declared size is reported as "exceeds the download size
+    // limit" rather than as an invalid size. That reads like a mistake and it is
+    // Python's behaviour, so it is kept: the message is user-visible and a bug
+    // report may quote it. The same asymmetry is in the `on_head` check below,
+    // which is why a negative `Content-Length` is an oversized archive and not
+    // an invalid header, even though `parse_content_length` would happily
+    // produce the number.
+    if release.size < 0 || release.size as u64 > download_cap {
+        return Err(RunnerError::ArchiveTooLarge);
+    }
+
+    let staging = StagingDirectory::create(runners_directory)?;
+    // The archive's remote name is irrelevant once it is inside the private
+    // staging directory, so it is not used as a local path at all. That is
+    // Python's comment and it is a real defence: an asset named `../x.tar.gz`
+    // never becomes a path here.
+    let archive = staging.path.join("runner.archive");
+    let extraction_root = staging.path.join("extracted");
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700);
+    builder.create(&extraction_root)?;
+
+    let headers = [("User-Agent", USER_AGENT)];
+    let mut stream = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&archive)?;
+
+    // Set by `on_head`, read by `sink`: the declared length is only available
+    // in the first callback and is needed by the second. Held in a `Cell`
+    // rather than threaded through a struct because the two closures are handed
+    // to one call and this is the only state they share.
+    let total = std::cell::Cell::new(0i64);
+    let downloaded = std::cell::Cell::new(0u64);
+
+    client.get(
+        &release.download_url,
+        &headers,
+        timeout,
+        &mut |head| {
+            let declared = parse_content_length(head.content_length.as_deref())?;
+            if declared < 0 || declared as u64 > download_cap {
+                return Err(RunnerError::ArchiveTooLarge);
+            }
+            total.set(if declared != 0 { declared } else { release.size });
+            Ok(())
+        },
+        &mut |chunk| {
+            let seen = downloaded.get() + chunk.len() as u64;
+            downloaded.set(seen);
+            if seen > download_cap {
+                return Err(RunnerError::ArchiveTooLarge);
+            }
+            stream.write_all(chunk)?;
+            let denominator = total.get();
+            if denominator > 0 {
+                let fraction = (seen as f64 / denominator as f64).min(1.0) as f32;
+                progress(fraction);
+            }
+            Ok(())
+        },
+    )?;
+
+    crate::runners::archive::extract_archive(&archive, &extraction_root)?;
+    let extracted = resolve_staged(&extraction_root)?;
+    crate::runners::archive::validate_staged_runner(&extracted, &extraction_root)?;
+    write_metadata(&extracted, release)?;
+    progress(1.0);
+    rename_noreplace(&extracted, &target)?;
+    Ok(target)
+}
+
+/// Remove an installed runner build. `ProtonManager.uninstall`
+/// (`runners.py:922`).
+///
+/// Refuses the two ids that name something the user did not install: the empty
+/// id, and [`SYSTEM_WINE`] — the distro's Wine is not ours to delete.
+///
+/// An id that resolves to a **symlink** or to anything that is not a directory
+/// is a no-op rather than an error, and that is deliberate rather than sloppy:
+/// the call site is a UI action that should converge on "it is gone", so an
+/// unknown id, a directory already deleted, and a name that is really a link to
+/// somewhere else all leave the build uninstalled, which is what was asked.
+/// Following the symlink would delete the *target*, which is why the check is
+/// `is_symlink()` first and not just "is this a directory".
+///
+/// An **unsafe** id is a different matter and is an error, not a no-op:
+/// `safe_install_id` raises in Python and this propagates it. The two read
+/// alike — "nothing was deleted either way" — but they are not the same
+/// outcome, and the difference is visible to the UI, which reports the failure.
+/// A `safe_install_id` that returned `Ok` for `"../.."` here would be a delete
+/// outside the runners directory.
+///
+/// Note also that the set membership test is on the **raw** id, before
+/// trimming, so `" wine-system "` passes the guard and is then trimmed into the
+/// system runner's directory name by `safe_install_id` — i.e. it is deletable.
+/// That is Python's behaviour and it is kept, because a UI can only produce this
+/// id by reading it from somewhere the user already edited; it is recorded here
+/// rather than fixed because "fixing" it would make a `safe_install_id` result
+/// and a runner id disagree, and every other caller in this module relies on
+/// them agreeing.
+pub fn uninstall(runners_directory: &Path, runner_id: &str) -> Result<(), RunnerError> {
+    if runner_id.is_empty() || runner_id == SYSTEM_WINE {
+        return Err(RunnerError::SystemWineCannotBeUninstalled);
+    }
+    let install_id = safe_install_id(runner_id)?;
+    let target = runners_directory.join(install_id);
+    if target.is_symlink() || !target.is_dir() {
+        return Ok(());
+    }
+    fs::remove_dir_all(&target)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1161,13 +1666,14 @@ mod tests {
     }
 
     impl HttpClient for FakeClient {
-        fn get_chunked(
+        fn get(
             &self,
             url: &str,
             headers: &[(&str, &str)],
             _timeout: Duration,
+            on_head: &mut dyn FnMut(&ResponseHead) -> Result<(), RunnerError>,
             sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
-        ) -> Result<ResponseHead, RunnerError> {
+        ) -> Result<(), RunnerError> {
             self.seen.borrow_mut().push((
                 url.to_string(),
                 headers
@@ -1177,8 +1683,12 @@ mod tests {
             ));
             match &self.status {
                 Ok((head, body)) => {
-                    sink(body)?;
-                    Ok(head.clone())
+                    // The head is delivered first and its error is **not**
+                    // swallowed: a double that called `on_head` and ignored the
+                    // result would make the size-cap abort untestable and would
+                    // hide a broken `install` behind a passing suite.
+                    on_head(head)?;
+                    sink(body)
                 }
                 Err(RunnerError::Http { message }) => {
                     Err(RunnerError::Http { message: message.clone() })
@@ -1450,57 +1960,775 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // The HTTP client's provided method
+    // The HTTP client seam
     // -----------------------------------------------------------------
 
-    /// `get` is provided in terms of `get_chunked`, so a double only implements
-    /// one method. This pins that the accumulation is correct — a provided
-    /// method that dropped chunks would break every fetch above silently.
+    /// A client that hands out its body in several chunks, so the accumulation
+    /// in `get_text` is exercised rather than assumed.
+    struct Chunky {
+        chunks: Vec<&'static [u8]>,
+        head: ResponseHead,
+    }
+
+    impl HttpClient for Chunky {
+        fn get(
+            &self,
+            _url: &str,
+            _headers: &[(&str, &str)],
+            _timeout: Duration,
+            on_head: &mut dyn FnMut(&ResponseHead) -> Result<(), RunnerError>,
+            sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
+        ) -> Result<(), RunnerError> {
+            on_head(&self.head)?;
+            for chunk in &self.chunks {
+                sink(chunk)?;
+            }
+            Ok(())
+        }
+    }
+
+    /// `get_text` accumulates every chunk, in order. A collector that dropped
+    /// chunks would break every fetch in this module silently, because each one
+    /// goes through here.
     #[test]
-    fn the_provided_get_accumulates_every_chunk_in_order() {
-        struct Chunky;
-        impl HttpClient for Chunky {
-            fn get_chunked(
+    fn text_accumulates_every_chunk_in_order() {
+        let client = Chunky {
+            chunks: vec![b"he", b"llo", b" world"],
+            head: ResponseHead { content_length: Some("11".to_string()) },
+        };
+        let text = get_text(&client, "u", &[], Duration::from_secs(1)).unwrap();
+        assert_eq!(text, "hello world");
+    }
+
+    /// The two callbacks run in the order the trait promises — `on_head` before
+    /// any body byte — because `install` sets its progress denominator in the
+    /// first and reads it in the second. A client that called `sink` first
+    /// would leave every progress report dividing by zero, and the suite would
+    /// still pass if nothing pinned the order.
+    #[test]
+    fn the_head_arrives_before_any_body_byte() {
+        // `FakeClient` records the request but not the callback order, so this
+        // client does the reverse: it delivers a head and a body and nothing
+        // else, and the log below is what pins the order. Both callbacks record
+        // into *one* log, so the assertion is about the order they ran in
+        // rather than about two independent observations that could both be
+        // true of a client that ran them backwards.
+        struct Ordered;
+        impl HttpClient for Ordered {
+            fn get(
                 &self,
                 _url: &str,
                 _headers: &[(&str, &str)],
                 _timeout: Duration,
+                on_head: &mut dyn FnMut(&ResponseHead) -> Result<(), RunnerError>,
                 sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
-            ) -> Result<ResponseHead, RunnerError> {
-                for chunk in [b"he".as_slice(), b"llo".as_slice(), b" world".as_slice()] {
-                    sink(chunk)?;
-                }
-                Ok(ResponseHead { content_length: Some("11".to_string()) })
+            ) -> Result<(), RunnerError> {
+                on_head(&ResponseHead { content_length: Some("3".to_string()) })?;
+                sink(b"abc")
             }
         }
-        let (head, body) = Chunky
-            .get("u", &[], Duration::from_secs(1))
+        let log = std::cell::RefCell::new(Vec::new());
+        Ordered
+            .get(
+                "u",
+                &[],
+                Duration::from_secs(1),
+                &mut |_head| {
+                    log.borrow_mut().push("head");
+                    Ok(())
+                },
+                &mut |_chunk| {
+                    log.borrow_mut().push("body");
+                    Ok(())
+                },
+            )
             .unwrap();
-        assert_eq!(body, b"hello world");
-        assert_eq!(head.content_length.as_deref(), Some("11"));
+        assert_eq!(*log.borrow(), ["head", "body"]);
     }
 
-    /// The sink's `Err` stops the transfer and reaches the caller unchanged —
-    /// the property `install` will rely on to abandon an oversized download
-    /// rather than buffering it.
-    ///
-    /// Written against `get_chunked` directly, because `get`'s sink never
-    /// fails: testing the stop through `get` would require a sink that cannot
-    /// exist, and the first version of this test asserted an error that the
-    /// provided sink could never produce.
+    /// Either callback's `Err` stops the transfer and reaches the caller
+    /// unchanged — the property `install` relies on to abandon an oversized
+    /// download rather than buffering it, from the declared length *and* from
+    /// the streamed body.
     #[test]
-    fn the_sink_can_stop_a_transfer_and_its_error_reaches_the_caller() {
+    fn either_callback_can_stop_a_transfer_and_its_error_reaches_the_caller() {
         let client = FakeClient::body("0123456789");
         let mut delivered = Vec::new();
         let error = client
-            .get_chunked("u", &[], Duration::from_secs(1), &mut |chunk| {
-                delivered.push(chunk.to_vec());
-                Err(RunnerError::Http { message: "abandoned".to_string() })
-            })
+            .get(
+                "u",
+                &[],
+                Duration::from_secs(1),
+                &mut |_head| Ok(()),
+                &mut |chunk| {
+                    delivered.push(chunk.to_vec());
+                    Err(RunnerError::Http { message: "abandoned".to_string() })
+                },
+            )
             .unwrap_err();
         assert_eq!(error.to_string(), "abandoned");
         // The sink *was* reached — the error is not being produced before the
         // transfer starts, which would also satisfy the assertion above.
         assert!(!delivered.is_empty(), "the sink was never called");
+
+        // The head's own exit: no body byte is delivered at all.
+        let mut delivered = Vec::new();
+        let error = client
+            .get(
+                "u",
+                &[],
+                Duration::from_secs(1),
+                &mut |_head| Err(RunnerError::Http { message: "too big".to_string() }),
+                &mut |chunk| {
+                    delivered.push(chunk.to_vec());
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "too big");
+        assert!(delivered.is_empty(), "the body was read despite the head aborting");
+    }
+    // -----------------------------------------------------------------
+    // The filesystem half: staging, resolution, install, uninstall
+    // -----------------------------------------------------------------
+
+    /// Run `f` against a fresh scratch directory that is cleaned up after.
+    fn in_scratch<T>(label: &str, f: impl FnOnce(&Path) -> T) -> T {
+        let root = scratch(label);
+        let result = f(&root);
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
+
+    /// A release whose download URL points at nothing, for the tests that
+    /// never reach the network.
+    fn a_release(tag: &str) -> ReleaseInfo {
+        ReleaseInfo::new(tag, "GE-Proton.tar.gz", "https://example.invalid/x.tar.gz", 1024)
+    }
+
+    /// The same, with a `size` small enough to pass a test's download cap.
+    ///
+    /// The size guard runs **first**, so a test that wants to reach the
+    /// declared-length guard or the streaming guard must not hand `install` a
+    /// release whose `size` already exceeds the cap — the release guard would
+    /// fire and the guard under test would never run. Two of these tests were
+    /// written that way first and were vacuous: they passed with the guard they
+    /// named deleted.
+    fn a_small_release(tag: &str, size: i64) -> ReleaseInfo {
+        let mut subject = a_release(tag);
+        subject.size = size;
+        subject
+    }
+
+    /// A tar archive holding one directory that is a usable runner.
+    fn runner_tar(directory: &str, data: &[u8]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_path(format!("{directory}/")).unwrap();
+        header.set_size(0);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder.append(&header, std::io::empty()).unwrap();
+
+        let mut file = tar::Header::new_gnu();
+        file.set_path(format!("{directory}/proton")).unwrap();
+        file.set_size(data.len() as u64);
+        file.set_mode(0o755);
+        file.set_cksum();
+        builder.append(&file, data).unwrap();
+        builder.into_inner().unwrap()
+    }
+
+    /// A client that serves one fixed body, with a head it can lie about.
+    struct Serve {
+        body: Vec<u8>,
+        declared: Option<String>,
+        chunks: usize,
+        /// How many times `get` was entered. A test that claims a guard fires
+        /// "before the network is touched" has to be able to see the network,
+        /// and without this counter such a test passes for a guard that fires
+        /// after the download — which is the whole property under test.
+        calls: std::cell::Cell<usize>,
+    }
+
+    impl Serve {
+        fn new(body: Vec<u8>) -> Self {
+            Self { body, declared: None, chunks: 1, calls: std::cell::Cell::new(0) }
+        }
+        fn declaring(mut self, value: &str) -> Self {
+            self.declared = Some(value.to_string());
+            self
+        }
+        fn in_chunks(mut self, count: usize) -> Self {
+            self.chunks = count.max(1);
+            self
+        }
+        fn calls(&self) -> usize {
+            self.calls.get()
+        }
+    }
+
+    impl HttpClient for Serve {
+        fn get(
+            &self,
+            _url: &str,
+            _headers: &[(&str, &str)],
+            _timeout: Duration,
+            on_head: &mut dyn FnMut(&ResponseHead) -> Result<(), RunnerError>,
+            sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
+        ) -> Result<(), RunnerError> {
+            self.calls.set(self.calls.get() + 1);
+            on_head(&ResponseHead { content_length: self.declared.clone() })?;
+            if self.body.is_empty() {
+                return Ok(());
+            }
+            let size = self.body.len().div_ceil(self.chunks).max(1);
+            for chunk in self.body.chunks(size) {
+                sink(chunk)?;
+            }
+            Ok(())
+        }
+    }
+
+    /// The whole install path, happy: download, extract, validate, metadata,
+    /// rename — and then `is_installed` must agree that it landed.
+    #[test]
+    fn an_install_downloads_stages_validates_and_lands_under_its_install_id() {
+        let tar = runner_tar("GE-Proton9-5", b"#!/bin/sh\n");
+        in_scratch("proton-install-ok", |root| {
+            let runners = root.join("runners");
+            let client = Serve::new(tar);
+            let seen = std::cell::RefCell::new(Vec::new());
+            let target = install(
+                &client,
+                &runners,
+                &a_release("GE-Proton9-5"),
+                &|fraction| seen.borrow_mut().push(fraction),
+                Duration::from_secs(5),
+            )
+            .unwrap();
+
+            assert_eq!(target, runners.join("GE-Proton9-5"));
+            assert!(target.join("proton").is_file());
+            assert!(is_installed(&runners, "GE-Proton9-5", Some("proton-ge")));
+
+            // No staging directory survives, which is the `Drop` half of the
+            // contract and is what stops a failed install poisoning the next
+            // scan.
+            let leftovers: Vec<String> = fs::read_dir(&runners)
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with(".install-"))
+                .collect();
+            assert!(leftovers.is_empty(), "staging left behind: {leftovers:?}");
+
+            // Progress ends at exactly 1.0, and every report is in range.
+            let reports = seen.into_inner();
+            assert_eq!(reports.last().copied(), Some(1.0));
+            assert!(reports.iter().all(|value| (0.0..=1.0).contains(value)));
+        });
+    }
+
+    /// The metadata file the install writes is the one `is_installed`'s legacy
+    /// scan reads, in Python's byte order and with its trailing newline.
+    #[test]
+    fn the_written_metadata_is_the_four_keys_in_python_s_order_and_newline() {
+        let tar = runner_tar("GE-Proton9-5", b"#!/bin/sh\n");
+        in_scratch("proton-metadata-bytes", |root| {
+            let runners = root.join("runners");
+            let mut subject = a_release("GE-Proton9-5");
+            subject.name = "GE-Proton9-5.tar.gz".to_string();
+            install(
+                &Serve::new(tar),
+                &runners,
+                &subject,
+                &|_| {},
+                Duration::from_secs(5),
+            )
+            .unwrap();
+            let text = fs::read_to_string(runners.join("GE-Proton9-5").join(METADATA_NAME)).unwrap();
+            assert_eq!(
+                text,
+                concat!(
+                    "{\n",
+                    "  \"family\": \"proton-ge\",\n",
+                    "  \"tag\": \"GE-Proton9-5\",\n",
+                    "  \"asset\": \"GE-Proton9-5.tar.gz\",\n",
+                    "  \"source\": \"GloriousEggroll/proton-ge-custom\"\n",
+                    "}\n"
+                ),
+                "key order, indent and the trailing newline are all Python's"
+            );
+        });
+    }
+
+    /// An install onto an existing directory is refused **before** the network
+    /// is touched, and the refusal is `AlreadyInstalled` — the message Python
+    /// raises as `FileExistsError`.
+    #[test]
+    fn an_install_onto_an_existing_directory_is_refused_without_downloading() {
+        in_scratch("proton-install-exists", |root| {
+            let runners = root.join("runners");
+            fs::create_dir_all(runners.join("GE-Proton9-5")).unwrap();
+            let client = Serve::new(runner_tar("GE-Proton9-5", b"x"));
+            let error = install(
+                &client,
+                &runners,
+                &a_release("GE-Proton9-5"),
+                &|_| {},
+                Duration::from_secs(5),
+            )
+            .unwrap_err();
+            assert_eq!(error.to_string(), "Runner 'GE-Proton9-5' is already installed");
+            assert_eq!(client.calls(), 0, "the refusal must precede the download");
+        });
+    }
+
+    /// A **broken symlink** at the target is refused too. `exists()` alone is
+    /// false for one, so a port that checked only that would let the rename
+    /// replace a link the user made deliberately.
+    #[test]
+    fn a_broken_symlink_at_the_target_is_not_silently_replaced() {
+        in_scratch("proton-install-symlink", |root| {
+            let runners = root.join("runners");
+            fs::create_dir_all(&runners).unwrap();
+            std::os::unix::fs::symlink("nowhere", runners.join("GE-Proton9-5")).unwrap();
+            let client = Serve::new(runner_tar("GE-Proton9-5", b"x"));
+            let error = install(
+                &client,
+                &runners,
+                &a_release("GE-Proton9-5"),
+                &|_| {},
+                Duration::from_secs(5),
+            )
+            .unwrap_err();
+            assert!(matches!(error, RunnerError::AlreadyInstalled { .. }));
+            assert!(
+                runners.join("GE-Proton9-5").is_symlink(),
+                "the link must still be there, un-replaced"
+            );
+            // The `is_symlink()` half of the pre-check is what makes this
+            // *early*. `RENAME_NOREPLACE` refuses the target too, so without
+            // this assertion the test passes for a guard that runs after the
+            // whole archive has been downloaded and extracted — the same error,
+            // the same surviving link, and the download wasted.
+            assert_eq!(
+                client.calls(),
+                0,
+                "a broken symlink must be refused before the network is touched"
+            );
+        });
+    }
+
+    /// A declared `Content-Length` over the cap aborts from the **head**, so no
+    /// body byte is written at all. That is the cheap check Python does before
+    /// its read loop.
+    #[test]
+    fn a_declared_length_over_the_cap_aborts_before_the_body_is_read() {
+        in_scratch("proton-cap-head", |root| {
+            let runners = root.join("runners");
+            let client = Serve::new(runner_tar("GE-Proton9-5", b"x")).declaring("999999");
+            // The cap has to be larger than the body, or the *streaming* guard
+            // fires first and this test passes without the declared-length
+            // guard existing at all — which is exactly what it did. The body is
+            // a small tar and the declared length is far above the cap, so only
+            // the head guard can produce the error being asserted.
+            let error = install_with(
+                &client,
+                &runners,
+                &a_small_release("GE-Proton9-5", 10),
+                &|_| {},
+                Duration::from_secs(5),
+                100_000,
+            )
+            .unwrap_err();
+            assert_eq!(error.to_string(), "Runner archive exceeds the download size limit");
+            assert!(!runners.join("GE-Proton9-5").exists());
+            // The head was read — the request happened, so the error is not
+            // being produced before the transfer starts — and the body was
+            // refused, because a `Serve` only reaches its body once `on_head`
+            // has returned `Ok`.
+            assert_eq!(client.calls(), 1);
+            // Nothing was left in staging either — the abort is a `Drop`, not a
+            // `return` that skipped cleanup.
+            let leftovers: Vec<String> = fs::read_dir(&runners)
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            assert!(leftovers.is_empty(), "staging left behind: {leftovers:?}");
+        });
+    }
+
+    /// A server that **lies** — a short `Content-Length`, then an oversized
+    /// body — is stopped by the streaming guard. This is the reason the guard
+    /// exists, and with the real 2 GiB cap no honest test could reach it, which
+    /// is why `install_with` takes the cap as a parameter.
+    #[test]
+    fn a_body_that_crosses_the_cap_is_stopped_while_streaming() {
+        in_scratch("proton-cap-stream", |root| {
+            let runners = root.join("runners");
+            let body = vec![0u8; 4096];
+            let client = Serve::new(body).declaring("10").in_chunks(8);
+            let error = install_with(
+                &client,
+                &runners,
+                // Size **and** declared length are both under the cap, so the
+                // only guard that can produce this error is the streaming one.
+                &a_small_release("GE-Proton9-5", 10),
+                &|_| {},
+                Duration::from_secs(5),
+                100,
+            )
+            .unwrap_err();
+            assert_eq!(error.to_string(), "Runner archive exceeds the download size limit");
+            assert!(!runners.join("GE-Proton9-5").exists());
+        });
+    }
+
+    /// A **declared size** over the cap (`release.size`) is refused before the
+    /// staging directory is even created — including a negative one, which
+    /// Python reports as an oversized archive rather than as a bad size.
+    #[test]
+    fn a_release_size_over_the_cap_is_refused_including_a_negative_one() {
+        in_scratch("proton-cap-size", |root| {
+            let runners = root.join("runners");
+            for size in [-1i64, 101] {
+                let mut subject = a_release("GE-Proton9-5");
+                subject.size = size;
+                let client = Serve::new(runner_tar("GE-Proton9-5", b"x"));
+                let error = install_with(
+                    &client,
+                    &runners,
+                    &subject,
+                    &|_| {},
+                    Duration::from_secs(5),
+                    100,
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    "Runner archive exceeds the download size limit",
+                    "size {size} should read as oversized, not as invalid"
+                );
+            }
+            assert!(!runners.join("GE-Proton9-5").exists());
+        });
+    }
+
+    /// `_resolve_staged`: a rootless archive keeps its whole tree.
+    #[test]
+    fn a_rootless_archive_keeps_its_whole_extraction_root() {
+        in_scratch("proton-rootless", |root| {
+            fs::create_dir_all(root.join("bin")).unwrap();
+            fs::write(root.join("bin/wine"), "#!/bin/sh\n").unwrap();
+            assert_eq!(resolve_staged(root).unwrap(), root);
+        });
+    }
+
+    /// `_resolve_staged`: exactly one usable directory is selected.
+    #[test]
+    fn one_usable_directory_is_selected_from_the_staged_entries() {
+        in_scratch("proton-one-dir", |root| {
+            fs::create_dir_all(root.join("GE-Proton9-5")).unwrap();
+            fs::write(root.join("GE-Proton9-5/proton"), "#!/bin/sh\n").unwrap();
+            fs::create_dir_all(root.join("docs")).unwrap();
+            fs::write(root.join("README.md"), "hi\n").unwrap();
+            assert_eq!(resolve_staged(root).unwrap(), root.join("GE-Proton9-5"));
+        });
+    }
+
+    /// `_resolve_staged`: two usable directories is ambiguous and raises.
+    #[test]
+    fn two_usable_directories_are_ambiguous_rather_than_a_guess() {
+        in_scratch("proton-two-dirs", |root| {
+            for name in ["GE-Proton9-5", "GE-Proton9-6"] {
+                fs::create_dir_all(root.join(name)).unwrap();
+                fs::write(root.join(name).join("proton"), "#!/bin/sh\n").unwrap();
+            }
+            let error = resolve_staged(root).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "Could not locate one usable runner in the staged archive"
+            );
+        });
+    }
+
+    /// `_resolve_staged`: a usable directory whose name is **not** a safe
+    /// install id is an error, not a skipped entry.
+    ///
+    /// This is the trap. Python calls `safe_install_id(entry.name)` and lets it
+    /// raise; a porting hand reaches for `continue`, because "this entry cannot
+    /// be the runner" reads like a filter. It is not: an archive shipping
+    /// `.wine/proton` beside a real `GE-Proton9-5/` must fail, and a `continue`
+    /// would install the second and never mention the first.
+    #[test]
+    fn a_usable_directory_whose_name_is_unsafe_is_an_error_not_a_skip() {
+        in_scratch("proton-unsafe-name", |root| {
+            for name in [".wine", "..wine"] {
+                fs::create_dir_all(root.join(name)).unwrap();
+                // A nested `bin/wine`, so the candidate is usable and the name
+                // is the only thing wrong with it.
+                fs::create_dir_all(root.join(name).join("bin")).unwrap();
+                fs::write(root.join(name).join("bin/wine"), "#!/bin/sh\n").unwrap();
+            }
+            let error = resolve_staged(root).unwrap_err();
+            assert!(
+                error.to_string().starts_with("Unsafe runner id:"),
+                "expected the id refusal, got {error}"
+            );
+        });
+    }
+
+    /// `_resolve_staged`: a **top-level symlink** refuses the archive — but
+    /// only after the rootless check, which is why this fixture is not itself a
+    /// runner.
+    #[test]
+    fn a_top_level_symlink_refuses_the_archive() {
+        in_scratch("proton-top-link", |root| {
+            std::os::unix::fs::symlink("/etc", root.join("etc")).unwrap();
+            fs::create_dir_all(root.join("GE-Proton9-5")).unwrap();
+            fs::write(root.join("GE-Proton9-5/proton"), "#!/bin/sh\n").unwrap();
+            let error = resolve_staged(root).unwrap_err();
+            assert_eq!(error.to_string(), "Runner archive contains an unsafe top-level link");
+        });
+    }
+
+    /// `_resolve_staged`: the rootless check runs **before** the top-level
+    /// symlink refusal, and that order is deliberate.
+    ///
+    /// A rootless archive is kept wholesale, so a symlink anywhere in it is
+    /// judged later, by `validate_staged_runner`, against the tree as it will
+    /// actually land. Refusing here first would reject a rootless archive whose
+    /// own layout includes a link — which real Wine builds do.
+    #[test]
+    fn a_rootless_archive_is_kept_even_when_it_contains_a_top_level_link() {
+        in_scratch("proton-rootless-link", |root| {
+            fs::create_dir_all(root.join("bin")).unwrap();
+            fs::write(root.join("bin/wine"), "#!/bin/sh\n").unwrap();
+            std::os::unix::fs::symlink("bin/wine", root.join("wine")).unwrap();
+            assert_eq!(
+                resolve_staged(root).unwrap(),
+                root,
+                "the rootless tree is kept, symlink and all — the link is \
+                 `validate_staged_runner`'s to judge, not this function's"
+            );
+        });
+    }
+
+    /// `_resolve_staged`: nothing usable at all.
+    #[test]
+    fn a_staged_tree_with_no_runner_is_an_error() {
+        in_scratch("proton-none", |root| {
+            fs::create_dir_all(root.join("docs")).unwrap();
+            let error = resolve_staged(root).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "Could not locate one usable runner in the staged archive"
+            );
+        });
+    }
+
+    /// A `proton` entry that is a **directory** is usable to `is_installed`'s
+    /// first check (`exists`) and not to `_resolve_staged` (`is_file`). Both
+    /// spellings are Python's and both are pinned here, because unifying them
+    /// would be an invisible change of behaviour on the path that decides
+    /// whether the UI offers to install a build that is already on disk.
+    #[test]
+    fn a_proton_directory_installs_as_installed_but_does_not_resolve_as_staged() {
+        in_scratch("proton-proton-dir", |root| {
+            // `is_installed`'s first check: `(target / "proton").exists()`.
+            let runners = root.join("runners");
+            fs::create_dir_all(runners.join("GE-Proton9-5").join("proton")).unwrap();
+            assert!(
+                is_installed(&runners, "GE-Proton9-5", Some("proton-ge")),
+                "`exists()` accepts a directory called `proton`"
+            );
+
+            // `_resolve_staged`: `(entry / "proton").is_file()`.
+            let staged = root.join("staged");
+            fs::create_dir_all(staged.join("GE-Proton9-5").join("proton")).unwrap();
+            assert!(
+                matches!(resolve_staged(&staged), Err(RunnerError::NoUsableRunner)),
+                "`is_file()` does not accept a directory called `proton`"
+            );
+        });
+    }
+
+    /// `rename_noreplace` is the atomic half of the install, and its whole
+    /// value is that it **refuses** rather than replacing.
+    #[test]
+    fn rename_noreplace_refuses_an_existing_target_and_leaves_it_untouched() {
+        in_scratch("proton-rename", |root| {
+            let source = root.join("source");
+            let target = root.join("target");
+            fs::create_dir_all(&source).unwrap();
+            fs::write(source.join("proton"), "new\n").unwrap();
+            fs::create_dir_all(&target).unwrap();
+            fs::write(target.join("proton"), "old\n").unwrap();
+
+            let error = rename_noreplace(&source, &target).unwrap_err();
+            assert_eq!(error.to_string(), "Runner 'target' is already installed");
+            assert_eq!(fs::read_to_string(target.join("proton")).unwrap(), "old\n");
+            assert!(source.is_dir(), "a refused rename must not consume the source");
+
+            // The happy path, once the target is gone.
+            fs::remove_dir_all(&target).unwrap();
+            rename_noreplace(&source, &target).unwrap();
+            assert_eq!(fs::read_to_string(target.join("proton")).unwrap(), "new\n");
+            assert!(!source.exists());
+        });
+    }
+
+    /// `uninstall`: the two ids that name something the user did not install.
+    #[test]
+    fn the_system_runner_and_the_empty_id_cannot_be_uninstalled() {
+        in_scratch("proton-uninstall-guard", |root| {
+            for id in ["", SYSTEM_WINE] {
+                let error = uninstall(root, id).unwrap_err();
+                assert_eq!(error.to_string(), "System Wine cannot be uninstalled");
+            }
+        });
+    }
+
+    /// `uninstall`: an unsafe id **raises**, which is different from the
+    /// silent no-op below — the UI reports the failure, and `safe_install_id`
+    /// returning `Ok` for `"../.."` here would be a delete outside the runners
+    /// directory.
+    #[test]
+    fn uninstalling_an_unsafe_id_raises_rather_than_deleting_outside() {
+        in_scratch("proton-uninstall-unsafe", |root| {
+            let runners = root.join("runners");
+            fs::create_dir_all(&runners).unwrap();
+            // A sibling that must survive: were the traversal followed, this is
+            // what `../..` would reach.
+            let outside = root.join("precious");
+            fs::create_dir_all(&outside).unwrap();
+            fs::write(outside.join("keep"), "x").unwrap();
+
+            for id in ["../precious", "..", "."] {
+                let error = uninstall(&runners, id).unwrap_err();
+                assert!(
+                    error.to_string().starts_with("Unsafe runner id:"),
+                    "{id:?} should be refused, got {error}"
+                );
+            }
+            assert!(outside.join("keep").is_file(), "nothing outside was touched");
+        });
+    }
+
+    /// `uninstall`: an unknown id, a missing directory and a symlink are all
+    /// silent no-ops — including a symlink **to a real directory**, which must
+    /// not be followed and deleted.
+    #[test]
+    fn uninstalling_an_unknown_or_linked_id_is_a_silent_no_op() {
+        in_scratch("proton-uninstall-noop", |root| {
+            let runners = root.join("runners");
+            fs::create_dir_all(&runners).unwrap();
+
+            uninstall(&runners, "GE-Proton9-5").unwrap();
+
+            // A symlink to a real directory of ours, outside the runners dir.
+            let real = root.join("real");
+            fs::create_dir_all(&real).unwrap();
+            fs::write(real.join("keep"), "x").unwrap();
+            std::os::unix::fs::symlink(&real, runners.join("GE-Proton9-6")).unwrap();
+            uninstall(&runners, "GE-Proton9-6").unwrap();
+            assert!(real.join("keep").is_file(), "the link target must survive");
+            assert!(runners.join("GE-Proton9-6").is_symlink(), "the link is left alone");
+
+            // A plain file where a directory would be.
+            fs::write(runners.join("GE-Proton9-7"), "x").unwrap();
+            uninstall(&runners, "GE-Proton9-7").unwrap();
+            assert!(runners.join("GE-Proton9-7").is_file());
+        });
+    }
+
+    /// `uninstall`: a real install goes, and takes its tree with it.
+    #[test]
+    fn uninstalling_a_real_install_removes_the_tree() {
+        in_scratch("proton-uninstall-real", |root| {
+            let runners = root.join("runners");
+            let target = runners.join("GE-Proton9-5");
+            fs::create_dir_all(target.join("files/bin")).unwrap();
+            fs::write(target.join("proton"), "#!/bin/sh\n").unwrap();
+            uninstall(&runners, "GE-Proton9-5").unwrap();
+            assert!(!target.exists());
+        });
+    }
+
+    /// Every install id the catalogue can produce is *already* a safe install
+    /// id, so `install`'s extra `safe_install_id` call is a no-op today.
+    ///
+    /// That call is Python's (`safe_install_id(release.install_id)`) and it is
+    /// kept as defence in depth: it is what stands between a future edit to
+    /// `install_id` and a directory name that escapes `runners/`. But a
+    /// redundant guard is invisible — with the outer call deleted the whole
+    /// suite still passes, because the inner one did the work, and the mutation
+    /// was measured surviving.
+    ///
+    /// Deletion is not the right answer, so this test states the invariant that
+    /// justifies the redundancy instead. If `install_id` ever stops producing
+    /// safe names, this fails and the outer call becomes load-bearing *visibly*
+    /// rather than silently.
+    #[test]
+    fn every_install_id_the_catalogue_can_produce_is_already_safe() {
+        let tags = [
+            "GE-Proton9-5",
+            "v1.0.0",
+            "../../etc",
+            "",
+            "   ",
+            "tag with/slash",
+            "..",
+            ".hidden",
+            "日本 語",
+            "~hdeadbeef",
+        ];
+        let padded = "x".repeat(300);
+        let mut checked = 0;
+        for family in crate::runners::families::families() {
+            for tag in tags.iter().copied().chain(std::iter::once(padded.as_str())) {
+                let Ok(id) = crate::runners::families::install_id_for(tag, family.id) else {
+                    // An id that cannot be built at all is refused by
+                    // `install_id` itself, which is a different guard.
+                    continue;
+                };
+                assert_eq!(
+                    safe_install_id(&id).unwrap_or_else(|error| panic!(
+                        "install_id_for({tag:?}, {:?}) produced {id:?}, which \
+                         `safe_install_id` refuses: {error}. The outer call in \
+                         `install` has just become load-bearing.",
+                        family.id
+                    )),
+                    id
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked > 10,
+            "the loop should have exercised a real spread of tags, checked {checked}"
+        );
+    }
+
+    /// The staging directory is created `0700` — the tree is attacker-
+    /// influenced and is validated *after* extraction, so between those two
+    /// moments nobody else may read it.
+    #[test]
+    fn the_staging_directory_is_private_while_it_exists() {
+        use std::os::unix::fs::PermissionsExt;
+        in_scratch("proton-staging-mode", |root| {
+            let staging = StagingDirectory::create(root).unwrap();
+            let mode = fs::metadata(&staging.path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "staging must be owner-only");
+
+            // And it is gone once dropped.
+            let path = staging.path.clone();
+            drop(staging);
+            assert!(!path.exists(), "the staging directory must clean itself up");
+        });
     }
 }

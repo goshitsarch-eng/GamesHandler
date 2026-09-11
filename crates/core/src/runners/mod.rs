@@ -130,6 +130,20 @@ pub enum RunnerError {
     AlreadyInstalled { id: String },
     /// `System Wine cannot be uninstalled`.
     SystemWineCannotBeUninstalled,
+    /// `Runner archive exceeds the download size limit`.
+    ///
+    /// Raised for a declared `Content-Length` over the cap *before* the body is
+    /// read, and again if the streamed body crosses the cap — so a server that
+    /// lies about its length still cannot fill the disk.
+    ArchiveTooLarge,
+    /// `Runner archive contains an unsafe top-level link`.
+    StagedTopLevelLink,
+    /// `Could not locate one usable runner in the staged archive`.
+    ///
+    /// The archive was valid and extracted; it simply does not contain one
+    /// directory that is a runner, which is a property of the release rather
+    /// than of the download.
+    NoUsableRunner,
     /// A library entry lives on a network share that has no local mount.
     ///
     /// The message is `netpaths.unreachable_share_message`, which is built from
@@ -186,6 +200,15 @@ impl fmt::Display for RunnerError {
             }
             RunnerError::SystemWineCannotBeUninstalled => {
                 f.write_str("System Wine cannot be uninstalled")
+            }
+            RunnerError::ArchiveTooLarge => {
+                f.write_str("Runner archive exceeds the download size limit")
+            }
+            RunnerError::StagedTopLevelLink => {
+                f.write_str("Runner archive contains an unsafe top-level link")
+            }
+            RunnerError::NoUsableRunner => {
+                f.write_str("Could not locate one usable runner in the staged archive")
             }
             RunnerError::UnreachableShare { message } => f.write_str(message),
             RunnerError::Http { message } => f.write_str(message),
