@@ -498,6 +498,10 @@ struct Guard {
     variants: BTreeSet<String>,
     handled: BTreeSet<String>,
     covered: Vec<CoveredPage>,
+    /// Number of arms in `Shell::update`'s match. Fewer than `variants.len()`
+    /// when an or-pattern binds several at once, which is exactly why it is
+    /// recorded rather than recomputed by a reader.
+    arm_count: usize,
 }
 
 impl Guard {
@@ -578,7 +582,14 @@ impl Guard {
             variants: variant_set,
             handled,
             covered,
+            arm_count: arms.len(),
         }
+    }
+
+    /// How many dead emissions exist, deferred ones included. Used for the
+    /// figures this prints; the check itself uses [`Self::uncovered`].
+    fn dead_emissions_len(&self) -> usize {
+        self.dead_emissions().len()
     }
 
     /// `(page, module, variant)` for every message a covered page emits that
@@ -719,7 +730,23 @@ fn empty_arm(src: &str, variant: &str) -> String {
 
 #[test]
 fn every_message_a_dispatched_page_emits_has_a_handler() {
-    let failures = Guard::parse(&read("crates/app/src/main.rs")).uncovered();
+    let guard = Guard::parse(&read("crates/app/src/main.rs"));
+    // Printed, not just asserted, because #65 was reported to the team as a
+    // count ("N empty arms") and a count is only checkable if it is
+    // reproducible. Run with `--nocapture` for the figures. They are measured
+    // against whatever revision is checked out — the tree moves constantly
+    // here, so a count without its commit means nothing (D-45).
+    println!(
+        "dispatch coverage: {} Message variants, {} match arms, {} covered pages, \
+         {} dead emissions ({} deferred by KNOWN_DEAD), {} exemptions in HANDLED_ELSEWHERE",
+        guard.variants.len(),
+        guard.arm_count,
+        guard.covered.len(),
+        guard.dead_emissions_len(),
+        KNOWN_DEAD.len(),
+        HANDLED_ELSEWHERE.len(),
+    );
+    let failures = guard.uncovered();
     assert!(
         failures.is_empty(),
         "{} message(s) a dispatched page emits have an empty `Shell::update` arm. The page is \
