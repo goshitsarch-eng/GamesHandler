@@ -1170,3 +1170,76 @@ is observed to fail under mutation.
 **Deviation from the reference.** Recorded here and in `FINDINGS.md` F-P. The
 port renders an icon stored under a non-`.ico` name on a plate, uncropped; the
 Python app renders it cropped, filling the tile, with no plate.
+
+---
+
+## D-31. A SKIP is only a pass when the caller asked for it
+
+**Question.** `scripts/verify.sh` exits on `FAILED[]` alone; `SKIPPED[]` never
+affects the exit code. So on a machine with no `flatpak-builder`, stage 7 SKIPs,
+stage 10 loses its installed-copies half and SKIPs too, and the script exits 0
+having never built or inspected the Flatpak. PLAN.md §9 requires that
+"`scripts/verify.sh` passes from a clean checkout". Should a skipped stage be
+able to satisfy that, and if not, how is the difference expressed?
+
+**Options considered.**
+
+1. Leave it: a SKIP is a SKIP, the summary already says "a SKIP is not a pass",
+   and the reader is trusted to notice.
+2. Make every SKIP fatal (exit non-zero whenever anything skipped).
+3. Split skips by **cause** and exit non-zero only for the ones the caller did
+   not ask for: requested skips (via `--skip-flatpak` / `--skip-smoke`) stay a
+   legitimate exit 0; a skip caused by a missing prerequisite exits 3.
+
+**Choice.** Option 3.
+
+**Why.** The two kinds of skip are not the same event wearing different labels:
+one is an instruction the caller gave, the other is a capability the machine
+lacked. Option 1 leaves the DoD claim satisfiable vacuously — a partial run
+prints a note in the middle of a wall of output and returns success, and the
+note is exactly the sort of thing that gets skimmed past (this project has
+already had to correct several claims whose supporting evidence was not what it
+appeared to be; a green exit code is the strongest-looking evidence there is).
+Option 2 is the opposite overcorrection: it breaks the fast-iteration loop the
+skip flags exist for, by failing a run in which the caller deliberately asked
+for less work, and it would make the flag unusable in the one context it is
+documented for.
+
+Exit **3** rather than 1, so a reader and CI can separate "a stage failed"
+(a defect to fix) from "the run was incomplete" (a toolchain to install).
+**Not 2**, because 2 is already the unknown-option usage error at the top of the
+same script; reusing it would make `verify.sh --oops` and a partial run
+indistinguishable by exit code alone.
+
+The default for `finish_skip`'s `requested` argument is **0** (unrequested,
+i.e. the code path that can exit 3) on purpose: forgetting to mark a requested
+skip makes a run look incomplete — noisy but safe — whereas the opposite default
+would let an unrequested skip disappear inside an exit 0, which is the defect
+this decision exists to close.
+
+Precedence: a genuine failure (exit 1) outranks an incomplete run (exit 3).
+Observed in the wild during this work — a run with both a failed stage and an
+unrequested `flatpak-build` skip exited 1, with the incompleteness reported in
+the summary alongside it.
+
+**Interaction with the Flatpak build lock (the sibling change in the same
+file).** The lock and this decision answer the same underlying worry — "can this
+run's result be believed?" — and they must not contradict each other:
+
+- A lock that **cannot be acquired** is a **failure (1)**, not a skip: stages
+  7-10 did not run and it was not the caller's doing or an absent tool's, it is
+  a broken lock.
+- `flock` **not being installed** is deliberately **neither** a failure nor a
+  skip-to-exit-3: every stage still runs, so the run is *complete* and remains
+  exit 0. It is un-*serialised*, not incomplete, and it says so in the output.
+  Exiting 3 there would state something false — that stages did not run — about
+  stages that did.
+- The lock converts the specific corruption T-23 recorded (`flatpak-contents`
+  reporting SKIP because a concurrent `--force-clean` wiped the tree) into a
+  wait. That SKIP was never *this* decision's kind of skip: the caller asked for
+  a full verification, so it would have been an unrequested skip and exit 3.
+  Both fixes point the same way, which is why they landed together.
+
+**Consequence.** "`verify.sh` passes from a clean checkout" now means every
+stage either passed or was skipped by explicit request. A run that could not
+verify something says so in its exit code, not only in its prose.

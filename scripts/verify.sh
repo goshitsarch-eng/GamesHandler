@@ -63,6 +63,21 @@
 #   --offline        pass --disable-download to flatpak-builder
 #   --hold SECONDS   forward the GUI hold interval to the smoke test
 #
+# Exit codes (DECISIONS D-31):
+#
+#   0  every stage either passed or was skipped *because the caller asked*
+#      (--skip-flatpak / --skip-smoke). A requested skip is a legitimate pass:
+#      those flags exist for fast local iteration, and a flag that skipped work
+#      and then failed would be useless for the loop it is documented for.
+#   1  a stage failed. A defect to fix.
+#   2  usage error (unknown option), reported before any stage runs.
+#   3  the run was INCOMPLETE: a stage was skipped for a missing prerequisite
+#      rather than by request. Everything that ran may still be green, but this
+#      run did not verify what its stage list claims — most sharply, without
+#      flatpak-builder the Flatpak is never built or inspected, which is how
+#      "verify.sh passes from a clean checkout" (PLAN.md §9) could otherwise be
+#      satisfied by a run that never built anything.
+#
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -81,6 +96,10 @@ SMOKE_HOLD=""
 PASSED=()
 FAILED=()
 SKIPPED=()
+# Split by cause, because only one of them is a legitimate exit 0: see the
+# "Exit codes" note in the header. `finish_skip` fills these.
+SKIPPED_REQUESTED=()
+SKIPPED_UNREQUESTED=()
 
 usage() {
     cat <<'EOF'
@@ -140,10 +159,25 @@ finish_ok()   {
     echo_subchecks
     PASSED+=("$STAGE")
 }
+# finish_skip <reason> [requested]
+#
+# `requested` is 1 only when the user asked for this skip (--skip-flatpak /
+# --skip-smoke) and 0 (the default) when a prerequisite was missing instead.
+# The two are not the same thing and the exit code treats them differently —
+# see the "Exit codes" note in the header. The default is the *conservative*
+# direction on purpose: forgetting to mark a requested skip makes the run look
+# incomplete, which is noisy but safe, whereas the opposite default would let an
+# unrequested skip hide inside an exit 0.
 finish_skip() {
-    printf 'SKIP %-18s %s\n' "$STAGE" "$1"
+    local reason="$1" requested="${2:-0}"
+    printf 'SKIP %-18s %s\n' "$STAGE" "$reason"
     echo_subchecks
     SKIPPED+=("$STAGE")
+    if [ "$requested" -eq 1 ]; then
+        SKIPPED_REQUESTED+=("$STAGE")
+    else
+        SKIPPED_UNREQUESTED+=("$STAGE")
+    fi
 }
 
 summary() {
@@ -152,8 +186,14 @@ summary() {
     printf 'failed:  %s\n' "${FAILED[*]:-none}"
     printf 'skipped: %s\n' "${SKIPPED[*]:-none}"
     printf 'logs:    %s/\n' "${LOGDIR#"$ROOT"/}"
-    if [ "${#SKIPPED[@]}" -gt 0 ]; then
-        printf 'NOTE: a SKIP is not a pass — those stages did not run.\n'
+    if [ "${#SKIPPED_REQUESTED[@]}" -gt 0 ]; then
+        printf 'asked to skip: %s (legitimate)\n' "${SKIPPED_REQUESTED[*]}"
+    fi
+    if [ "${#SKIPPED_UNREQUESTED[@]}" -gt 0 ]; then
+        printf '\nNOTE: %s did not run for a missing prerequisite, so this run did\n' \
+            "${SKIPPED_UNREQUESTED[*]}"
+        printf 'NOT verify what the DoD claims it verifies. A SKIP is not a pass,\n'
+        printf 'and this is not an exit 0 — see the reason above each SKIP line.\n'
     fi
 }
 
@@ -701,7 +741,7 @@ if ! acquire_flatpak_lock; then
 fi
 
 if [ "$SKIP_FLATPAK" -eq 1 ]; then
-    begin flatpak-build; finish_skip "--skip-flatpak"
+    begin flatpak-build; finish_skip "--skip-flatpak" 1
 elif require_tool flatpak-builder "from flatpak-builder"; then
     run_stage flatpak-build stage_flatpak
 else
@@ -709,14 +749,17 @@ else
 fi
 
 if [ "$SKIP_SMOKE" -eq 1 ]; then
-    begin smoke-test; finish_skip "--skip-flatpak/--skip-smoke"
+    begin smoke-test; finish_skip "--skip-flatpak/--skip-smoke" 1
 else
     run_stage smoke-test stage_smoke
 fi
 
 if [ "$SKIP_FLATPAK" -eq 1 ] && [ ! -d "$BUILD_DIR/files" ]; then
     begin desktop-metainfo
-    finish_skip "no build tree — run without --skip-flatpak to validate the installed copies"
+    # This one follows from --skip-flatpak, so it is a requested skip too: the
+    # caller asked not to build, and is told the consequence is an unvalidated
+    # installed copy rather than being failed for it.
+    finish_skip "no build tree — run without --skip-flatpak to validate the installed copies" 1
 else
     run_stage desktop-metainfo stage_desktop_metainfo
 fi
@@ -740,5 +783,33 @@ fi
 
 if [ "${#FAILED[@]}" -gt 0 ]; then
     exit 1
+fi
+
+# Exit codes, and why a skip is not always benign. A SKIP the caller asked for
+# (--skip-flatpak / --skip-smoke) is a legitimate 0: the flag exists for exactly
+# that, and a flag that skips work while still failing would be unusable in the
+# fast local iteration loop it is documented for. A SKIP caused by a *missing
+# prerequisite* is different in kind — the caller asked for a full verification
+# and did not get one. Exiting 0 there is how "scripts/verify.sh passes from a
+# clean checkout" (PLAN.md §9) becomes satisfiable by a run that never built or
+# inspected the Flatpak: absent flatpak-builder, stage 7 skips, stage 10 loses
+# its installed-copies half, and the whole thing reports success.
+#
+# A distinct code rather than 1, so a reader (and CI) can tell "a stage failed"
+# from "the run was incomplete" — a defect to fix versus a toolchain to install.
+# 3, not 2: 2 is already taken by the unknown-option usage error at the top of
+# this script, and a CI step cannot tell `verify.sh --oops` from a partial run
+# if both exit 2. The summary prints the same distinction, above the script's
+# own line that already says a SKIP is not a pass; this is that sentence
+# finally affecting the outcome.
+#
+# Note the lock's interaction: an unacquirable lock is a FAIL (1), not a skip,
+# and the flock-absent branch in acquire_flatpak_lock is deliberately neither.
+# Every stage still runs there, so the run is *complete* and stays a 0 — it is
+# only un-serialised, and it says so in the output. Turning that into a 2 would
+# report a missing util-linux as an incomplete verification, which is a false
+# statement about stages that genuinely ran.
+if [ "${#SKIPPED_UNREQUESTED[@]}" -gt 0 ]; then
+    exit 3
 fi
 exit 0
