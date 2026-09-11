@@ -263,6 +263,7 @@ Legend: **☐** not started · **~** in progress · **☑** done+verified
 | **R-9** | Feature-loss candidates: network-share file dialogs (portal returns mounted paths), the Locate-exe fallback dialog (P-57), toast actions, `.ico` letterboxing, global shortcuts, right-click menus, Breeze icon-name mapping onto COSMIC icons. | **Medium** | Each has a P-item; none may be silently dropped. |
 | **R-10** | Build time regresses sharply (iced+libcosmic from source). | **Low** | Accept; document. |
 | **R-11** | **`.webp` covers will not decode.** Verified at the pinned rev: libcosmic depends on `image` with `features = ["ico", "jpeg", "png"]` only. But `covers.py:300` stores custom covers as `.png`/`.jpg`/`.jpeg`/**`.webp`**. Cosmos's own `animated-image` feature turns on `webp`; if we do not, a user's imported `.webp` cover silently fails to render. | **Medium** | Enable `webp` at T-14, or transcode `.webp` to PNG on import in `core::covers`. Either is fine; silently dropping support is not. |
+| **R-12** | **Silent compatibility regressions.** F-H is the proof that this class is real and was invisible to the tests written for it: a green suite passed a change that would have corrupted a fifth of users' timestamps. Any dependency edit that drops `float_roundtrip`, or any future fixture set drawn from round numbers, silently reintroduces it. | **High** | D-19 pins it with bit-level fixtures built from dense random values; the reason is written next to the dependency as well as in DECISIONS.md; `verify.sh` stage 4 fails if the oracle drifts. Treat "the fixtures all pass" as necessary, never sufficient. |
 
 ---
 
@@ -276,10 +277,10 @@ same file (D-05).
 |---|---|---|---|
 | T-01 | Workspace scaffold: `Cargo.toml`, `crates/core`, `crates/app`, minimal libcosmic app that compiles and runs | Arch + UX | **DONE** (`f76cedd`). Proves F-1/F-3 in-tree. Core has **no** GUI deps — verified with `cargo tree -p gamehandler-core`. |
 | T-01a | Compatibility oracle: run the Python impl, freeze its JSON behaviour | Lead | **DONE** (`docs/migration/oracle/`). Blocking input for T-02. |
-| T-02 | `core::paths` + `core::models` + `core::settings` | Arch | Must satisfy the oracle fixtures — see §6a. **Struct field order must match the Python dataclasses** (31 `Game` fields, 18 `Settings` fields) or byte equality fails. |
+| T-02 | `core::paths` + `core::models` + `core::settings` | Arch | Must satisfy the oracle fixtures — see §6a. **Struct field order must match the Python dataclasses** (31 `Game` fields, 18 `Settings` fields) or byte equality fails. **Gate: D-19** (`float_roundtrip` — without it the round-trip test passes on fixtures and fails on real data), **D-18** (typed scalars), **D-20** (`Settings` UTF-8), **D-21** (BOM, nesting). |
 | T-03 | `core::runners` — families, archive extraction, env/launch, desktop shortcuts | Arch | Largest port. Security tests are the gate. |
 | T-04 | `core::installers` | Arch | Wizard/poll state machine with injectable clock. |
-| T-05 | `core::covers` + `exe_icons` + `netpaths` | Arch | PE parser + GVFS mapping. |
+| T-05 | `core::covers` + `exe_icons` + `netpaths` | Arch | PE parser + GVFS mapping. Cover paths are user-controlled strings — apply the D-18 typed-scalar rule to `cover_path` too. |
 | T-06 | `core::plugins` + `core::credits` | Arch | Small. |
 | T-07 | `app`: `State` + `Message` + `update()` + CLI (`--list`/`--launch`/`--version`) | Arch | **CLI works headless here** (D-12, N-01). State-model tests land with it. |
 | T-08 | `app`: shell — nav bar, page routing, toaster, no-display diagnostic | UX | N-01/N-02. |
@@ -293,7 +294,7 @@ same file (D-05).
 | T-16 | Flatpak: new manifest, `cargo-sources.json`, `build.sh` | Pkg | Removes PySide6/llvm21/PYTHONPATH. Keeps Wine base, osslsigncode, DXVK. |
 | T-17 | `scripts/verify.sh` + headless smoke test | Pkg | 7 stages per `packaging.md` §6. |
 | T-18 | Metadata: desktop file, metainfo, README, version bump to 0.8.0 | Pkg + UX | Version-lockstep test. |
-| T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. |
+| T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. Include F-B/F-I/F-J/F-K as **explicit non-regression cases**: hand-craft a `games.json` / `settings.json` containing each defect's trigger and confirm the Rust app survives it, since "the port does not copy the bug" is a claim that needs demonstrating, not asserting. |
 | T-20 | `docs/migration/REPORT.md` | Lead | Final deliverable. |
 
 Ordering rationale: logic (`T-02`–`T-06`) lands before UI, so the UI is built
@@ -311,7 +312,10 @@ than by reasoning about it. Regenerating is one command, so the contract cannot
 drift from the app.
 
 Running it overturned four assumptions the team had written down and found two
-real bugs. Full detail in `oracle/FINDINGS.md`; the load-bearing consequences:
+real bugs. **Adversarial review of those results then found six more**, including
+one that every fixture had passed while a naive port would still have been wrong
+on a fifth of real user data. Full detail in `oracle/FINDINGS.md` (§4–5 are the
+review findings); the load-bearing consequences:
 
 | # | Finding | Requirement on the port |
 |---|---|---|
@@ -322,10 +326,30 @@ real bugs. Full detail in `oracle/FINDINGS.md`; the load-bearing consequences:
 | F-E | Validation fallbacks are fixed literals, and `color_scheme`'s is the hardcoded `"dark"` | Use the same literals |
 | F-F | Python renders floats with `%g` exponent rules; `serde_json` uses Ryu (`1e-07` vs `1e-7`) | Byte-equality is bounded; assert numeric equality after reparse where only the exponent spelling differs (D-15) |
 | F-G | `serde_json` **rejects** `1e400`; Python parses it to `inf` and normalizes — so a naive port discards the **whole library** | **Lenient number parsing**, saturating outside `f64` range (D-16) |
+| **F-H** | **`serde_json`'s default `f64` reader is not correctly rounded** — 4070/20000 realistic timestamps change on a parse→serialize round-trip. Every earlier fixture passed anyway | **`serde_json = { version = "1", features = ["float_roundtrip"] }`** — 0/20000 with it (D-19). Pinned by `floats_roundtrip`, comparing **bits** |
+| **F-I** | A wrong-typed `name` (`123`, `["x"]`) is stored as-is, then breaks **all three** sorts including the default; `name: null` drops the game entirely. Wider reach than F-B and needs no non-default setting | **Coerce scalars into their declared types** (D-18). Same class as F-B |
+| **F-J** | `Library.load` catches `UnicodeDecodeError`; `Settings.load` does not — so a bad byte in `settings.json` kills the app at startup | **Tolerate and fall back to defaults** (D-20), like `Library` already does |
+| **F-K** | A UTF-8 BOM → empty library → the next `save()` writes `[]` **over the user's file** | **Strip the BOM** (D-21). Being more tolerant than Python is deliberate here |
+| **F-L** | Python parses 1000-deep nesting; `serde_json`'s limit is 128 and would reject the file | **Skip discarded values without recursing** (D-21) — they are thrown away anyway per F-D |
+| **F-M** | `save()` **replaces** a symlinked `games.json` instead of writing through it — silent data loss for a synced library | **No divergence**: keep the atomic temp-and-replace, document the limitation (D-22) |
 
-F-G is the most serious of these: it is precisely the failure mode D-06 exists
-to prevent, reached by an input the original analysis missed. It is a hard
-requirement, not a polish item.
+F-G is the most serious of the *parity* findings: it is precisely the failure
+mode D-06 exists to prevent, reached by an input the original analysis missed.
+It is a hard requirement, not a polish item.
+
+**F-H is the most serious finding of the whole exercise, for a different
+reason.** It is not a parity gap — it is a *silent* one. The fixtures that exist
+to catch it all passed, because they used small round values that survive a
+1-ULP error; the error needs the dense, arbitrary values the app actually
+writes. A green test suite would have shipped a port that drifted every user's
+timestamps in the low bits on the first save. The lesson recorded in D-19 is
+that a fixture set is only as good as the inputs it dares to use, and that
+"the tests pass" was, in this case, evidence of nothing.
+
+F-B, F-I, F-J and F-K are all **bugs in the Python app that the port
+deliberately does not copy**, and all four are worth reporting upstream
+independently of this migration. D-14, D-18, D-20 and D-21 record the reasoning
+for each; F-M is the one inherited defect, listed in REPORT.md instead.
 
 **T-02 is not complete until every fixture in `oracle/fixtures/` passes**, and
 `verify.sh` fails if the checked-in oracle is stale relative to the Python app.
