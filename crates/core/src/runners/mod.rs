@@ -28,6 +28,7 @@
 //! * `desktop` — `.desktop` shortcut generation.
 
 pub mod archive;
+pub mod desktop;
 pub mod env;
 pub mod families;
 pub mod launch;
