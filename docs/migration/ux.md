@@ -335,13 +335,45 @@ The last two rows are the two facts that are easy to get wrong:
   `portrait.png` (`covers.py:40`) — so a game whose only available asset is the PNG gets
   **PNG bytes in a `.jpg` file** whenever Steam's CDN serves it.
 
-Cost of the feature, from `Cargo.lock` and `cargo-sources.json`: `image-webp 0.2.4` and
-`gif 0.13.3` are already locked and already vendored — reachable today only through
-`resvg`, which `iced_tiny_skia` pulls in for SVG. So enabling `image/webp` and
-`image/gif` adds **no new vendored crate**; only `async-fs` is genuinely absent from
-both `Cargo.lock` and `cargo-sources.json`. (Vendored is not the same as *usable*: those
-two crates being present is exactly why "it's already in Cargo.lock" is not an argument,
-in either direction.)
+Cost of the feature, from `Cargo.lock` and `cargo-sources.json`:
+
+> `image-webp 0.2.4` and `gif 0.13.3` are already locked and already vendored —
+> reachable today only through `resvg`, which `iced_tiny_skia` pulls in for SVG. So
+> enabling `image/webp` and `image/gif` adds **no new vendored crate**; only
+> `async-fs` is genuinely absent from both `Cargo.lock` and `cargo-sources.json`.
+> (Vendored is not the same as *usable*: those two crates being present is exactly
+> why "it's already in Cargo.lock" is not an argument, in either direction.)
+
+**That paragraph is wrong, and it is left standing because the way it is wrong is the
+point.** The quoted text is exactly the reasoning that produced the original error, so
+deleting it would hide the trap rather than mark it. Corrected:
+
+- **`gif 0.14.2` is a genuinely new crate, and `gif` now compiles twice.** `image`'s
+  optional `gif` dependency is **unversioned**; `resvg` pins `gif = "0.13.3"`. Cargo does
+  not reuse a crate across a version mismatch, so it appends a second, duplicate copy.
+  `Cargo.lock` holds both `gif 0.13.3` and `gif 0.14.2`, and both are vendored.
+- So the feature adds **two** crates, not one and not zero: `async-fs 2.2.0` (the only one
+  this section originally named) and `gif 0.14.2`.
+
+The paragraph's own closing sentence almost has the right lesson and stops one step
+short. The distinction that matters is **vendored vs *reused***, not locked vs unlocked:
+`gif 0.13.3` was locked *and* vendored and is still no help, because "already in
+`Cargo.lock`" says nothing about whether cargo will hand that copy to the new dependent.
+Only `image-webp 0.2.4` was locked **and reused**. (Same correction in D-29, which also
+pointed readers here; the measured evidence — both `gif` versions in `Cargo.lock` and in
+`cargo-sources.json` — is in the D-29 commit.)
+
+One further number, so the regeneration is not misread as the feature's cost. That
+commit's `cargo-sources.json` grew by 22 entries — 11 crates × 2, because each crate
+contributes one `"type": "archive"` entry for its `.crate` tarball and one
+`"type": "inline"` entry writing `cargo/vendor/<name>-<version>/.cargo-checksum.json`
+(verified per crate, not inferred from the totals). **Only 2 of the 11 are the
+feature's**. The other 9 — `tar 0.4.46`, `bzip2 0.5.2`, `bzip2-sys
+0.1.13+1.0.8`, `lzma-sys 0.1.20`, `xz2 0.1.7`, `libz-sys 1.1.29`, `vcpkg 0.2.15`,
+`filetime 0.2.29`, `xattr 1.6.1` — entered `Cargo.lock` earlier with `core`'s archive
+work and were stale only because `cargo-sources.json` had not been regenerated since;
+stage 6 was already failing at `HEAD` before this change. Verified independently here
+against the two revisions of the file, and it matches the packaging owner's account.
 
 **Options considered.**
 1. Enable libcosmic's `animated-image` (`Cargo.toml:26-32`) — turns on `image/webp`,
@@ -369,21 +401,34 @@ in either direction.)
    Option 2 also cannot be had without inventing a filename policy for the
    already-existing `.webp` (convert in place? leave it and render nothing?) — and D-02's
    "the Python app keeps working on the same data" removes the free choices.
-3. **Option 1 is ~one crate.** `async-fs` plus a little; everything else the feature
-   needs is already vendored. Against a per-render or per-import transcode in the read
-   path, that is the smaller change and the smaller risk surface.
+3. **Option 1 is two crates** — `async-fs 2.2.0` and a second, duplicate `gif 0.14.2`
+   (corrected above; this said "~one crate", on the same false premise that
+   `gif 0.13.3`'s presence would be reused). Against a per-render or per-import
+   transcode in the read path, that is still the smaller change and the smaller risk
+   surface — the argument survives the correction, the number does not.
 4. Option 3 is excluded by R-11 itself: "silently dropping support is not [fine]".
 
 **Accepted costs, stated so they are not mistaken for benefits.** `animated-image` is
 granularity-locked: it also turns on GIF and pulls `async-fs`, neither of which this app
 uses — the app produces `.jpg`, `.png`, `.ico` and `.webp` and no animation. The feature
 name is a misnomer for our purpose ("codec coverage"), so nobody should read it as a
-promise of `AnimatedImage` widgets in the cover UI. And enabling it means
-`build-aux/flatpak/cargo-sources.json` must be **regenerated** (`async-fs` is absent
-from it today), which `scripts/verify.sh` stage 6 enforces.
+promise of `AnimatedImage` widgets in the cover UI. And the vendored manifest had to be
+**regenerated**: both `async-fs 2.2.0` and `gif 0.14.2` were absent from it (the same
+false premise, corrected above — `gif 0.13.3` *is* present and is irrelevant, because the
+new dependent needs 0.14.2), which `scripts/verify.sh` stage 6 enforces by comparing the
+manifest against `Cargo.lock`.
 
-**Not mine to land:** the feature list is in `crates/app/Cargo.toml` (app owner) and the
-vendored-source regeneration is `build-aux/flatpak/` (packaging owner).
+Landed since: `crates/app/Cargo.toml` carries `animated-image` and
+`cargo-sources.json` is regenerated, so the above is now a record of what the change cost
+rather than work still owed. The one cost to keep in view is the duplicate `gif`: the
+sandbox compiles **both** `gif 0.13.3` (for `resvg`, via `iced_tiny_skia`'s SVG support)
+and `gif 0.14.2` (for `image`), and neither is used by this app's cover path. That is
+build time and vendored bytes, not a behaviour difference — but it is the kind of thing
+that reads as a mistake in a later audit, so it is written down where the audit will look.
+
+**Ownership** (both have now landed): the feature list is in `crates/app/Cargo.toml`, the
+app owner's file; the vendored-source regeneration is `build-aux/flatpak/`, the packaging
+owner's.
 
 ### 12.5 A requirement on the cover UI, from the same investigation (T-14)
 
