@@ -12,9 +12,15 @@
 #
 # One difference to be aware of when the Python tree is eventually retired: the
 # LICENSE install below has no counterpart in the Rust manifest, which installs
-# only the osslsigncode and DXVK licence texts. Removing this file without
-# replacing that install would drop the application's own GPL text from the
-# Flatpak.
+# only the osslsigncode and DXVK licence texts (verified: `grep LICENSE` over
+# build-aux/flatpak/com.goshapps.GameHandler.json finds no source that is the
+# application's own COPYING, and no `"LICENSE"` path at all). This is a live
+# regression, not a hypothetical: before T-16 the Flatpak built this module with
+# `"buildsystem": "meson"` (`b73e492`), so the install_data below put the GPL
+# text at /app/share/licenses/com.goshapps.GameHandler/LICENSE. The Rust manifest
+# builds the binary with cargo and never runs it. Removing this file without
+# adding an equivalent line to the manifest would drop the application's own
+# licence from the Flatpak. Reported to the packaging owner.
 app_id = 'com.goshapps.GameHandler'
 
 install_data(
