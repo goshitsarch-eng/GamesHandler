@@ -1743,25 +1743,40 @@ mod tests {
             let Some(close) = matching(source, open) else { break };
             let arguments: Vec<char> = source[open + 1..close].to_vec();
             let parts = split_top_level(&arguments);
-            if let Some(callback) = parts.get(2) {
-                found.push((start, callback.iter().collect::<String>()));
+            if let Some((offset, callback)) = parts.get(2) {
+                // The callback's *own* line, not the call's. `offset` is where
+                // the third argument begins, which is the line of the comma
+                // before it; the leading whitespace is skipped so the number
+                // below points at the closure a reader has to look at.
+                let lead = callback
+                    .iter()
+                    .take_while(|character| character.is_whitespace())
+                    .count();
+                found.push((
+                    open + 1 + offset + lead,
+                    callback.iter().collect::<String>(),
+                ));
             }
             from = close;
         }
         found
     }
 
-    /// The comma-separated arguments of a call, split only at depth zero.
-    fn split_top_level(arguments: &[char]) -> Vec<Vec<char>> {
+    /// The comma-separated arguments of a call, split only at depth zero, each
+    /// with the offset it starts at — offsets are what let a finding cite the
+    /// callback's line rather than the call's.
+    fn split_top_level(arguments: &[char]) -> Vec<(usize, Vec<char>)> {
         let mut parts = Vec::new();
         let mut current = Vec::new();
+        let mut start = 0usize;
         let mut depth = 0i32;
-        for character in arguments {
+        for (index, character) in arguments.iter().enumerate() {
             match character {
                 '(' | '[' | '{' => depth += 1,
                 ')' | ']' | '}' => depth -= 1,
                 ',' if depth == 0 => {
-                    parts.push(std::mem::take(&mut current));
+                    parts.push((start, std::mem::take(&mut current)));
+                    start = index + 1;
                     continue;
                 }
                 _ => {}
@@ -1769,7 +1784,7 @@ mod tests {
             current.push(*character);
         }
         if !current.iter().all(|character| character.is_whitespace()) {
-            parts.push(current);
+            parts.push((start, current));
         }
         parts
     }
