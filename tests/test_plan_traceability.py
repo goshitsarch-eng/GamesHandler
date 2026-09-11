@@ -51,6 +51,14 @@ a commit that exists, that a row's status matches what happened, or that a row's
 scope is the work that was done — those are claims about content, and #66/#68
 are the record of how wrong content claims get. It is a reachability check, and
 it is named for that.
+
+**And it only reads `T-nn`.** `P-nn` (parity) and `F-nn`/`R-nn` ids are not
+covered by either direction, which is a bound worth stating because it is
+exactly how `T-63` stayed invisible to the commit half: the work landed as
+`P-71: the .desktop writer…` (`b9e8cc6`) while T-04's row is the only place
+`T-63` is named. Widening the pattern to every id family would mean checking
+that `P-` ids resolve too, which is a different table (#67's) and a different
+task; recorded here as a limit rather than left to read as coverage.
 """
 
 import re
@@ -87,14 +95,34 @@ MIN_MENTIONS = 30
 #: [`PlanTraceabilityTests.test_the_deferral_list_is_not_stale`], so this cannot
 #: become a list of things nobody looks at again.
 #:
-#: EMPTY right now, which is where it should stay. If you are here to add one,
-#: the cheaper fix is almost always to write the missing row.
+#: One entry right now (`T-63`), and the header used to read "EMPTY right now"
+#: over it — a claim about this dict written by hand rather than derived from
+#: it, in the file that disproves it. Nothing checked the prose, so it stayed
+#: wrong from the commit that introduced the entry. That is why the count is
+#: not repeated here: [`PlanTraceabilityTests.test_the_deferral_list_is_not_stale`]
+#: is what actually holds the list honest, and a reader wanting the count can
+#: read the dict below.
+#:
+#: If you are here to add one, the cheaper fix is almost always to write the
+#: missing row.
 UNROUTED = {
     "T-63": (
         "#71 (second instance). T-04's row names it as the owner of the `.desktop` "
         "writer — `T-63` is P-71, the desktop-shortcut writer, and T-04's row "
-        "sequences the whole critical path around it. No row defines it: `git grep "
-        "T-63` over tracked files returns PLAN.md:347 and nothing else. It is "
+        "sequences the whole critical path around it, and now says the work is "
+        "DONE — `T-63`/`.desktop` landed at `b9e8cc6` (606 lines, "
+        "`crates/core/src/runners/desktop.rs`). So this is not only a mention with "
+        "no row: it is #71's shape a second time, a task worked and landed with no "
+        "row anywhere, and the id it landed under was `P-71`, which the commit half "
+        "of this check cannot see because it reads `T-nn` only. "
+        "No row defines it: `grep -c "
+        "'^| T-63 |' docs/migration/PLAN.md` is 0, and the mention at PLAN.md:347 "
+        "is the only one outside this file. (This sentence used to read \"`git "
+        "grep T-63` over tracked files returns PLAN.md:347 and nothing else\" — "
+        "false the moment this file was written, since the sentence itself and six "
+        "others in it contain the string. A claim broader than what was measured, "
+        "in the file that falsifies it; scoped to outside-this-file, which is what "
+        "was actually being claimed.) It is "
         "deferred rather than fixed because `docs/migration/PLAN.md` is the Lead's "
         "file (D-05, one agent per file), and it is deferred rather than ignored "
         "because an id the plan hands work to and never defines is work with no "
