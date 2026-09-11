@@ -1449,6 +1449,603 @@ mod tests {
             Message::SetDefaultRunner(ref value)
                 if value == gamehandler_core::models::SYSTEM_WINE
         ));
+
+        // And the **Installers** page's, which was the third sibling and is the
+        // one this test could not see. #97/D-55: the closure was
+        // `move |index| Message::SetDefaultRunner(index.to_string())` — the
+        // position, written as though it were the id — so the two lines below
+        // assert the mapping the page was missing rather than a third copy of
+        // the two above. Note which *destination* it maps to as well: the
+        // per-install choice, not `SetDefaultRunner`; see [`D-55`] and
+        // [`super::installers::seeded_install_runner`].
+        //
+        // [`D-55`]: ../../../../docs/migration/DECISIONS.md
+        assert!(matches!(
+            crate::view::installers::install_runner_selection(&choices, 1),
+            Message::SetInstallRunner(ref value) if value == "GE-Proton9-1"
+        ));
+        assert!(matches!(
+            crate::view::installers::install_runner_selection(&choices, 0),
+            Message::SetInstallRunner(ref value)
+                if value == gamehandler_core::models::SYSTEM_WINE
+        ));
+
+        // The category selector of that same page, which had #97's twin: its
+        // closure's parameter was named `category` and was a `usize`, so
+        // `category.to_string()` stored `"1"` where the model wanted
+        // `"Launchers"`, and the catalog came back empty. `library.rs` fixed
+        // this exact shape once already (`category_selection`); this is the same
+        // mapping for this page's sentinel-carrying list.
+        let categories = crate::view::installers::installer_categories();
+        assert!(matches!(
+            crate::view::installers::category_selection(&categories, 1),
+            Message::SetInstallerCategory(ref value) if value == "Launchers"
+        ));
+        assert!(matches!(
+            crate::view::installers::category_selection(&categories, 0),
+            Message::SetInstallerCategory(ref value)
+                if value == crate::view::installers::ALL_CATEGORIES
+        ));
+    }
+
+    // ---- The widened guard: a dropdown's callback receives a *position* ------
+    //
+    // The test above compares three hand-named mappings, and D-55's whole point
+    // is that it could not have caught #97: there were two mappings to compare
+    // and the third selector had none, so there was nothing to compare it with.
+    // A guard over an explicit list is blind to the unlisted, and adding a third
+    // name to the list would have left the next selector exactly as invisible.
+    //
+    // So this one names no subjects at all. It reads the view layer's own source
+    // — every `.rs` file the directory holds, found with `read_dir` rather than
+    // listed, plus `main.rs` — and applies one rule to every dropdown callback
+    // it finds:
+    //
+    // > `dropdown`'s `on_selected` is `impl Fn(usize) -> Message`
+    // > (`libcosmic src/widget/dropdown/mod.rs:30`), so the callback's
+    // > parameter is a **position**. A callback that converts that parameter
+    // > itself — `|index| SetX(index.to_string())`, `|category|
+    // > SetCategory(category.to_string())` — is passing the position where the
+    // > model's value belongs. The value must come out of the model: either a
+    // > bracket lookup (`SORT_OPTIONS[index].0`) or a call to a named mapping
+    // > (`default_runner_selection(&choices, index)`), the shape `library.rs`
+    // > settled on after the same defect.
+    //
+    // Three of these were live in `view/installers.rs` at `cc81be7`: the runner
+    // selector (#97) and both halves of the category selector. `library.rs`'s
+    // `category_selection` doc records the same bug being fixed there by hand,
+    // which is what says a rule is worth having rather than a fourth fix.
+    //
+    // # What this cannot see, stated rather than implied
+    //
+    // It is a text parser over source, not a type check — the same class of
+    // instrument as `tests/dispatch_coverage.rs`, with the same kind of limits:
+    //
+    //   * **Only the conversions it names.** A payload written as
+    //     `String::from(index)`, `index as char`, or baked into a struct field
+    //     by a helper escapes it. The set is `to_string`, `to_owned`, `clone`,
+    //     `into`, `as_str`, `as_ref`, and any `format!` whose braces mention the
+    //     parameter — the shapes that have actually appeared here.
+    //   * **A wrong list passes.** `labels[index].clone()` looks up *a* model,
+    //     and this rule cannot know which one the message wants. The value-level
+    //     assertions above are what pin that half.
+    //   * **A callback whose body calls a helper that itself stringifies the
+    //     index passes**, because the body no longer mentions the parameter. That
+    //     is deliberate: the helper *is* the fix's shape, and it is where the
+    //     value-level test can reach.
+    //   * **A dropdown built by another spelling** (`popup_dropdown`, or a
+    //     `Dropdown::new` chain) is not a `widget::dropdown(` call and is not
+    //     seen. The non-vacuity floor below is what fails loudly if the calls
+    //     this reads are ever all renamed away.
+
+    /// Every `.rs` file the view directory holds, plus `main.rs`, as
+    /// `(name, source)` with comments blanked and the `#[cfg(test)]` modules
+    /// cut — because this module's own samples are strings that contain the
+    /// defect, and a scanner that read them would report itself.
+    fn production_sources() -> Vec<(String, String)> {
+        let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(crate_dir.join("src/view"))
+            .expect("`src/view` is where this crate keeps its pages")
+            .map(|entry| entry.expect("a readable directory entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .collect();
+        paths.push(crate_dir.join("src/main.rs"));
+        paths.sort();
+
+        paths
+            .into_iter()
+            .map(|path| {
+                let text = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{} is unreadable: {error}", path.display()));
+                let name = path
+                    .strip_prefix(crate_dir)
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string();
+                (name, production_source(&text))
+            })
+            .collect()
+    }
+
+    /// One file's production source: comments gone, test modules gone.
+    fn production_source(text: &str) -> String {
+        // Two passes over the same lexer. The structural pass blanks string
+        // literals too, because brace matching must not count a `{` inside one;
+        // the readable pass keeps them, because `format!("BOGUS-{index}")` is
+        // one of the shapes the rule has to see, and its braces live in a
+        // string. The cut is computed on the first and applied to both.
+        let structural = lex(text, true);
+        let readable = lex(text, false);
+        let mut readable = readable;
+        for (start, end) in test_module_ranges(&structural) {
+            for character in &mut readable[start..end] {
+                if *character != '\n' {
+                    *character = ' ';
+                }
+            }
+        }
+        readable.into_iter().collect()
+    }
+
+    /// `src` as chars, with every comment blanked to spaces (offsets kept so a
+    /// failure can name a line) and, when `blank_strings`, every string and
+    /// char literal blanked with it.
+    fn lex(src: &str, blank_strings: bool) -> Vec<char> {
+        let chars: Vec<char> = src.chars().collect();
+        let mut out = chars.clone();
+        // Bounds-checked because an unterminated literal has to leave the
+        // scanner running to the end rather than panicking on the way.
+        let blank = |out: &mut Vec<char>, index: usize| {
+            if blank_strings && index < out.len() && out[index] != '\n' {
+                out[index] = ' ';
+            }
+        };
+        let mut index = 0;
+        while index < chars.len() {
+            let current = chars[index];
+            if current == '/' && chars.get(index + 1) == Some(&'/') {
+                while index < chars.len() && chars[index] != '\n' {
+                    out[index] = ' ';
+                    index += 1;
+                }
+            } else if current == '/' && chars.get(index + 1) == Some(&'*') {
+                out[index] = ' ';
+                out[index + 1] = ' ';
+                index += 2;
+                while index < chars.len()
+                    && !(chars[index] == '*' && chars.get(index + 1) == Some(&'/'))
+                {
+                    out[index] = ' ';
+                    index += 1;
+                }
+                for _ in 0..2 {
+                    if index < chars.len() {
+                        out[index] = ' ';
+                        index += 1;
+                    }
+                }
+            } else if current == '"' {
+                blank(&mut out, index);
+                index += 1;
+                while index < chars.len() && chars[index] != '"' {
+                    if chars[index] == '\\' {
+                        blank(&mut out, index);
+                        index += 1;
+                    }
+                    blank(&mut out, index);
+                    index += 1;
+                }
+                blank(&mut out, index);
+                index += 1;
+            } else if let Some(length) = char_literal_at(&chars, index) {
+                for _ in 0..length {
+                    blank(&mut out, index);
+                    index += 1;
+                }
+            } else {
+                index += 1;
+            }
+        }
+        out
+    }
+
+    /// The length of the char literal starting at `index`, or `None` when
+    /// `chars[index]` is not a quote or the `'` opens a lifetime (`&'a str`).
+    ///
+    /// Lifetimes are why this exists: a lexer that treats every `'` as a literal
+    /// opener swallows the rest of the line, and every view module is full of
+    /// them in `Element<'a, Message>`.
+    ///
+    /// The `chars[index] == '\''` test is not decoration. Without it the arms
+    /// below match on the three characters *after* `index`, so the `d` of
+    /// `rest.find('"')` looks like a three-character literal `('` and the scan
+    /// blanks `d('` and steps onto the `"`, which then opens a string that runs
+    /// to the next quote on the following line. That is what made this file's
+    /// `#[cfg(test)] mod tests` appear to end at `fn form_label` (line 957 of
+    /// 2,100) and made the guard below report its own fixture strings as
+    /// findings — a false positive whose cause was one blanked character.
+    fn char_literal_at(chars: &[char], index: usize) -> Option<usize> {
+        if chars.get(index) != Some(&'\'') {
+            return None;
+        }
+        match (chars.get(index + 1), chars.get(index + 2), chars.get(index + 3)) {
+            (Some('\\'), Some(_), Some('\'')) => Some(4),
+            (Some(_), Some('\''), _) => Some(3),
+            _ => None,
+        }
+    }
+
+    /// The `#[cfg(test)] mod` ranges of an already-lexed source.
+    fn test_module_ranges(chars: &[char]) -> Vec<(usize, usize)> {
+        let marker: Vec<char> = "#[cfg(test)]".chars().collect();
+        let mut ranges = Vec::new();
+        let mut from = 0usize;
+        while let Some(start) = find_chars(chars, &marker, from) {
+            let after = start + marker.len();
+            let word: String = chars[after..]
+                .iter()
+                .skip_while(|character| character.is_whitespace())
+                .take(3)
+                .collect();
+            if word == "mod" {
+                let open = (after..chars.len())
+                    .find(|index| chars[*index] == '{')
+                    .expect("a module has a body");
+                let end = matching(chars, open).unwrap_or(chars.len());
+                ranges.push((start, end));
+                from = end;
+            } else {
+                from = after;
+            }
+        }
+        ranges
+    }
+
+    /// The first `needle` at or after `from`.
+    fn find_chars(haystack: &[char], needle: &[char], from: usize) -> Option<usize> {
+        if needle.is_empty() || haystack.len() < needle.len() {
+            return None;
+        }
+        (from..=haystack.len() - needle.len())
+            .find(|start| haystack[*start..*start + needle.len()] == *needle)
+    }
+
+    /// The index of the `)` that closes the `(` at `open`.
+    ///
+    /// Bracket depth is tracked over all three kinds so a `)` inside a `[...]`
+    /// or a `{...}` cannot close the call early. Strings are not consulted: both
+    /// callers pass text whose string literals have already been handled.
+    fn matching(chars: &[char], open: usize) -> Option<usize> {
+        let mut depth = 0i32;
+        for (offset, character) in chars[open..].iter().enumerate() {
+            match character {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(open + offset);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Every `widget::dropdown(` call's third argument — the selection callback
+    /// — as `(offset, text)`.
+    fn dropdown_callbacks(source: &[char]) -> Vec<(usize, String)> {
+        let needle: Vec<char> = "widget::dropdown(".chars().collect();
+        let mut found = Vec::new();
+        let mut from = 0usize;
+        while let Some(start) = find_chars(source, &needle, from) {
+            let open = start + needle.len() - 1;
+            let Some(close) = matching(source, open) else { break };
+            let arguments: Vec<char> = source[open + 1..close].to_vec();
+            let parts = split_top_level(&arguments);
+            if let Some(callback) = parts.get(2) {
+                found.push((start, callback.iter().collect::<String>()));
+            }
+            from = close;
+        }
+        found
+    }
+
+    /// The comma-separated arguments of a call, split only at depth zero.
+    fn split_top_level(arguments: &[char]) -> Vec<Vec<char>> {
+        let mut parts = Vec::new();
+        let mut current = Vec::new();
+        let mut depth = 0i32;
+        for character in arguments {
+            match character {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(std::mem::take(&mut current));
+                    continue;
+                }
+                _ => {}
+            }
+            current.push(*character);
+        }
+        if !current.iter().all(|character| character.is_whitespace()) {
+            parts.push(current);
+        }
+        parts
+    }
+
+    /// The closure a callback argument is, as `(parameter, body)`; `None` when
+    /// it is a named function, which is the shape the rule is asking for.
+    fn closure_parts(callback: &str) -> Option<(String, String)> {
+        let chars: Vec<char> = callback.chars().collect();
+        let first = chars.iter().position(|character| *character == '|')?;
+        let second = chars[first + 1..]
+            .iter()
+            .position(|character| *character == '|')?
+            + first
+            + 1;
+        if second == first + 1 {
+            return None; // `||`: no parameters, nothing to get wrong
+        }
+        let header: String = chars[first + 1..second].iter().collect();
+        let parameter = header.split(':').next()?.trim().to_string();
+        let parameter = parameter
+            .trim_start_matches("mut ")
+            .trim_start_matches('&')
+            .trim()
+            .to_string();
+        if parameter.is_empty() {
+            return None;
+        }
+        Some((parameter, chars[second + 1..].iter().collect()))
+    }
+
+    /// The conversions of a callback's own parameter that the rule refuses.
+    const INDEX_CONVERSIONS: [&str; 6] = [
+        "to_string()",
+        "to_owned()",
+        "clone()",
+        "into()",
+        "as_str()",
+        "as_ref()",
+    ];
+
+    /// Every dropdown callback in `src` that passes its own index where the
+    /// model's value belongs. `src` is raw source, as it sits in the file.
+    fn stringified_index_findings(src: &str) -> Vec<String> {
+        let source = production_source(src);
+        let chars: Vec<char> = source.chars().collect();
+        let mut findings = Vec::new();
+        for (offset, callback) in dropdown_callbacks(&chars) {
+            let Some((parameter, body)) = closure_parts(&callback) else {
+                continue;
+            };
+            let line = 1 + chars[..offset].iter().filter(|c| **c == '\n').count();
+            let trimmed = callback.trim();
+            for conversion in INDEX_CONVERSIONS {
+                if body.contains(&format!("{parameter}.{conversion}")) {
+                    findings.push(format!(
+                        "line {line}: `{trimmed}` converts the callback's own index \
+                         with `{parameter}.{conversion}` — the parameter is a \
+                         position (`libcosmic src/widget/dropdown/mod.rs:30`), so \
+                         the message carries the position where the model's value \
+                         belongs"
+                    ));
+                }
+            }
+            for open in format_macro_openings(&body) {
+                let arguments: Vec<char> = body.chars().collect();
+                let Some(close) = matching(&arguments, open) else {
+                    continue;
+                };
+                let inside: String = arguments[open + 1..close].iter().collect();
+                if contains_word(&inside, &parameter) {
+                    findings.push(format!(
+                        "line {line}: `{trimmed}` formats the callback's own index \
+                         into the message — `{inside}` is a rendered position, not \
+                         the model's value"
+                    ));
+                }
+            }
+        }
+        findings
+    }
+
+    /// The offsets of every `format!(` in `body`.
+    fn format_macro_openings(body: &str) -> Vec<usize> {
+        let chars: Vec<char> = body.chars().collect();
+        let needle: Vec<char> = "format!".chars().collect();
+        let mut found = Vec::new();
+        let mut from = 0usize;
+        while let Some(start) = find_chars(&chars, &needle, from) {
+            let mut index = start + needle.len();
+            while chars.get(index).is_some_and(|c| c.is_whitespace()) {
+                index += 1;
+            }
+            if chars.get(index) == Some(&'(') {
+                found.push(index);
+            }
+            from = index.max(start + 1);
+        }
+        found
+    }
+
+    /// Whether `word` appears in `haystack` as a whole identifier.
+    fn contains_word(haystack: &str, word: &str) -> bool {
+        let mut from = 0usize;
+        while let Some(found) = haystack[from..].find(word) {
+            let start = from + found;
+            let end = start + word.len();
+            let before = haystack[..start].chars().next_back();
+            let after = haystack[end..].chars().next();
+            let boundary = |character: Option<char>| {
+                !character.is_some_and(|c| c.is_alphanumeric() || c == '_')
+            };
+            if boundary(before) && boundary(after) {
+                return true;
+            }
+            from = end;
+        }
+        false
+    }
+
+    /// The instrument, driven on the defect it was written for and on the fix.
+    ///
+    /// A guard that reports nothing on the real tree is only worth anything if
+    /// it reports something on the tree it was written to reject, so both live
+    /// defects are run through the same entry point the scan uses — string
+    /// literals, test-cut and all — and the three correct shapes with them.
+    #[test]
+    fn the_dropdown_guard_reports_the_defect_it_was_written_for() {
+        // `view/installers.rs` at `cc81be7`, verbatim, and the `format!` variant
+        // of the same mistake.
+        for defect in [
+            "let _ = cosmic::widget::dropdown(\n  labels,\n  runner_index(page.runners, page.runner_id),\n  move |index| Message::SetDefaultRunner(index.to_string()),\n);",
+            "let _ = cosmic::widget::dropdown(\n  page.categories.to_vec(),\n  selected,\n  |category| Message::SetInstallerCategory(category.to_string()),\n);",
+            "let _ = cosmic::widget::dropdown(\n  labels,\n  None,\n  |index| Message::SetInstallRunner(format!(\"BOGUS-{index}\")),\n);",
+        ] {
+            let findings = stringified_index_findings(defect);
+            assert_eq!(
+                findings.len(),
+                1,
+                "the instrument found {findings:?} in a callback that passes its \
+                 own index where the model's value belongs: {defect}"
+            );
+        }
+
+        // Every shape that is right, and must not be reported: the three named
+        // mappings this tree has, the two bracket lookups, and a callback with
+        // no parameters.
+        for correct in [
+            "let _ = cosmic::widget::dropdown(\n  labels,\n  Some(0),\n  move |index| crate::view::settings::default_runner_selection(&choices, index),\n);",
+            "let _ = cosmic::widget::dropdown(\n  labels,\n  Some(0),\n  { let owned = choices.clone(); move |index| runner_selection(&owned, index) },\n);",
+            "let _ = cosmic::widget::dropdown(\n  page.categories.to_vec(),\n  selected,\n  move |index| category_selection(&page_categories, index),\n);",
+            "let _ = cosmic::widget::dropdown(\n  sort_labels(),\n  sort_index(page.sort_mode),\n  |index| Message::SetSortMode(SORT_OPTIONS[index].0.to_string()),\n);",
+            "let _ = cosmic::widget::dropdown(\n  labels,\n  None,\n  || Message::SetX,\n);",
+        ] {
+            let findings = stringified_index_findings(correct);
+            assert!(
+                findings.is_empty(),
+                "the instrument reported {findings:?} in the correct callback \
+                 `{correct}` — a guard that fires on the fix is a guard somebody \
+                 deletes"
+            );
+        }
+    }
+
+    /// And the instrument on this tree: nothing, over every file, with a floor
+    /// so the silence cannot mean the scanner stopped matching.
+    #[test]
+    fn no_dropdown_callback_turns_its_index_into_the_payload() {
+        let sources = production_sources();
+        let mut findings = Vec::new();
+        let mut callbacks = 0usize;
+        let mut closures = 0usize;
+        for (name, source) in &sources {
+            let chars: Vec<char> = source.chars().collect();
+            let found = dropdown_callbacks(&chars);
+            closures += found
+                .iter()
+                .filter(|(_, callback)| closure_parts(callback).is_some())
+                .count();
+            callbacks += found.len();
+            findings.extend(
+                stringified_index_findings(source)
+                    .into_iter()
+                    .map(|finding| format!("{name}: {finding}")),
+            );
+        }
+
+        assert!(
+            findings.is_empty(),
+            "a dropdown callback is carrying its index where the model's value \
+             belongs — the defect `library.rs` fixed by hand and `#97` shipped \
+             anyway:\n  {}",
+            findings.join("\n  ")
+        );
+        assert!(
+            callbacks >= 6,
+            "the scan found only {callbacks} `widget::dropdown` callbacks over \
+             {} files, so its silence above is not evidence: {sources:?}",
+            sources.len()
+        );
+        assert!(
+            closures >= 4,
+            "the scan found {callbacks} callbacks but only {closures} that are \
+             closures — the rule has no subjects, which is what a scanner that \
+             stopped matching looks like"
+        );
+    }
+
+    /// The other half of `#97`, and the repair `D-55` warns is the plausible one.
+    ///
+    /// A callback can carry the *right* value to the *wrong* control, and no
+    /// index-shaped rule can see it. `SetDefaultRunner` writes the app's default
+    /// runner, which the reference gives exactly one control —
+    /// `SettingsPage.qml`'s combo. The installers page never writes it:
+    /// `InstallersPage.qml:49-64` has no write-back at all, `:55`/`:61` only
+    /// *read* `defaultRunner`, and the runner the user picks goes to `installEasy`
+    /// as an argument (`:128-130`), where `bridge.py:840`/`:855` treat it as the
+    /// install's value and fall back to the global default only when it is empty.
+    ///
+    /// So routing that page's selector through
+    /// [`crate::view::settings::default_runner_selection`] — the one-character
+    /// repair that fixes the value and keeps the destination — compiles, reads
+    /// like parity, passes every test written against either half alone, and
+    /// makes choosing a runner for one install silently rewrite the app's
+    /// default. This test is the one that fails on it.
+    ///
+    /// It is a scan for the *paths to that destination*, not for one spelling of
+    /// it: the variant, and the helper that builds it. Both are needed — the
+    /// plausible repair does not write `Message::SetDefaultRunner(`, it calls
+    /// [`crate::view::settings::default_runner_selection`], which is a
+    /// grep for the variant away from the defect. What this rule cannot see is a
+    /// *third* route to that write, and it is not a proof that none exists: it is
+    /// a tripwire on the two routes this tree has, and the doc above says why the
+    /// second one is the dangerous one.
+    #[test]
+    fn the_global_default_runner_is_written_by_the_settings_page_alone() {
+        const ROUTES: [&str; 2] = ["SetDefaultRunner", "default_runner_selection"];
+        let sources = production_sources();
+        let mut offenders = Vec::new();
+        let mut owners = Vec::new();
+        for (name, source) in &sources {
+            let reached: Vec<&str> = ROUTES
+                .iter()
+                .copied()
+                .filter(|route| source.contains(route))
+                .collect();
+            if reached.is_empty() {
+                continue;
+            }
+            // `main.rs` is the handler, not a page: its arm *matches* the
+            // variant, and matching is not writing.
+            if name == "src/main.rs" {
+                continue;
+            }
+            if name == "src/view/settings.rs" {
+                owners.push(name.clone());
+            } else {
+                offenders.push(format!("{name} (`{}`)", reached.join("`, `")));
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "{} reaches the app's *global* default runner — a control \
+             `SettingsPage.qml` owns and `InstallersPage.qml:49-64` deliberately \
+             does not have (P-53's first clause is about the *install*). The \
+             runner a page picks for its own action goes through that page's own \
+             mapping (`install_runner_selection` here); see `D-55`",
+            offenders.join(", ")
+        );
+        assert_eq!(
+            owners,
+            vec!["src/view/settings.rs".to_string()],
+            "the settings page no longer reaches `SetDefaultRunner` by either \
+             route, so the rule above has no subject and its silence is not \
+             evidence"
+        );
     }
 
     /// The category combo is `editable: true` (`:129`), so the port draws a

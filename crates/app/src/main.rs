@@ -775,6 +775,16 @@ pub enum Message {
     SetInstallerSearch(String),
     /// The installer category filter; empty resets to "All" (`bridge.py:806`).
     SetInstallerCategory(String),
+    /// The runner the **next install** will use — not the app's default.
+    ///
+    /// The Installers page's selector, and the one message of T-38's set that is
+    /// an addition rather than a rename of a `bridge.py` setter: the reference's
+    /// combo stores nothing (`InstallersPage.qml:49-64` has no write-back), so
+    /// there is no `_set_` for it to mirror. It is a message all the same
+    /// because a libcosmic view is rebuilt every frame and the choice has to
+    /// live somewhere; [`crate::state::State::installer_runner`] is where, and
+    /// it is what `StartEasyInstall`'s `runner_id` is read from. See D-55.
+    SetInstallRunner(String),
     /// Start a one-click install. `installEasy()`.
     StartEasyInstall { installer_id: String, runner_id: String },
     /// The install's progress fraction.
@@ -1192,7 +1202,11 @@ impl Shell {
                     category: &self.state.installer_category,
                     categories: &self.state.installer_categories,
                     runners: &self.state.installer_runners,
-                    runner_id: &self.state.settings.default_runner,
+                    // The install's runner, not `settings.default_runner`. That
+                    // was D-55's defect: this one binding made the page's
+                    // selector write the Settings page's control and install
+                    // under whichever runner the index happened to resolve to.
+                    runner_id: &self.state.installer_runner,
                     busy: view::installers::installing(&self.state),
                     progress: view::installers::progress_fraction(&self.state),
                 };
@@ -1838,6 +1852,18 @@ impl Shell {
                     .unwrap_or_else(cosmic::task::none);
                 self.state.refresh_installers();
                 return task;
+            }
+            // The Installers page's runner selector (P-53's first clause, D-55).
+            // Local state like the two above, and answered by the page for the
+            // same reason — but **not** followed by `refresh_installers`: the
+            // seed keeps a choice that is still in the list, so a refresh here
+            // would be harmless and a refresh that ever stopped keeping it would
+            // silently discard the user's pick on the next keystroke in the
+            // search box. The choice is read by the page's `runner_id` and by
+            // nothing else.
+            Message::SetInstallRunner(_) => {
+                return view::installers::update(&mut self.state, &message)
+                    .unwrap_or_else(cosmic::task::none);
             }
             // `installEasy` (`bridge.py:831-903`): the guards, then the worker.
             Message::StartEasyInstall {
@@ -2825,6 +2851,14 @@ impl cosmic::Application for App {
         // Same priming as `Shell::new`: the Plugins page's rows are a cache the
         // host refresh fills, not something the constructor can know.
         state.refresh_plugins(&gamehandler_core::plugins::SystemPluginEnv);
+        // And the same for the Installers page, whose *four* arguments are the
+        // same kind of cache. This line was missing until the D-55 repair and
+        // `Shell::new` had it, so every test that renders the page passed while
+        // the shipped app drew "No matching installers" over a catalog of nine,
+        // and an empty runner selector beside it, until the user typed in the
+        // search box. A test-side primer that production does not share is a
+        // test that is not measuring production.
+        state.refresh_installers();
         let mut app = App {
             core,
             shell: Shell {
@@ -4022,6 +4056,12 @@ mod tests {
         Message::SetViewMode(_) => ("SetViewMode", Message::SetViewMode("list".to_string())),
         Message::SetSortMode(_) => ("SetSortMode", Message::SetSortMode("recent".to_string())),
         Message::SetDefaultRunner(_) => ("SetDefaultRunner", Message::SetDefaultRunner("proton-ge".to_string())),
+        // A runner no default can already be: `State::installer_runner` is
+        // seeded from `settings.default_runner` or from `choices()`' first
+        // entry, which is System Wine's id or a Proton version's, never this.
+        // A sample equal to the seeded value would write what is already there
+        // and read as an unwritten arm — D-34.
+        Message::SetInstallRunner(_) => ("SetInstallRunner", Message::SetInstallRunner("GE-Proton9-5".to_string())),
         Message::SetCloseOnLaunch(_) => ("SetCloseOnLaunch", Message::SetCloseOnLaunch(true)),
         Message::SetDefaultToggle { .. } => ("SetDefaultToggle", Message::SetDefaultToggle {
                             name: "mangohud".to_string(),
@@ -4594,6 +4634,13 @@ mod tests {
             // worker gives up.
             "SetInstallerSearch",
             "SetInstallerCategory",
+            // The runner the *next install* uses (D-55). It is here because its
+            // handler writes `State::installer_runner`, and that write is the
+            // only part of the arm this guard can see — the value reaching the
+            // created game is three hops away (`InstallersView::runner_id` →
+            // `install_press` → `StartEasyInstall`), and
+            // `the_chosen_runner_is_the_one_the_install_press_names` walks it.
+            "SetInstallRunner",
             "StartEasyInstall",
             "EasyInstallProgress",
             "EasyInstallWizardFinished",

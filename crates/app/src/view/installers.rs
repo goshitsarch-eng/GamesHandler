@@ -10,6 +10,9 @@
 //! installer_rows       → the catalog, filtered, as the cards the page draws
 //! runner_choices       → the runner selector's labels
 //! runner_index         → which one is selected
+//! seeded_install_runner → what a fresh page starts out selecting
+//! install_runner_selection → the per-install runner the selector names
+//! category_selection   → the category the filter's selector names
 //! card_subtitle        → the description, plus the notes when there are any
 //! card_category        → the badge's text, folding a blank into "Uncategorized"
 //! install_tooltip      → what the Install button says it will do
@@ -52,7 +55,9 @@
 //!   [`runner_choices`] over [`RunnerManager::choices`], and they reach the page
 //!   through `State::installer_runners`, primed by `State::refresh_installers`
 //!   — the same off-the-render-path reason [`super::runners`] gives for its own
-//!   two bundles.
+//!   two bundles. The **selection** is [`State::installer_runner`], and it is
+//!   the install's rather than the app's (P-53's first clause, D-55): see
+//!   [`seeded_install_runner`] and [`install_runner_selection`].
 //! * **The file chooser** behind P-57's "Locate exe" dialog, which is T-15 and
 //!   stays with UX (this task's brief says so explicitly). The reference's
 //!   `easyInstallNeedsExe` path is `Message::EasyInstallWizardFinished`, and
@@ -162,9 +167,105 @@ pub fn selected_category(categories: &[String], category: &str) -> Option<usize>
 /// An unknown or empty id selects nothing rather than silently the first
 /// entry — the reference does the same, falling back to index 0 in the QML
 /// itself (`InstallersPage.qml:56-57`), which is a rendering decision this
-/// function deliberately leaves to the view.
+/// function deliberately leaves to the view. The value it is handed comes from
+/// [`seeded_install_runner`], which performs that collapse on the *state*
+/// instead, so the case is unreachable in practice rather than unhandled.
 pub fn runner_index(choices: &[(String, String)], runner_id: &str) -> Option<usize> {
     choices.iter().position(|(id, _)| id == runner_id)
+}
+
+/// The `Message` a runner selection carries, from the selector's index.
+///
+/// # This is `#97`/D-55, and the reason it is a function rather than a closure
+///
+/// `dropdown`'s `on_selected` is `impl Fn(usize) -> Message` (`libcosmic
+/// src/widget/dropdown/mod.rs:30`), so the callback's parameter is a **position
+/// in the model**, never the value the model holds. The line this replaced was
+/// `move |index| Message::SetDefaultRunner(index.to_string())`, which is wrong
+/// twice over:
+///
+/// * **the value** — it stored `"1"` where a runner id belongs, and
+///   `RunnerManager::get` answers an unknown id with System Wine, so the user
+///   picked Proton GE and installed under System Wine, silently, every time;
+/// * **the destination** — it wrote `settings.default_runner`, the Settings
+///   page's control. The reference's combo has **no write-back at all**
+///   (`InstallersPage.qml:49-64` reads `defaultRunner` only, at `:55` and
+///   `:61`); its `valueRole: "runnerId"` reaches `installEasy` as an argument
+///   (`:128-130`) and the global default is only the *fallback*
+///   (`bridge.py:840`, and the resolved id is carried onto the created game at
+///   `:855`, `:890`, `:906`). See [`State::installer_runner`].
+///
+/// The named function is what makes the mapping testable at all: a closure
+/// lives inside a builder and a builder needs a renderer, so no assertion could
+/// read what it produced — the same wall [`super::library::category_selection`]
+/// hit with the same defect, and the same repair. `form.rs`'s
+/// `no_dropdown_callback_turns_its_index_into_the_payload` is the guard that now
+/// reads the call sites themselves.
+///
+/// [`State::installer_runner`]: crate::state::State::installer_runner
+pub fn install_runner_selection(choices: &[(String, String)], index: usize) -> Message {
+    Message::SetInstallRunner(
+        choices
+            .get(index)
+            .map(|(id, _)| id.clone())
+            .unwrap_or_else(|| gamehandler_core::models::SYSTEM_WINE.to_string()),
+    )
+}
+
+/// The runner a new install starts out selecting.
+///
+/// This is the QML combo's `currentIndex`, in the port's state, and it is the
+/// reference's own two moments folded into one rule:
+///
+/// * `Component.onCompleted` (`InstallersPage.qml:56-57`) — a fresh page selects
+///   [`State::settings`]'s `default_runner` when the list offers it, and entry
+///   zero (System Wine) when it does not;
+/// * the `onRunnersChanged` handler (`:60-63`) — the same lookup again, so a
+///   runner that has been uninstalled cannot leave the selector pointing at a
+///   choice that is gone.
+///
+/// The difference is that `current` — the port's stand-in for the widget's own
+/// `currentIndex`, which the reference never stores — is kept when it is still
+/// one of `choices`. Without that, every keystroke in the search box (which
+/// calls [`State::refresh_installers`]) would silently discard a choice the user
+/// had made. The reference has no such write to make: its combo is not rebuilt
+/// by `installersChanged`, only by `runnersChanged`.
+///
+/// [`State::settings`]: crate::state::State::settings
+/// [`State::refresh_installers`]: crate::state::State::refresh_installers
+pub fn seeded_install_runner(
+    choices: &[(String, String)],
+    current: &str,
+    default_runner: &str,
+) -> String {
+    for candidate in [current, default_runner] {
+        if runner_index(choices, candidate).is_some() {
+            return candidate.to_string();
+        }
+    }
+    choices
+        .first()
+        .map(|(id, _)| id.clone())
+        .unwrap_or_default()
+}
+
+/// The `Message` a category selection carries, from the selector's index.
+///
+/// The same mapping as [`super::library::category_selection`], for this page's
+/// own message and its own sentinel-carrying list. It exists for the reason
+/// [`install_runner_selection`] does, and it was needed for the same reason: the
+/// closure this replaced named its parameter `category` and was
+/// `|category| Message::SetInstallerCategory(category.to_string())`, so choosing
+/// "Launchers" stored `"2"` and the catalog came back empty. `library.rs` fixed
+/// that shape once already and its doc says so; a rule that reads every call
+/// site is what stops it being fixed a third time by hand.
+pub fn category_selection(options: &[String], index: usize) -> Message {
+    Message::SetInstallerCategory(
+        options
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| ALL_CATEGORIES.to_string()),
+    )
 }
 
 /// `"<description>\n<notes>"`, or just the description.
@@ -325,7 +426,16 @@ pub struct InstallersView<'a> {
     pub categories: &'a [String],
     /// [`runner_choices`]' result.
     pub runners: &'a [(String, String)],
-    /// The runner a new install will use.
+    /// The runner a new install will use — **this install's**, not the global
+    /// default.
+    ///
+    /// [`State::installer_runner`], which [`seeded_install_runner`] fills from
+    /// `settings.default_runner` and the selector's own choice then overrides.
+    /// The distinction is the whole of D-55: binding this to
+    /// `state.settings.default_runner` made the page's selector write the
+    /// Settings page's control, which the reference's combo never does.
+    ///
+    /// [`State::installer_runner`]: crate::state::State::installer_runner
     pub runner_id: &'a str,
     /// [`installing`], i.e. `state.busy()`.
     pub busy: bool,
@@ -354,6 +464,13 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
 
     // ---- The header toolbar: search and category ---------------------------
     let selected = selected_category(page.categories, page.category);
+    // The callback is `Send + Sync + 'static` (`libcosmic
+    // src/widget/dropdown/mod.rs:30`), so it cannot borrow the page it is built
+    // from: each selector takes its own copy of the model, exactly as
+    // `view::settings`'s runner row does. The copies are of a nine-entry list
+    // and a handful of runners, once per frame.
+    let category_options = page.categories.to_vec();
+    let category_choices = category_options.clone();
 
     body = body.push(
         Row::new()
@@ -363,9 +480,9 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
                     .width(Length::Fixed(22.0 * 18.0)),
             )
             .push(cosmic::widget::dropdown(
-                page.categories.to_vec(),
+                category_options,
                 selected,
-                |category| Message::SetInstallerCategory(category.to_string()),
+                move |index| category_selection(&category_choices, index),
             ))
             .push(Space::new().width(Length::Fill))
             .spacing(8)
@@ -383,10 +500,11 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
     // ---- The runner a new install will use ---------------------------------
     body = body.push(text::body("Runner for new installs:"));
     let labels: Vec<String> = page.runners.iter().map(|(_, label)| label.clone()).collect();
+    let runner_choices = page.runners.to_vec();
     body = body.push(cosmic::widget::dropdown(
         labels,
         runner_index(page.runners, page.runner_id),
-        move |index| Message::SetDefaultRunner(index.to_string()),
+        move |index| install_runner_selection(&runner_choices, index),
     ));
     body = body.push(text::caption(RUNNER_NOTE));
 
@@ -514,6 +632,23 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             } else {
                 category.clone()
             };
+            Some(Task::none())
+        }
+        // The per-install runner (D-55). Stored as it arrives, with no
+        // validation and no fallback of its own: the reference's combo can only
+        // yield a value from `backend.runnerChoices` (`InstallersPage.qml:50`),
+        // and the one place a value that is not a runner has to survive is
+        // `start_easy_install`, which already resolves an empty id to the global
+        // default exactly as `bridge.py:840` does. A guard here would be a
+        // second rule about the same value, free to disagree with the first.
+        //
+        // It deliberately does **not** write `settings.default_runner`: that is
+        // the Settings page's control and the reference never writes it from
+        // here. The value travels to the install as an argument — through
+        // `InstallersView::runner_id`, `install_press` and
+        // `Message::StartEasyInstall` — and lands on the created game.
+        Message::SetInstallRunner(runner_id) => {
+            state.installer_runner = runner_id.clone();
             Some(Task::none())
         }
         _ => None,
@@ -709,6 +844,165 @@ mod tests {
         assert_eq!(runner_choices(&manager), manager.choices());
     }
 
+    // ---- the two selectors' mappings (#97 / D-55) --------------------------
+
+    /// The fixture both mapping tests use: no id equals any label, so a
+    /// mutation that read the wrong half could not pass by coincidence — the
+    /// property `form.rs`'s runner test spells out one module over.
+    fn fixture_choices() -> Vec<(String, String)> {
+        let choices = vec![
+            (
+                gamehandler_core::models::SYSTEM_WINE.to_string(),
+                "System Wine".to_string(),
+            ),
+            ("GE-Proton9-5".to_string(), "GE-Proton9-5 (Proton-GE)".to_string()),
+        ];
+        let mut halves: Vec<&String> = choices.iter().flat_map(|(id, label)| [id, label]).collect();
+        halves.sort();
+        let all = halves.len();
+        halves.dedup();
+        assert_eq!(
+            halves.len(),
+            all,
+            "the fixture has an id equal to a label, so it cannot tell the id \
+             from the label: {choices:?}"
+        );
+        choices
+    }
+
+    /// The selector carries the runner's **id**, not its position — #97.
+    ///
+    /// The defect, spelled out: the line this replaced was
+    /// `move |index| Message::SetDefaultRunner(index.to_string())`, so index 1
+    /// became the id `"1"`, which `RunnerManager::get` answers with System Wine.
+    /// The assertion that would have caught it is the first one below, and the
+    /// second is its destination: this message must not be
+    /// [`Message::SetDefaultRunner`], because the reference never writes the
+    /// global default from this page (D-55).
+    #[test]
+    fn the_runner_selection_carries_the_id_and_not_the_position() {
+        let choices = fixture_choices();
+
+        assert!(matches!(
+            install_runner_selection(&choices, 1),
+            Message::SetInstallRunner(ref value) if value == "GE-Proton9-5"
+        ));
+        assert!(matches!(
+            install_runner_selection(&choices, 0),
+            Message::SetInstallRunner(ref value)
+                if value == gamehandler_core::models::SYSTEM_WINE
+        ));
+
+        // The defect, spelled out: index 1 is Proton GE, and `"1"` is an id no
+        // manager holds.
+        assert_ne!(
+            match install_runner_selection(&choices, 1) {
+                Message::SetInstallRunner(value) => value,
+                other => panic!("the selector must carry the per-install message, got {other:?}"),
+            },
+            "1",
+            "the index is a position, and `\"1\"` resolves to System Wine"
+        );
+
+        // An index past the end collapses to System Wine — the same entry
+        // `runner_index` falls back to — rather than to an empty id.
+        for index in [2usize, 9] {
+            assert!(matches!(
+                install_runner_selection(&choices, index),
+                Message::SetInstallRunner(ref value)
+                    if value == gamehandler_core::models::SYSTEM_WINE
+            ));
+        }
+        assert!(matches!(
+            install_runner_selection(&[], 0),
+            Message::SetInstallRunner(ref value)
+                if value == gamehandler_core::models::SYSTEM_WINE
+        ));
+    }
+
+    /// The category selector carries the category, not its position.
+    ///
+    /// #97's twin, live in this file until the D-55 repair: the closure's
+    /// parameter was named `category` and was a `usize`, so
+    /// `category.to_string()` stored `"2"` and the page drew "No matching
+    /// installers" over a full catalog. `library.rs` records fixing exactly this
+    /// by hand once before; this is the same assertion for this page's list.
+    #[test]
+    fn the_category_selection_carries_the_name_and_not_the_position() {
+        let options = installer_categories();
+        let launchers = options
+            .iter()
+            .position(|option| option == "Launchers")
+            .expect("the catalog has a Launchers category");
+
+        assert!(matches!(
+            category_selection(&options, launchers),
+            Message::SetInstallerCategory(ref value) if value == "Launchers"
+        ));
+        assert!(matches!(
+            category_selection(&options, 0),
+            Message::SetInstallerCategory(ref value) if value == ALL_CATEGORIES
+        ));
+        // The defect, spelled out.
+        assert_ne!(
+            match category_selection(&options, launchers) {
+                Message::SetInstallerCategory(value) => value,
+                other => panic!("the selector must carry the category message, got {other:?}"),
+            },
+            launchers.to_string(),
+            "the position is not the category, and a filter set to `\"{launchers}\"` \
+             matches no card"
+        );
+        // An index no option provides cannot invent a category: it folds to the
+        // sentinel rather than to a string that matches nothing.
+        assert!(matches!(
+            category_selection(&[], 99),
+            Message::SetInstallerCategory(ref value) if value == ALL_CATEGORIES
+        ));
+    }
+
+    /// A fresh page selects the stored default when the list offers it, and
+    /// System Wine when it does not — `InstallersPage.qml:56-57`'s two-way
+    /// lookup, and the same one the `onRunnersChanged` handler repeats (`:60-63`).
+    #[test]
+    fn a_fresh_page_selects_the_default_when_the_list_offers_it() {
+        let choices = fixture_choices();
+        let system = gamehandler_core::models::SYSTEM_WINE;
+
+        assert_eq!(
+            seeded_install_runner(&choices, "", "GE-Proton9-5"),
+            "GE-Proton9-5",
+            "the default is what a fresh page selects when it is installed"
+        );
+        assert_eq!(
+            seeded_install_runner(&choices, "", "uninstalled-runner"),
+            system,
+            "a default that is not in the list degrades to entry zero, which is \
+             System Wine — the reference's `index >= 0 ? index : 0`"
+        );
+        assert_eq!(
+            seeded_install_runner(&[], "", "GE-Proton9-5"),
+            "",
+            "an empty list has nothing to select, and `runner_index` renders that \
+             as no selection rather than as a panic"
+        );
+
+        // A choice that is still in the list survives the refresh: this is the
+        // port's stand-in for the combo's own `currentIndex`, and without it a
+        // keystroke in the search box would silently discard the user's pick.
+        assert_eq!(
+            seeded_install_runner(&choices, "GE-Proton9-5", "uninstalled-runner"),
+            "GE-Proton9-5",
+            "the current choice wins over the default while it is still offered"
+        );
+        // ...and one that is gone does not, which is the `onRunnersChanged` half.
+        assert_eq!(
+            seeded_install_runner(&choices, "uninstalled-runner", "GE-Proton9-5"),
+            "GE-Proton9-5",
+            "a choice whose runner was uninstalled falls back to the default"
+        );
+    }
+
     // ---- update ------------------------------------------------------------
 
     /// `installerSearch` is stored as typed. The reference's setter compares
@@ -743,6 +1037,75 @@ mod tests {
     fn a_fresh_state_opens_on_all_categories() {
         assert_eq!(state().installer_category, ALL_CATEGORIES);
         assert_eq!(state().installer_search, "");
+    }
+
+    /// The per-install choice is stored on the install's field and **not** on
+    /// the app's default — the first half of D-55.
+    ///
+    /// This is the assertion whose absence let #97 ship: the arm it replaces
+    /// wrote `settings.default_runner`, so the page's selector moved a control
+    /// on another page while the value it wrote there was the index.
+    #[test]
+    fn choosing_a_runner_for_the_next_install_leaves_the_global_default_alone() {
+        let mut state = state();
+        state.settings.default_runner = "system".to_string();
+        state.installer_runner = "system".to_string();
+
+        assert!(update(
+            &mut state,
+            &Message::SetInstallRunner("GE-Proton9-5".to_string())
+        )
+        .is_some());
+        assert_eq!(state.installer_runner, "GE-Proton9-5");
+        assert_eq!(
+            state.settings.default_runner, "system",
+            "the Installers selector is not the Settings page's control; the \
+             reference's combo has no write-back at all"
+        );
+
+        // And the other direction, so the two fields cannot be one field with
+        // two names: the Settings page's message does not move the install's
+        // choice either. (`SetDefaultRunner` is declined here — it is T-13's —
+        // so this asserts the *state* is untouched rather than the return.)
+        assert!(update(&mut state, &Message::SetDefaultRunner("system".to_string())).is_none());
+        assert_eq!(state.installer_runner, "GE-Proton9-5");
+    }
+
+    /// The chain D-55 is about, walked end to end without a runner: the choice
+    /// reaches the install press as the runner the install will use.
+    ///
+    /// Three hops — `State::installer_runner` → `InstallersView::runner_id` →
+    /// [`install_press`]'s payload — and the middle one is a binding in
+    /// `main.rs`'s `view_body` that no test can read. What this holds is the two
+    /// ends: the message writes the field the page is handed, and the press
+    /// carries what the field says. The binding between them is checked by
+    /// reading it, which is what the comment on it is for.
+    #[test]
+    fn the_chosen_runner_is_the_one_the_install_press_names() {
+        let mut state = state();
+        state.easy_busy = false;
+
+        update(
+            &mut state,
+            &Message::SetInstallRunner("GE-Proton9-5".to_string()),
+        );
+
+        let steam = row("steam", "Steam");
+        // `false` for `busy`: pressing Install while a job runs carries no
+        // message at all, which is P-59 and is `install_press`'s own test.
+        match install_press(&steam, &state.installer_runner, false) {
+            Some(Message::StartEasyInstall {
+                installer_id,
+                runner_id,
+            }) => {
+                assert_eq!(installer_id, "steam");
+                assert_eq!(
+                    runner_id, "GE-Proton9-5",
+                    "the runner the user picked for this install, by id"
+                );
+            }
+            other => panic!("an idle card must offer its install, got {other:?}"),
+        }
     }
 
     /// The easy-install lifecycle is **declined, not half-written** — this is

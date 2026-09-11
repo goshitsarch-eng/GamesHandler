@@ -802,6 +802,26 @@ pub struct State {
     /// `RunnerManager::choices` reads the runners directory and scans `PATH`,
     /// and a frame is the wrong rate for either.
     pub installer_runners: Vec<(String, String)>,
+    /// The runner the **next install** will use — P-53's first clause, D-55.
+    ///
+    /// Not `settings.default_runner`, and the difference is the whole decision:
+    /// the reference's Installers combo has no write-back at all
+    /// (`InstallersPage.qml:49-64` reads `defaultRunner`, never writes it), its
+    /// `valueRole: "runnerId"` is passed to `installEasy` as an argument
+    /// (`:128-130`), and `bridge.py:840` treats the global default as a
+    /// *fallback* — `runner_id or self.settings.default_runner` — with the
+    /// resolved id carried onto the created game (`:855`, `:890`, `:906`). The
+    /// port wrote the index to the global default instead, which both selected
+    /// the wrong runner and moved a control the user never touched.
+    ///
+    /// It is the port's stand-in for the QML combo's own `currentIndex`, which
+    /// the reference keeps in the widget: a libcosmic view is rebuilt every
+    /// frame from borrowed state, so a choice with nowhere to live would not
+    /// survive the frame it was made in. [`Self::refresh_installers`] seeds it
+    /// from `settings.default_runner` and keeps it while it remains a real
+    /// choice — see `view::installers::seeded_install_runner` for why keeping it
+    /// is what the reference's two `indexOfValue` lookups amount to here.
+    pub installer_runner: String,
     /// The install that is running right now, or `None`.
     ///
     /// The reference keeps this in the worker closure (`installEasy`'s
@@ -913,6 +933,7 @@ impl State {
             installer_catalog: Vec::new(),
             installer_categories: Vec::new(),
             installer_runners: Vec::new(),
+            installer_runner: String::new(),
             running_install: None,
             releases: Vec::new(),
             releases_family: String::new(),
@@ -951,7 +972,7 @@ impl State {
         self.runner_busy || self.easy_busy
     }
 
-    /// Recompute the three things the Installers page draws, from the filters it
+    /// Recompute the four things the Installers page draws, from the filters it
     /// holds.
     ///
     /// This is `_get_installers` (`bridge.py:813-828`) pulled off the render
@@ -965,6 +986,14 @@ impl State {
     /// call sites so they cannot be refreshed one without the other: a card
     /// whose category the filter cannot offer is #74, and that defect was
     /// exactly one of these two lists being updated and the other not.
+    ///
+    /// The fourth field, [`Self::installer_runner`], is here for the same
+    /// reason one step further out: it is a *choice over*
+    /// [`Self::installer_runners`], so a list that changes without the choice
+    /// being re-seeded leaves the selector pointing at a runner that is gone.
+    /// [`crate::view::installers::seeded_install_runner`] has the rule and the
+    /// reference's two call sites; it keeps the current choice whenever it is
+    /// still in the list, so a filter keystroke does not discard it.
     pub fn refresh_installers(&mut self) {
         self.installer_catalog = crate::view::installers::installer_rows(
             &self.installer_search,
@@ -972,6 +1001,11 @@ impl State {
         );
         self.installer_categories = crate::view::installers::installer_categories();
         self.installer_runners = crate::view::installers::runner_choices(&self.runners);
+        self.installer_runner = crate::view::installers::seeded_install_runner(
+            &self.installer_runners,
+            &self.installer_runner,
+            &self.settings.default_runner,
+        );
     }
 
     /// The next form-cover token, consuming the current one.
