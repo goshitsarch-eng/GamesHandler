@@ -1646,7 +1646,7 @@ fn save_replaces_a_symlink_rather_than_writing_through_it() {
 /// that quietly *disappears* from the suite fails too. That second case is the
 /// degenerate version of "a fixture that only ever checks what it already
 /// covers": a corpus that shrank to nothing would otherwise stay green.
-const PORTED_VECTOR_OPS: [&str; 10] = [
+const PORTED_VECTOR_OPS: [&str; 12] = [
     "asset_matches",
     "asset_name",
     "install_id_from_parts",
@@ -1655,6 +1655,8 @@ const PORTED_VECTOR_OPS: [&str; 10] = [
     "pure_posix_name",
     "safe_archive_name",
     "safe_install_id",
+    "launch_failure_text",
+    "readable_error",
     "sanitise_release_tag",
     "shell_split",
 ];
@@ -1714,6 +1716,43 @@ fn rust_vector_answer(op: &str, args: &Value) -> Result<Value, String> {
     };
 
     match op {
+        "readable_error" => Ok(json!(crate::runners::readable_error(&text("text")))),
+        "launch_failure_text" => {
+            // B-07. The Python op builds a real child, drains its stderr on a
+            // thread, and **joins that thread** before reading — the one line
+            // the shipped `failure()` omits. The child-process half cannot be
+            // reproduced here (this replay is pure by construction, and must
+            // stay that way), so the case's `stderr` field stands in for what
+            // the completed drain would have collected. That is faithful for
+            // every case in the corpus: each writes far less than the pipe
+            // buffer, so the join is what makes the capture complete, and the
+            // capture is lossless once it happens.
+            //
+            // What this arm therefore pins is the **message contract** — text
+            // if there is any, status line otherwise, `None` on a clean exit,
+            // and the fallback when there is no capture at all. The *ordering*
+            // that makes the text available in the first place is pinned by
+            // `the_stderr_drain_is_joined_before_the_text_is_read`, which does
+            // spawn a child. Neither test alone covers B-07; both together do,
+            // which is why the split is stated rather than left implicit.
+            let code = args
+                .get("exit_code")
+                .and_then(Value::as_i64)
+                .expect("launch_failure_text needs an exit_code");
+            let captured = args
+                .get("capture")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let detail = if captured {
+                crate::runners::readable_error(&text("stderr"))
+            } else {
+                String::new()
+            };
+            Ok(match crate::runners::failure_message(code as i32, &detail) {
+                None => Value::Null,
+                Some(message) => json!(message),
+            })
+        }
         "shell_split" => match shell::split_posix(&text("text")) {
             Ok(words) => Ok(json!(words)),
             // Python raises `ValueError`; the recorded answer is

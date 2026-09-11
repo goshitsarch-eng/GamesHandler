@@ -48,6 +48,7 @@ import json
 import pathlib
 import re
 import shlex
+import subprocess
 import sys
 import time as _time
 
@@ -264,6 +265,72 @@ def op_prefix_drive_cs(args):
     return [str(path) for path in runners.prefix_drive_cs(_need(args, "prefix"))]
 
 
+def op_readable_error(args):
+    """`_readable_error`: a runner's output reduced to the part worth showing.
+
+    Pure, so this op is the shipped code unchanged. It is here because the
+    shaping rules are easy to misread — noise prefixes are dropped *unless* they
+    are all there is, the tail is taken over four lines, and the result is
+    space-joined and then truncated to 240 characters.
+    """
+    return runners._readable_error(_need(args, "text"))
+
+
+def op_launch_failure_text(args):
+    """The `LaunchedGame.failure()` contract, with B-07's ordering applied.
+
+    **This is the one op that does not answer with the shipped code.** It is the
+    shipped code plus the one line the shipped code is missing, and the missing
+    line is the entire point of the op.
+
+    `LaunchedGame.failure()` (`runners.py:1358`) reads `self.errors.text()` after
+    `process.wait()` returns. `wait()` returning proves the child was *reaped*;
+    it says nothing about the stderr pipe having been drained. `_ErrorTail._drain`
+    runs on a separate daemon thread with no join, so it can still be
+    unscheduled when `failure()` reads the buffer — the buffer looks empty, and
+    the real Wine/Proton error text is silently replaced by the generic
+    `the runner exited with status {code}`. Measured at 90/300 runs under load
+    (FINDINGS B-07), which is why `tests/test_runners.py:761` is flaky.
+
+    So this op builds a *real* `_ErrorTail` over the child's stderr and then does
+    the thing the shipped code cannot: it joins the drain thread before reading.
+    Everything else — the chunked reads, the bounded buffer, the UTF-8 decoding,
+    `_readable_error`, the fallback string — is the real implementation, so the
+    answer here is the behaviour the app *means* to have. The port must match
+    this, not the buggy ordering; the divergence is in reliability, not in output
+    format.
+
+    Not covered: the `TimeoutExpired` arm, which returns `None` for a child that
+    is still running. Reaching it needs a clock, and a corpus that depends on
+    timing cannot be re-run for an identical answer. It is pinned by a unit test
+    on the Rust side instead, and named here so the gap is visible.
+    """
+    capture = args.get("capture", True)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            f"sys.stderr.write({args.get('stderr', '')!r})\n"
+            "sys.stderr.flush()\n"
+            f"sys.exit({_need(args, 'exit_code')})\n",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    tail = runners._ErrorTail(process.stderr) if capture else None
+    process.wait()
+    if tail is not None:
+        # The line the shipped `failure()` omits. Without it the read below
+        # races the drain thread and loses the text ~30% of the time.
+        tail._thread.join()
+    code = process.returncode
+    if code == 0:
+        return None
+    detail = runners._readable_error(tail.text()) if tail is not None else ""
+    return detail or f"the runner exited with status {code}"
+
+
 OPS = {
     "safe_archive_name": op_safe_archive_name,
     "safe_install_id": op_safe_install_id,
@@ -287,6 +354,8 @@ OPS = {
     "shell_split": op_shell_split,
     "pure_posix_name": op_pure_posix_name,
     "install_id_from_parts": op_install_id_from_parts,
+    "readable_error": op_readable_error,
+    "launch_failure_text": op_launch_failure_text,
 }
 
 
@@ -310,7 +379,7 @@ OPS = {
 # *last* review's class of bug — inputs where the obvious implementation and
 # Python's differ — not cases that cover lines.
 #
-# Four groups earn their size:
+# Six groups earn their size:
 #
 # * `shell_split` — the hand-written `shlex` port. Every case is a place where a
 #   plausible scanner disagrees with CPython: `\x0b` is not whitespace, `''` is
@@ -319,11 +388,27 @@ OPS = {
 # * `asset_name` / `safe_archive_name` / `pure_posix_name` — the `or ""`
 #   truthiness rule and the `PurePosixPath` basename rule. Both already found
 #   real defects in the port; these are the cases that found them.
-# * `parse_env_block` / `merge_dll_overrides` / `normalize_desktop_size` — the
-#   pure launch-option inputs, which the toggle matrix will cross next. They are
-#   pure, so they are pinned now rather than with `launch_opts`.
-# * `launch_failure_text` — the B-07 reproducer, and the one op here that is not
-#   pure. See its own note.
+# * `asset_matches` / `pick_asset` / `looks_like_archive` /
+#   `install_id_from_parts` — asset selection and install ids, where a wrong
+#   answer installs the wrong build or silently overwrites another family's.
+#   The inline `family` cases exist because no shipped family has both a
+#   `require` and an `exclude` that bite.
+# * `parse_env_block` / `merge_dll_overrides` / `normalize_desktop_size` /
+#   `virtual_desktop_argv` — the pure launch-option inputs, which the toggle
+#   matrix will cross next. They are pure, so they are pinned now rather than
+#   with `launch_opts`.
+# * `readable_error` — how a runner's output is reduced to a toast. The
+#   `splitlines` cases are the reason it is here: `str.splitlines()` breaks on
+#   `\x0b \x0c \x1c \x1d \x1e \x85 \u2028 \u2029`, and a port that
+#   splits on `\n` joins two errors into one line. Same class of trap as
+#   shlex's whitespace set.
+# * `launch_failure_text` — B-07. The one op here that is not pure; see its own
+#   note, which explains why the ordering lives in this script rather than in
+#   the shipped `failure()`.
+#
+# Ten of the sixteen ops are replayed by `crates/core/src/oracle_tests.rs` §12;
+# the four launch-option ops are named there as deferred to `launch_opts`, and
+# that list is asserted against the corpus so it cannot rot.
 
 
 def _shell_split_cases():
@@ -532,6 +617,75 @@ def _launch_option_cases():
     return cases
 
 
+def _readable_error_cases():
+    """`_readable_error`'s shaping rules, where a plausible reading differs."""
+    cases = []
+    for text in [
+        "", "   ", "\n", "\r\n",
+        "wine: cannot find the executable",
+        "warn: fixme: only noise\nwine: real failure",
+        "warn: only noise", "fixme: a\ntrace: b\ninfo: c\nwarn: d",
+        "one\ntwo\nthree\nfour\nfive\nsix",
+        "a\r\nb\rc", "  leading and trailing  ",
+        "x" * 300, "a" * 100 + "\n" + "b" * 200,
+        "NOISE: case", "Fixme: uppercase prefix is not stripped",
+        "err:x11drv: real", "   warn: indented noise is still noise",
+        "\x00embedded nul", "ünïcøde: failed",
+        # `str.splitlines()` is **not** `str.split("\n")`. It also breaks on
+        # `\x0b \x0c \x1c \x1d \x1e \x85 \u2028 \u2029`, and a port that
+        # reaches for `split('\n')` renders `a\x0bb` as one line where Python
+        # sees two and joins them with a space. Same class of trap as shlex's
+        # whitespace set, and the same reason it is in this corpus.
+        "a\x0bb", "a\x0cb", "a\x1cb", "a\x1db", "a\x1eb",
+        "a\x85b", "a\u2028b", "a\u2029b",
+        # Non-splitting whitespace, for contrast: a tab is stripped at the
+        # edges but never splits, and an embedded NUL is ordinary text.
+        "a\tb", "\ta\t", "a\x00b",
+        # The noise arm when every line is noise *and* when none is.
+        "warn: only\ntrace: only", "err: one\nwarn: two",
+        "x" * 240 + "\n" + "y" * 240,
+    ]:
+        cases.append({"op": "readable_error", "args": {"text": text}})
+    return cases
+
+
+def _launch_failure_cases():
+    """B-07: the ordering, not the message.
+
+    Every case here has a **non-empty stderr and a non-zero exit**, which is
+    exactly the situation the race corrupts. A case with empty stderr would be
+    answered `the runner exited with status N` by both orderings, so it could
+    not tell the race from the fix — and a corpus that cannot tell them apart
+    is the shape of test that let B-07 live in the Python suite for so long.
+    """
+    stderrs = [
+        "wine: cannot find the executable\n",
+        "err:module:import_dll Library not found\n",
+        "warn: noise only\nwine: the real one\n",
+        "one\ntwo\nthree\nfour\nfive\n",
+        "fixme: only noise\n",
+        "x" * 300,
+        "a" * 100 + "\n" + "b" * 200,
+    ]
+    cases = [
+        {"op": "launch_failure_text",
+         "args": {"stderr": text, "exit_code": code, "capture": True}}
+        for text in stderrs
+        for code in (1, 2, 127)
+    ]
+    # Exit 0 is `None` regardless of stderr — the "it did not fail" arm.
+    cases.append({"op": "launch_failure_text",
+                  "args": {"stderr": "noise on a clean exit\n", "exit_code": 0,
+                           "capture": True}})
+    # No capture at all: `errors is None`, so the fallback is the *only*
+    # possible answer. Distinct from an empty buffer, which is the race's
+    # signature — and telling those two apart is the point of B-07.
+    cases.append({"op": "launch_failure_text",
+                  "args": {"stderr": "never read\n", "exit_code": 3,
+                           "capture": False}})
+    return cases
+
+
 def build_suite():
     """The whole adversarial corpus, as a list of request objects."""
     cases = []
@@ -540,6 +694,8 @@ def build_suite():
     cases += _install_id_cases()
     cases += _selection_cases()
     cases += _launch_option_cases()
+    cases += _readable_error_cases()
+    cases += _launch_failure_cases()
     return cases
 
 

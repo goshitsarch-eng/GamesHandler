@@ -5667,5 +5667,499 @@
    "/desktop=namewithspaces,1920x1080",
    "/g/app.exe"
   ]
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": ""
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "   "
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "\n"
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "\r\n"
+  },
+  "ok": true,
+  "result": ""
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "wine: cannot find the executable"
+  },
+  "ok": true,
+  "result": "wine: cannot find the executable"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "warn: fixme: only noise\nwine: real failure"
+  },
+  "ok": true,
+  "result": "wine: real failure"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "warn: only noise"
+  },
+  "ok": true,
+  "result": "warn: only noise"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "fixme: a\ntrace: b\ninfo: c\nwarn: d"
+  },
+  "ok": true,
+  "result": "fixme: a trace: b info: c warn: d"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "one\ntwo\nthree\nfour\nfive\nsix"
+  },
+  "ok": true,
+  "result": "three four five six"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "a\r\nb\rc"
+  },
+  "ok": true,
+  "result": "a b c"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "  leading and trailing  "
+  },
+  "ok": true,
+  "result": "leading and trailing"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "ok": true,
+  "result": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "ok": true,
+  "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "NOISE: case"
+  },
+  "ok": true,
+  "result": "NOISE: case"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "Fixme: uppercase prefix is not stripped"
+  },
+  "ok": true,
+  "result": "Fixme: uppercase prefix is not stripped"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "err:x11drv: real"
+  },
+  "ok": true,
+  "result": "err:x11drv: real"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "   warn: indented noise is still noise"
+  },
+  "ok": true,
+  "result": "warn: indented noise is still noise"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "\u0000embedded nul"
+  },
+  "ok": true,
+  "result": "\u0000embedded nul"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "ünïcøde: failed"
+  },
+  "ok": true,
+  "result": "ünïcøde: failed"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "a\u000bb"
+  },
+  "ok": true,
+  "result": "a b"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "a\fb"
+  },
+  "ok": true,
+  "result": "a b"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "a\u001cb"
+  },
+  "ok": true,
+  "result": "a b"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "a\u001db"
+  },
+  "ok": true,
+  "result": "a b"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "a\u001eb"
+  },
+  "ok": true,
+  "result": "a b"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "ab"
+  },
+  "ok": true,
+  "result": "a b"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "a b"
+  },
+  "ok": true,
+  "result": "a b"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "a b"
+  },
+  "ok": true,
+  "result": "a b"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "a\tb"
+  },
+  "ok": true,
+  "result": "a\tb"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "\ta\t"
+  },
+  "ok": true,
+  "result": "a"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "a\u0000b"
+  },
+  "ok": true,
+  "result": "a\u0000b"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "warn: only\ntrace: only"
+  },
+  "ok": true,
+  "result": "warn: only trace: only"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "err: one\nwarn: two"
+  },
+  "ok": true,
+  "result": "err: one"
+ },
+ {
+  "op": "readable_error",
+  "args": {
+   "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+  },
+  "ok": true,
+  "result": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "wine: cannot find the executable\n",
+   "exit_code": 1,
+   "capture": true
+  },
+  "ok": true,
+  "result": "wine: cannot find the executable"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "wine: cannot find the executable\n",
+   "exit_code": 2,
+   "capture": true
+  },
+  "ok": true,
+  "result": "wine: cannot find the executable"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "wine: cannot find the executable\n",
+   "exit_code": 127,
+   "capture": true
+  },
+  "ok": true,
+  "result": "wine: cannot find the executable"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "err:module:import_dll Library not found\n",
+   "exit_code": 1,
+   "capture": true
+  },
+  "ok": true,
+  "result": "err:module:import_dll Library not found"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "err:module:import_dll Library not found\n",
+   "exit_code": 2,
+   "capture": true
+  },
+  "ok": true,
+  "result": "err:module:import_dll Library not found"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "err:module:import_dll Library not found\n",
+   "exit_code": 127,
+   "capture": true
+  },
+  "ok": true,
+  "result": "err:module:import_dll Library not found"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "warn: noise only\nwine: the real one\n",
+   "exit_code": 1,
+   "capture": true
+  },
+  "ok": true,
+  "result": "wine: the real one"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "warn: noise only\nwine: the real one\n",
+   "exit_code": 2,
+   "capture": true
+  },
+  "ok": true,
+  "result": "wine: the real one"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "warn: noise only\nwine: the real one\n",
+   "exit_code": 127,
+   "capture": true
+  },
+  "ok": true,
+  "result": "wine: the real one"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "one\ntwo\nthree\nfour\nfive\n",
+   "exit_code": 1,
+   "capture": true
+  },
+  "ok": true,
+  "result": "two three four five"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "one\ntwo\nthree\nfour\nfive\n",
+   "exit_code": 2,
+   "capture": true
+  },
+  "ok": true,
+  "result": "two three four five"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "one\ntwo\nthree\nfour\nfive\n",
+   "exit_code": 127,
+   "capture": true
+  },
+  "ok": true,
+  "result": "two three four five"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "fixme: only noise\n",
+   "exit_code": 1,
+   "capture": true
+  },
+  "ok": true,
+  "result": "fixme: only noise"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "fixme: only noise\n",
+   "exit_code": 2,
+   "capture": true
+  },
+  "ok": true,
+  "result": "fixme: only noise"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "fixme: only noise\n",
+   "exit_code": 127,
+   "capture": true
+  },
+  "ok": true,
+  "result": "fixme: only noise"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "exit_code": 1,
+   "capture": true
+  },
+  "ok": true,
+  "result": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "exit_code": 2,
+   "capture": true
+  },
+  "ok": true,
+  "result": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "exit_code": 127,
+   "capture": true
+  },
+  "ok": true,
+  "result": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "exit_code": 1,
+   "capture": true
+  },
+  "ok": true,
+  "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "exit_code": 2,
+   "capture": true
+  },
+  "ok": true,
+  "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "exit_code": 127,
+   "capture": true
+  },
+  "ok": true,
+  "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "noise on a clean exit\n",
+   "exit_code": 0,
+   "capture": true
+  },
+  "ok": true,
+  "result": null
+ },
+ {
+  "op": "launch_failure_text",
+  "args": {
+   "stderr": "never read\n",
+   "exit_code": 3,
+   "capture": false
+  },
+  "ok": true,
+  "result": "the runner exited with status 3"
  }
 ]

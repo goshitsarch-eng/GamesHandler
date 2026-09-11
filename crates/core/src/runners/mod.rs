@@ -681,6 +681,178 @@ fn take_chars(text: &str, count: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Launch failure reporting (B-07)
+// ---------------------------------------------------------------------------
+
+/// How many trailing lines of a runner's output are kept. `runners.py:1297`.
+const ERROR_TAIL_LINES: usize = 4;
+
+/// The message cap, in *characters*, matching Python's slice. `runners.py:1298`.
+const ERROR_MESSAGE_CHARS: usize = 240;
+
+/// Prefixes that mark a line as noise. `runners.py:1300`.
+///
+/// Matched case-insensitively against the *start* of the stripped line, which
+/// is why `"WARN: caps"` survives — see [`readable_error`].
+const NOISE_PREFIXES: [&str; 4] = ["fixme:", "warn:", "trace:", "info:"];
+
+/// The line breaks [`python_splitlines`] recognises beyond `\n`.
+///
+/// `str.splitlines()` is **not** `str.split("\n")`. It also breaks on these,
+/// and the port has to say so explicitly because Rust's [`str::lines`] and a
+/// plain `split('\n')` both disagree with Python here. A runner that emits a
+/// form feed between two errors — Wine's own output does contain `\x0c` — would
+/// otherwise be read as one long line instead of two.
+const PYTHON_LINE_BREAKS: [char; 8] = [
+    '\u{0b}',
+    '\u{0c}',
+    '\u{1c}',
+    '\u{1d}',
+    '\u{1e}',
+    '\u{85}',
+    '\u{2028}',
+    '\u{2029}',
+];
+
+/// Python's `str.splitlines()`, including the breaks Rust does not treat as
+/// line boundaries.
+///
+/// The full set is `\n \r \v \f \x1c \x1d \x1e \x85 \u2028 \u2029`, plus
+/// the `\r\n` pair which counts once. Callers here pass text that has already
+/// had `\r` replaced by `\n` (as Python's own caller does), so `\r` and `\r\n`
+/// cannot reach this function from [`readable_error`] — but the splitter is
+/// written for the general case so it is not a trap if it is reused.
+fn python_splitlines(text: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut start = 0usize;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, c)) = chars.next() {
+        let is_break = if c == '\r' {
+            // A CRLF pair is one break, not two, so the LF is consumed here.
+            if chars.peek().is_some_and(|(_, next)| *next == '\n') {
+                chars.next();
+            }
+            true
+        } else if c == '\n' {
+            true
+        } else {
+            PYTHON_LINE_BREAKS.contains(&c)
+        };
+        if is_break {
+            lines.push(&text[start..index]);
+            start = index + c.len_utf8();
+        }
+    }
+    if start < text.len() {
+        lines.push(&text[start..]);
+    }
+    lines
+}
+
+/// Reduce a runner's output to the part worth putting in a toast.
+/// `_readable_error` (`runners.py:1304`).
+///
+/// Three rules, and each one has a case in the vector corpus:
+///
+/// * Every line is stripped, so indentation does not defeat the noise filter.
+/// * Noise lines are dropped — **unless every line is noise**, in which case
+///   the unstripped-of-noise list is used instead. A runner that emits nothing
+///   but `warn:` lines still gets *something* shown rather than an empty string
+///   that would fall back to the generic status message.
+/// * The last four useful lines are joined with spaces and truncated to 240
+///   characters. Joining is what makes a multi-line Wine error readable in a
+///   single-line toast.
+///
+/// The prefix test is `line.lower().startswith(...)`, so `"WARN: caps"` is
+/// noise but `"xwarn:"` and `" err: "` (stripped to `"err:"`) are not — `err:`
+/// is not in the noise set at all, which is deliberate: it is where Wine puts
+/// real failures.
+pub fn readable_error(text: &str) -> String {
+    let normalized = text.replace('\r', "\n");
+    let lines: Vec<&str> = python_splitlines(&normalized)
+        .into_iter()
+        .map(str::trim)
+        .collect();
+    let useful: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|line| !line.is_empty() && !is_noise(line))
+        .collect();
+    // The fallback deliberately re-derives from *all* lines rather than
+    // reusing `lines`: Python's `or` picks the non-noise list only when it is
+    // non-empty, and the alternative is the empty-stripped list.
+    let tail: Vec<&str> = if useful.is_empty() {
+        lines.iter().copied().filter(|line| !line.is_empty()).collect()
+    } else {
+        useful
+    };
+    let start = tail.len().saturating_sub(ERROR_TAIL_LINES);
+    take_chars(&tail[start..].join(" "), ERROR_MESSAGE_CHARS)
+}
+
+/// The message a failed launch reports. `LaunchedGame.failure` (`runners.py:1358`).
+///
+/// `None` means the title did not fail: either it is still running when the
+/// grace period expires, or it exited **zero**. Anything else is reported — with
+/// the runner's own error text if there is any, and the status line otherwise.
+///
+/// # B-07 — the port deliberately diverges here, in reliability
+///
+/// The Python original reads its captured stderr like this:
+///
+/// ```text
+/// code = self.process.wait(timeout=timeout)      # reaped, NOT drained
+/// detail = _readable_error(self.errors.text())   # races the drain thread
+/// return detail or f"the runner exited with status {code}"
+/// ```
+///
+/// `wait()` returning proves the child was *reaped*. It says nothing about the
+/// stderr pipe having been drained, and `_ErrorTail._drain` runs on a separate
+/// daemon thread that `failure()` never joins. So the buffer can still be empty
+/// when it is read, and `or` then silently substitutes the generic status line —
+/// **the actual Wine/Proton error is lost**, which is the one thing the caller
+/// needed. Measured at 90/300 runs under load (FINDINGS B-07); `python-tests`
+/// was intermittently red because of it.
+///
+/// The fix is the *ordering*, and it is not available in Python: a daemon
+/// thread has no join and `failure()` runs on the UI path with a six-second
+/// deadline. Rust has the tools, so the port uses them — the reader is awaited
+/// to completion before the buffer is read, and this function only ever sees
+/// text that was already fully collected.
+///
+/// This is a divergence in **reliability, not in output format**. The
+/// observable contract is unchanged and is what the port honours: *report the
+/// runner's error text if there is any, else the status line*. The Python app
+/// meets it only most of the time; the port meets it always. So the port never
+/// degrades to the fallback when the runner did write something, and a test for
+/// this asserts the error text is **present** — a test that accepted either
+/// outcome would pass while the race was live, which is precisely how the
+/// Python suite hid this for so long.
+///
+/// The ordering itself is [`crate::runners::mod`]'s
+/// `the_stderr_drain_is_joined_before_the_text_is_read`; this function is the
+/// pure half, so the message shape is also pinned by the vector corpus
+/// (`launch_failure_text`, answered by `run_runners_vectors.py` with the join
+/// applied).
+pub fn failure_message(code: i32, detail: &str) -> Option<String> {
+    if code == 0 {
+        return None;
+    }
+    if detail.is_empty() {
+        return Some(format!("the runner exited with status {code}"));
+    }
+    Some(detail.to_string())
+}
+
+/// Whether a stripped line carries one of [`NOISE_PREFIXES`].
+fn is_noise(line: &str) -> bool {
+    let lowered = line.to_lowercase();
+    NOISE_PREFIXES
+        .iter()
+        .any(|prefix| lowered.starts_with(prefix))
+}
+
+// ---------------------------------------------------------------------------
 // Runner metadata
 // ---------------------------------------------------------------------------
 
@@ -1477,6 +1649,145 @@ mod tests {
         assert_eq!(stripped_var(&env, "WINEPREFIX"), None);
         env.insert("WINEPREFIX".to_string(), " /prefix ".to_string());
         assert_eq!(stripped_var(&env, "WINEPREFIX").as_deref(), Some("/prefix"));
-        assert_eq!(stripped_var(&env, "ABSENT"), None);
+         assert_eq!(stripped_var(&env, "ABSENT"), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // B-07 — the ordering, against a real child
+    // -----------------------------------------------------------------------
+    //
+    // The corpus pins the *message contract*; this pins the *ordering* that
+    // makes the message available at all. The two are split because the corpus
+    // replay must stay pure, and the ordering can only be observed with a
+    // process. Neither test covers B-07 alone.
+
+    /// Drain a child's stderr on a thread and wait for the child, joining the
+    /// reader **before** returning the captured text.
+    ///
+    /// This is the shape the port must use, and the shape Python cannot.
+    /// `Child::wait()` (as in `std::process` and as in Python's `Popen.wait`)
+    /// returns when the child is *reaped*; the pipe is a separate object with a
+    /// separate reader, and nothing about the reap implies the reader has seen
+    /// the last bytes. The join is the whole fix.
+    ///
+    /// `wait_with_output()` is the stdlib spelling of the same idea and is used
+    /// by `launch.rs`; this hand-built version exists so the test can assert on
+    /// the ordering directly rather than trusting that a combined call orders
+    /// it correctly.
+    fn capture_stderr_joined(child: &mut std::process::Child) -> (std::process::ExitStatus, String) {
+        use std::io::Read;
+
+        let mut pipe = child.stderr.take().expect("stderr was piped");
+        let reader = std::thread::spawn(move || {
+            let mut buffer = Vec::new();
+            // A read error on a closed pipe is not a failure to report; the
+            // text collected so far is still worth having.
+            let _ = pipe.read_to_end(&mut buffer);
+            buffer
+        });
+        let status = child.wait().expect("the child should be waitable");
+        // The line B-07 is about. Without it, `buffer` below can be empty or
+        // short even though the child wrote a complete message.
+        let bytes = reader.join().expect("the reader thread should not panic");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// The child this test launches, chosen so B-07 is visible.
+    ///
+    /// `sh` rather than the game handler binary: the point is a process that
+    /// writes a diagnostic and exits non-zero, and every Unix has `/bin/sh`.
+    /// The payload is far larger than a pipe buffer is comfortable with, so the
+    /// child cannot finish writing until the reader has been draining for a
+    /// while — which is exactly the window in which the un-joined ordering
+    /// loses the tail. The *last* lines are what `readable_error` keeps, so a
+    /// torn capture shows up as missing text rather than as a shorter message.
+    fn failing_child() -> std::process::Command {
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("i=0; while [ $i -lt 4000 ]; do echo \"err:module:import_dll Library $i not found\" >&2; i=$((i+1)); done; exit 3")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        command
+    }
+
+    #[test]
+    fn the_stderr_drain_is_joined_before_the_text_is_read() {
+        // B-07's assertion, and the coordinator's requirement stated exactly:
+        // the error text must be **present**, never the fallback. Accepting
+        // either outcome is how the Python suite stayed green while the race
+        // was live, so there is deliberately no `assert!(text == real ||
+        // text == fallback)` here — the fallback is a failure.
+        let mut child = failing_child().spawn().expect("/bin/sh should be runnable");
+        let (status, captured) = capture_stderr_joined(&mut child);
+
+        // The child really did fail, and really did write a diagnostic.
+        assert_eq!(status.code(), Some(3), "the child should exit 3");
+        assert!(
+            !captured.is_empty(),
+            "the child wrote a diagnostic to stderr; an empty capture here is \
+             the drain race, not a quiet child"
+        );
+
+        let message = failure_message(status.code().unwrap(), &readable_error(&captured))
+            .expect("a non-zero exit is a failure");
+
+        // The whole point: the runner's own text, not the status line.
+        assert!(
+            message.contains("import_dll"),
+            "the runner's error text should be reported, but got {message:?}"
+        );
+        assert!(
+            !message.starts_with("the runner exited with status"),
+            "the fallback means the drain lost the text — this is B-07 itself, \
+             and it must fail loudly rather than be tolerated: {message:?}"
+        );
+        // And the tail specifically, since `readable_error` keeps the last four
+        // lines — the part a torn capture would be missing.
+        assert!(
+            message.contains("3999"),
+            "the *last* line the child wrote must survive the capture: {message:?}"
+        );
+    }
+
+    #[test]
+    fn a_capture_that_really_is_empty_falls_back_to_the_status_line() {
+        // The other direction, so the test above cannot be satisfied by a
+        // function that simply never uses the fallback. A child that exits
+        // non-zero without writing anything is reported by status, exactly as
+        // Python's contract says — the fallback is correct *here* and wrong
+        // above, and both arms have to be pinned or the pair proves nothing.
+        let mut child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("exit 4")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("/bin/sh should be runnable");
+        let (status, captured) = capture_stderr_joined(&mut child);
+
+        assert_eq!(status.code(), Some(4));
+        assert!(captured.is_empty(), "this child writes nothing");
+        assert_eq!(
+            failure_message(4, &readable_error(&captured)).as_deref(),
+            Some("the runner exited with status 4")
+        );
+    }
+
+    #[test]
+    fn a_clean_exit_is_never_a_failure() {
+        // `code == 0` short-circuits before the text is even consulted, so a
+        // zero-exit child that chattered on stderr is still not a failure. The
+        // corpus carries this as `launch_failure_text` with `exit_code: 0`.
+        assert_eq!(failure_message(0, "wine: noise on a clean exit"), None);
+        assert_eq!(failure_message(0, ""), None);
+        // And a non-zero exit with no text is the one case that *does* use the
+        // status line — the shape the race degrades to.
+        assert_eq!(
+            failure_message(127, "").as_deref(),
+            Some("the runner exited with status 127")
+        );
     }
 }
