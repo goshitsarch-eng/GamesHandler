@@ -40,9 +40,11 @@ pub const APP_NAME: &str = "GameHandler";
 /// cannot drift apart.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+mod hash;
 pub mod json;
 pub mod models;
 pub mod paths;
+pub mod runners;
 pub mod settings;
 
 #[cfg(test)]

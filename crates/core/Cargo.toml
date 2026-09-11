@@ -45,3 +45,27 @@ serde = { version = "1", features = ["derive"] }
 # `float_roundtrip` changes no API, which is exactly why it needs the fixture
 # and the named value to hold it in place.
 serde_json = { version = "1", features = ["float_roundtrip"] }
+
+# Runner archives (DECISIONS D-24). `core::runners::archive` streams an
+# attacker-influenced tarball into private staging, and it is the one place in
+# this crate where a defect is a vulnerability rather than a bug — so these are
+# the reference C implementations, which have had a decade of adversarial
+# attention, over younger pure-Rust ones. The allowlist's purpose was never "no
+# dependencies": it is that `cargo test -p gamehandler-core` stays instant,
+# headless and offline, and none of these compromise that.
+#
+# `flate2` is pinned to the `zlib` backend for the same reason: its default
+# `miniz_oxide` is pure Rust but younger. The three C libraries are proven
+# present in the 25.08 runtime at T-17; `bzip2` is the one to watch, because
+# the SDK ships libbz2 and its headers but **no `bzip2.pc`**. That is not a
+# failure, and it is worth stating because it reads like one: `bzip2-sys`'s
+# `build.rs` consumes `pkg_config::probe("bzip2").is_ok()`, so a missing `.pc`
+# falls through to `cc::Build` over the vendored `bzip2-1.0.8/*.c` — the
+# documented-vendored path, chosen automatically. `lzma-sys` has the same
+# `.is_ok()` shape for `liblzma`, so xz2 is safe for the same reason. There is
+# no environment variable to set; an earlier draft of D-24 named one
+# (`BZIP2_SYS_USE_PKG_CONFIG`) that does not exist.
+tar = "0.4"
+xz2 = "0.1"
+bzip2 = "0.5"
+flate2 = { version = "1", default-features = false, features = ["zlib"] }
