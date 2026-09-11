@@ -82,6 +82,25 @@ renders "via wgpu":
 order: it protects parity and sandbox correctness, and it is the simplest thing
 that works. Revisit only with evidence that CPU rasterization is too slow.
 
+**Precision (verified in-tree after T-01).** The *renderer* is software, but the
+**`iced_wgpu` crate is still compiled**. libcosmic's `wayland` feature enables
+`iced_wgpu/wayland` without the `?` that would make it conditional, so the crate
+enters the dependency graph regardless. Checked with
+`cargo tree -e features`:
+
+```
+iced_renderer feature "tiny-skia"     -> present
+iced_renderer feature "wgpu"          -> ABSENT (count 0)
+libcosmic feature "iced_wgpu"         -> present      (via `wayland`)
+```
+
+So D-11 holds at **runtime** — nothing initialises a GPU device — and the
+earlier phrasing "the wgpu tree is not in the build" was wrong. The distinction
+matters for exactly one thing: build time. It has **no** packaging consequence,
+since `cargo-sources.json` must cover the crate either way (D-09 anticipated
+this). Recorded so nobody later mistakes a compiled-but-unused crate for an
+active GPU path.
+
 ---
 
 ## 3. Deliverable shape
@@ -255,7 +274,7 @@ same file (D-05).
 
 | # | Task | Owner | Notes |
 |---|---|---|---|
-| T-01 | Workspace scaffold: `Cargo.toml`, `crates/core`, `crates/app`, minimal libcosmic app that compiles and runs | Arch + UX | Proves F-1/F-3 in-tree. Core has **no** GUI deps. |
+| T-01 | Workspace scaffold: `Cargo.toml`, `crates/core`, `crates/app`, minimal libcosmic app that compiles and runs | Arch + UX | **DONE** (`f76cedd`). Proves F-1/F-3 in-tree. Core has **no** GUI deps — verified with `cargo tree -p gamehandler-core`. |
 | T-01a | Compatibility oracle: run the Python impl, freeze its JSON behaviour | Lead | **DONE** (`docs/migration/oracle/`). Blocking input for T-02. |
 | T-02 | `core::paths` + `core::models` + `core::settings` | Arch | Must satisfy the oracle fixtures — see §4a. |
 | T-03 | `core::runners` — families, archive extraction, env/launch, desktop shortcuts | Arch | Largest port. Security tests are the gate. |
