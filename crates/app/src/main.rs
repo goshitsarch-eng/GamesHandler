@@ -24,9 +24,10 @@ use cosmic::widget::{container, icon, nav_bar, text, toaster};
 use gamehandler_core::models::{Library, SORT_MODES};
 use gamehandler_core::runners::families::ReleaseInfo;
 use gamehandler_core::runners::{RunnerManager, SystemLaunchEnv};
-use gamehandler_core::settings::{Settings, VIEW_MODES};
+use gamehandler_core::settings::{COLOR_SCHEMES, Settings, VIEW_MODES};
 use gamehandler_core::{APP_ID, APP_NAME, VERSION};
 
+mod http;
 mod state;
 // TODO(T-09): remove once the pages call these components. See D-32.
 //
@@ -637,12 +638,15 @@ fn page_icon(page: Page) -> &'static str {
 /// The reference starts on the Library page (`Main.qml:56`,
 /// `pageStack.initialPage: libraryPage`), so the first row is active.
 ///
-/// The label comes from [`Page::label`], including for the one page where it
-/// disagrees with the reference: `Main.qml:99` and `CreditsPage.qml:10` both say
-/// **"About & Credits"**, and `Page::label` says "Credits". The mismatch is
-/// recorded here and reported rather than patched over, because the fix is in
-/// `core`'s table and a second copy of the labels here would be a third place
-/// for them to drift.
+/// The label comes from [`Page::label`], which is now the reference's own
+/// wording for every page. It said "Credits" where `Main.qml:94` and
+/// `CreditsPage.qml:10` both say **"About & Credits"** until T-13 fixed it
+/// (P-65); the mismatch was recorded in the `KNOWN_LABEL_DIVERGENCE` table
+/// below rather than patched here, because a second copy of the labels in this
+/// file would be a third place for them to drift.
+///
+/// (`state.rs`, not `core`: an earlier version of this comment sent the reader to
+/// `core`'s table for [`Page::label`], which lives in `crate::state`.)
 fn build_nav_model() -> nav_bar::Model {
     let mut model = nav_bar::Model::default();
     for page in Page::ALL {
@@ -812,12 +816,25 @@ impl Shell {
             Page::Installers => pending_page(Page::Installers, "T-12"),
             // TODO(T-11): the runner manager's page.
             Page::Runners => pending_page(Page::Runners, "T-11"),
-            // TODO(T-13): the plugin list.
+            // TODO(T-06 + T-13): the plugin list. **Blocked, and not on this
+            // task's own work.** `PluginsPage.qml` draws `backend.plugins`
+            // (`bridge.py:949-1031`), whose five helpers, three states and
+            // install commands are `plugins.py` (188 lines) — and `core::plugins`
+            // has not landed (T-06, `PLAN.md` §6). A page here could only invent
+            // the data or draw an empty list, and an empty plugin list is the
+            // "passes without inspecting what it claims" defect with a UI.
             Page::Plugins => pending_page(Page::Plugins, "T-13"),
-            // TODO(T-13): about and credits.
+            // TODO(T-06 + T-13): about and credits. Same blocker: five sections
+            // and 25 entries out of `credits.py` (413 lines, `bridge.py:1036-1069`),
+            // and the regenerable README section (P-65) depends on the same data.
             Page::Credits => pending_page(Page::Credits, "T-13"),
-            // TODO(T-13): the settings form.
-            Page::Settings => pending_page(Page::Settings, "T-13"),
+            Page::Settings => {
+                let page = view::settings::SettingsPage {
+                    settings: &self.state.settings,
+                    runners: &self.state.runners,
+                };
+                view::settings::view(page)
+            }
         }
     }
 
@@ -866,15 +883,29 @@ impl Shell {
     ///   [`Message::SetCategoryFilter`], [`Message::ClearFilters`],
     ///   [`Message::SetViewMode`] and [`Message::SetSortMode`] — the search box,
     ///   the category filter, the button that clears both, and the two settings
-    ///   the toolbar's selectors write.
+    ///   the toolbar's selectors write;
+    /// - the Settings page, from T-13: [`Message::SetColorScheme`],
+    ///   [`Message::SetDefaultRunner`], [`Message::SetCloseOnLaunch`] and
+    ///   [`Message::SetDefaultToggle`] — the four controls the page's two
+    ///   selectors, two switches and thirteen default toggles write through.
     ///
     /// `ClearFilters` is one of them rather than two writes at the call site so
     /// that the search box and the category can never be observed cleared one
     /// without the other.
     ///
+    /// Each of the four from T-13 carries a guard the reference has and this
+    /// port did not: an out-of-set colour scheme is dropped
+    /// (`bridge.py:197-199`), an empty default runner is dropped (`:235-238`),
+    /// and both the switch and the toggles are written only when the value
+    /// actually differs (`:247-250`, `:264-269`). Those guards are why the
+    /// samples in `every_message` carry **non-default** values: with a sample
+    /// that writes what is already there, a correct guarded handler and an
+    /// unwritten arm produce the same silence — the D-34 shape, in the samples
+    /// rather than in the handler.
+    ///
     /// That count is not a comment. `only_the_written_handlers_change_anything`
     /// drives every message in `every_message` through this function and
-    /// requires the set that has any effect to be exactly those four (plus
+    /// requires the set that has any effect to be exactly those twelve (plus
     /// `Quit`, which needs the window and so is `App::update`'s one arm). A
     /// handler that regresses to `{}` shrinks that set and fails; a sixth
     /// handler landing grows it and fails until it is added deliberately. The
@@ -926,10 +957,25 @@ impl Shell {
             Message::Quit => {}
 
             // ---- Settings --------------------------------------------------
-            // TODO(T-13): validate against the allowed sets before storing —
-            // `bridge.py` ignores an unrecognised value rather than saving it,
-            // and the validation is part of the behaviour, not a guard.
-            Message::SetColorScheme(_value) => {}
+            // `_set_color_scheme` (`bridge.py:197-203`) ignores a value outside
+            // `COLOR_SCHEMES` rather than storing it, and the load path already
+            // folds one (`settings.rs:89-91`) — so the message path was the
+            // missing half, exactly as for the two below.
+            //
+            // **What this does not do is the other half of that setter**: the
+            // reference then calls `self._theme.apply(value)`, and this port has
+            // no theme to apply it to (`Shell` has no `theme()` override, so
+            // `cosmic::Theme` follows the system and nothing reads
+            // `settings.color_scheme`). Storing the choice is the whole of the
+            // behaviour here, and it is stored so the setting survives a restart
+            // and so the page's selector round-trips. See D-13 (`PLAN.md:479`),
+            // which names T-13 as where the default is decided; the decision is
+            // recorded in DECISIONS rather than closed silently here.
+            Message::SetColorScheme(value) => {
+                if COLOR_SCHEMES.contains(&value.as_str()) {
+                    self.state.settings.color_scheme = value;
+                }
+            }
             // `_set_view_mode` (`bridge.py:210-214`) and `_set_sort_mode`
             // (`223-228`) both *ignore* a value outside the allowed set rather
             // than storing it. The load path already does this
@@ -947,9 +993,34 @@ impl Shell {
                     self.state.settings.sort_mode = value;
                 }
             }
-            Message::SetDefaultRunner(_value) => {}
-            Message::SetCloseOnLaunch(_value) => {}
-            Message::SetDefaultToggle { name: _name, value: _value } => {}
+            // `_set_default_runner` (`bridge.py:235-238`): an **empty** value is
+            // ignored, and a value equal to what is stored is not written. The
+            // emptiness check is the reference's own guard and not a stand-in for
+            // "the runner exists" — the reference does not check that either, and
+            // the selector's own fallback (`SettingsPage.qml:83-94`) is what
+            // keeps a stored runner that is no longer installed selectable.
+            Message::SetDefaultRunner(value) => {
+                if !value.is_empty() && value != self.state.settings.default_runner {
+                    self.state.settings.default_runner = value;
+                }
+            }
+            // `_set_close_on_launch` (`bridge.py:247-250`): `bool(value)` then a
+            // compare, so writing the stored value is a no-op rather than a
+            // redundant save.
+            Message::SetCloseOnLaunch(value) => {
+                if value != self.state.settings.close_on_launch {
+                    self.state.settings.close_on_launch = value;
+                }
+            }
+            // `setDefaultToggle` (`bridge.py:264-269`): the name must be one of
+            // the defaulted toggles, and the value must differ — both checked in
+            // one place, `view::settings::set_toggle`, so the page's read and the
+            // message path's write cannot disagree about which field a key means.
+            // An unknown name is ignored, which is the reference's behaviour and
+            // the reason `set_toggle` returns a `bool` instead of asserting.
+            Message::SetDefaultToggle { name, value } => {
+                view::settings::set_toggle(&mut self.state.settings, &name, value);
+            }
 
             // ---- Library view state ----------------------------------------
             Message::SetSearchText(text) => {
@@ -1114,7 +1185,6 @@ const PENDING_PAGES: &[(Page, &str)] = &[
     (Page::Runners, "T-11"),
     (Page::Plugins, "T-13"),
     (Page::Credits, "T-13"),
-    (Page::Settings, "T-13"),
 ];
 
 /// The task that will build `page`, or `None` once its body has landed.
@@ -2052,7 +2122,7 @@ mod tests {
         Message::CoverFileChosen(_) => ("CoverFileChosen", Message::CoverFileChosen(Some("/tmp/c.png".to_string()))),
         Message::DismissToast(_) => ("DismissToast", Message::DismissToast(cosmic::widget::toaster::ToastId::default())),
         Message::Quit => ("Quit", Message::Quit),
-        Message::SetColorScheme(_) => ("SetColorScheme", Message::SetColorScheme("dark".to_string())),
+        Message::SetColorScheme(_) => ("SetColorScheme", Message::SetColorScheme("light".to_string())),
         // A value *other than the default*: on a default shell `"grid"` and
         // `"name"` write what is already there, which makes a guarded setter
         // and an unwritten one produce the same silence — the defect D-34
@@ -2193,8 +2263,8 @@ mod tests {
     ///   real (`toasts.remove(id)`) and no test can build an id naming a live
     ///   toast, so it cannot be told apart from `{}` — see
     ///   [`a_test_cannot_observe_which_toast_was_dismissed`], which measures
-    ///   that rather than asserting it. The list below therefore names eight
-    ///   handlers where nine bodies are written, and says which is which.
+    ///   that rather than asserting it. The list below therefore names twelve
+    ///   handlers where thirteen bodies are written, and says which is which.
     ///
     /// [`observe`] counts a returned [`cosmic::Task`] as well as a state
     /// change, so the *other* class of invisible handler — one whose only
@@ -2226,6 +2296,12 @@ mod tests {
             "ClearFilters",
             "SetViewMode",
             "SetSortMode",
+            // T-13's four. Live because the Settings page draws the controls
+            // that produce them, and guarded because the reference guards them.
+            "SetColorScheme",
+            "SetDefaultRunner",
+            "SetCloseOnLaunch",
+            "SetDefaultToggle",
         ];
         // `DismissToast` is written and cannot be observed; see the doc above.
         expected.sort_unstable();
@@ -2410,6 +2486,233 @@ mod tests {
         let mut shell = shell_with_work_to_do();
         observe(&mut shell, Message::SetCategoryFilter(String::new()));
         assert_eq!(shell.state.category_filter, crate::view::library::ALL_CATEGORIES);
+    }
+
+    /// **The Settings page's body is the Settings page, and it is not the
+    /// placeholder.**
+    ///
+    /// The same check T-09 needed, for the same reason: deleting the
+    /// `PENDING_PAGES` entry is the claim, and this is what makes the claim
+    /// true. Driven through [`Shell::view_body`] rather than
+    /// `view::settings::view`, because the dispatch arm is the thing under
+    /// test — a correct builder behind a placeholder arm is exactly the state
+    /// `PINNED_PENDING` counts and cannot see.
+    ///
+    /// Both directions again: the strings are required to be *present*, not
+    /// merely the placeholder required to be absent, because an empty body
+    /// would satisfy the negative alone.
+    ///
+    /// # What this cannot see, measured rather than assumed
+    ///
+    /// **The thirteen toggle labels and the close-on-launch explanation are not
+    /// in `drawn`.** [`drawn_strings`] collects text through iced's `Operation`
+    /// traversal, which observes child `Text` widgets — and `Toggler::draw`
+    /// paints its label with a direct `iced_widget::text::draw` call
+    /// (`libcosmic src/widget/toggler.rs:316-321`), so there is no child widget
+    /// and nothing for the operation to see. Verified by running this with the
+    /// explanation asserted: it fails with the explanation absent from a page
+    /// that is displaying it.
+    ///
+    /// That is the same blind spot as #46's failed decode, on a different
+    /// widget: the page is right and the instrument is blind. It is written here
+    /// because the honest reading is that **fourteen of this page's strings have
+    /// no render-level check** — they rest on the pure functions
+    /// `the_toggles_are_the_reference_pages_toggles_in_order` and
+    /// `the_toggle_label_is_the_references_wording`, which check the table and
+    /// the formatting but cannot prove the widget was ever built. What is
+    /// asserted below is the set that *is* observable.
+    #[test]
+    fn the_settings_page_draws_the_settings_and_not_the_placeholder() {
+        let mut shell = Shell::new();
+        shell.show_page(Page::Settings);
+        let drawn = drawn_strings(shell.view_body());
+
+        for expected in [
+            // The four section headings.
+            crate::view::settings::SECTION_APPEARANCE,
+            crate::view::settings::SECTION_NEW_GAMES,
+            crate::view::settings::SECTION_BEHAVIOR,
+            crate::view::settings::SECTION_SHORTCUTS,
+            // The three form rows, whose labels are `text::body` children and so
+            // do reach the operation — unlike the togglers'.
+            "Color scheme:",
+            "Library layout:",
+            "Default runner:",
+            // A shortcut row, which is also a `text::body` child.
+            "Ctrl+Q:",
+        ] {
+            assert!(
+                drawn.iter().any(|text| text == expected),
+                "the Settings page should draw {expected:?}; drawn: {drawn:?}"
+            );
+        }
+        assert!(
+            !drawn.iter().any(|text| text.contains("has not been ported yet")),
+            "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
+        );
+    }
+
+    /// **The toggles' labels are drawn and are not observable** — the limit
+    /// [`the_settings_page_draws_the_settings_and_not_the_placeholder`]
+    /// documents, pinned so it cannot quietly stop being true.
+    ///
+    /// If a future libcosmic makes `Toggler` build a child text widget, this
+    /// test fails and the doc above becomes wrong — which is the point. Until
+    /// then it is the reason the fourteen toggle strings rest on pure functions
+    /// rather than on a render.
+    #[test]
+    fn the_toggler_labels_do_not_reach_the_text_operation() {
+        use cosmic::widget::toggler;
+        let drawn = drawn_strings::<Message>(
+            toggler(true).label("A LABEL THAT IS DRAWN".to_string()).into(),
+        );
+        assert!(
+            drawn.is_empty(),
+            "if this now lists the label, `Toggler` gained a child text widget — \
+             update the note on the dispatch test and assert the thirteen toggle \
+             labels there. Drawn: {drawn:?}"
+        );
+    }
+
+    /// **An out-of-set colour scheme is ignored, not stored** —
+    /// `bridge.py:197-199`. The in-set half is asserted too, because "ignores
+    /// everything" would satisfy the first half alone.
+    #[test]
+    fn an_out_of_set_color_scheme_is_ignored() {
+        let mut shell = shell_with_work_to_do();
+        assert_eq!(shell.state.settings.color_scheme, "dark", "the default");
+
+        let effect = observe(&mut shell, Message::SetColorScheme("nonsense".to_string()));
+        assert!(!effect.state_changed, "an unrecognised scheme must not be stored");
+        assert_eq!(shell.state.settings.color_scheme, "dark");
+
+        let effect = observe(&mut shell, Message::SetColorScheme("light".to_string()));
+        assert!(effect.state_changed, "a known scheme must be stored");
+        assert_eq!(shell.state.settings.color_scheme, "light");
+    }
+
+    /// **An empty default runner is ignored, and so is a write of the value
+    /// already stored** — both halves of `bridge.py:235-238`.
+    ///
+    /// The emptiness check is the reference's own and is not a stand-in for "the
+    /// runner exists": the reference does not check that, and the selector's
+    /// fallback is what keeps a runner the user uninstalled selectable.
+    #[test]
+    fn an_empty_default_runner_is_ignored() {
+        let mut shell = shell_with_work_to_do();
+        let original = shell.state.settings.default_runner.clone();
+
+        let effect = observe(&mut shell, Message::SetDefaultRunner(String::new()));
+        assert!(!effect.state_changed, "an empty runner id must not be stored");
+        assert_eq!(shell.state.settings.default_runner, original);
+
+        let effect = observe(&mut shell, Message::SetDefaultRunner(original.clone()));
+        assert!(
+            !effect.state_changed,
+            "writing the stored runner must report no change"
+        );
+
+        let effect = observe(&mut shell, Message::SetDefaultRunner("GE-Proton9-1".to_string()));
+        assert!(effect.state_changed, "a different runner must be stored");
+        assert_eq!(shell.state.settings.default_runner, "GE-Proton9-1");
+    }
+
+    /// **`SetDefaultToggle` writes only when the value differs, and ignores a
+    /// name that is not one of the thirteen** — `bridge.py:264-269`.
+    ///
+    /// `mangohud` defaults to `false` and `esync` to `true`, so this exercises
+    /// both directions of the value with values the model does not already
+    /// hold. The unknown name is `wayland`, which the reference deliberately
+    /// excludes from the defaulted set (`bridge.py:79-82`).
+    ///
+    /// **The same-value assertion below is not evidence of the reference's
+    /// compare.** `observe` sees the `Debug` of the state, so a write of the
+    /// stored value is indistinguishable from no write — measured: `set_toggle`
+    /// with its compare deleted leaves that assertion green. What *is* caught is
+    /// the `wayland` half: `toggle_slot`'s unknown-key arm was mutated to write
+    /// `mangohud` and this test failed, so the name-to-field guard is real.
+    #[test]
+    fn the_default_toggle_writes_only_a_real_change() {
+        let mut shell = shell_with_work_to_do();
+
+        let effect = observe(&mut shell, Message::SetDefaultToggle {
+            name: "mangohud".to_string(),
+            value: true,
+        });
+        assert!(effect.state_changed, "mangohud defaults to false, so this is a change");
+        assert!(shell.state.settings.default_mangohud);
+
+        // Not "the compare fired": indistinguishable from no write. See above.
+        let effect = observe(&mut shell, Message::SetDefaultToggle {
+            name: "mangohud".to_string(),
+            value: true,
+        });
+        assert!(!effect.state_changed, "the state is unchanged by a repeated write");
+
+        let effect = observe(&mut shell, Message::SetDefaultToggle {
+            name: "wayland".to_string(),
+            value: true,
+        });
+        assert!(
+            !effect.state_changed,
+            "`wayland` has no `default_wayland` field and must not be written"
+        );
+
+        // The other direction of the compare: `esync` is true by default.
+        let effect = observe(&mut shell, Message::SetDefaultToggle {
+            name: "esync".to_string(),
+            value: false,
+        });
+        assert!(effect.state_changed, "esync defaults to true, so turning it off is a change");
+        assert!(!shell.state.settings.default_esync);
+    }
+
+    /// **Close-on-launch round-trips through the state** — `bridge.py:247-250`.
+    ///
+    /// # What this does not check, and why the name says so
+    ///
+    /// The reference's setter also *compares* before writing — `if bool(value)
+    /// != self.settings.close_on_launch` — and **this test cannot see that
+    /// guard**. `observe` compares the `Debug` of the whole state, so a write of
+    /// the value already stored leaves it byte-identical whether or not the
+    /// guard is there. Measured: deleting the compare from the handler leaves
+    /// this test green. The guard is kept because it is the reference's
+    /// behaviour, not because anything here verifies it, and the four
+    /// assertions below are what the test actually proves — the value moves when
+    /// it should, in both directions.
+    #[test]
+    fn close_on_launch_round_trips_through_the_state() {
+        let mut shell = shell_with_work_to_do();
+        assert!(!shell.state.settings.close_on_launch, "the default");
+
+        let effect = observe(&mut shell, Message::SetCloseOnLaunch(true));
+        assert!(effect.state_changed);
+        assert!(shell.state.settings.close_on_launch);
+
+        // Not "the guard fired": a write of the same value is indistinguishable
+        // from no write at all. See the doc above.
+        let effect = observe(&mut shell, Message::SetCloseOnLaunch(true));
+        assert!(!effect.state_changed, "the state is unchanged by a repeated write");
+
+        let effect = observe(&mut shell, Message::SetCloseOnLaunch(false));
+        assert!(effect.state_changed);
+        assert!(!shell.state.settings.close_on_launch);
+    }
+
+    /// **The Credits label is the reference's, and the divergence record that
+    /// used to hold it is empty.**
+    ///
+    /// `KNOWN_LABEL_DIVERGENCE` held `Credits → "About & Credits"` because the
+    /// port said "Credits" and `Main.qml:94` says "About & Credits". Its own arm
+    /// asserted `ours != qml_label`, so it *cannot* survive the fix — this is the
+    /// assertion that the fix happened and that the record went with it.
+    #[test]
+    fn the_credits_label_matches_the_reference_and_the_record_is_empty() {
+        assert_eq!(Page::Credits.label(), "About & Credits");
+        assert!(
+            KNOWN_LABEL_DIVERGENCE.is_empty(),
+            "a fixed divergence must delete its record, not leave it (P-65)"
+        );
     }
 
     /// **`NavigateTo` moves both records of the current page.**
@@ -2655,9 +2958,16 @@ mod tests {
     /// on disk, the second against [`Page::label`]. Neither is compared to the
     /// other, so neither can be satisfied by an identity.
     ///
-    /// **Empty is the target.** See P-65.
-    const KNOWN_LABEL_DIVERGENCE: [(Page, &str, &str); 1] =
-        [(Page::Credits, "About & Credits", "Credits")];
+    /// **Empty is the target, and it is empty as of T-13.** See P-65.
+    ///
+    /// It held one entry — `Page::Credits`, whose label said "Credits" where
+    /// `Main.qml:94` says "About & Credits" — until T-13 corrected
+    /// [`Page::label`] `(state.rs:89)`. The entry could not simply be left: its
+    /// own arm asserts `ours != qml_label`, so a fixed label fails the *record*
+    /// as stale ("delete it (P-65)") rather than passing quietly. That is what
+    /// made the fix verifiable rather than declarable, and it is why deleting
+    /// this line is the proof the divergence is gone.
+    const KNOWN_LABEL_DIVERGENCE: [(Page, &str, &str); 0] = [];
 
     /// **The shell's labels are the reference drawer's labels, read off the
     /// QML.**
@@ -2668,9 +2978,13 @@ mod tests {
     /// survived it, including one that moved every label to its neighbour.
     ///
     /// This reads `Main.qml` instead, which is the port's specification and is
-    /// still in the tree. That is what makes it falsifiable: `Main.qml:94` says
-    /// **"About & Credits"** where `Page::label` says "Credits", and
-    /// [`KNOWN_LABEL_DIVERGENCE`] is where that is recorded rather than hidden.
+    /// still in the tree. That is what makes it falsifiable, and it is what
+    /// caught the divergence T-13 fixed: `Main.qml:94` says **"About &
+    /// Credits"** where `Page::label` said "Credits", recorded in
+    /// [`KNOWN_LABEL_DIVERGENCE`] rather than hidden. **That record is empty
+    /// now** — emptying it is how the fix is proved, because the entry asserted
+    /// its own staleness (`assert_ne!`), so it cannot outlive the divergence it
+    /// records.
     #[test]
     fn the_shells_labels_are_the_reference_drawers_labels_in_order() {
         let main_qml =

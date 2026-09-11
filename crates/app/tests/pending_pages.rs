@@ -74,12 +74,11 @@ use std::path::{Path, PathBuf};
 /// deliberately not copied: an earlier version of this comment listed it, and
 /// the list went stale while the test beside it stayed correct. A hand-copied
 /// fact that no assertion reads has nothing to keep it honest.
-const PINNED_PENDING: [&str; 5] = [
+const PINNED_PENDING: [&str; 4] = [
     "Installers",
     "Runners",
     "Plugins",
     "Credits",
-    "Settings",
 ];
 
 /// The repository root, derived rather than hardcoded.

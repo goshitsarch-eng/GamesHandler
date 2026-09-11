@@ -45,4 +45,5 @@ pub mod library;
 pub mod meta;
 pub mod metrics;
 pub mod runners;
+pub mod settings;
 pub mod widgets;

@@ -160,6 +160,31 @@ pub fn category_index(options: &[String], category: &str) -> Option<usize> {
     options.iter().position(|option| option == category)
 }
 
+/// The `Message` a category selection carries, from the selector's index.
+///
+/// **Named rather than left as a closure in [`view`], because the callback's
+/// parameter is an index and not a name.** `dropdown`'s `on_selected` is
+/// `impl Fn(usize) -> Message` (`libcosmic
+/// src/widget/dropdown/mod.rs:30`), so a closure written as
+/// `|category| SetCategoryFilter(category.to_string())` — which is what this
+/// file originally had, with the parameter named as though it were the category
+/// — stores `"1"` where the model wants `"Puzzle"`. Nothing catches that: the
+/// string is a valid `String`, the page draws, and the filter matches no game.
+/// It is the #46 shape in the message path — a wrong value that no assertion in
+/// this file could see, because the closure is inside a builder and a builder
+/// needs a renderer.
+///
+/// So the mapping is a function, and `a_selection_carries_the_name_and_not_the_index`
+/// is the assertion that fails for the stringified-index version.
+pub fn category_selection(options: &[String], index: usize) -> Message {
+    Message::SetCategoryFilter(
+        options
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| ALL_CATEGORIES.to_string()),
+    )
+}
+
 /// The `Message` a "Clear filters" press carries.
 ///
 /// One message rather than two, because the reference's button does two writes
@@ -253,7 +278,12 @@ pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
             .push(cosmic::widget::dropdown(
                 categories.clone(),
                 category_index(&categories, page.category),
-                |category| Message::SetCategoryFilter(category.to_string()),
+                // The selector's index, mapped to the category it stands for —
+                // never the index itself. See [`category_selection`].
+                {
+                    let options = categories.clone();
+                    move |index| category_selection(&options, index)
+                },
             ))
             .push(cosmic::widget::dropdown(
                 sort_labels(),
@@ -413,6 +443,62 @@ mod tests {
         assert_eq!(category_index(&options, "All"), Some(0));
         assert_eq!(category_index(&options, "action"), Some(1));
         assert_eq!(category_index(&options, "gone"), None);
+    }
+
+    /// **A category selection carries the category, not the row it sat at.**
+    ///
+    /// The selector's callback receives an index (`libcosmic
+    /// src/widget/dropdown/mod.rs:30`), and this file's original closure —
+    /// `|category| SetCategoryFilter(category.to_string())`, with the parameter
+    /// named as though it were the category — stored `"1"` instead of
+    /// `"puzzle"`. Every test in this module passed. The page drew, the filter
+    /// matched nothing, and the only way to see it was to read the closure and
+    /// know the callback's type.
+    ///
+    /// So this asserts the defect explicitly, in both directions: the message
+    /// carries the name, and it is *not* the stringified index. The second is
+    /// the one that fails for the original code.
+    /// The category a selection carries, read out of the real `Message`.
+    ///
+    /// `Message` has no `PartialEq` (it holds a `ToastId`, a `Task` and a
+    /// `GameForm`), so the payload is destructured rather than compared — which
+    /// is stricter, not looser: a selection that produced the *wrong variant*
+    /// panics here instead of failing an equality it might have passed.
+    fn category_of(message: Message) -> String {
+        match message {
+            Message::SetCategoryFilter(value) => value,
+            other => panic!("expected SetCategoryFilter, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_selection_carries_the_name_and_not_the_index() {
+        let options = category_options(&["action".to_string(), "puzzle".to_string()]);
+
+        assert_eq!(
+            category_of(category_selection(&options, 2)),
+            "puzzle",
+            "index 2 is the third entry, `puzzle`"
+        );
+        assert_eq!(
+            category_of(category_selection(&options, 0)),
+            ALL_CATEGORIES,
+            "index 0 is the `All` sentinel"
+        );
+
+        // The defect, spelled out.
+        assert_ne!(
+            category_of(category_selection(&options, 1)),
+            "1",
+            "index 1 is `action`, and `\"1\"` is a filter that matches nothing"
+        );
+
+        // An index no option provides cannot invent a category: it folds to
+        // `All` rather than to a string that matches nothing.
+        assert_eq!(
+            category_of(category_selection(&options, 99)),
+            ALL_CATEGORIES
+        );
     }
 
     /// The sort selector reads its row out of the same list it offers.

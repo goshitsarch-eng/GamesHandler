@@ -86,7 +86,11 @@ impl Page {
             Page::Installers => "Installers",
             Page::Runners => "Runners",
             Page::Plugins => "Plugins",
-            Page::Credits => "Credits",
+            // `Main.qml:94` and `CreditsPage.qml:10` both read "About &
+            // Credits"; this said "Credits" until T-13 (P-65). The page's own
+            // title and the drawer's label are the same string in the reference
+            // and are the same string here.
+            Page::Credits => "About & Credits",
             Page::Settings => "Settings",
         }
     }
