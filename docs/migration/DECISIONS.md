@@ -1853,3 +1853,56 @@ turns both cases into hard errors: a compiled-in `CARGO_MANIFEST_DIR` that does 
 match the working directory, and a root that is not a GameHandler checkout, each
 fail with the advice the case needs (the second is distinguished from "the tree is
 gone" by a three-path probe, as `app_id_lockstep.rs` does).
+
+## D-42. A fail-fast abort names every stage it skipped — and the item that said otherwise was wrong when written
+
+**The disagreement, as it stood.** `VERIFY-FINDINGS.md` §4 carried an open item:
+*"`run_stage` → `finish_fail` exits by default, so a failing early stage silently
+skips later ones including the Flatpak build and smoke test, while the summary
+lists only the stages that ran. Use `--keep-going` for a full picture. Raised with
+the advocate: defect or contract?"*
+
+**Decision: contract. And the item's description of the behaviour is false.**
+
+**The measurement.** A stub harness — `verify.sh` copied to `/tmp`, its `STAGES`
+list intact, every stage body replaced by `return 0` except `stage_clippy`, which
+returns 1 — run to completion:
+
+```
+passed:  build
+failed:  clippy
+skipped: none
+did not run (an earlier stage failed): test cli oracle-freshness python-tests
+    cargo-sources flatpak-build smoke-test desktop-metainfo flatpak-contents
+  these are neither passes nor skips: nothing was verified about them
+```
+
+exit **1**. Nothing is silent: the eight stages that did not run are named, the
+reason is stated in the summary line itself, and the exit code is non-zero. The
+Flatpak build and smoke test are named in that list rather than omitted from it.
+
+**And it was never true.** The same harness run against `50798f9^` — the tree
+*before* the #41 fix — produces a byte-identical summary. So this is not a
+description that went stale; it described a behaviour the script did not have when
+it was written. The mechanism was there the whole time, in `finish_fail`'s
+`summary` call before `exit 1`, reading `ATTEMPTED` against `STAGES`.
+
+**Why #41 was not this.** #41 is the *other* path: a run that **finishes** with
+stages in `STAGES` never reached. There `summary` computed the unrun list into a
+`local` and discarded it, and the exit tail checked only `FAILED` and
+`SKIPPED_UNREQUESTED` — so a run that ended early *without failing* reported
+nothing and exited 0. That was a real defect with a real fix. The two look alike
+from the outside (both print "did not run") and are opposite in mechanism, which is
+probably how one item absorbed the other's description.
+
+**Consequence for the record.** The item is kept in §4 rather than deleted, with
+the measurement and the note that it was wrong when written. Deleting it would
+remove the only place the header's `--keep-going` line is justified. It is also
+the third time this project has found a claim that was *never* true being read as
+a claim that had merely gone out of date — after `verify.sh:517` (#42) and the
+`NOTE(T-03)` `ProtonManager` marker — so §4 now carries an explicit instruction to
+re-verify every item at T-19 before restating it.
+
+**The rule.** "Defect or contract?" is settled by running the case, not by taste.
+And a residual filed against a script should be filed with the command that shows
+it; an unrun claim about an unrun path is how this one survived review.

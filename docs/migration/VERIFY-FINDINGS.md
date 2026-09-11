@@ -121,10 +121,12 @@ bin-only crate like `crates/app`. The answerable form names the mechanism:
 
 ## 4. Open at the time of writing
 
-- **#41 and #42** — the two `verify.sh` residuals above. Both non-blocking, both
-  require editing the script itself, neither is reachable from a tree change.
-  #41 is the residual of D-34 and the script's own comment at `:1362-1386`
-  already argues for the fix.
+- **#41 and #42 are closed** (`50798f9`, in the table above). They are named here
+  only because this section listed them as open and the listing outlived the fix:
+  leaving a closed item in the open list is the same failure as leaving a stale
+  instruction in a comment — a reader acting on it looks for a defect that is not
+  there. **Section 4 is walked at T-19 and everything in it must be re-verified
+  before it is restated**, because this has now happened once.
 
 - **#32 is closed**, and the two questions it carried are answered. The
   before/after pair was captured for both halves. The reachability question —
@@ -143,10 +145,27 @@ bin-only crate like `crates/app`. The answerable form names the mechanism:
   as a placeholder).
 - **N-01** — the no-display panic, assigned to T-08; `smoke-test`'s only failing
   check.
-- **`run_stage` → `finish_fail` exits by default**, so a failing early stage
-  silently skips later ones *including the Flatpak build and smoke test*, while
-  the summary lists only the stages that ran. Use `--keep-going` for a full
-  picture. Raised with the advocate: defect or contract?
+- **`run_stage` → `finish_fail` exits by default: contract, not defect.** Settled
+  (D-42). The item as originally written was *substantially false* — it said a
+  failing early stage "**silently** skips later ones … while the summary lists
+  only the stages that ran". Measured on a stub harness with `clippy` forced to
+  fail and every other stage stubbed green: the summary prints
+
+  ```
+  failed:  clippy
+  did not run (an earlier stage failed): test cli oracle-freshness python-tests
+      cargo-sources flatpak-build smoke-test desktop-metainfo flatpak-contents
+    these are neither passes nor skips: nothing was verified about them
+  ```
+
+  and exits **1**. Every skipped stage is named, the reason is given, and the
+  exit code is non-zero. **The same harness run against `50798f9^` produces the
+  identical summary**, so this was true *before* the #41 fix as well as after:
+  the description was not stale, it was wrong when written. What #41 actually
+  repaired was the run that **finishes** with stages unreached (no `STOPPED`),
+  which is the opposite path. Kept as a bullet rather than deleted, because the
+  next reader of the header's `--keep-going` line deserves the measurement, and
+  because "defect or contract?" is answered by running the case, not by taste.
 - **Minor:** the `view/cover.rs` fixture helper creates
   `/tmp/gh-cover-{name}-{pid}` per test per run and never removes them — 1245
   directories accumulated in one session.
