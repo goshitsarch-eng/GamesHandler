@@ -2355,27 +2355,70 @@ above. The thing that would have caught it is a comparison of the commit's
 shape as a stale binary printing a green count, and as a truncation whose
 failure nobody read.
 
-### The rule, and the measurement behind it
+### The rule, and the measurements behind it
 
-Always name the paths; never `git add` first:
+Name the paths; never commit bare:
 
+    git add -- <a path git has never seen>      # only for a brand-new file
     git commit -m "..." -- path/one path/two
 
-This was **measured, not assumed.** In a scratch repo with `b.txt` staged,
-`git commit -m "only a" -- a.txt` produced a one-file commit, ignored the staged
-`b.txt` entirely, and **left `b.txt` staged** for its owner. The pathspec form
-is atomic and does not disturb another agent's staging; the `git add` form is
+The pathspec form was **measured, not assumed.** In a scratch repo with `b.txt`
+staged, `git commit -m "only a" -- a.txt` produced a one-file commit, ignored the
+staged `b.txt` entirely, and **left `b.txt` staged** for its owner. It is atomic
+and does not disturb another agent's staging; a bare `git add` + `git commit` is
 neither.
 
-Three checks, because the rule alone is a convention and conventions are what
-fail:
+**The advocate tested that rule before adopting it and found two holes. Both
+were reproduced by the lead, and both are real — the rule as first written was
+wrong.**
 
-1. **Before:** `git status --short` and `git diff --cached --name-only`. A path
+**Hole 1 — a path git has never seen cannot be committed this way.** With an
+untracked `c.txt`:
+
+    $ git commit -m "..." -- c.txt
+    error: pathspec 'c.txt' did not match any file(s) known to git
+
+The pathspec form matches paths git already knows. A brand-new file must be
+`git add`ed first — and *only* that file, `git add -- c.txt`, never `git add .`,
+which reintroduces the original hazard wholesale.
+
+**Hole 2 — the pathspec form commits the *working tree*, not the index.** This
+is the one that matters, because it is the same incident by a different route.
+With `tracked.txt` staged as one version and edited again afterwards:
+
+    index    : "staged version"
+    worktree : "staged version" + "WORKTREE version"
+    $ git commit -m "..." -- tracked.txt
+    COMMITTED: "staged version" + "WORKTREE version"    <- the worktree won
+
+`git commit -- <paths>` takes the updated **working-tree** contents of the named
+paths and disregards what is staged for *other* paths. That is precisely what
+closes the original door — and it opens a second one: an edit made after staging
+is swept in. **And `git show --stat` cannot see it**, because neither the path
+nor the file count changes. The advocate demonstrated that check *passing* on a
+commit whose content was not what was intended. It catches the incident we had,
+not its sibling — which is the project's defect class one more time, a check
+that passes without inspecting what it claims.
+
+So the corrected procedure:
+
+1. **New path?** `git add -- <that path>`, and nothing else.
+2. **Commit with paths named:** `git commit -m "..." -- <path> <path>`. Never bare.
+3. **Know what lands:** the pathspec form commits the *working-tree* contents of
+   the named paths. Do not stage a version and then keep editing expecting the
+   staged version to be committed. If the two differ on purpose, confirm the
+   result with `git show <sha>:<path>` rather than trusting the command.
+4. **Before:** `git status --short` and `git diff --cached --name-only`. A path
    you do not own that is staged stays staged — do not commit it on their behalf.
-2. **After:** `git show --stat HEAD`. A file you did not touch in the commit you
-   just made is the failure, visible, one command.
-3. **Never** commit a file another agent holds uncommitted edits in; that sweeps
-   their work too.
+5. **After:** `git show --name-only <sha>` against the intent. A file you did not
+   touch is the failure, visible, one command.
+
+The advocate added step 5 to their own review routine on the strength of this:
+their provenance checks pin the *content* of each file they measure to its sha
+(`git show <sha>:<path> | cmp`), which is stronger than `--stat` for content, but
+they do not enumerate what *else* a commit contains — so this incident class
+could have passed them too. **A check narrower than the claim it supports is the
+same defect as no check.**
 
 ### Why history was not rewritten
 
@@ -2387,6 +2430,30 @@ the tree would risk dropping real work to fix a cosmetic boundary. D-46 clause 2
 also applies: an amend voids a review, so rewriting a commit the advocate had
 seen would cost more than the mislabelled message does. Recorded rather than
 rewritten.
+
+**There are two contaminated commits, and only one is still in history.** The
+advocate's scan found no commit containing `http.rs` and reported the tension
+with "not rewriting either contaminated commit"; the account is consistent, and
+the distinction matters:
+
+- The commit that swept in Architecture's five source files — `http.rs`,
+  `Cargo.toml`, `view/runners.rs`, `main.rs`, `Cargo.lock` — was `6b9746c`, and
+  the lead **reset it away** (`git reset --soft HEAD~1`) before anything else
+  landed. It is reachable from no ref (`git log --all` does not list it; the
+  object survives only as a dangling commit until gc), which is why no commit
+  contains an `http.rs`: the commit carrying it is not in history. Its five
+  source files are in the working tree, staged and uncommitted, which is correct
+  ownership — and that is exactly what the advocate observed.
+- The commit that is **still** contaminated is `ac76e4e` — Packaging's
+  `scripts/verify.sh` `#53` fix plus this file, which the lead had staged when
+  that commit was created. Both halves complete, both correct, message naming
+  only the verify.sh half.
+
+So "no commit contains `http.rs`" and "the contaminated commit remains" are both
+true because they are different commits. The advocate was looking for the right
+marker and drew the wrong inference from its absence — which is itself the
+lesson of the hole they found: **absence of the evidence you looked for is not
+evidence about what you did not look at.**
 
 The advocate's standing instruction is amended accordingly: when a task report
 says "committed at `<sha>`", read `git show --stat <sha>` and compare it to what
