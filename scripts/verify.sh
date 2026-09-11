@@ -1389,12 +1389,59 @@ stage_flatpak_contents() {
     # the Rust — a comment inside the match that begins with an arm-like prefix
     # still counts — which is why the pass line says what it checked rather than
     # claiming it counted call sites. The parse is the test's job.
-    local in_source in_binary
+    # THE DENOMINATOR, and why this stage cannot be trusted without one. The
+    # source count below is a count of arms calling `pending_page`, and that
+    # number is *supposed* to reach zero at T-19 — so "zero" has to mean
+    # "nothing dispatches to the placeholder", not "the file was not read". It
+    # cannot tell those apart on its own: a failed grep prints 0 through
+    # `wc -l` exactly as a successful grep with no matches does, and the
+    # pipeline's status is discarded. Measured: the same pipeline against a
+    # nonexistent path gives `0` and rc=2, silently. So the zero-placeholder
+    # tree — the one T-19 verifies — would read a missing `main.rs` as a fully
+    # ported one and `ok` it.
+    #
+    # `in_dispatch` is the file's page-dispatch arm count, from the
+    # `match self.state.page` anchor to EOF. It is non-zero whenever the
+    # dispatch was actually found, so requiring it non-zero makes the zero
+    # above a finding rather than an absence. It counts from the anchor rather
+    # than matching `Page::X =>` file-wide because the file has a *second*
+    # `Page::X =>` match (the icon names at ~:658, before the anchor); file-wide
+    # the number is 13, and a denominator that a second match can hold up is
+    # not evidence that this match was read.
+    local dispatch_src="$ROOT/crates/app/src/main.rs"
+    if [ ! -r "$dispatch_src" ]; then
+        echo "FAIL cannot read ${dispatch_src#"$ROOT"/}, so this stage cannot tell a"
+        echo "     ported tree from an unread one — both give a count of 0."
+        rc=1
+        return "$rc"
+    fi
+
+    local in_source in_binary in_dispatch
     in_source="$(grep -oE '^[[:space:]]*Page::[A-Za-z]+ => pending_page\(Page::' \
-        "$ROOT/crates/app/src/main.rs" | wc -l | tr -d '[:space:]')"
+        "$dispatch_src" | wc -l | tr -d '[:space:]')"
     in_binary="$(grep -ao -- 'This page has not been ported yet (' \
         "$tree/bin/gamehandler" | wc -l | tr -d '[:space:]')"
-    if [ "$in_source" -gt 0 ] && [ "$in_binary" -gt 0 ]; then
+    # The anchor is matched from the start of the line AND requires the opening
+    # brace. Both are load-bearing, and both were found by breaking it rather
+    # than by reasoning: with the pattern as a bare substring, renaming the
+    # dispatch (`match self.state.page_renamed`) still matched and the count
+    # stayed at 6, so the denominator survived the very edit it exists to
+    # detect. The line-start anchor also skips the doc comment at ~:902 that
+    # quotes this anchor in prose — the same trap `pending_pages.rs` hit when an
+    # unanchored search found its own documentation first and parsed nothing.
+    in_dispatch="$(awk '/^[[:space:]]*match self\.state\.page[[:space:]]*\{/{found=1}
+        found && /^[[:space:]]*Page::[A-Za-z]+ =>/{count++}
+        END{print count+0}' "$dispatch_src")"
+
+    if [ "${in_dispatch:-0}" -eq 0 ]; then
+        echo "FAIL found no page-dispatch arms in ${dispatch_src#"$ROOT"/}"
+        echo "     no 'match self.state.page' was found, or it has no arms under it."
+        echo "     The placeholder counts below cannot mean anything without it: with"
+        echo "     no dispatch read, 'no arm calls pending_page' and 'the file was not"
+        echo "     read' are the same observation, and the second is not evidence."
+        echo "     If the dispatch moved out of this file, point this stage at it."
+        rc=1
+    elif [ "$in_source" -gt 0 ] && [ "$in_binary" -gt 0 ]; then
         echo "ok   the shipped binary carries the placeholder text, as the source does"
         echo "     ($in_source arm(s) dispatch to pending_page; $in_binary occurrence(s) in the ELF)"
         echo "     both sides are non-zero, so this checked that the two AGREE that"
@@ -1402,9 +1449,17 @@ stage_flatpak_contents() {
         echo "     names pages is crates/app/tests/pending_pages.rs, which is reported"
         echo "     by the test stage; this half is only the artifact cross-check."
     elif [ "$in_source" -eq 0 ] && [ "$in_binary" -eq 0 ]; then
-        echo "ok   every page is ported in the source, and the shipped binary has no placeholder"
-        echo "     neither side mentions the placeholder, which is T-19's end state; this"
-        echo "     says nothing about whether the six pages render anything correct"
+        echo "ok   no page dispatch arm calls pending_page, and the shipped binary"
+        echo "     carries no placeholder text — T-19's end state"
+        echo "     $in_dispatch dispatch arm(s) were read, so this is the dispatch having"
+        echo "     no placeholder in it, NOT a parse that found nothing. The earlier"
+        echo "     wording here read 'every page is ported in the source', which is an"
+        echo "     inference from absence and was stronger than the check: an arm that"
+        echo "     draws nothing, or draws text(\"TODO\"), also fails to call"
+        echo "     pending_page. The ELF half is an absence too. So this establishes"
+        echo "     that the placeholder is gone and says nothing about whether the"
+        echo "     pages render anything correct — the check that names pages is"
+        echo "     crates/app/tests/pending_pages.rs, and parity is T-19's."
     else
         echo "FAIL the shipped binary and the source disagree about the placeholder pages"
         echo "     crates/app/src/main.rs: $in_source arm(s) dispatching to pending_page"

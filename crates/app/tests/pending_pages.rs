@@ -317,6 +317,28 @@ fn pending_pages_match_the_pinned_set() {
     let (main_rs, _) = sources();
     let arms = page_dispatch(&main_rs);
 
+    // At T-19 both sides of the comparison below are empty — `PINNED_PENDING`
+    // is `[]` and no arm calls `pending_page` — so a set equality would be
+    // `[] == []` and this test could never fail again. That is not a reason to
+    // delete it (it is the pin that makes landing a page an edit), but the
+    // vacuity has to be held off by something, and this is it: the parse must
+    // have found the dispatch. With a non-empty `arms`, "no arm is pending" is
+    // a statement about the arms that were read; without one it is a statement
+    // about nothing, and reads identically.
+    //
+    // `the_page_dispatch_has_one_arm_per_page` above also fails on a parse that
+    // loses arms, by comparing against `Page::ALL`. This is the same guard in
+    // the test that needs it, so the pin stands on its own rather than on a
+    // neighbour the next refactor may reorganise.
+    assert!(
+        !arms.is_empty(),
+        "parsed no arms out of the page dispatch in crates/app/src/main.rs, so \
+         the set comparison below is empty against empty and cannot fail. \
+         `PINNED_PENDING` is {} and every page would read as ported off a parse \
+         that found nothing.",
+        PINNED_PENDING.len()
+    );
+
     let mut actual: Vec<&str> = arms
         .iter()
         .filter(|arm| arm.is_pending())
