@@ -25,3 +25,4 @@
 //! * `desktop` — `.desktop` shortcut generation.
 
 pub mod archive;
+pub mod families;

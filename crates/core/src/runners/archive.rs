@@ -56,6 +56,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::hash::sha256_hex;
 
+use super::families::find_wine_binary;
+
 /// Written into an installed runner directory to record where it came from.
 pub const METADATA_NAME: &str = ".gamehandler.json";
 
@@ -70,13 +72,6 @@ pub const MAX_ARCHIVE_DECOMPRESSED_BYTES: u64 = 24 * 1024 * 1024 * 1024;
 /// Cap on the number of members, which is what stops a tarball of a hundred
 /// million empty files from being a denial of service.
 pub const MAX_ARCHIVE_MEMBERS: u64 = 250_000;
-
-/// Layouts used by Proton tarballs and Kron4ek Wine-Builds. `runners.py:60`.
-const WINE_CANDIDATES: [&[&str]; 3] = [
-    &["files", "bin", "wine"],
-    &["dist", "bin", "wine"],
-    &["bin", "wine"],
-];
 
 /// The bounds applied while extracting.
 ///
@@ -205,17 +200,20 @@ impl From<io::Error> for ArchiveError {
 /// compromised, so they are never joined onto a directory unfiltered. The
 /// fallback is used for anything that is not a usable name — including `..`,
 /// which is why the result is a filename and never a path.
+///
+/// The basename comes from a `PurePosixPath` in Python, which is *not* the same
+/// as splitting on the last separator. It drops `.` components and empty ones
+/// first, so `"a/."` is `"a"` and `"trailing/"` is `"trailing"` — a `rsplit('/')`
+/// port returns `"."` and `""` for those and then falls back, discarding a
+/// perfectly good name. Caught by the vectors in `run_runners_vectors.py`.
 pub fn safe_archive_name(name: &str, fallback: &str) -> String {
-    // Python takes `PurePosixPath(name.replace("\\", "/")).name.strip()`, so
-    // the last component after normalising separators, then trimmed. Empty,
-    // "." and ".." are all rejected rather than returned.
     let normalised = name.replace('\\', "/");
     let candidate = normalised
-        .rsplit('/')
-        .next()
+        .split('/')
+        .rfind(|part| !part.is_empty() && *part != ".")
         .unwrap_or_default()
         .trim();
-    if candidate.is_empty() || candidate == "." || candidate == ".." || candidate.contains('/') {
+    if candidate.is_empty() || candidate == ".." {
         return fallback.to_string();
     }
     candidate.to_string()
@@ -690,18 +688,6 @@ fn extract_members<R: Read>(
 // ---------------------------------------------------------------------------
 // Staging validation
 // ---------------------------------------------------------------------------
-
-/// Locate the Wine binary inside an extracted Proton or Wine build.
-/// `runners.py:303`.
-pub fn find_wine_binary(root: &Path) -> Option<PathBuf> {
-    for parts in WINE_CANDIDATES {
-        let candidate = root.join(parts.iter().collect::<PathBuf>());
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 /// Confirm a selected staged tree is self-contained and still runnable.
 /// `runners.py:632`.
@@ -1224,6 +1210,30 @@ mod tests {
     }
 
     #[test]
+    fn the_basename_is_pure_posix_paths_not_a_split_on_the_last_separator() {
+        // Both of these were wrong in the first draft, which used
+        // `rsplit('/').next()` and so returned `""` and `"."` — falling back to
+        // `runner.tar.gz` and throwing away a usable asset name. Python takes
+        // `PurePosixPath(name).name`, which drops empty and `.` components
+        // *before* taking the last one. Found by the vectors in
+        // `docs/migration/oracle/run_runners_vectors.py`; pinned here so it does
+        // not come back.
+        let fallback = "runner.tar.gz";
+        assert_eq!(safe_archive_name("trailing/", fallback), "trailing");
+        assert_eq!(safe_archive_name("a/b/", fallback), "b");
+        assert_eq!(safe_archive_name("a/.", fallback), "a");
+        assert_eq!(safe_archive_name("x/./y", fallback), "y");
+        assert_eq!(safe_archive_name("a//b", fallback), "b");
+        assert_eq!(safe_archive_name("a/b//", fallback), "b");
+        assert_eq!(safe_archive_name(".hidden/", fallback), ".hidden");
+        // And the cases where the basename is still unusable.
+        assert_eq!(safe_archive_name("/", fallback), fallback);
+        assert_eq!(safe_archive_name("//", fallback), fallback);
+        assert_eq!(safe_archive_name(".", fallback), fallback);
+        assert_eq!(safe_archive_name("a/..", fallback), fallback);
+    }
+
+    #[test]
     fn install_ids_that_could_escape_are_rejected() {
         assert_eq!(safe_install_id("GE-Proton9-5").unwrap(), "GE-Proton9-5");
         for bad in ["..", "../../home", "a/b", "", ".hidden", "a\\b"] {
@@ -1315,21 +1325,6 @@ mod tests {
         fs::create_dir_all(&tree).unwrap();
         fs::write(tree.join("proton"), b"#!/bin/sh\n").unwrap();
         validate_staged_runner(&tree, &root).unwrap();
-    }
-
-    #[test]
-    fn the_wine_binary_is_found_in_each_supported_layout() {
-        for layout in [["files", "bin"], ["dist", "bin"], ["bin", ""]] {
-            let scratch = Scratch::new("layout");
-            let root = scratch.join("stage");
-            let mut wine = root.clone();
-            for part in layout.iter().filter(|part| !part.is_empty()) {
-                wine.push(part);
-            }
-            fs::create_dir_all(&wine).unwrap();
-            fs::write(wine.join("wine"), b"wine").unwrap();
-            assert_eq!(find_wine_binary(&root), Some(wine.join("wine")));
-        }
     }
 
     #[test]
