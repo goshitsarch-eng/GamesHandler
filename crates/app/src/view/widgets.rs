@@ -545,11 +545,55 @@ pub fn title_of(game: &Game) -> String {
 /// last-played label and the card does not (see [`card`]) — and a helper that
 /// picked one would have to know which caller it had. Both compositions live in
 /// [`meta`], which is the module whose job that is.
+///
+/// # Both lines are single-line, and that is not cosmetic
+///
+/// [`Wrapping::None`] on each, because a *wrapping* name is what broke the card:
+/// a cell's interior is exactly filled by cover + text block + Play control, so
+/// the block growing by one line comes out of the control, and the control is
+/// what iced's `Column` squeezes last. Measured before this: on "The Elder
+/// Scrolls V Skyrim Special Edition" the name took two lines (56.6 px instead of
+/// 37.0) and the Play control laid out at **1.4000015 px** — measured when the
+/// chrome was 70.0; at the corrected 81.0 the same wrap takes it to 12.4 px,
+/// which is still a squeeze and still fails the same assertion. See
+/// [`metrics::CARD_CHROME_HEIGHT`] and
+/// `a_long_name_does_not_squeeze_the_play_control`.
+///
+/// It is also what the reference does, which is the better reason: the card's
+/// two `QQC2.Label`s set `elide: Text.ElideRight` and no `wrapMode`
+/// (`LibraryPage.qml:182-197`), and `QQC2.Label`'s default is `Text.NoWrap`. The
+/// row's do the same (`:261-273`). So the reference never wraps these strings
+/// either — it truncates them.
+///
+/// # One divergence, recorded rather than closed
+///
+/// The reference **elides** — it draws `The Elder Scrolls V Sky…` — and this
+/// iced has no ellipsis: [`Wrapping`] is `None`, `Word`, `Glyph` or
+/// `WordOrGlyph`, and there is no truncation-with-marker mode in this version.
+/// So a name too long for the card is cut at the card's edge instead of at a
+/// `…`. The width is still bounded — iced clamps the run to the limits it is
+/// given, so the string does not spill across its neighbours (measured: a
+/// 45-character name lays out 188.0 wide inside a 188.0 box) — and a one-line
+/// title that is cut off is a smaller defect than a Play control with nothing
+/// in it. Closing it needs an iced that can elide, so it is a bound on this fix
+/// and not a task inside it.
+///
+/// [`Wrapping`]: cosmic::iced::widget::text::Wrapping
+/// [`Wrapping::None`]: cosmic::iced::widget::text::Wrapping::None
 fn name_and_subtitle<'a, M: Clone + 'static>(game: &'a Game, subtitle: String) -> Element<'a, M> {
+    use cosmic::iced::widget::text::Wrapping;
     Column::new()
-        .push(text(title_of(game)).size(14.0))
-        .push(text(subtitle).size(11.0))
-        .spacing(2.0)
+        .push(
+            text(title_of(game))
+                .size(metrics::CARD_NAME_SIZE)
+                .wrapping(Wrapping::None),
+        )
+        .push(
+            text(subtitle)
+                .size(metrics::CARD_SUBTITLE_SIZE)
+                .wrapping(Wrapping::None),
+        )
+        .spacing(metrics::CARD_TEXT_SPACING)
         .width(Length::Fill)
         .into()
 }
@@ -1142,6 +1186,300 @@ mod tests {
         );
     }
 
+    /// `traversal` at a bounded width, which is the only way a wrap is visible.
+    ///
+    /// [`traversal`] passes `f32::INFINITY` as the limit, so nothing in it can
+    /// wrap: a name long enough to need two lines lays out as one long line and
+    /// every assertion about wrapping silently passes. This is the same helper
+    /// with a real width, and it exists because that difference is exactly the
+    /// difference between a test that can see #96 and one that cannot.
+    fn traversal_at_width<M: Clone + 'static>(el: &mut Element<'_, M>, width: f32) -> Vec<Seen> {
+        let renderer = renderer();
+        let mut tree = Tree::new(el.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(width, f32::INFINITY));
+        let node = el.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let mut collect = Collect::default();
+        el.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut collect);
+        collect.0
+    }
+
+    /// The boxes a card's column holds, in order: the cover, the name and
+    /// subtitle, and the Play control.
+    ///
+    /// `mouse_area` delegates its layout to its content and adds no node of its
+    /// own (`iced/widget/src/mouse_area.rs:234-238`), so the root here is the
+    /// card's container and its one child is the column.
+    ///
+    /// Takes the element rather than building one, so a caller can read the
+    /// column's boxes and the traversal's reported bounds **from the same
+    /// element**. That is what makes the control's box and the label drawn inside
+    /// it two readings of one layout rather than two cards that happen to agree.
+    fn column_children_of<M: Clone + 'static>(el: &mut Element<'_, M>) -> Vec<Size> {
+        let renderer = renderer();
+        let mut tree = Tree::new(el.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let node = el.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let column = node
+            .children()
+            .first()
+            .expect("the card's container holds its column");
+        column.children().iter().map(|child| child.size()).collect()
+    }
+
+    /// **A name too long for the card must not squeeze the Play control — #96.**
+    ///
+    /// The card's cell is exactly filled: cover 207 + gap 6 + text block 37 +
+    /// gap 6 + control 32 = 288, the whole interior. iced's `Column` gives a
+    /// deficit to its last child, so a text block that grows by one line comes
+    /// out of the control. Before `name_and_subtitle` clamped its two lines,
+    /// this name laid the Play control out at **1.4000015 px** — with a 1.4-px
+    /// icon and a 1.4-px label inside it — and every test in this file passed.
+    /// (That number was measured when the chrome was `70.0` and the cover 218;
+    /// with the chrome corrected to 81.0 the same wrap takes the control to
+    /// **12.4 px** instead. Both are squeezes, and both fail the assertions
+    /// below — see [`metrics::PLAY_BUTTON_HEIGHT`] for why the chrome moved.)
+    ///
+    /// # Why this is a layout test and not an arithmetic one
+    ///
+    /// Because the defect is a relationship between a drawn box and the space it
+    /// was given. `metrics`' const checks bound the reserve; only laying the
+    /// real element out says whether the drawing fits inside it. Note also that
+    /// this had to be [`traversal_at_width`] and not [`traversal`]: at infinite
+    /// width nothing wraps, so the original assertions would have passed against
+    /// the broken card.
+    ///
+    /// # The fixture is proven, not assumed
+    ///
+    /// A short name would make all of this vacuous, so the last block measures
+    /// the same name with iced's *default* wrapping, at the same width, and
+    /// asserts it takes more than one line. That is what says the name is a real
+    /// stress case — and it is the mutation in miniature: turn the clamp off and
+    /// this is the layout the card gets.
+    #[test]
+    fn a_long_name_does_not_squeeze_the_play_control() {
+        let short = Game::new_named("Celeste");
+        let long = Game::new_named("The Elder Scrolls V Skyrim Special Edition");
+        let available = metrics::GRID_CELL.0 - 2.0 * metrics::CARD_MARGIN;
+        let one_line = metrics::CARD_NAME_SIZE * metrics::LINE_HEIGHT_RATIO;
+
+        let mut short_card: Element<'_, ()> = card(&short, "", ());
+        let short_parts = column_children_of(&mut short_card);
+        let mut long_card: Element<'_, ()> = card(&long, "", ());
+        let long_parts = column_children_of(&mut long_card);
+        assert_eq!(
+            long_parts.len(),
+            3,
+            "the card's column is the cover, the name-and-subtitle block and the Play control"
+        );
+        // The cover is the part that absorbs, so it is the part that would hide a
+        // mistake: the column's own `spacing` is a second literal, and raising it
+        // shrinks the cover without moving the chrome the const checks bound. This
+        // is what ties the drawn cover to the box `metrics` derives for it.
+        assert_eq!(
+            long_parts[0],
+            Size::new(card_cover_spec().width, card_cover_spec().height),
+            "the cover must be drawn in the box the metrics module derives from the cell, \
+             the chrome and the margin — not in whatever the column has left. The card's \
+             parts were {long_parts:?}"
+        );
+
+        assert!(
+            long_parts[2].height >= metrics::PLAY_BUTTON_HEIGHT,
+            "the Play control on a card with a long name laid out {:.4} px high; it must be \
+             at least metrics::PLAY_BUTTON_HEIGHT ({}). A control squeezed below that is \
+             #96, and the name is what took the space. The card's parts were {:?}",
+            long_parts[2].height,
+            metrics::PLAY_BUTTON_HEIGHT,
+            long_parts
+        );
+        // And the other end of the same squeeze: the text block must take exactly
+        // the room the chrome reserves for it, so the deficit cannot be hidden by
+        // the block genuinely needing a second line. This is the assertion that
+        // covers the *subtitle* as well as the name — both are clamped, and only
+        // this one measures the block as a whole.
+        assert_eq!(
+            long_parts[1].height, metrics::CARD_TEXT_BLOCK_HEIGHT,
+            "a card's name-and-subtitle block must be exactly the height the chrome \
+             reserves, however long the name is. A taller block is a wrapped line, and \
+             the cell has no slack to give it — it comes out of the Play control. The \
+             card's parts were {long_parts:?}"
+        );
+        assert_eq!(
+            long_parts[2].height, short_parts[2].height,
+            "the Play control must be the same height whatever the game is called — a name \
+             must not come out of the control. Short: {short_parts:?}, long: {long_parts:?}"
+        );
+
+        let content: f32 = long_parts.iter().map(|size| size.height).sum::<f32>()
+            + 2.0 * metrics::CARD_MARGIN;
+        let interior = metrics::GRID_CELL.1 - 2.0 * metrics::CARD_MARGIN;
+        assert!(
+            content <= interior,
+            "a card's content must fit its cell's interior: {content} > {interior}, so \
+             something is being clipped rather than drawn"
+        );
+
+        // The subtitle is the block's *other* line and needs its own fixture: a
+        // real game's subtitle is short enough to fit, so the name alone cannot
+        // test it. This is what the card's `label` parameter is for — a long
+        // runner label makes a long subtitle without inventing a game whose
+        // metadata is stranger than any real one's. Without this block, removing
+        // the clamp from the subtitle alone survives the whole suite.
+        let long_label = "Proton-GE-Proton9-20-x86_64 ".repeat(8);
+        let subtitle = subtitle_of(&long, &long_label);
+        let subtitle_line = metrics::CARD_SUBTITLE_SIZE * metrics::LINE_HEIGHT_RATIO;
+        let mut labelled_card: Element<'_, ()> = card(&long, &long_label, ());
+        let labelled_parts = column_children_of(&mut labelled_card);
+        assert_eq!(
+            labelled_parts[1].height, metrics::CARD_TEXT_BLOCK_HEIGHT,
+            "the same block, with a subtitle long enough to wrap. Its parts were \
+             {labelled_parts:?}"
+        );
+        let labelled_seen = traversal_at_width(&mut labelled_card, metrics::GRID_CELL.0);
+        assert_eq!(
+            drawn(&labelled_seen, &subtitle).height,
+            subtitle_line,
+            "the card's subtitle must be a single line whatever its length"
+        );
+        // The same anti-vacuity as the name's, for the same reason.
+        let mut unclamped_subtitle: Element<'_, ()> = text(&subtitle)
+            .size(metrics::CARD_SUBTITLE_SIZE)
+            .into();
+        let wrapped_subtitle = traversal_at_width(&mut unclamped_subtitle, available);
+        assert!(
+            drawn(&wrapped_subtitle, &subtitle).height > subtitle_line,
+            "the fixture subtitle must be long enough to wrap at {available} px, or the \
+             assertion above cannot fail on it"
+        );
+
+        // The fix itself, stated as what it is: one line, in both delegates.
+        let mut card_el: Element<'_, ()> = card(&long, "", ());
+        let card_seen = traversal_at_width(&mut card_el, metrics::GRID_CELL.0);
+        assert_eq!(
+            drawn(&card_seen, &title_of(&long)).height,
+            one_line,
+            "the card's name must be a single line whatever its length"
+        );
+
+        let played = format_last_played(0.0, FROZEN_NOW);
+        let labels = RowLabels {
+            runner: "",
+            last_played: &played,
+        };
+        // Narrow on purpose: the row is a `Length::Fill` line inside the page, so
+        // a wide window would never wrap its text and the row's half of this
+        // would be untested.
+        let mut row_el: Element<'_, ()> = row(&long, &labels, ());
+        let row_seen = traversal_at_width(&mut row_el, 400.0);
+        assert_eq!(
+            drawn(&row_seen, &title_of(&long)).height,
+            one_line,
+            "the row's name must be a single line too — it is the same builder"
+        );
+
+        // Anti-vacuity, and the sharpest form of it available: with iced's own
+        // default wrapping this name *does* take more than one line at this
+        // width, so the clamp is what the assertions above are measuring.
+        let mut unclamped: Element<'_, ()> = text(title_of(&long))
+            .size(metrics::CARD_NAME_SIZE)
+            .into();
+        let wrapped = traversal_at_width(&mut unclamped, available);
+        assert!(
+            drawn(&wrapped, &title_of(&long)).height > one_line,
+            "the fixture name {:?} must be long enough to wrap at {available} px, or this \
+             test cannot fail on a wrapping name and should be given a longer one",
+            title_of(&long)
+        );
+    }
+
+    /// **The Play control is exactly the height the card reserves for it.**
+    ///
+    /// [`metrics::PLAY_BUTTON_HEIGHT`] is the only number in the metrics module
+    /// that is another crate's layout rather than arithmetic of ours, and this is
+    /// what keeps it honest: libcosmic's button is its padding plus its label, so
+    /// a libcosmic change that moves its height fails here, naming the constant —
+    /// instead of silently changing how much of the cell is left for the cover,
+    /// which is the direction that leads back to #96.
+    ///
+    /// # The second half is the one #96 needed
+    ///
+    /// "The button lays out to 32" and "the card gives the button 32" are two
+    /// different claims, and the card's was the false one before this: the
+    /// constant said 21, the button's own layout said 32, and the card drew it at
+    /// 21 — a Play label of 20 pixels inside a 21-pixel box, 0.5 pixels of
+    /// padding where libcosmic's button asks for 5. Nothing failed. So the second
+    /// assertion lays out a real card and reads the control's box out of the
+    /// column, and **that** is the one the old code fails: in the pre-#96 chrome
+    /// the leftover was 27 pixels, and with a wrapped name it was 1.4000015.
+    ///
+    /// # The third assertion, and what it is for
+    ///
+    /// The third reads the same element as the second and states the invariant
+    /// `metrics::PLAY_BUTTON_HEIGHT` exists to hold: **the control's content fits
+    /// in the box the card reserves.** It is not an independent witness for any
+    /// mutation reachable from this file — the second assertion fires first on
+    /// all of them, which is measured, not assumed. It is kept because it is the
+    /// claim itself rather than its arithmetic, and because it is the only thing
+    /// here that would notice a libcosmic whose button reported a box through
+    /// `layout` that its own label overflowed: the second reads the layout node,
+    /// the third reads what the text operation was handed for the same element.
+    ///
+    /// # The measurement this test cannot make
+    ///
+    /// The app's theme may set a different text size from `renderer`'s
+    /// `Pixels(16.0)`, and then the control asks for a different height. Nothing
+    /// here can see that — the renderer is the test's, not the app's — which is
+    /// why the number is documented as measured at a written-down text size
+    /// rather than as derived.
+    #[test]
+    fn the_play_control_is_the_height_the_card_reserves() {
+        let game = Game::new_named("Celeste");
+
+        let mut control: Element<'_, ()> = play_button(&game.id, ());
+        let renderer = renderer();
+        let mut tree = Tree::new(control.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let node = control.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        assert_eq!(
+            node.size().height,
+            metrics::PLAY_BUTTON_HEIGHT,
+            "the Play control's own height, which metrics::PLAY_BUTTON_HEIGHT is the \
+             card's reservation for"
+        );
+
+        // One element, read two ways: the layout node's sizes, and the bounds the
+        // traversal reports for the strings inside it.
+        let mut card_el: Element<'_, ()> = card(&game, "Shooter", ());
+        let parts = column_children_of(&mut card_el);
+        assert_eq!(
+            parts[2].height,
+            metrics::PLAY_BUTTON_HEIGHT,
+            "the Play control inside a card, which is the box the reservation is for. \
+             The card's parts were {parts:?}"
+        );
+
+        // The box the card gives, against the content that has to go in it.
+        let seen = traversal(&mut card_el);
+        let label = drawn(&seen, PLAY_LABEL);
+        assert!(
+            label.height <= parts[2].height,
+            "the Play label is {} px tall and the card gives its control {} px — the \
+             control is being squeezed by whatever grew above it, which is #96. The \
+             strings drawn were {:?}",
+            label.height,
+            parts[2].height,
+            texts(&seen)
+        );
+        assert!(
+            label.height > 0.5 * metrics::PLAY_BUTTON_HEIGHT,
+            "the label's {} px must be a real label and not a collapsed one; the box is \
+             {} px",
+            label.height,
+            parts[2].height
+        );
+    }
+
     /// **Two games' Play controls are two keys, not one key twice.**
     ///
     /// The reason [`play_button_id`] takes the game's id. iced's `Id` is a key
@@ -1191,7 +1529,7 @@ mod tests {
             metrics::CARD_CHROME_HEIGHT,
             metrics::CARD_MARGIN,
         );
-        assert_eq!((w, h), (188.0, 218.0));
+        assert_eq!((w, h), (188.0, 207.0));
         // The cover box is narrower than the cell, so the initials are sized
         // from 188 and not from 200: 64 rather than 68. Asserted as both
         // numbers, because a single `assert_ne!` would pass on a one-pixel
@@ -1208,8 +1546,8 @@ mod tests {
 
     /// **The card's initials are the full-size ones.** A card is not a compact
     /// drawing, so its initials come from `initials_size(w, h, false)` — 64
-    /// points at the card's 188×218 cover box — and not from the compact rule's
-    /// 92.
+    /// points at the card's 188×207 cover box — and not from the compact rule's
+    /// 87.
     ///
     /// The claim is made without knowing the font's line-height ratio, which is
     /// the property that makes this test portable: every string in a card is
@@ -1221,10 +1559,16 @@ mod tests {
     /// The two candidate answers are written out rather than taken from
     /// [`metrics::initials_size`], so that a change to the rule cannot make the
     /// test agree with the widget about the wrong number.
+    ///
+    /// Both numbers moved with the cover box when #96 shortened it from 218 to
+    /// 207: the full-size rule takes `min(width, height)`, which is still the
+    /// width, so 64 is unmoved; the compact rule takes the height, so 92 became
+    /// 87. The assertion that reads the *card* is the quotient below, and it is
+    /// the one that would have caught the widget changing rules.
     #[test]
     fn a_cards_initials_are_the_full_size_rule_and_not_the_compact_one() {
-        assert_eq!(metrics::initials_size(188.0, 218.0, false), 64.0);
-        assert_eq!(metrics::initials_size(188.0, 218.0, true), 92.0);
+        assert_eq!(metrics::initials_size(188.0, 207.0, false), 64.0);
+        assert_eq!(metrics::initials_size(188.0, 207.0, true), 87.0);
 
         // "Halo" so that the initials "HA" cannot be confused with the name.
         let game = Game::new_named("Halo");
@@ -1238,8 +1582,8 @@ mod tests {
             (ratio - expected).abs() < 0.05,
             "the initials/name height quotient should be 64/14 = {expected:.3} \
              for the full-size rule; got {ratio:.3}, and the compact rule would \
-             give 92/14 = {:.3}",
-            92.0 / 14.0
+             give 87/14 = {:.3}",
+            87.0 / 14.0
         );
     }
 
@@ -1355,26 +1699,38 @@ mod tests {
     ///
     /// # What the photograph half can and cannot show (#46)
     ///
-    /// That a photograph's box is the full 188x218 and not the inset one. What
+    /// That a photograph's box is the full 188x207 and not the inset one. What
     /// it **cannot** show is that a picture is there at all: [`framed`] pins the
     /// container with `width(Fixed(..))`/`height(Fixed(..))`,
     /// `Limits::width(Length::Fixed(x))` sets `min == max == x`
     /// (`iced/core/src/layout/limits.rs:60-66`), and `Image::layout` resolves
     /// `intrinsic.min(max).max(min)` (`iced/widget/src/image.rs:257-268`) — so
-    /// the leaf is 188x218 for *any* intrinsic, including the `Size::ZERO` a
+    /// the leaf is 188x207 for *any* intrinsic, including the `Size::ZERO` a
     /// failed decode produces. Measured, all three in this binary:
     ///
     /// | cover | `measure_image` | `leaves` |
     /// |---|---|---|
-    /// | `WEBP_COVER` | `Some(24x16)` | 188x218 |
-    /// | twelve bytes of PNG header | `None` | 188x218 |
+    /// | `WEBP_COVER` | `Some(24x16)` | 188x207 |
+    /// | twelve bytes of PNG header | `None` | 188x207 |
     /// | no file at all (`Prey`) | `None` | 78.528x89.6 |
     ///
-    /// The plate row's height is `spec.height - 2 * 64.2`, the same 89.6 for
-    /// every name; its width is the drawn initials and so moves with the name
-    /// (`Celeste` 76.032, `Bare` 82.496, `""` 27.776 — all measured, all at
-    /// this spec). It is named here because a bare 78.528 would be a number no
-    /// reader could reproduce: it is what `Prey`'s two initials measure.
+    /// The plate row's *height* is the initials' line height and nothing to do
+    /// with the cover box: `initials_only` sizes the text at
+    /// `initials_size(188, h, false)` — 64, because the full-size rule takes
+    /// `min(width, height)` and the width is the smaller — and iced's line
+    /// height is 1.4 of it, so 64 × 1.4 = 89.6 for every name. Its width is the
+    /// drawn initials and so moves with the name (`Celeste` 76.032, `Bare`
+    /// 82.496, `""` 27.776 — all measured, all at this spec). It is named here
+    /// because a bare 78.528 would be a number no reader could reproduce: it is
+    /// what `Prey`'s two initials measure.
+    ///
+    /// **That height was 89.6 before #96 shortened the cover too, and this
+    /// paragraph used to say it was `spec.height - 2 * 64.2`.** Those two
+    /// expressions agree at 218 and nowhere else — 218 − 128.4 = 89.6, and so
+    /// does 64 × 1.4 — so the wrong derivation read as correct until the box
+    /// moved to 207 and the leaf stayed at 89.6. It is corrected here, and it is
+    /// the reason the numbers in this table are re-measured rather than
+    /// recomputed.
     ///
     /// The third row is why this test is not worthless — it does separate a
     /// plate from a photograph. The first two are why it needed
@@ -1383,14 +1739,14 @@ mod tests {
     #[test]
     fn an_icons_picture_is_inset_inside_the_plate_by_the_icon_inset() {
         let spec = card_cover_spec();
-        assert_eq!((spec.width, spec.height), (188.0, 218.0));
+        assert_eq!((spec.width, spec.height), (188.0, 207.0));
         assert_eq!(metrics::ICON_INSET, 18.0);
 
         let with_icon_game = with_icon("Half-Life 2");
         let mut icon: Element<'_, ()> = cover_box(&with_icon_game, spec);
         assert_eq!(
             leaves(&mut icon),
-            [Size::new(188.0 - 2.0 * 18.0, 218.0 - 2.0 * 18.0)],
+            [Size::new(188.0 - 2.0 * 18.0, 207.0 - 2.0 * 18.0)],
             "the icon's box should be the plate's, less the inset on each side"
         );
 
@@ -1400,7 +1756,7 @@ mod tests {
         let mut photo: Element<'_, ()> = cover_box(&with_photo_game, spec);
         assert_eq!(
             leaves(&mut photo),
-            [Size::new(188.0, 218.0)],
+            [Size::new(188.0, 207.0)],
             "a photograph fills the box rather than being inset into it"
         );
     }
@@ -1420,7 +1776,7 @@ mod tests {
     ///
     /// It is the only observable that moves. See the table on
     /// `an_icons_picture_is_inset_inside_the_plate_by_the_icon_inset`: the
-    /// laid-out box is the pinned 188x218 for a decoded image and for an
+    /// laid-out box is the pinned 188x207 for a decoded image and for an
     /// undecodable one alike, so a `.webp` assertion written the way the
     /// photograph tests are written would pass with the decoder switched off —
     /// which is the defect (#46) this test was written to close.
