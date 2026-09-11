@@ -1017,3 +1017,63 @@ namespace and the icons are unchanged by this migration — D-02 keeps the app
 identity, and changing the ID would orphan every installed user's data
 directory. The Qt-era `Categories` line is a separate, cosmetic defect being
 corrected under T-18.
+
+---
+
+## D-29. `.webp` covers: enable the decoder, do not transcode on import
+
+**Question.** libcosmic pins its `image` dependency to
+`features = ["ico","jpeg","png"]` (`libcosmic/Cargo.toml:139-143`), but
+`copy_custom_cover` stores a user's `.webp` verbatim and keeps the suffix
+(`covers.py:300-301`). How does the port render a `.webp` cover?
+
+**Options considered.** (1) Enable libcosmic's `animated-image` feature, which
+turns on `image/webp`, `image/gif` and `dep:async-fs`. (2) Transcode `.webp` →
+PNG on import in `core::covers`, adding `image` as a direct `crates/core`
+dependency. (3) Do nothing and lose `.webp` silently.
+
+**Choice.** Option 1 — enable the decoder.
+
+**Why.** The full analysis, with a measured probe, is in `ux.md` §12.4. The
+decisive argument is parity, and it is worth restating here because it is not
+obvious: **option 2 does not fix the library that exists.** A user's `games.json`
+may already point `cover_path` at `<id>.webp`, written by the Python app, which
+stays on this branch and shares the data directory (D-02). Transcoding on import
+only affects covers imported afterwards and does nothing on the *read* path, so
+every already-stored `.webp` stays unrenderable. Only a decoder fixes both. Option
+2 also stores different bytes under a different name for the same user action,
+breaking a byte-parity property the migration's first priority protects, and
+would require inventing a conversion policy for files already on disk.
+
+Option 3 is excluded by R-11 itself.
+
+**Accepted costs, recorded so they are not mistaken for benefits.**
+`animated-image` is granularity-locked: it also enables GIF and pulls `async-fs`,
+neither of which this app uses. The feature name is a misnomer for our purpose
+("codec coverage"), so it is **not** a promise of `AnimatedImage` widgets in the
+cover UI. Enabling it requires regenerating `build-aux/flatpak/cargo-sources.json`,
+since `async-fs` is absent from it today; `scripts/verify.sh` stage 6 enforces that.
+
+**Cost, measured.** `image-webp 0.2.4` and `gif 0.13.3` are already locked *and*
+already vendored — reachable today only via `resvg`, which `iced_tiny_skia` pulls
+in for SVG. `async-fs` is the only genuinely new crate; its likely transitive
+dependencies (`blocking`, `futures-lite`, `async-lock`, `polling`, `fastrand`,
+`event-listener`, `piper`, `memchr`) are all already in `Cargo.lock`.
+
+**Two adjacent facts established by the same probe, so they are not re-litigated.**
+- The `.ico` path needs **no** fix: `image`'s `"ico"` feature implies `bmp` + `png`,
+  so `save_exe_icon`'s artefact already decodes. R-11 should not be read as
+  implicating it.
+- Decoding sniffs **content**, so PNG bytes in a `<id>.jpg` file work. This is a
+  normal outcome (F-N), not an edge case, and it is why extension-based branching
+  is forbidden in the cover UI (D-13's constraint, restated in `ux.md` §12.5).
+
+**Verification still owed, and it is narrower than the probe.** The probe showed
+that `image` decodes webp *when its webp feature is on*. It did **not** show that
+enabling libcosmic's `animated-image` is sufficient for iced's decode path — that
+rests on feature unification: both libcosmic and iced depend on the same
+`image 0.25.10`, so `image/webp` enabled through libcosmic unifies onto the
+instance iced decodes with. The reasoning is sound but it is reasoning, so the
+landing task requires an end-to-end check that a real `<id>.webp` renders through
+`iced`'s widget path after the feature is enabled — not merely that the crate can
+decode it in isolation.
