@@ -42,22 +42,22 @@
 //! that contract is settled, and it is the honest shape regardless: it is what
 //! makes [`view`] callable from a test with no `State` at all.
 //!
-//! # What is handled, and what is declined
+//! # What is handled, and what is *not*
 //!
-//! [`update`] handles every message whose whole effect is local state, **and**
-//! `FetchReleases`, which is the one handler on this page that reaches the
-//! network. Its task runs `core`'s fetch through the concrete [`HttpClient`]
-//! this crate injects (DECISIONS D-26) — `crate::http` is that client, and it
-//! is the reason this arm can return a task rather than a promise of one.
+//! [`update`] handles every one of this page's messages. Two of them reach the
+//! network — `FetchReleases` and `InstallRunner` — and both run `core`'s work
+//! through the concrete [`HttpClient`] this crate injects (DECISIONS D-26):
+//! `crate::http` is that client, and it is the reason these arms can return a
+//! task rather than a promise of one.
 //!
-//! `InstallRunner` is still declined — `update` returns `None`, *this page does
-//! not handle that* — and for a reason that is now about scope rather than
-//! about a missing dependency. The client exists, but the work behind that
-//! message is the archive download and install, which is T-12's other half on
-//! this page. An arm that set `runner_busy` and returned `Task::none()` would
-//! leave the page busy forever *and* look implemented to
-//! `only_the_written_handlers_change_anything`, which is the defect class this
-//! project keeps finding.
+//! Neither returns `None`, and that is now a statement about the *page* rather
+//! than about this module: `None` means *not mine*, so an arm that declined one
+//! of the page's own messages would fall through the shell's dispatcher and do
+//! nothing at all. The two arms that used to decline — both of them were
+//! declined while the work behind them was missing — now do the work, and the
+//! messages they *do* drop (a tag the page is not offering, a click while a
+//! download is running) return `Some(Task::none())`, which is the different
+//! statement: handled, with nothing to do.
 //!
 //! [`WineRunner::version`]: gamehandler_core::runners::WineRunner::version
 //! [`HttpClient`]: gamehandler_core::runners::proton::HttpClient
@@ -72,8 +72,11 @@ use gamehandler_core::runners::families::{
 use gamehandler_core::runners::proton;
 use gamehandler_core::runners::proton::HttpClient;
 use gamehandler_core::runners::{ProtonRunner, Runner, RunnerError, SYSTEM_WINE};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// `StreamExt::map`, for turning the install's report channel into a task.
+use cosmic::iced::futures::StreamExt;
 
 use crate::state::{ReleasesStatus, State};
 use crate::Message;
@@ -631,6 +634,28 @@ pub fn fetch_releases(
     proton::fetch_available(client, Some(family), RELEASES_LIMIT, RELEASES_TIMEOUT)
 }
 
+/// `str(exc) or exc.__class__.__name__` (`bridge.py:157`) — the one place an
+/// error becomes the text a user reads.
+///
+/// The fallback is not defensive padding. `_async` renders whatever the
+/// background work raised, and on the failures that are commonest in the field
+/// `str()` is **empty** — `ConnectionResetError`, `TimeoutError` and
+/// `http.client.RemoteDisconnected` all render as `''`, measured and recorded
+/// in `VERIFY-FINDINGS` §5. Without this the status line shows
+/// `Could not fetch builds — ` with a dangling dash, which is what
+/// [`status_line`] builds when the message is empty.
+///
+/// [`RunnerError::class_name`] is the analogue of `__class__`; it is asked only
+/// when the rendered message is empty, so the ordinary case is unchanged.
+pub fn rendered_message(error: &RunnerError) -> String {
+    let text = error.to_string();
+    if text.is_empty() {
+        error.class_name().to_string()
+    } else {
+        text
+    }
+}
+
 /// The task half of [`Message::FetchReleases`].
 ///
 /// `Task::perform` runs this off the UI thread, so the blocking client inside
@@ -649,8 +674,8 @@ fn fetch_releases_task(family: String) -> Task<Message> {
             // `"error: "` prefix on the wire and strips seven characters in the
             // QML (`RunnersPage.qml:164`), which [`status_line`] does not need
             // to reproduce.
-            let result =
-                fetch_releases(&crate::http::UreqClient, &family).map_err(|error| error.to_string());
+            let result = fetch_releases(&crate::http::UreqClient, &family)
+                .map_err(|error| rendered_message(&error));
             Message::ReleasesFetchFinished { family, result }
         },
         // `cosmic::app::Task<Message>` is `iced::Task<Action<Message>>`, so a
@@ -658,6 +683,87 @@ fn fetch_releases_task(family: String) -> Task<Message> {
         // shell's `update`. This is the idiomatic libcosmic mapping.
         cosmic::Action::App,
     )
+}
+
+/// The install's ceiling. `ProtonManager.install`'s own default
+/// (`runners.py:868`), and `installRelease` passes no timeout (`bridge.py:750`),
+/// so 60 s is the reference's effective value rather than a choice made here.
+///
+/// It is deliberately not [`RELEASES_TIMEOUT`]. The two are separate numbers in
+/// the reference and a build is ~100 MB where a releases listing is a few KB, so
+/// sharing one constant would silently couple the listing's patience to the
+/// download's or the reverse.
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// [`Message::InstallRunner`]'s task: a blocking install that reports progress.
+///
+/// # Why this is a stream and not `Task::perform`
+///
+/// The fetch handler returns one value when it finishes, so `Task::perform` is
+/// enough. This one reports *while* it runs — `install` takes a
+/// `&dyn Fn(f32)` progress callback, which the reference wires to
+/// `_progress_cb` and which reaches the page as [`Message::RunnerProgress`].
+/// `Task::perform`'s mapper is `FnOnce`, so it cannot yield a message more than
+/// once; `Task::stream` over a channel can, and the channel is what lets the
+/// callback — which is synchronous and takes no `&mut State` — reach the
+/// update loop at all.
+///
+/// # Why a thread, when the executor is already off the UI thread
+///
+/// `Task::stream`'s future runs on the executor, which is where the blocking
+/// `install` would block a worker for the whole download. The blocking work is
+/// therefore moved to its own thread, exactly as Python's `_async` does
+/// (`bridge.py:152-166`), and the stream only forwards what that thread sends.
+/// The sender is dropped when the thread ends, which ends the stream; there is
+/// no separate "done" signal to get wrong.
+///
+/// **The order is load-bearing**: the progress reports and the final
+/// [`Message::RunnerInstallFinished`] go through one channel, so the result
+/// cannot overtake the last progress tick and leave the bar drawn above a
+/// finished install.
+///
+/// # What ends the stream, and the one case where nothing does
+///
+/// The sender is moved into the thread and dropped when it ends, so the stream
+/// finishes on its own — including when the install returns `Err`, which is the
+/// ordinary path. The exception is a **panic**: the thread unwinds, the sender
+/// drops with the panic message on stderr, and the stream ends without a
+/// [`Message::RunnerInstallFinished`], leaving the page busy. That is left
+/// unguarded deliberately. Python wraps the work in `try/except` because an
+/// exception is its ordinary error channel; here the ordinary channel is
+/// `Result`, which [`proton::install`] uses throughout, so a panic is a bug in
+/// this port rather than a network condition — and converting it into a toast
+/// would hide it. A `catch_unwind` would inherit [`Task::perform`]'s lack of one
+/// in the fetch handler, so the two would be asymmetric for no gain.
+fn install_runner_task(release: ReleaseInfo, runners_directory: PathBuf) -> Task<Message> {
+    // `unbounded` because the callback is synchronous and cannot await: a bounded
+    // send from inside it would have to drop reports, and a dropped report is a
+    // progress bar that stalls. The volume is one message per archive chunk.
+    let (sender, receiver) = cosmic::iced::futures::channel::mpsc::unbounded::<Message>();
+
+    std::thread::spawn(move || {
+        let tag = release.tag.clone();
+        let progress = |fraction: f32| {
+            // A send fails only when the receiver is gone, i.e. the page was
+            // navigated away from and the task dropped. Nothing to report to.
+            let _ = sender.unbounded_send(Message::RunnerProgress(fraction));
+        };
+        let result = proton::install(
+            &crate::http::UreqClient,
+            &runners_directory,
+            &release,
+            &progress,
+            INSTALL_TIMEOUT,
+        )
+        .map(|_installed_to| tag)
+        .map_err(|error| rendered_message(&error));
+        let _ = sender.unbounded_send(Message::RunnerInstallFinished(result));
+    });
+
+    // Each report becomes `Action::App(message)` because a task built in a page
+    // is `iced::Task<Action<Message>>` — the same mapping `fetch_releases_task`
+    // explains at its `Task::perform` call.
+    Task::stream(receiver.map(cosmic::Action::App))
 }
 
 pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
@@ -688,6 +794,35 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
                 }
             }
             Some(Task::none())
+        }
+        // `installRelease` (`bridge.py:742-764`).
+        //
+        // The two early returns are the reference's, and both are silent: a
+        // click while a download is already running is dropped rather than
+        // queued (`if self._runner_busy: return`), and so is a tag that is not
+        // in the list the page is showing (`if release is None: return`) —
+        // which a stale page can still send after a family change, since the
+        // button was drawn from the list that has since been replaced.
+        //
+        // The state is written **before** the work starts, so the bar and the
+        // disabled buttons are up while the download is in flight; that is
+        // Python's order too (`busyChanged` before `_async`).
+        Message::InstallRunner { tag } => {
+            if state.runner_busy {
+                return Some(Task::none());
+            }
+            let Some(release) = state.releases.iter().find(|item| item.tag == *tag).cloned() else {
+                return Some(Task::none());
+            };
+            state.runner_busy = true;
+            state.progress = Some(0.0);
+
+            // The toast and the download are one task, so the page cannot end up
+            // busy with no explanation of why.
+            Some(Task::batch([
+                push_toast(state, format!("Downloading {tag}…")),
+                install_runner_task(release.clone(), state.runners.runners_directory().to_path_buf()),
+            ]))
         }
         // `_progress_cb` (`bridge.py:730-732`).
         Message::RunnerProgress(fraction) => {
@@ -1235,6 +1370,65 @@ mod tests {
         assert_eq!(error.to_string(), "Unexpected GitHub releases response");
     }
 
+    // ---- rendered_message -------------------------------------------------
+
+    /// **The message a failure renders is never empty**, which is the invariant
+    /// `VERIFY-FINDINGS` §5 names and the reason `bridge.py:157` has a fallback
+    /// at all.
+    ///
+    /// All four variants whose `Display` can be empty are driven, not just the
+    /// one the fetch path happens to produce: a test on `Http` alone would pass
+    /// for an implementation that special-cased it. The premise is asserted
+    /// first — each of these really does render as `''` — because otherwise the
+    /// test would pass for an error that was never empty to begin with, which is
+    /// the defect the fallback exists to catch.
+    ///
+    /// The ordinary case is asserted too: the fallback must not rewrite a
+    /// message that already has one.
+    #[test]
+    fn a_failure_never_renders_an_empty_message() {
+        let empty: Vec<(&str, RunnerError)> = vec![
+            ("Http", RunnerError::Http { message: String::new() }),
+            (
+                "UnreachableShare",
+                RunnerError::UnreachableShare { message: String::new() },
+            ),
+            ("Io", RunnerError::Io(std::io::Error::other(""))),
+            (
+                "Archive",
+                RunnerError::Archive(gamehandler_core::runners::ArchiveError::Io(
+                    std::io::Error::other(""),
+                )),
+            ),
+        ];
+
+        for (name, error) in empty {
+            assert_eq!(
+                error.to_string(),
+                "",
+                "the premise: {name} renders empty, so the fallback is what is under test"
+            );
+            assert_eq!(rendered_message(&error), name, "the class name stands in");
+
+            // The point of the invariant: what the user actually reads.
+            let line = status_line(&ReleasesStatus::Error(rendered_message(&error)), 0);
+            assert_eq!(
+                line.as_deref(),
+                Some(format!("Could not fetch builds — {name}").as_str()),
+                "a dangling dash is the defect this prevents"
+            );
+        }
+
+        let message = RunnerError::Http {
+            message: "rate limit exceeded".to_string(),
+        };
+        assert_eq!(
+            rendered_message(&message),
+            "rate limit exceeded",
+            "a real message is passed through untouched"
+        );
+    }
+
     // ---- update -----------------------------------------------------------
 
     /// A fetch request clears the previous family's list *and* marks the fetch
@@ -1367,29 +1561,85 @@ mod tests {
         }
     }
 
-    /// `InstallRunner` is **declined, not half-written**.
+    /// **Every handler is now written** — the two that used to be declined are
+    /// handled, and the page has no arm left that returns `None` for one of its
+    /// own messages.
     ///
-    /// This is the guard on the module's own honesty: the archive download and
-    /// install is T-12's other half on this page, and an arm that set
-    /// `runner_busy` without doing the work would render as a busy page that
-    /// never finishes *and* look implemented. Writing that transition is the
-    /// plausible next mistake, so this goes red when someone writes it alone.
+    /// This test used to be its own opposite: it asserted `InstallRunner` and
+    /// `FetchReleases` were *declined, not half-written*, because an arm that
+    /// set `runner_busy` without doing the work would render as a busy page that
+    /// never finishes and would look implemented. Both now do the work, so an
+    /// assertion that they were declined would be asserting the opposite of the
+    /// truth. What replaces it is the pair below: a tag the page is not
+    /// offering is dropped, and a click while a download is already running is
+    /// dropped — the reference's two silent early returns, which are now the
+    /// only way this arm returns without work.
     ///
-    /// `FetchReleases` is **not** in this test, and its absence is the point:
-    /// it is fully handled — the transition *and* the task — since the client
-    /// landed in `crate::http`. Asserting it were declined, as this test did
-    /// while the task was missing, would now be asserting the opposite of the
-    /// truth.
+    /// Neither dropping case leaves state behind, which is the half a "returns
+    /// something" assertion would miss.
     #[test]
-    fn installing_is_declined_because_the_install_is_not_wired() {
+    fn a_tag_the_page_is_not_offering_is_dropped() {
         let mut state = state();
+        state.releases = vec![released("GE-Proton9-5", "a.tar.gz", 1024)];
+
+        let task = update(&mut state, &Message::InstallRunner { tag: "not-offered".to_string() });
         assert!(
-            update(&mut state, &Message::InstallRunner { tag: "t".to_string() }).is_none(),
-            "InstallRunner's download and install is T-12's half of this page, \
-             and returning a state change without it would render as a busy \
-             page that never finishes"
+            task.is_some(),
+            "the message is this page's — it is dropped, not declined"
         );
-        assert!(!state.runner_busy);
+        assert!(!state.runner_busy, "a dropped install must not mark the page busy");
+        assert_eq!(state.progress, None, "and must not draw a bar");
+    }
+
+    /// A second click while a download is in flight is dropped rather than
+    /// queued — `if self._runner_busy: return` (`bridge.py:743-744`).
+    ///
+    /// Without it the second click would start a second task against the same
+    /// directory, which the install would refuse as already-installed once the
+    /// first rename lands, and the user would see a failure toast for a download
+    /// that succeeded.
+    #[test]
+    fn a_click_while_an_install_is_running_is_dropped() {
+        let mut state = state();
+        state.releases = vec![released("GE-Proton9-5", "a.tar.gz", 1024)];
+        state.runner_busy = true;
+        state.progress = Some(0.4);
+
+        let task = update(&mut state, &Message::InstallRunner { tag: "GE-Proton9-5".to_string() });
+        assert!(task.is_some(), "dropped, not declined");
+        assert!(state.runner_busy, "the guard is unchanged");
+        assert_eq!(
+            state.progress,
+            Some(0.4),
+            "and the running download's bar is not reset to zero"
+        );
+    }
+
+    /// The accepting path writes both halves of the busy state *before* any work
+    /// starts, which is what makes the bar appear and the buttons disable
+    /// immediately rather than one frame later.
+    ///
+    /// The task is asserted to be a task and not inspected: it spawns a real
+    /// download, so driving it would reach the network. What is checkable
+    /// without a network is the transition, and that is what this asserts. The
+    /// task's own shape — the channel, the thread, the order of the reports — is
+    /// covered by [`install_runner_task`]'s note and by
+    /// `an_install_finishing_clears_the_guard_on_success_and_on_failure` from the
+    /// receiving end.
+    #[test]
+    fn installing_marks_the_page_busy_at_zero_progress_before_the_work_starts() {
+        let mut state = state();
+        state.releases = vec![released("GE-Proton9-5", "a.tar.gz", 1024)];
+
+        let task = update(&mut state, &Message::InstallRunner { tag: "GE-Proton9-5".to_string() });
+        assert!(task.is_some(), "the install is this page's message");
+        assert!(state.runner_busy, "the guard is up before the download");
+        assert_eq!(
+            state.progress,
+            Some(0.0),
+            "and the bar starts at zero, not at the previous download's value"
+        );
+        assert_eq!(progress_fraction(&state), Some(0.0));
     }
 
     // ---- uninstall_line ----------------------------------------------------

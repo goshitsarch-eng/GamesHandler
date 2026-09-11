@@ -166,6 +166,63 @@ pub enum RunnerError {
     Io(std::io::Error),
 }
 
+impl RunnerError {
+    /// The analogue of `exc.__class__.__name__` — the name to show when the
+    /// rendered message is empty.
+    ///
+    /// `_async` renders whatever the background work raised with
+    /// `str(exc) or exc.__class__.__name__` (`bridge.py:157`), and the fallback
+    /// is load-bearing rather than defensive: on the failures that are commonest
+    /// in the field `str()` is **empty**, and Python's own suite measures three
+    /// distinct exceptions that render as `''` (`ConnectionResetError`,
+    /// `TimeoutError`, and `http.client.RemoteDisconnected`); see
+    /// `docs/migration/VERIFY-FINDINGS.md` §5, which is where that was measured.
+    /// Without it the status line reads `Could not fetch builds — ` with a
+    /// dangling dash, which is what [`crate::runners`]'s callers render.
+    ///
+    /// Rust has no `__class__`, so the name is the variant's — one word each,
+    /// which is the same information a Python class name carries here. It is a
+    /// `match` with no catch-all on purpose: a new variant must be named, rather
+    /// than silently inheriting some generic word.
+    ///
+    /// **Four variants can render empty**, and they are the ones whose
+    /// `Display` is a carried string rather than a sentence this port writes:
+    /// [`RunnerError::Http`] and [`RunnerError::UnreachableShare`] render the
+    /// message they carry, [`RunnerError::Io`] renders a `std::io::Error`, and
+    /// [`RunnerError::Archive`] forwards to [`ArchiveError`], whose own `Io`
+    /// arm renders an `io::Error` the same way. [`Shell`] is not among them —
+    /// both of its variants are fixed sentences. That is why the fallback is
+    /// applied by the *renderer*, where the empty case is a value it sees,
+    /// rather than ruled out here by an invariant nothing enforces.
+    ///
+    /// [`ArchiveError]: crate::runners::archive::ArchiveError
+    /// [`Shell`]: RunnerError::Shell
+    pub fn class_name(&self) -> &'static str {
+        match self {
+            RunnerError::NotAvailable { .. } => "NotAvailable",
+            RunnerError::GamescopeMissing => "GamescopeMissing",
+            RunnerError::NvapiNeedsProton => "NvapiNeedsProton",
+            RunnerError::FsrNeedsProton => "FsrNeedsProton",
+            RunnerError::WaylandNeedsProton => "WaylandNeedsProton",
+            RunnerError::NoExecutable => "NoExecutable",
+            RunnerError::DxvkNeedsPrefix => "DxvkNeedsPrefix",
+            RunnerError::DxvkUnavailable => "DxvkUnavailable",
+            RunnerError::WinetricksMissing => "WinetricksMissing",
+            RunnerError::UnknownTool { .. } => "UnknownTool",
+            RunnerError::AlreadyInstalled { .. } => "AlreadyInstalled",
+            RunnerError::SystemWineCannotBeUninstalled => "SystemWineCannotBeUninstalled",
+            RunnerError::ArchiveTooLarge => "ArchiveTooLarge",
+            RunnerError::StagedTopLevelLink => "StagedTopLevelLink",
+            RunnerError::NoUsableRunner => "NoUsableRunner",
+            RunnerError::UnreachableShare { .. } => "UnreachableShare",
+            RunnerError::Http { .. } => "Http",
+            RunnerError::Archive(_) => "Archive",
+            RunnerError::Shell(_) => "Shell",
+            RunnerError::Io(_) => "Io",
+        }
+    }
+}
+
 impl fmt::Display for RunnerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

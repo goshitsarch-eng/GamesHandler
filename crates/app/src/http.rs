@@ -6,8 +6,8 @@
 //!
 //! # Which client, and why the system trust store
 //!
-//! `ureq` with `rustls`, choosing [`RootCerts::PlatformVerifier`] rather than
-//! the default [`RootCerts::WebPki`]. The choice of the *system* store over a
+//! `ureq` with `rustls`, choosing `RootCerts::PlatformVerifier` rather than
+//! the default `RootCerts::WebPki`. The choice of the *system* store over a
 //! bundled one is deliberate (D-48): a user who has installed a corporate or
 //! self-signed CA into their own trust configuration expects this app to honour
 //! it, and a bundled root list would silently ignore it. `ureq`'s default is
