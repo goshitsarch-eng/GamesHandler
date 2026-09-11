@@ -142,10 +142,37 @@ ATTEMPTED=()
 # run that reached the end.
 STOPPED=""
 
-# name|what it is — THE stage list, in the order they run, and the only copy of
-# it. Three things are derived from this array: the usage text, `begin()`'s
-# refusal to announce a stage that is not listed here or is out of order, and the
-# summary's account of the stages an early exit never reached.
+# name|function|what it is — THE stage list, in the order they run, and the only
+# copy of it. Four things are derived from this array: the usage text, `begin()`'s
+# refusal to announce a stage that is not listed here or is out of order, the
+# summary's account of the stages an early exit never reached, and — since #48 —
+# which function a stage runs.
+#
+# The function belongs here rather than at the `run_stage` call site for the
+# reason #47 was fixed in `finish_ok` rather than in the exit tail: a pairing
+# written in two places can disagree, and the run cannot tell. Eleven
+# near-identical consecutive `run_stage` lines invite a copy-paste slip, and
+# `run_stage cli stage_test` reported `cli` as passed while the test suite ran in
+# its place — the summary byte-identical to a correct run (#48). With the pairing
+# in the table, `run_stage` takes only a name and there is no second argument to
+# get wrong: the wrong state cannot be written, rather than being detected after
+# it has been.
+#
+# It cannot be derived by convention. `oracle-freshness -> stage_oracle`,
+# `flatpak-build -> stage_flatpak` and `smoke-test -> stage_smoke` all fail
+# `stage_${name//-/_}`, so a table is needed either way — and needing one either
+# way is the argument for it being the only one.
+#
+# What this does **not** catch, since a table cannot check itself against the
+# code it names: an entry whose function is a different *existing* stage
+# function — `"cli|stage_test|..."`. That is measured, not assumed: it exits 0
+# and reports `cli` passed with the test suite's output, exactly as before. The
+# removal closes the realistic trigger (a slip across eleven near-identical
+# call-site lines, which is no longer expressible) and leaves the deliberate
+# edit, which is the same residual any source file has: no structure prevents
+# someone from writing the wrong thing on purpose. It is stated here rather than
+# left implied, because claiming more than that is how the comment this fix
+# replaced came to be false.
 #
 # That last one is why it exists. The order used to be implied by the sequence of
 # `run_stage` calls and restated in the usage text, and nothing compared them, so
@@ -153,17 +180,17 @@ STOPPED=""
 # not been attempted at all — and "failed: oracle-freshness" on its own reads as
 # "only the oracle is broken" (task #29; the lead read it that way himself).
 STAGES=(
-    "build|the workspace builds"
-    "clippy|cargo clippy --all-targets -- -D warnings (workspace root ONLY, D-08)"
-    "test|the test suite, in BOTH feature configurations (task #27)"
-    "cli|the headless CLI --list/--launch/--version, against a library it must read"
-    "oracle-freshness|the checked-in fixtures equal what the Python generators produce"
-    "python-tests|the Python suite stays green (D-17)"
-    "cargo-sources|cargo-sources.json is fresh against Cargo.lock and covers every git source"
-    "flatpak-build|flatpak-builder builds the manifest"
-    "smoke-test|scripts/smoke-test.sh — CLI + headless GUI"
-    "desktop-metainfo|desktop-file-validate + appstreamcli validate"
-    "flatpak-contents|the installed Flatpak files, and the tree its binary came from"
+    "build|stage_build|the workspace builds"
+    "clippy|stage_clippy|cargo clippy --all-targets -- -D warnings (workspace root ONLY, D-08)"
+    "test|stage_test|the test suite, in BOTH feature configurations (task #27)"
+    "cli|stage_cli|the headless CLI --list/--launch/--version, against a library it must read"
+    "oracle-freshness|stage_oracle|the checked-in fixtures equal what the Python generators produce"
+    "python-tests|stage_python|the Python suite stays green (D-17)"
+    "cargo-sources|stage_cargo_sources|cargo-sources.json is fresh against Cargo.lock and covers every git source"
+    "flatpak-build|stage_flatpak|flatpak-builder builds the manifest"
+    "smoke-test|stage_smoke|scripts/smoke-test.sh — CLI + headless GUI"
+    "desktop-metainfo|stage_desktop_metainfo|desktop-file-validate + appstreamcli validate"
+    "flatpak-contents|stage_flatpak_contents|the installed Flatpak files, and the tree its binary came from"
 )
 
 # The banner comment above each stage function names the stage, and this asserts
@@ -220,7 +247,9 @@ Stages, in order:
 EOF
     local entry
     for entry in "${STAGES[@]}"; do
-        printf '  %-18s %s\n' "${entry%%|*}" "${entry#*|}"
+        # `##*|`, not `#*|`: the entries carry the stage's function as a middle
+        # field, so the first `|` is no longer where the description starts.
+        printf '  %-18s %s\n' "${entry%%|*}" "${entry##*|}"
     done
 }
 
@@ -1314,12 +1343,25 @@ stage_flatpak_contents() {
 STATUS_BEFORE="$(git status --porcelain 2>/dev/null)"
 
 run_stage() {
-    local name="$1" fn="$2"
-    # A typo here would otherwise surface as "command not found" (127) and be
-    # reported as a failing stage, which sends the reader looking at the code
-    # under test rather than at this line.
+    # One argument, because the function comes from STAGES. See the note above
+    # the array: the pairing used to be written here as well, and a copy-paste
+    # slip across eleven near-identical lines ran the wrong stage under the right
+    # name while the run reported success (#48).
+    local name="$1"
+    # The same cursor `begin` uses, read *before* `begin` appends to ATTEMPTED,
+    # so this is the entry for the stage about to start.
+    local entry="${STAGES[${#ATTEMPTED[@]}]:-}"
+    local fn="${entry#*|}"; fn="${fn%%|*}"
+    if [ -z "${entry:-}" ]; then
+        printf 'verify.sh: run_stage %s — STAGES has no stage %d to take a function from\n' \
+            "$name" "${#ATTEMPTED[@]}" >&2
+        exit 2
+    fi
+    # A typo in the table would otherwise surface as "command not found" (127)
+    # and be reported as a failing stage, which sends the reader looking at the
+    # code under test rather than at the STAGES entry.
     if ! declare -F "$fn" >/dev/null; then
-        printf 'verify.sh: stage %s names %s, which is not a function in this script\n' \
+        printf 'verify.sh: STAGES entry %s names %s, which is not a function in this script\n' \
             "$name" "$fn" >&2
         exit 2
     fi
@@ -1345,14 +1387,13 @@ run_stage() {
     esac
 }
 
-run_stage build             stage_build
-run_stage clippy            stage_clippy
-run_stage test              stage_test
-run_stage cli               stage_cli
-run_stage oracle-freshness  stage_oracle
-run_stage python-tests      stage_python
-run_stage cargo-sources     stage_cargo_sources
-
+run_stage build
+run_stage clippy
+run_stage test
+run_stage cli
+run_stage oracle-freshness
+run_stage python-tests
+run_stage cargo-sources
 # Everything from here to `release_flatpak_lock` is one critical section over
 # build-flatpak/ — the four locked stages, whether they build, run or merely
 # read it. The
@@ -1373,7 +1414,7 @@ fi
 if [ "$SKIP_FLATPAK" -eq 1 ]; then
     begin flatpak-build; finish_skip "--skip-flatpak" 1
 elif require_tool flatpak-builder "from flatpak-builder"; then
-    run_stage flatpak-build stage_flatpak
+    run_stage flatpak-build
 else
     begin flatpak-build; finish_skip "flatpak-builder is not installed"
 fi
@@ -1381,7 +1422,7 @@ fi
 if [ "$SKIP_SMOKE" -eq 1 ]; then
     begin smoke-test; finish_skip "--skip-flatpak/--skip-smoke" 1
 else
-    run_stage smoke-test stage_smoke
+    run_stage smoke-test
 fi
 
 if [ "$SKIP_FLATPAK" -eq 1 ] && [ ! -d "$BUILD_DIR/files" ]; then
@@ -1391,14 +1432,13 @@ if [ "$SKIP_FLATPAK" -eq 1 ] && [ ! -d "$BUILD_DIR/files" ]; then
     # installed copy rather than being failed for it.
     finish_skip "no build tree — run without --skip-flatpak to validate the installed copies" 1
 else
-    run_stage desktop-metainfo stage_desktop_metainfo
+    run_stage desktop-metainfo
 fi
 
 # Runs even under --skip-flatpak: its manifest half needs no build tree, and that
 # is precisely the half that catches a deleted install line. It reports SKIP on
 # its own when there is no tree to inspect.
-run_stage flatpak-contents  stage_flatpak_contents
-
+run_stage flatpak-contents
 # End of the build-flatpak/ critical section (see the lock note above).
 release_flatpak_lock
 
