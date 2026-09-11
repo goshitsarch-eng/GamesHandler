@@ -1342,6 +1342,72 @@ stage_flatpak_contents() {
 # Recorded so the script can assert it did not dirty the tree (see below).
 STATUS_BEFORE="$(git status --porcelain 2>/dev/null)"
 
+# Every `stage_*` function the script defines is named by exactly one STAGES
+# entry, and every entry names a defined function.
+#
+# Since #48 the table is the only place the stage/function pairing is written,
+# which makes it the single point of failure: an entry edited to name another
+# *existing* stage function reports the wrong stage as passed, and nothing in
+# the run can tell (measured — it exits 0 with `ok cli` while the test suite's
+# log is the one written). This does not check the *mapping*, which is a thing a
+# table cannot check against the code it names. It checks the **bijection**,
+# which is enough for the case that has to be closed: an entry typo strands its
+# own function (set `cli|stage_test` and `stage_cli` is named by nothing) and, if
+# it points at another stage's function, names that one twice. The report names
+# all three kinds — stranded, duplicated, dangling — because which one you get
+# depends on which way the edit went.
+#
+# What still slips through, stated so this is not read as covering more: a
+# permutation that preserves the bijection — `cli -> stage_test` *and*
+# `test -> stage_cli` together — still runs the wrong functions under the right
+# names. That is two coordinated edits, not one slip, and it is a far smaller
+# target than the eleven near-identical call-site lines #48 closed.
+#
+# Called from the runner rather than from the top of the file with the other
+# guards, because bash executes top-down: at the top the stage functions are not
+# defined yet, so this would find none and pass vacuously. That is the same trap
+# as a test that asserts on an empty collection.
+check_stage_table() {
+    local -a named=() defined=()
+    local entry fn problem=""
+
+    for entry in "${STAGES[@]}"; do
+        fn="${entry#*|}"; fn="${fn%%|*}"
+        named+=("$fn")
+    done
+    # `declare -F` prints "declare -f <name>" per line, so $3 is the name.
+    mapfile -t defined < <(declare -F | awk '{print $3}' | grep '^stage_' | sort)
+
+    # A defined stage function that no entry names — the entry-typo case.
+    for fn in "${defined[@]}"; do
+        if ! printf '%s\n' "${named[@]}" | grep -qx -- "$fn"; then
+            problem+="  ${fn} is defined but no STAGES entry names it\n"
+        fi
+    done
+    # A function named by more than one entry, and an entry naming something
+    # that is not defined. The second is also caught by `run_stage`, but only
+    # once that stage is reached — after other stages have already run.
+    for fn in "${named[@]}"; do
+        if ! declare -F "$fn" >/dev/null; then
+            problem+="  STAGES names ${fn}, which is not a function in this script\n"
+        fi
+    done
+    for fn in $(printf '%s\n' "${named[@]}" | sort | uniq -d); do
+        problem+="  ${fn} is named by more than one STAGES entry\n"
+    done
+
+    if [ -n "$problem" ]; then
+        printf 'verify.sh: the STAGES table and the script disagree about the stage functions\n' >&2
+        printf '%b' "$problem" >&2
+        printf '  every `stage_*` function the script defines must be named by exactly\n' >&2
+        printf '  one STAGES entry, and every entry must name one — see the note on the\n' >&2
+        printf '  table above, which is the only place the pairing is written.\n' >&2
+        exit 2
+    fi
+}
+
+check_stage_table
+
 run_stage() {
     # One argument, because the function comes from STAGES. See the note above
     # the array: the pairing used to be written here as well, and a copy-paste
