@@ -32,6 +32,7 @@ use std::time::Duration;
 
 use gamehandler_core::runners::RunnerError;
 use gamehandler_core::runners::proton::{HttpClient, ResponseHead};
+use ureq::ResponseExt;
 
 /// Bytes handed to [`HttpClient::get`]'s sink per call.
 ///
@@ -85,7 +86,16 @@ impl HttpClient for UreqClient {
             .get("content-length")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        on_head(&ResponseHead { content_length })?;
+        // `get_uri()` is ureq's `resp.geturl()`: the URI this response is
+        // *about*, which differs from the request URI exactly when a redirect
+        // was followed (ureq's own doc says so, and `ResponseExt` is the trait
+        // that exposes it). ureq follows up to ten redirects by default, so a
+        // host that bounces this request elsewhere is reported here as
+        // elsewhere — which is what makes an allowlist check possible at all.
+        on_head(&ResponseHead {
+            content_length,
+            final_url: response.get_uri().to_string(),
+        })?;
 
         let mut reader = response.into_body().into_reader();
         let mut buffer = vec![0u8; CHUNK];

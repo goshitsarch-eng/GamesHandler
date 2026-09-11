@@ -119,6 +119,20 @@ const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 pub struct ResponseHead {
     /// The `Content-Length` header verbatim, or `None` if it was absent.
     pub content_length: Option<String>,
+    /// The URL the response actually came from, **after every redirect**.
+    ///
+    /// Required rather than optional, and empty is not a valid answer: the one
+    /// caller that reads it is an allowlist check
+    /// ([`crate::installers`]'s download origin validation), and a field that
+    /// could be `None` would need a rule for what `None` means. The only two
+    /// candidates are "trust the request URL instead" — which turns a redirect
+    /// to an attacker's host into an accepted download — and "reject", which is
+    /// the same as an empty string here. Making it a plain `String` removes the
+    /// question: a client that cannot report the final URL reports `""`, and
+    /// `""` is not in any installer's `allowed_hosts`, so it fails closed.
+    ///
+    /// [`Default`] gives `""`, which is the same fail-closed direction.
+    pub final_url: String,
 }
 
 /// A blocking HTTP GET, injected rather than imported (D-26).
@@ -148,6 +162,18 @@ pub struct ResponseHead {
 /// transfer: `on_head` for a declared length that is already too large, `sink`
 /// for a body that turns out to be. Python gets both from exceptions raised
 /// inside its `with` block; these are the same two exits.
+///
+/// # Why the final URL rides in the head too
+///
+/// It was added third, for `installers.download_installer`, and it belongs in
+/// the head for the same reason the length does: Python validates the origin
+/// (`_validate_download_origin`, `installers.py:551-558`) against
+/// `resp.geturl()` **before its read loop**, so no byte of a redirect to an
+/// untrusted host is ever written. A client that reported the final URL only
+/// on completion would still let the caller delete what it had written — but
+/// only after receiving up to the 1 GiB size cap from a host the allowlist
+/// never approved. The head is the point at which the answer exists and
+/// nothing has been kept, so it is where the answer goes.
 pub trait HttpClient {
     /// GET `url`, then hand the response to two callbacks in order.
     ///
@@ -1646,16 +1672,33 @@ mod tests {
     }
 
     impl FakeClient {
+        /// The canned response's final URL is empty, which is what a client
+        /// that cannot report one gives. `fetch_available` has no origin
+        /// allowlist to check, so the empty string is inert here; the field's
+        /// fail-closed shape is exercised by `install`'s redirect test in
+        /// `installers.rs`.
         fn body(text: &str) -> Self {
             Self {
-                status: Ok((ResponseHead { content_length: None }, text.as_bytes().to_vec())),
+                status: Ok((
+                    ResponseHead {
+                        content_length: None,
+                        final_url: String::new(),
+                    },
+                    text.as_bytes().to_vec(),
+                )),
                 seen: std::cell::RefCell::new(Vec::new()),
             }
         }
 
         fn bytes(raw: &[u8]) -> Self {
             Self {
-                status: Ok((ResponseHead { content_length: None }, raw.to_vec())),
+                status: Ok((
+                    ResponseHead {
+                        content_length: None,
+                        final_url: String::new(),
+                    },
+                    raw.to_vec(),
+                )),
                 seen: std::cell::RefCell::new(Vec::new()),
             }
         }
@@ -1994,7 +2037,7 @@ mod tests {
     fn text_accumulates_every_chunk_in_order() {
         let client = Chunky {
             chunks: vec![b"he", b"llo", b" world"],
-            head: ResponseHead { content_length: Some("11".to_string()) },
+            head: ResponseHead { content_length: Some("11".to_string()), final_url: String::new() },
         };
         let text = get_text(&client, "u", &[], Duration::from_secs(1)).unwrap();
         assert_eq!(text, "hello world");
@@ -2023,7 +2066,7 @@ mod tests {
                 on_head: &mut dyn FnMut(&ResponseHead) -> Result<(), RunnerError>,
                 sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
             ) -> Result<(), RunnerError> {
-                on_head(&ResponseHead { content_length: Some("3".to_string()) })?;
+                on_head(&ResponseHead { content_length: Some("3".to_string()), final_url: String::new() })?;
                 sink(b"abc")
             }
         }
@@ -2179,7 +2222,7 @@ mod tests {
             sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
         ) -> Result<(), RunnerError> {
             self.calls.set(self.calls.get() + 1);
-            on_head(&ResponseHead { content_length: self.declared.clone() })?;
+            on_head(&ResponseHead { content_length: self.declared.clone(), final_url: String::new() })?;
             if self.body.is_empty() {
                 return Ok(());
             }

@@ -1460,6 +1460,9 @@ mod tests {
             self.seen.borrow_mut().push(url.to_string());
             on_head(&ResponseHead {
                 content_length: None,
+                // This fake never redirects, so the request URL *is* the final
+                // URL — the field is `""` only for a client that cannot say.
+                final_url: url.to_string(),
             })?;
             sink(self.body.as_bytes())
         }
