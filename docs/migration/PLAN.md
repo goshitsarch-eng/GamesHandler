@@ -248,6 +248,7 @@ Legend: **☐** not started · **~** in progress · **☑** done+verified
 | **B-04** | A BOM'd or deeply-nested `games.json` loads instead of being emptied (D-21) | F-K/F-L | BOM'd file whose games survive the next save |
 | **B-05** | Timestamps survive a save unchanged at the bit level (D-19) | F-H | save a library the Rust app loaded; bytes match Python's |
 | **B-06** | A pathologically deep `games.json` cannot abort the process (D-21) | F-L | deep nesting must be a parse *error at worst*, never SIGABRT |
+| **B-07** | A failed launch reports the runner's actual error text, never the generic status line (F-O) | F-O | launch a game whose runner exits non-zero within the grace period; the message names the cause, on every attempt |
 
 A separate category from the parity checklist above, and not to be confused with
 section H below. Every P-item says *"behave like the Qt app"*; every B-item says
@@ -273,6 +274,28 @@ the stack and aborts on input Python reads fine, and the abort was invisible to
 `cargo test -p gamehandler-core` while killing a workspace-wide `cargo test`.
 It is a checklist item so that Phase 3 verifies the fix against a real file, not
 only against the test that was written alongside it.
+
+**B-07 is the first B-item found *during* the port rather than in Phase 1** (by
+the UX teammate, though it belongs to `core::runners`), and the first that is
+*load-sensitive* rather than input-sensitive. `LaunchedGame.failure()`
+(`runners.py:1358-1374`) calls `process.wait()` and then reads a stderr buffer
+filled by a **separate daemon thread** (`_ErrorTail._drain`, `:1322-1345`).
+`wait()` returning says the process was reaped, not that the pipe was drained,
+so the read can beat the drainer and the real Wine/Proton error is silently
+replaced by `"the runner exited with status {code}"`.
+
+Both the UX teammate (12/300) and the lead, independently, (90/300) reproduced
+it; the rate is load-dependent, which is why it appeared as an intermittent
+`python-tests` failure while a `flatpak-builder` ran alongside. The user-visible
+cost is a failed launch that says nothing useful, and the *flakiness* is the
+tell: `tests/test_runners.py:761` fails only when the race is lost. A Rust port
+that spawns a reader task and awaits the child inherits the same unordered
+pairing, so the port must drain **before** reading — `child.wait_with_output()`
+does this, reading a collected buffer after `wait()` without joining the reader
+does not. The port's output *format* stays identical; only the reliability
+changes, which is why a Rust test here must assert the error text is present and
+must not accept the fallback string, or it will pass while the race is present —
+exactly how the Python suite hid this.
 
 ### H. New items (not in the Qt app — added by this migration)
 | ID | Item | Why |
@@ -328,7 +351,7 @@ same file (D-05).
 | T-16 | Flatpak: new manifest, `cargo-sources.json`, `build.sh` | Pkg | Removes PySide6/llvm21/PYTHONPATH. Keeps Wine base, osslsigncode, DXVK. |
 | T-17 | `scripts/verify.sh` + headless smoke test | Pkg | 7 stages per `packaging.md` §6. |
 | T-18 | Metadata: desktop file, metainfo, README, version bump to 0.8.0 | Pkg + UX | Version-lockstep test. |
-| T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. Walk **B-01…B-06** — hand-edit the file named for each and confirm the real app survives it. "The port does not copy the bug" is a claim that needs demonstrating, not asserting. |
+| T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. Walk **B-01…B-07** — hand-edit the file named for each and confirm the real app survives it. "The port does not copy the bug" is a claim that needs demonstrating, not asserting. |
 | T-20 | `docs/migration/REPORT.md` | Lead | Final deliverable. |
 
 Ordering rationale: logic (`T-02`–`T-06`) lands before UI, so the UI is built

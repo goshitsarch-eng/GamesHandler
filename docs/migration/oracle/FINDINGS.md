@@ -511,6 +511,53 @@ a `.jpg` name does not imply JPEG. R-11's scope is nevertheless still correct:
 webp can only reach disk through `copy_custom_cover`, because every other writer
 emits JPEG, PNG or ICO bytes.
 
+### F-O. `failure()` can silently lose the runner's error text (a race)
+
+Found by the UX teammate during T-18 while chasing an intermittent
+`python-tests` failure, and reproduced independently by the lead. Recorded here
+because it is a behaviour of the Python app that the port must **not** copy —
+tracked as **B-07** in `PLAN.md`.
+
+`LaunchedGame.failure()` (`runners.py:1358-1374`) waits for the child and then
+reads the stderr buffer:
+
+```python
+code = self.process.wait(timeout=timeout)      # reaps the child
+...
+detail = _readable_error(self.errors.text())   # reads a buffer filled elsewhere
+```
+
+but that buffer is filled by a **separate daemon thread**, `_ErrorTail._drain`
+(`:1322-1345`), started in `_ErrorTail.__init__`. `wait()` returning proves the
+process was reaped; it proves nothing about the pipe having been drained. The
+read can therefore beat the drainer, and `failure()` falls back to the generic
+`"the runner exited with status {code}"`, discarding the Wine/Proton diagnostic
+that is the entire reason the method exists.
+
+**Measured, twice, independently:**
+
+| Observer | Method | Rate |
+|---|---|---|
+| UX teammate | real `_ErrorTail`, under load from a concurrent `flatpak-builder` | 12 / 300 |
+| Lead | real `_ErrorTail`, `Popen` child writing to stderr then exiting immediately | **90 / 300** |
+
+The rate is load-dependent, which is the signature: this surfaced as a *flaky*
+`python-tests` run, and `tests/test_runners.py:761` is the test that fails when
+the race is lost. A test that fails one run in ten and passes on re-run is not
+noise — it is this.
+
+**Consequence for the port, and the trap in the obvious translation.** The
+defect is the *ordering*, not the threading, so a Rust port that spawns a reader
+task and then awaits the child inherits the identical unordered pairing. The
+port must ensure the reader has completed before the buffer is read —
+`tokio::process::Child::wait_with_output()` does this, because draining the
+pipes is part of what it waits for; reading a collected buffer *after* `wait()`
+without joining the reader does not. The output **format** is unchanged; only
+the reliability is. A Rust test must therefore assert the error text is
+present, and must **not** accept the fallback string as a valid outcome — the
+latter is precisely how a test can be green while the race is live, which is why
+the Python suite concealed this.
+
 ## 5. Corrections to §1–3 found by the same review
 
 Two claims in the sections above were **weaker than they were written to be**,
