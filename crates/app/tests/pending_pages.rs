@@ -72,8 +72,7 @@ use std::path::{Path, PathBuf};
 /// `Library`→T-09, `Installers`→T-12, `Runners`→T-11, `Plugins`/`Credits`/
 /// `Settings`→T-13. The task ids are recorded in that file's comments and are
 /// not pinned here, so reassigning a task does not break this test.
-const PINNED_PENDING: [&str; 6] = [
-    "Library",
+const PINNED_PENDING: [&str; 5] = [
     "Installers",
     "Runners",
     "Plugins",

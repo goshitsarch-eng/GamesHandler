@@ -21,10 +21,10 @@ use std::process::ExitCode;
 use clap::Parser;
 use cosmic::app::ApplicationExt;
 use cosmic::widget::{container, icon, nav_bar, text, toaster};
-use gamehandler_core::models::Library;
+use gamehandler_core::models::{Library, SORT_MODES};
 use gamehandler_core::runners::families::ReleaseInfo;
 use gamehandler_core::runners::{RunnerManager, SystemLaunchEnv};
-use gamehandler_core::settings::Settings;
+use gamehandler_core::settings::{Settings, VIEW_MODES};
 use gamehandler_core::{APP_ID, APP_NAME, VERSION};
 
 mod state;
@@ -479,6 +479,12 @@ pub enum Message {
     SetSearchText(String),
     /// The category filter; empty resets to "All" (`bridge.py:292`).
     SetCategoryFilter(String),
+    /// Clear the search box **and** the category filter together.
+    ///
+    /// One message rather than two: the reference's button does both writes
+    /// (`LibraryPage.qml:118-121`), and a single message is what makes them
+    /// atomic — so the page cannot be drawn with one cleared and not the other.
+    ClearFilters,
 
     // ---- Library: the games themselves -----------------------------------
     /// Save the open form — add or update, decided by the form's game id.
@@ -791,9 +797,17 @@ impl Shell {
     /// on screen as well as in the code, so a page that has not landed says so.
     fn view_body(&self) -> cosmic::Element<'_, Message> {
         match self.state.page {
-            // TODO(T-09): the grid and list, with search, sort and the category
-            // filter (`LibraryPage.qml`).
-            Page::Library => pending_page(Page::Library, "T-09"),
+            Page::Library => {
+                let page = view::library::LibraryPage {
+                    library: &self.state.library,
+                    search: &self.state.search_text,
+                    category: &self.state.category_filter,
+                    sort_mode: &self.state.settings.sort_mode,
+                    view_mode: &self.state.settings.view_mode,
+                    runners: &self.state.runners,
+                };
+                view::library::view(page)
+            }
             // TODO(T-12): the release list and the install progress.
             Page::Installers => pending_page(Page::Installers, "T-12"),
             // TODO(T-11): the runner manager's page.
@@ -841,12 +855,22 @@ impl Shell {
     /// # What the placeholders do, and do not, mean
     ///
     /// A `Task::none()` below means *nothing has been implemented yet* — it
-    /// does not mean the message is a no-op by design. The **five** that carry
-    /// a real body are [`Message::NavigateTo`], [`Message::CloseDialog`],
-    /// [`Message::DismissToast`], [`Message::Notify`] and [`Message::Quit`]:
-    /// they are the ones the shell in T-08 needs in order to be usable at all —
-    /// navigation, the two ways a dialog closes, the toaster the whole app
-    /// reports through, and quitting.
+    /// does not mean the message is a no-op by design. The ones that carry a
+    /// real body are:
+    ///
+    /// - the shell, from T-08: [`Message::NavigateTo`], [`Message::CloseDialog`],
+    ///   [`Message::DismissToast`], [`Message::Notify`] and [`Message::Quit`] —
+    ///   navigation, the two ways a dialog closes, the toaster the whole app
+    ///   reports through, and quitting;
+    /// - the Library toolbar, from T-09: [`Message::SetSearchText`],
+    ///   [`Message::SetCategoryFilter`], [`Message::ClearFilters`],
+    ///   [`Message::SetViewMode`] and [`Message::SetSortMode`] — the search box,
+    ///   the category filter, the button that clears both, and the two settings
+    ///   the toolbar's selectors write.
+    ///
+    /// `ClearFilters` is one of them rather than two writes at the call site so
+    /// that the search box and the category can never be observed cleared one
+    /// without the other.
     ///
     /// That count is not a comment. `only_the_written_handlers_change_anything`
     /// drives every message in `every_message` through this function and
@@ -906,17 +930,45 @@ impl Shell {
             // `bridge.py` ignores an unrecognised value rather than saving it,
             // and the validation is part of the behaviour, not a guard.
             Message::SetColorScheme(_value) => {}
-            Message::SetViewMode(_value) => {}
-            Message::SetSortMode(_value) => {}
+            // `_set_view_mode` (`bridge.py:210-214`) and `_set_sort_mode`
+            // (`223-228`) both *ignore* a value outside the allowed set rather
+            // than storing it. The load path already does this
+            // (`settings.rs:148-153`); the message path did not, so a stale UI
+            // could write a mode the code does not handle and the next start
+            // would silently fold it back — the same defect D-34 names, on the
+            // other side of the file.
+            Message::SetViewMode(value) => {
+                if VIEW_MODES.contains(&value.as_str()) {
+                    self.state.settings.view_mode = value;
+                }
+            }
+            Message::SetSortMode(value) => {
+                if SORT_MODES.contains(&value.as_str()) {
+                    self.state.settings.sort_mode = value;
+                }
+            }
             Message::SetDefaultRunner(_value) => {}
             Message::SetCloseOnLaunch(_value) => {}
             Message::SetDefaultToggle { name: _name, value: _value } => {}
 
             // ---- Library view state ----------------------------------------
-            // TODO(T-09): these two are trivially storable, but they land with
-            // the Library page so the filter and the list move together.
-            Message::SetSearchText(_text) => {}
-            Message::SetCategoryFilter(_filter) => {}
+            Message::SetSearchText(text) => {
+                self.state.search_text = text;
+            }
+            // `_set_category_filter` (`bridge.py:290-293`): empty folds to
+            // "All", so the stored value is never the empty string.
+            Message::SetCategoryFilter(filter) => {
+                self.state.category_filter = if filter.is_empty() {
+                    view::library::ALL_CATEGORIES.to_string()
+                } else {
+                    filter
+                };
+            }
+            // Both halves, in one handler, so neither can be observed alone.
+            Message::ClearFilters => {
+                self.state.search_text.clear();
+                self.state.category_filter = view::library::ALL_CATEGORIES.to_string();
+            }
 
             // ---- Library: the games themselves -----------------------------
             // TODO(T-09): validate, normalise the paths, then `Library::add` or
@@ -1058,7 +1110,6 @@ impl Shell {
 /// function goes with the last entry.
 #[cfg(test)]
 const PENDING_PAGES: &[(Page, &str)] = &[
-    (Page::Library, "T-09"),
     (Page::Installers, "T-12"),
     (Page::Runners, "T-11"),
     (Page::Plugins, "T-13"),
@@ -2002,8 +2053,12 @@ mod tests {
         Message::DismissToast(_) => ("DismissToast", Message::DismissToast(cosmic::widget::toaster::ToastId::default())),
         Message::Quit => ("Quit", Message::Quit),
         Message::SetColorScheme(_) => ("SetColorScheme", Message::SetColorScheme("dark".to_string())),
-        Message::SetViewMode(_) => ("SetViewMode", Message::SetViewMode("grid".to_string())),
-        Message::SetSortMode(_) => ("SetSortMode", Message::SetSortMode("name".to_string())),
+        // A value *other than the default*: on a default shell `"grid"` and
+        // `"name"` write what is already there, which makes a guarded setter
+        // and an unwritten one produce the same silence — the defect D-34
+        // names, in the samples rather than in the handler.
+        Message::SetViewMode(_) => ("SetViewMode", Message::SetViewMode("list".to_string())),
+        Message::SetSortMode(_) => ("SetSortMode", Message::SetSortMode("recent".to_string())),
         Message::SetDefaultRunner(_) => ("SetDefaultRunner", Message::SetDefaultRunner("proton-ge".to_string())),
         Message::SetCloseOnLaunch(_) => ("SetCloseOnLaunch", Message::SetCloseOnLaunch(true)),
         Message::SetDefaultToggle { .. } => ("SetDefaultToggle", Message::SetDefaultToggle {
@@ -2012,6 +2067,7 @@ mod tests {
                         }),
         Message::SetSearchText(_) => ("SetSearchText", Message::SetSearchText("half".to_string())),
         Message::SetCategoryFilter(_) => ("SetCategoryFilter", Message::SetCategoryFilter("Action".to_string())),
+        Message::ClearFilters => ("ClearFilters", Message::ClearFilters),
         Message::SaveGameForm(_) => ("SaveGameForm", Message::SaveGameForm(GameForm::default())),
         Message::LaunchGame(_) => ("LaunchGame", Message::LaunchGame("g".to_string())),
         Message::LaunchWatchFinished { .. } => ("LaunchWatchFinished", Message::LaunchWatchFinished {
@@ -2100,6 +2156,15 @@ mod tests {
         shell.show_page(Page::Library);
         shell.state.game_form = Some(GameForm::default());
         shell.state.confirm_delete = Some("g".to_string());
+        // A search and a filter that are *not* the defaults — and, just as
+        // importantly, not the *sample* values either. `SetSearchText`'s sample
+        // is `"half"` and `SetCategoryFilter`'s is `"Action"`, so a fixture
+        // holding either of those makes the corresponding handler write what is
+        // already there and vanish from the set below: a handler that works
+        // perfectly, reported as an unwritten arm. The fixture has to differ
+        // from both the default and the sample for the change to be visible.
+        shell.state.search_text = "portal".to_string();
+        shell.state.category_filter = "Puzzle".to_string();
         shell
     }
 
@@ -2128,8 +2193,8 @@ mod tests {
     ///   real (`toasts.remove(id)`) and no test can build an id naming a live
     ///   toast, so it cannot be told apart from `{}` — see
     ///   [`a_test_cannot_observe_which_toast_was_dismissed`], which measures
-    ///   that rather than asserting it. The list below therefore names three
-    ///   handlers where four bodies are written, and says which is which.
+    ///   that rather than asserting it. The list below therefore names eight
+    ///   handlers where nine bodies are written, and says which is which.
     ///
     /// [`observe`] counts a returned [`cosmic::Task`] as well as a state
     /// change, so the *other* class of invisible handler — one whose only
@@ -2149,7 +2214,19 @@ mod tests {
             .map(|message| variant_name(&message))
             .collect();
 
-        let mut expected: Vec<&str> = vec!["NavigateTo", "CloseDialog", "Notify"];
+        let mut expected: Vec<&str> = vec![
+            "NavigateTo",
+            "CloseDialog",
+            "Notify",
+            // T-09's five. They are live because the Library page needs them:
+            // the search box, the category filter, the button that clears both
+            // at once, and the two settings the toolbar's selectors write.
+            "SetSearchText",
+            "SetCategoryFilter",
+            "ClearFilters",
+            "SetViewMode",
+            "SetSortMode",
+        ];
         // `DismissToast` is written and cannot be observed; see the doc above.
         expected.sort_unstable();
         changed.sort_unstable();
@@ -2201,6 +2278,138 @@ mod tests {
              live toast — which means `Toasts` grew the accessor this test was \
              written without, and `DismissToast` can be covered for real"
         );
+    }
+
+    /// **The Library page's body is the Library page, and it is not the
+    /// placeholder.**
+    ///
+    /// Deleting the `PENDING_PAGES` entry is what makes the page "landed" as
+    /// far as every guard in this file is concerned — so the deletion is the
+    /// claim, and this is the check that the claim is true. It drives
+    /// [`Shell::view_body`] rather than `view::library::view`, because the
+    /// dispatch arm is the thing under test: a page whose builder is correct
+    /// and whose arm still draws a placeholder is exactly the state that
+    /// `PINNED_PENDING` counts and cannot see.
+    ///
+    /// Both directions: the assert on the drawn strings would pass for an empty
+    /// body, so `NO_GAMES_TITLE` and the button are required to be *present*,
+    /// not merely the placeholder required to be absent.
+    #[test]
+    fn the_library_page_draws_the_library_and_not_the_placeholder() {
+        let shell = Shell::new();
+        assert_eq!(shell.state.library.len(), 0, "this fixture is the empty library");
+        let drawn = drawn_strings(shell.view_body());
+
+        assert!(
+            drawn.iter().any(|text| text == crate::view::library::NO_GAMES_TITLE),
+            "an empty library draws the empty state; drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == crate::view::library::ADD_FIRST_GAME),
+            "and the button out of it; drawn: {drawn:?}"
+        );
+        assert!(
+            !drawn.iter().any(|text| text.contains("has not been ported yet")),
+            "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
+        );
+    }
+
+    /// **A filter that hides every game draws the other empty state.**
+    ///
+    /// The single assertion that separates the two states, driven through the
+    /// real dispatch: a library with games in it and a search matching none
+    /// must not say "No games yet". Keyed on the filtered count alone, this is
+    /// the case that reports a full library as an empty one.
+    #[test]
+    fn a_search_that_matches_nothing_is_not_an_empty_library() {
+        let root = std::env::temp_dir().join(format!("gh-lib-page-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let mut shell = Shell::new();
+        shell.state.library = Library::new_at(Some(root.join("games.json")), 0.0);
+        shell
+            .state
+            .library
+            .add(gamehandler_core::models::Game::new_named("Celeste"))
+            .unwrap();
+        shell.state.search_text = "no such game".to_string();
+
+        let drawn = drawn_strings(shell.view_body());
+        assert!(
+            drawn.iter().any(|text| text == crate::view::library::NO_MATCHES_TITLE),
+            "a library with a game in it whose search matches nothing says so; \
+             drawn: {drawn:?}"
+        );
+        assert!(
+            !drawn.iter().any(|text| text == crate::view::library::NO_GAMES_TITLE),
+            "and must not claim the library is empty; drawn: {drawn:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **An out-of-set view mode or sort mode is ignored, not stored.**
+    ///
+    /// `bridge.py:210-214` and `223-228` both *ignore* an unrecognised value,
+    /// and the load path already folds one (`settings.rs:148-153`) — so the
+    /// message path was the one place the check was missing, and a stale UI
+    /// could write a mode the code does not handle.
+    ///
+    /// The in-set half is asserted too, because "ignores everything" would
+    /// satisfy the first half alone.
+    #[test]
+    fn an_out_of_set_view_mode_or_sort_mode_is_ignored() {
+        let mut shell = shell_with_work_to_do();
+
+        let effect = observe(&mut shell, Message::SetViewMode("nonsense".to_string()));
+        assert!(!effect.state_changed, "an unrecognised view mode must not be stored");
+        assert_eq!(shell.state.settings.view_mode, "grid");
+
+        let effect = observe(&mut shell, Message::SetViewMode("list".to_string()));
+        assert!(effect.state_changed, "a known view mode must be stored");
+        assert_eq!(shell.state.settings.view_mode, "list");
+
+        let effect = observe(&mut shell, Message::SetSortMode("nonsense".to_string()));
+        assert!(!effect.state_changed, "an unrecognised sort mode must not be stored");
+        assert_eq!(shell.state.settings.sort_mode, "name");
+
+        // `"grid"` is a view mode, and must not be accepted as a sort.
+        let effect = observe(&mut shell, Message::SetSortMode("grid".to_string()));
+        assert!(
+            !effect.state_changed,
+            "the two allowed sets are not interchangeable"
+        );
+
+        let effect = observe(&mut shell, Message::SetSortMode("recent".to_string()));
+        assert!(effect.state_changed, "a known sort mode must be stored");
+        assert_eq!(shell.state.settings.sort_mode, "recent");
+    }
+
+    /// **Clearing the filters empties both, and one message does it.**
+    ///
+    /// The reference's button writes two things (`LibraryPage.qml:118-121`).
+    /// One message is what makes them unobservable apart, so this asserts both
+    /// and not the one the fixture happened to set.
+    #[test]
+    fn clearing_the_filters_empties_both_records_at_once() {
+        let mut shell = shell_with_work_to_do();
+        assert!(!shell.state.search_text.is_empty(), "the fixture is filtering");
+        assert_ne!(shell.state.category_filter, "All", "the fixture is filtering");
+
+        observe(&mut shell, Message::ClearFilters);
+
+        assert!(shell.state.search_text.is_empty());
+        assert_eq!(shell.state.category_filter, crate::view::library::ALL_CATEGORIES);
+    }
+
+    /// `bridge.py:290-293`: an empty category folds to "All" rather than being
+    /// stored as the empty string, which is what makes "no filter" have one
+    /// spelling instead of two.
+    #[test]
+    fn an_empty_category_filter_folds_to_all() {
+        let mut shell = shell_with_work_to_do();
+        observe(&mut shell, Message::SetCategoryFilter(String::new()));
+        assert_eq!(shell.state.category_filter, crate::view::library::ALL_CATEGORIES);
     }
 
     /// **`NavigateTo` moves both records of the current page.**
