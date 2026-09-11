@@ -95,27 +95,110 @@ fn main() -> ExitCode {
     run_gui()
 }
 
+/// The lines `--list` prints, exactly as `main.py:_list_games` prints them.
+///
+/// Ported from Python, which is `Library().all()` → the empty-library line, or
+/// one `f"{game.id}\t{game.name}"` row per game. `all` with no argument sorts
+/// by `name`, and [`Library::all`]'s fall-through arm is that same
+/// case-insensitive `name` sort, so `"name"` is passed explicitly rather than
+/// relied on — a caller that passed something else would change the output
+/// silently, and this is what a script parses.
+///
+/// # The correctness criterion for this function is not "matches Python"
+///
+/// It was, and that was the bug: an earlier version of this file printed the
+/// empty-library line unconditionally, with a doc comment arguing it was
+/// correct *because* it was byte-identical to Python's empty case. It was
+/// byte-identical — and therefore indistinguishable from a real empty library.
+/// A script running `--list` on a machine with a full library got "the library
+/// is empty" and `rc=0`, and could not tell that from a build that never opened
+/// the file.
+///
+/// So the criterion is **"cannot be mistaken for the real thing"**, and output
+/// identity is only the second question. For a stub the two pull in opposite
+/// directions: the closer the fabricated text is to the truth, the more
+/// convincing the lie. Nothing here is fabricated now — every line is computed
+/// from the library that was actually loaded — and the rule for anything that
+/// has to stay stubbed is in [`launch_failure`].
+fn list_lines(library: &Library) -> Vec<String> {
+    let games = library.all("name");
+    if games.is_empty() {
+        return vec![format!("{APP_NAME}: the library is empty")];
+    }
+    games
+        .iter()
+        .map(|game| format!("{}\t{}", game.id, game.name))
+        .collect()
+}
+
 /// `--list`: print every game's id and name, tab-separated, one per line.
 ///
-/// TODO(T-07): load the library through `gamehandler_core::models::Library`
-/// and port `main.py:_list_games` in full — the empty-library line and the
-/// `{id}\t{name}` row format must stay byte-identical, since scripts parse
-/// this. The stub below already prints the correct empty-library line.
+/// # The one deliberate divergence from Python
+///
+/// `main.py:_list_games` opens with `config.ensure_dirs()`, which creates the
+/// config and runners directories. This does not, because creating directories
+/// is a side effect a *read* command has no business having: `--list` is what a
+/// script, a launcher or a `--help` wrapper calls, and on a fresh machine it
+/// would leave two new directories behind having printed nothing but a refusal.
+///
+/// It is unobservable in the output, which is the part that is contract, and
+/// observable only as the absence of a side effect that no caller asked for.
+/// Recorded here rather than silently dropped, since the load path does not
+/// need the directories: [`Library::load`] treats a missing file as an empty
+/// library and never writes.
 fn list_games() -> ExitCode {
-    println!("{APP_NAME}: the library is empty");
+    for line in list_lines(&Library::new(None)) {
+        println!("{line}");
+    }
     ExitCode::SUCCESS
+}
+
+/// Why `--launch` cannot start this game, and the code to exit with.
+///
+/// Returns `(stderr text, exit code)`. Every path is currently a failure,
+/// because the launch itself is not ported yet — `runners::launch`,
+/// `mark_played` and the P-46 immediate-failure grace check are T-03's next
+/// module. When they land, the success case (`(None, 0)`) is added here and
+/// the caller stops printing on it; the two failure paths below do not change.
+///
+/// # Why an unported launch is an error and not a silent success
+///
+/// A stub for this command has three options and only one of them is honest:
+/// print a plausible success (a lie — `.desktop` shortcuts invoke this, so the
+/// user gets a menu entry that opens nothing and reports nothing), print
+/// Python's unknown-id message for a game that *does* exist (also a lie, and
+/// the one an earlier version of this file told), or say what is actually true.
+/// The load and the lookup are real, so the only thing left to admit is that
+/// the launch is not: that is what the second arm does, with a non-zero code so
+/// a script cannot mistake it for a launched game.
+///
+/// The lookup is not incidental to that. It is the part of
+/// `main.py:_launch_from_cli` that needs no launch machinery, and doing it for
+/// real is what makes the unknown-id message mean what it says — the same
+/// message for an id that is in the library was the inverted criterion again.
+fn launch_failure(library: &Library, game_id: &str) -> (String, u8) {
+    let Some(game) = library.get(game_id) else {
+        return (format!("{APP_NAME}: no game with id {game_id}"), 1);
+    };
+    (
+        format!(
+            "{APP_NAME}: could not launch {}: launching is not implemented in \
+             this build",
+            game.name
+        ),
+        1,
+    )
 }
 
 /// `--launch <GAME_ID>`: start a game and report whether it stayed up.
 ///
-/// TODO(T-07): port `main.py:_launch_from_cli` — look the game up, call
-/// `gamehandler_core::runners::launch`, `mark_played`, then run the
-/// immediate-failure grace check (P-46) and exit 1 with the reason. The stub
-/// reproduces the exit code and stderr text for an unknown id, which is the
-/// only outcome reachable before the library lands.
+/// Ported from `main.py:_launch_from_cli` as far as the library allows: the
+/// lookup and its message are Python's, and the launch itself is
+/// [`launch_failure`]'s second arm.
 fn launch_game(game_id: &str) -> ExitCode {
-    eprintln!("{APP_NAME}: no game with id {game_id}");
-    ExitCode::from(1)
+    let (message, code) = launch_failure(&Library::new(None), game_id);
+    eprintln!("{message}");
+    ExitCode::from(code)
 }
 
 /// The environment variables winit accepts as proof of a display.
@@ -834,6 +917,7 @@ impl cosmic::Application for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gamehandler_core::models::Game;
 
     /// An environment built from `(name, value)` pairs, as the lookup
     /// [`display_present`] takes. Keeps every case below off the real process
@@ -848,6 +932,143 @@ mod tests {
                 .iter()
                 .find(|(k, _)| k == name)
                 .map(|(_, v)| v.clone())
+        }
+    }
+
+    /// A library at a temp path, populated with `(id, name)` games.
+    ///
+    /// Built through `Library::add`, which saves, so the games are read back
+    /// from a real file rather than injected — a listing that worked only on an
+    /// in-memory library would pass here and print nothing for a user.
+    fn library_with(label: &str, games: &[(&str, &str)]) -> (std::path::PathBuf, Library) {
+        let root = std::env::temp_dir().join(format!(
+            "gh-cli-{label}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("games.json");
+        let mut library = Library::new_at(Some(path), 0.0);
+        for (id, name) in games {
+            let mut game = Game::new_named(*name);
+            game.id = (*id).to_string();
+            library.add(game).unwrap();
+        }
+        (root, library)
+    }
+
+    /// `--list` prints one `id\tname` row per game, in the case-insensitive
+    /// name order Python's default sort produces.
+    #[test]
+    fn list_lines_are_the_ids_and_names_in_name_order() {
+        let (_root, library) = library_with(
+            "rows",
+            &[("b", "Beta"), ("a", "Alpha"), ("c", "gamma")],
+        );
+        assert_eq!(
+            list_lines(&library),
+            vec!["a\tAlpha", "b\tBeta", "c\tgamma"]
+        );
+    }
+
+    /// The sort is on the **lowercased** name, which is the one place a byte
+    /// divergence between the two implementations could hide.
+    ///
+    /// The pair is chosen to discriminate: a plain `str` sort is by code point,
+    /// where `Z` (0x5A) precedes `a` (0x61), so `Zebra` would come first. A
+    /// case-insensitive sort puts `apple` first. Only one of the two orders can
+    /// be produced by a given implementation, so this cannot pass vacuously.
+    #[test]
+    fn the_listing_sorts_case_insensitively_like_python_s_default() {
+        let (_root, library) = library_with(
+            "case",
+            &[("z", "Zebra"), ("a", "apple"), ("m", "Mango")],
+        );
+        assert_eq!(
+            list_lines(&library),
+            vec!["a\tapple", "m\tMango", "z\tZebra"],
+            "lowercased order, not code-point order"
+        );
+    }
+
+    /// An empty library says so once, and naming the file is not the point —
+    /// the message is Python's, verbatim, because scripts parse it.
+    #[test]
+    fn an_empty_library_prints_the_empty_line_and_nothing_else() {
+        let root = std::env::temp_dir().join(format!("gh-cli-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // A path with no file behind it: the missing-file case, which is what a
+        // first run looks like.
+        let library = Library::new_at(Some(root.join("games.json")), 0.0);
+        assert_eq!(
+            list_lines(&library),
+            vec!["GameHandler: the library is empty"]
+        );
+    }
+
+    /// The regression this whole change exists for: a **populated** library
+    /// must not print the empty line.
+    ///
+    /// The earlier stub printed it unconditionally, so this is the assertion
+    /// that would have failed it. Written against a real two-game library
+    /// because the failure it guards was only reachable on one.
+    #[test]
+    fn a_populated_library_does_not_claim_to_be_empty() {
+        let (_root, library) = library_with("populated", &[("a", "Alpha"), ("b", "Beta")]);
+        let lines = list_lines(&library);
+        assert_eq!(lines.len(), 2);
+        assert!(
+            !lines.iter().any(|line| line.contains("empty")),
+            "a library with games in it reported emptiness: {lines:?}"
+        );
+    }
+
+    /// An id that is not in the library is refused with Python's message.
+    #[test]
+    fn launching_an_unknown_id_is_refused_with_pythons_message() {
+        let (_root, library) = library_with("unknown", &[("a", "Alpha")]);
+        let (message, code) = launch_failure(&library, "nope");
+        assert_eq!(message, "GameHandler: no game with id nope");
+        assert_eq!(code, 1);
+    }
+
+    /// A game that **is** in the library is not reported as missing.
+    ///
+    /// This is the inverted-criterion bug again, one level down: the old stub
+    /// printed the unknown-id message for every id, including real ones, which
+    /// is a fabricated fact about the user's library. The message must say the
+    /// launch is unavailable, not that the game does not exist.
+    #[test]
+    fn launching_a_known_id_does_not_claim_the_game_is_missing() {
+        let (_root, library) = library_with("known", &[("a", "Alpha")]);
+        let (message, code) = launch_failure(&library, "a");
+        assert_eq!(code, 1, "an unported launch must not exit 0");
+        assert!(
+            !message.contains("no game with id"),
+            "a real game was reported as missing: {message}"
+        );
+        assert!(
+            message.contains("Alpha"),
+            "the message should name the game: {message}"
+        );
+        assert!(
+            message.contains("not implemented"),
+            "the message must admit the launch did not happen: {message}"
+        );
+    }
+
+    /// Every path out of `--launch` is non-zero while the launch is unported.
+    ///
+    /// Stated as a property over both branches rather than per-branch, because
+    /// the failure mode this guards is a later change adding a `return
+    /// ExitCode::SUCCESS` for a game it did not start.
+    #[test]
+    fn no_unported_launch_path_reports_success() {
+        let (_root, library) = library_with("status", &[("a", "Alpha"), ("b", "Beta")]);
+        for game_id in ["a", "b", "missing"] {
+            let (_, code) = launch_failure(&library, game_id);
+            assert_ne!(code, 0, "{game_id} reported success without launching");
         }
     }
 
