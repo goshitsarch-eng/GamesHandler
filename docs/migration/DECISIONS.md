@@ -1966,3 +1966,64 @@ writers cost a rebase whose conflicts are in the code that has no tests yet.
 picture. When a check's observable is a *laid-out box*, ask what the container
 was told to make that box: a `Fixed` dimension is an assertion the layout
 already satisfies, and no intrinsic can move it.
+
+## D-44. D-40's shape is invisible to mutation testing, and that clause is the actionable part
+
+**Decision.** D-40's rule is stated in one sentence, with the clause that makes
+it usable, at the request of Architecture and following the advocate's review of
+the T-11/T-12 extractions.
+
+> **A check that passes because a different mechanism produced the same
+> observable.** Mutation testing cannot see this shape, because the mutation
+> still changes behaviour — it is *the test* that cannot distinguish the two
+> causes. So a surviving-mutant measurement will report the check as covering
+> something it does not.
+
+**Why the second clause is the entry.** D-40 already described the shape (a
+guard firing earlier produced the error under assertion, so the guard under test
+never ran). What the clause adds is *why the project's best instrument is blind*
+to it — and that is what turns a description into a technique, because it tells
+you which measurements you may trust and which you must replace.
+
+Mutation testing's implicit assumption is that a mutation caught by the suite
+means the suite observed the mutated mechanism. D-40 breaks that assumption at
+exactly the point where the suite is green: the mutation changes behaviour, the
+test goes red, and the **reason** it went red is a different route to the same
+outcome. The instrument reports "caught" and is not wrong about the count — it is
+wrong about the *coverage claim* the count is read as making. This is why the
+repair is the distinguishing question in D-40 ("is the code under test the only
+thing that can produce the asserted outcome?") rather than a stronger battery:
+one more mutation would have been caught the same way.
+
+**The failure mode it names has now recurred in a second guise, and the second
+guise is the one to watch for.** In the T-11/T-12 extractions, a value built
+inline in an `update` arm was unreadable, so the fix was to extract it into a
+pure function with a test. The function bodies are now covered — control
+mutations inside them are caught, so the work is real. But **the call sites
+still are not**: mutating the call site to bypass the extracted function, or to
+pass a plausible wrong value, survives. The survivor **moved** rather than
+closed.
+
+That is D-40's shape one level up: the observable at the call site remained
+unreadable, and extracting the function created a *new* observable (the
+function's output) that is honest and well-tested while the original question —
+*is this function called with the right thing?* — is still unasked. Mutation
+testing over the new site reports "caught" for the function body and cannot see
+the untouched call site at all.
+
+**The rule, both levels.**
+
+* When a mutation survives, ask whether the *fix* closed it or relocated it. A
+  fix that introduces a new observable is a fix to the observable, not
+  necessarily to the gap.
+* When a mutation is caught, ask what produced the failure. If a second
+  mechanism can produce it, the catch is not evidence about the mechanism you
+  meant to test.
+* **A repair that makes a value readable is a repair to readability. Say
+  "the line and the guard are now readable", not "closed"** — because "closed"
+  asserts that the call site is covered, which is a different and stronger
+  claim than the one the measurement supports.
+
+Related: D-40, D-43, [[verification-defect-class]] — and the project's standing
+method, which is that **every one of these was found by running something and
+none by reading.**
