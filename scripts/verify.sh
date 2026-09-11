@@ -542,12 +542,84 @@ stage_clippy() {
 # identical bytes in both configurations. The exposure is test-side `to_value`
 # only — which is precisely why it is worth a gate rather than an argument.
 # ---------------------------------------------------------------------------
+# A green `cargo test` is not evidence that the source was tested (#50).
+#
+# Cargo reuses a target artifact when the source's mtime is not newer than the
+# artifact's, and `rsync -a` preserves mtimes, so this is reachable by ordinary
+# work. It fails in the one direction nothing else here guards: a test added to
+# a source file and then backdated is not in the binary cargo runs, and cargo
+# prints a clean `358 passed; 0 failed` over a tree it never compiled. Measured
+# with a test that *panics* — 358 passed, and the word `Compiling` nowhere in
+# the output. The count is fine, the binary is not the source, and the summary
+# says nothing about it.
+#
+# Section 3's rule ("a failure that contradicts the code is more likely a stale
+# artifact than a bug") covers the false-*failure* direction and works because a
+# contradiction makes someone look. A green count makes nobody look, which is
+# why the fix has to be here rather than there.
+#
+# Two halves, and both are load-bearing. `cargo clean -p` removes the artifacts
+# of the crates under test, so cargo must rebuild them from source and what runs
+# is what is here. The `Compiling` check then fails the stage if that did not
+# happen, so the forcing cannot stop working unnoticed — a different target
+# dir, a cargo change, a flag that no longer does what it says. Forcing alone is
+# a fix with nothing checking it; asserting alone would fail every legitimate
+# incremental run in which there was nothing to rebuild.
+#
+# `clean -p` also removes the `[[bin]]` that `stage_cli` runs. Measured in a
+# throwaway package rather than assumed: `cargo test` rebuilds the bin, so the
+# later stages still find theirs.
+#
+# Not a general "is the cache fresh" check: it names the one mechanism that was
+# measured to produce a false pass (D-41).
 stage_test() {
-    env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
-        cargo test || return 1
-    env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
+    local rc=0 output status
+
+    # One ok/FAIL line per crate, so a run that reused an artifact says so
+    # rather than reporting green (the output contract's one-line-per-check
+    # shape, echoed by `echo_subchecks`).
+    require_compiled() {
+        local crate="$1" out="$2"
+        if printf '%s\n' "$out" | grep -qE "^ +Compiling ${crate} v"; then
+            echo "ok   cargo compiled ${crate} from source before running its tests"
+        else
+            echo "FAIL cargo never compiled ${crate} — the binary it ran is not this source (#50)"
+            rc=1
+        fi
+    }
+
+    # Configuration 1: the whole workspace, default target dir.
+    if ! output="$(env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
+            cargo clean -p gamehandler-core -p gamehandler 2>&1)"; then
+        printf '%s\n' "$output"
+        echo "FAIL cargo clean failed, so nothing below is known to test this source"
+        return 1
+    fi
+    output="$(env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET cargo test 2>&1)"
+    status=$?
+    printf '%s\n' "$output"
+    [ "$status" -eq 0 ] || return 1
+    require_compiled gamehandler-core "$output"
+    require_compiled gamehandler "$output"
+
+    # Configuration 2: the core crate alone, in its own target dir (task #27),
+    # which needs its own clean for the same reason.
+    if ! output="$(env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
+            CARGO_TARGET_DIR="$ROOT/target/verify-narrow" \
+            cargo clean -p gamehandler-core 2>&1)"; then
+        printf '%s\n' "$output"
+        echo "FAIL cargo clean failed in the narrow target dir"
+        return 1
+    fi
+    output="$(env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
         CARGO_TARGET_DIR="$ROOT/target/verify-narrow" \
-        cargo test -p gamehandler-core
+        cargo test -p gamehandler-core 2>&1)"
+    status=$?
+    printf '%s\n' "$output"
+    [ "$status" -eq 0 ] || return 1
+    require_compiled gamehandler-core "$output"
+
+    return "$rc"
 }
 
 # ---------------------------------------------------------------------------
