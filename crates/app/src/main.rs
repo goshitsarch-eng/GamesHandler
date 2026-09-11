@@ -28,6 +28,7 @@ use gamehandler_core::settings::{COLOR_SCHEMES, Settings, VIEW_MODES};
 use gamehandler_core::{APP_ID, APP_NAME, VERSION};
 
 mod http;
+mod shortcuts;
 mod state;
 mod theme;
 // TODO(T-09): remove once the pages call these components. See D-32.
@@ -885,6 +886,42 @@ impl Shell {
         }
     }
 
+    /// `Ctrl+F` — the reference's two actions: `root.showPage("library")` and
+    /// `root.libraryPage.focusSearch()` (`Main.qml:126-134`).
+    ///
+    /// A method on `Shell` rather than the body of `App::on_search`, for the
+    /// same reason [`Shell::view_body`] is: `App` cannot be built off a display,
+    /// so the navigation half would otherwise be unreachable from a test. Here
+    /// the navigation half is assertable — `state.page`, the sidebar, and
+    /// `show_page`'s own `pages_agree` invariant all move — and only the focus
+    /// half is left unobservable.
+    ///
+    /// # Why the focus can be returned alongside the navigation
+    ///
+    /// A widget operation is applied to the tree that exists when it runs, so a
+    /// `focus(id)` returned in the same task as the navigation would do nothing
+    /// if the tree were still the *previous* page's — the search input would not
+    /// be in it, and the operation would silently find no match. **It is not:**
+    /// the runtime drains the update's actions and *then* rebuilds the
+    /// interfaces from `program.view()` before running them
+    /// (`iced/winit/src/lib.rs:1518-1537`, and the same order at `:1151-1169`).
+    /// The tree the operation sees is the one drawn after this navigation, so
+    /// `Page::Library`'s search box is in it.
+    ///
+    /// That ordering is the whole reason this can be one task rather than a
+    /// deferred second message, and it is a property of the runtime rather than
+    /// of anything here — which is why it is cited rather than assumed. It is
+    /// also not testable from here: the task has no accessor, so a test cannot
+    /// see the operation, only the state the navigation wrote.
+    fn focus_library_search(&mut self) -> cosmic::app::Task<Message> {
+        let navigate = self.show_page(Page::Library);
+        // The id is the view's, not this function's — `view/library.rs` is where
+        // the widget that carries it is built, so the two cannot drift into a
+        // focus that names a widget nothing draws.
+        let focus = cosmic::iced::widget::operation::focus(view::library::SEARCH_INPUT_ID);
+        cosmic::app::Task::batch([navigate, focus])
+    }
+
     /// The body under the sidebar, for whichever page is showing.
     ///
     /// This is the page dispatch: one arm per [`Page`], and the arms that call
@@ -1701,6 +1738,41 @@ impl cosmic::Application for App {
             return self.shell.show_page(page);
         }
         cosmic::task::none()
+    }
+
+    /// P-68, the three accelerators libcosmic does not bind.
+    ///
+    /// `keyboard::listen()` delivers an event only when no widget took it
+    /// (`iced/futures/src/keyboard.rs:9-19`), so a focused text field keeps its
+    /// own keystrokes — which is what [`shortcuts`]' own doc records, along with
+    /// why `Ctrl+F` is absent here: the framework already binds it and routes it
+    /// to [`cosmic::Application::on_search`] below, and binding it twice would
+    /// fire it twice.
+    ///
+    /// The mapping is [`shortcuts::shortcut_for`], a pure function, because this
+    /// one is not testable: a `Subscription` has no accessor, so nothing can
+    /// read back what was composed here.
+    fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
+        cosmic::iced::keyboard::listen().filter_map(|event| shortcuts::shortcut_for(&event))
+    }
+
+    /// `Ctrl+F` — libcosmic's own `Action::Search`, emitted by
+    /// `keyboard_nav::subscription()` (`src/keyboard_nav.rs:50-55`) and routed
+    /// here by `Cosmic::update` (`src/app/cosmic.rs:850`).
+    ///
+    /// Delegated so the navigation half is testable; see
+    /// [`Shell::focus_library_search`], which also records why the returned
+    /// focus operation reaches the search box at all.
+    ///
+    /// One divergence worth naming: libcosmic matches `Character("f")` with
+    /// Control and does **not** reject Shift, so `Ctrl+Shift+F` reaches this
+    /// hook, where Qt's `Shortcut` would not match it. It is the framework's
+    /// binding rather than one written here; the alternative — a second binding
+    /// in [`subscription`](cosmic::Application::subscription) with the
+    /// exact-modifier guard — would fire the same key twice, which is worse than
+    /// being liberal in this one case.
+    fn on_search(&mut self) -> cosmic::app::Task<Self::Message> {
+        self.shell.focus_library_search()
     }
 
     /// Handle one message.
@@ -3642,6 +3714,37 @@ mod tests {
             Some(Page::Plugins),
             "the sidebar must move with it, or the panel highlights one page \
              while the body draws another"
+        );
+        assert!(shell.pages_agree());
+    }
+
+    /// **`Ctrl+F` shows the Library from wherever the user is** — the half of
+    /// the reference's two actions (`Main.qml:126-134`) that can be observed.
+    ///
+    /// The other half is `focusSearch()`, which returns an `iced::Task`; a task
+    /// is a value with no accessor, so no assertion can reach the widget
+    /// operation in it and this test does not pretend otherwise. What it does
+    /// hold is that the shortcut's navigation is not merely *reachable* — it is
+    /// the same `show_page`, so the sidebar moves with it and `pages_agree`
+    /// stays true, rather than a second assignment to `state.page` that would
+    /// leave the panel highlighting the page the user just left.
+    ///
+    /// The starting page is *not* Library, deliberately: from Library the
+    /// navigation would be a no-op and a broken implementation would pass.
+    #[test]
+    fn ctrl_f_shows_the_library_from_wherever_the_user_is() {
+        let mut shell = Shell::new();
+        let _ = shell.update(Message::NavigateTo(Page::Settings));
+        assert_eq!(shell.state.page, Page::Settings, "start elsewhere");
+
+        let _ = shell.focus_library_search();
+
+        assert_eq!(shell.state.page, Page::Library, "Ctrl+F shows the Library");
+        assert_eq!(
+            shell.sidebar_page(),
+            Some(Page::Library),
+            "and the sidebar follows, or the panel highlights Settings while \
+             the body draws the Library"
         );
         assert!(shell.pages_agree());
     }

@@ -59,6 +59,21 @@ pub const ALL_CATEGORIES: &str = "All";
 /// The search box's placeholder. `LibraryPage.qml:32`, verbatim.
 pub const SEARCH_PLACEHOLDER: &str = "Search games…";
 
+/// The search box's widget id, so a keyboard shortcut can focus it.
+///
+/// `Ctrl+F` is two actions in the reference — show the Library *and* call
+/// `focusSearch()` (`Main.qml:126-134`) — and the second is a widget operation
+/// naming this id (`Shell::focus_library_search`). The constant lives here
+/// rather than in
+/// `main.rs` because this is where the widget that wears it is built: an id
+/// declared beside the task that focuses it, but not beside the input that
+/// carries it, is a focus that silently finds nothing the day the input is
+/// renamed.
+///
+/// The spelling follows the ids in [`super::widgets`] — `gamehandler.<area>.<name>`
+/// — so an id in a log line says which part of the app it belongs to.
+pub const SEARCH_INPUT_ID: &str = "gamehandler.library.search";
+
 /// The sort options, `(key, label)`. `bridge.py:67-71`, verbatim.
 ///
 /// The keys are validated against [`SORT_MODES`](gamehandler_core::models::SORT_MODES)
@@ -285,6 +300,7 @@ pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
         Row::new()
             .push(
                 text_input(SEARCH_PLACEHOLDER, page.search.to_string())
+                    .id(SEARCH_INPUT_ID.into())
                     .on_input(Message::SetSearchText)
                     .width(Length::Fill),
             )

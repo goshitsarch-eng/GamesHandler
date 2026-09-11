@@ -111,47 +111,61 @@ pub const SHORTCUTS: [(&str, &str); 4] = [
     ("Ctrl+Q:", "Quit"),
 ];
 
-/// The shortcuts the shell actually implements.
+/// The shortcuts the shell actually implements — all four, as of T-25 (P-68).
 ///
-/// # Empty, and that is a recorded gap rather than an oversight
+/// # This constant was empty, and how it emptied is the useful part
 ///
-/// **None of the four work.** `main.rs` has no `subscription()` override, no
-/// `on_key_press` and no keyboard handling of any kind — only `.desktop`
-/// entry *files* the app writes for games, which are a different thing with the
-/// same word in them. So the reference's four accelerators
-/// (`Main.qml:121-143`) are unported and **P-68 is unmet**.
+/// It previously read `[&str; 0] = []` under a heading that said **"None of
+/// the four work"**, with the reason paragraphs that survive in the git history:
+/// *"`Ctrl+F` must focus the Library search field (a widget `Id` and a focus
+/// `Task`), and `Ctrl+N`/`Ctrl+F` must not fire while the user is typing in a
+/// text field, which is a focus-visibility question the shell does not yet
+/// answer for any widget."* Two of those three claims turned out to be false,
+/// and both were false in the same direction — the framework already answered
+/// the question:
 ///
-/// This is written down instead of left implicit because the page prints the
-/// rows either way: without it, this page would show four shortcuts beside
-/// controls that do nothing, and nothing in the suite would say so. The constant
-/// exists so that "the shell implements none of these" is a value a test can
-/// read, and so that wiring one is a one-line change here rather than a
-/// rediscovery.
+/// * **`Ctrl+F` is bound by libcosmic, not by the port.** Its
+///   `keyboard_nav::subscription()` matches `Character("f")` with Control
+///   (`src/keyboard_nav.rs:50-55`) and `Cosmic::update` routes that to
+///   `Application::on_search()` (`src/app/cosmic.rs:850`). `main.rs` replies to
+///   that hook; it does not add a binding of its own, because a second one would
+///   fire the same key twice.
+/// * **"must not fire while the user is typing" needed no code.** The keyboard
+///   subscriptions deliver only events whose status is `Ignored` — the status
+///   the widget tree reported — so a focused `text_input` keeps its own editing
+///   keys and these three pass through. `Main.qml:122` sets
+///   `context: Qt.ApplicationShortcut` precisely so that the shortcut is active
+///   regardless of which widget holds focus, so passing through *is* the
+///   reference's behaviour rather than a hole.
 ///
-/// # Why this is not wired in this task
+/// So this is not a constant that was filled in by wishful thinking: it is one
+/// whose emptiness was measured, whose stated reasons were then falsified
+/// against the vendored source, and which the suite refused to let change until
+/// the list was updated — `the_page_does_not_claim_a_shortcut_the_shell_does_not_implement`
+/// is what failed when the subscription landed.
 ///
-/// It is not page work, and it is not small. Each shortcut needs a
-/// `Subscription` on the application (`cosmic::Application::subscription`,
-/// `libcosmic src/app/mod.rs:460`) listening through
-/// `iced_futures::keyboard::listen()` — and the two that look easiest are the
-/// hard ones: `Ctrl+F` must *focus* the Library search field (a widget `Id` and
-/// a focus `Task`), and `Ctrl+N`/`Ctrl+F` must not fire while the user is typing
-/// in a text field, which is a focus-visibility question the shell does not yet
-/// answer for any widget. Landing that inside a three-page task, untested,
-/// would be the same class of mistake as the T-11/T-12 wiring: a control that
-/// renders and does nothing.
-pub const IMPLEMENTED_SHORTCUTS: [&str; 0] = [];
+/// # Two things this still does not claim
+///
+/// * `Ctrl+Shift+F` reaches the `on_search` hook (`main.rs`), because libcosmic's
+///   match tests Control and does not reject Shift, where Qt's `Shortcut` would
+///   not match it. It is the framework's binding; the divergence is recorded
+///   here because this is the page that advertises the key.
+/// * That a key press actually arrives is a claim about a running window.
+///   Nothing here is observable without one, so it is T-19's to walk in the
+///   Flatpak — the same bound P-68's own acceptance criteria name.
+pub const IMPLEMENTED_SHORTCUTS: [&str; 4] = ["Ctrl+N:", "Ctrl+F:", "Ctrl+,:", "Ctrl+Q:"];
 
 /// Every row [`SHORTCUTS`] prints that [`IMPLEMENTED_SHORTCUTS`] does not.
 ///
-/// The complement, spelled out rather than computed, because the two constants
-/// exist to be read by a human deciding what to do next: "these four are
-/// advertised and none of them works" is the P-68 status, and a reviewer should
-/// get it without running anything. `the_page_does_not_claim_a_shortcut_the_shell_does_not_implement`
-/// checks the complement is exact — a row in neither list, or in both, fails.
-///
-/// When a shortcut is wired, move it from here to [`IMPLEMENTED_SHORTCUTS`].
-pub const UNWIRED_SHORTCUTS: [&str; 4] = ["Ctrl+N:", "Ctrl+F:", "Ctrl+,:", "Ctrl+Q:"];
+/// **Empty, and that is now the good case rather than the gap.** The constant
+/// and its test exist for the state this file was in before T-25: a page
+/// advertising four shortcuts while the shell honoured none, with nothing in the
+/// suite saying so. The complement is spelled out rather than computed so a
+/// reviewer can read the status without running anything, and it stays declared
+/// at zero length rather than deleted so that the *next* shortcut to be
+/// advertised-but-unwired has an obvious home and the test that guards it
+/// remains a two-way check rather than one-way.
+pub const UNWIRED_SHORTCUTS: [&str; 0] = [];
 
 /// A section heading, `(heading, is_a_form_section)`.
 ///
