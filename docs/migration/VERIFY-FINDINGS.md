@@ -128,6 +128,15 @@ bin-only crate like `crates/app`. The answerable form names the mechanism:
 - **Minor:** the `view/cover.rs` fixture helper creates
   `/tmp/gh-cover-{name}-{pid}` per test per run and never removes them — 1245
   directories accumulated in one session.
+- **Python flake, verified unreproducible.** One live-repo run reported
+  `FAILED (failures=1)`: `test_a_failing_launch_reports_the_runners_own_error`,
+  `'cannot find' not found in 'the runner exited with status 53'`. Six
+  consecutive `python3 -m unittest discover -t . -q` runs then returned
+  `OK (skipped=1)`, and the test passes alone. Not reproducible, so not a task —
+  but the reason string varies with a runner's exit status, which is worth
+  watching. **If it recurs, capture the run.** Python is the *reference* rather
+  than the shipped code beyond this point, so a sporadic failure here affects
+  the oracle's authority, not the product.
 
 ## 5. Unmeasured numbers
 
