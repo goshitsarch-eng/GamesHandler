@@ -116,33 +116,59 @@ repaired** from inside the test: the cell is the owner's to rewrite with the
 pipe escaped, and a test that edited the document it is checking could report a
 tree it had just made clean.
 
-**The other half of #84, and the reason this check does not print "clean" over
-these documents.** Counting cells against a header presupposes there is a
-header. Measured three ways — the structural rule in [`tables`] (a table is a
-run whose second line is a `|---|` delimiter row), `markdown-it`'s `gfm-like`
-preset, and Python-Markdown's `tables` extension — there is no header, for four
-runs of 56 lines. The three agree on every one of those four: `PLAN.md` has 16
-pipe-runs and 15 tables (the rows T-12…T-39, the second half of the task list,
-were cut off from their table by prose inserted at `:355`), and
-`VERIFY-FINDINGS.md` has 5 runs and 2 tables (findings 61–80, 81–82 and 83–88
-are orphans of the same kind).
+The count to compare against is read from each table's **own header row**, not
+hardcoded: a table that legitimately gains a column must not read as broken,
+which is this defect class wearing the other hat. Two documents are covered —
+`PLAN.md` and `VERIFY-FINDINGS.md` — so this file reads the lead's second doc
+as well. It reads both; it edits neither. A malformed row is **reported, never
+repaired** from inside the test: the cell is the owner's to rewrite with the
+pipe escaped, and a test that edited the document it is checking could report a
+tree it had just made clean.
 
-The two renderers are not quoted as agreeing with each other in general: they
-differ by one table in `PLAN.md` — Python-Markdown reports 14, merging the two
-tables at `:225` and `:243` that a heading separates with no blank line between
-them — which is that extension's limit rather than a GFM behaviour, and it does
-not touch any of the four runs here, which it declines to render as a table
-either way. Said precisely because "two renderers agree" is a stronger claim
-than two renderers agreeing about the runs being counted.
+# The other half, and #93's own statement of it
 
-Those lines still look like table rows in the source, so reading the file
-satisfies the reader while rendering flattens them to paragraphs — and a run
-with no delimiter row is skipped by [`tables`], which is how a
-header-comparison check comes to report nothing about them. [`headerless_runs`]
-and `test_every_table_block_is_actually_a_table` close that hole. Four runs are
-deferred in [`MALFORMED_RUNS`] on the same terms as the malformed row: named in
-the output, checked for staleness, and left for their owner because both
-documents are the lead's (D-05).
+**A row with well-formed cells and no table is not a table, and #84's check
+could not tell the difference.** Counting cells against a header presupposes
+there is a header. On this tree there was not, for four runs of 56 lines: the
+whole second half of `PLAN.md`'s task table (T-12…T-39, cut off from `:341` by
+prose inserted at `:355`) and three runs of findings (61–80, 81–82, 83–88),
+every row of them with a perfect cell count and none of them in a table. UX
+found the findings half, the lead measured the `PLAN.md` half and filed #93,
+and `7d8176e` inserted the four missing header+delimiter pairs. Measured three
+ways at `7d8176e` — the structural rule in [`tables`] (a table is a run whose
+second line is a `|---|` delimiter row), `markdown-it`'s `gfm-like` preset, and
+Python-Markdown's `tables` extension — all four runs then rendered as tables.
+
+The durable check is [`headerless_runs`] and
+`test_every_row_run_is_immediately_headed`: a run of rows breaks on any
+non-matching line **including a blank one**, and its header must be *immediately*
+above it. **The lead's first scanner searched backwards past the blank line for
+the nearest header and reported all four broken runs as headed** — it is
+recorded as the wrong instrument in #93, and the reason is not bookkeeping: in a
+document made of tables, "a header exists somewhere above this line" is true of
+almost every line, so the predicate stops discriminating.
+
+Two renderers are not quoted as agreeing with each other in general: they differ
+by one table in `PLAN.md` — Python-Markdown reports 14 where markdown-it reports
+15, merging the two tables at `:225` and `:243` that a heading separates with no
+blank line between them, which is that extension's limit rather than a GFM
+behaviour. [`is_delimiter`] is that structural rule, and it is what the checks
+use; the renderers are how the rule was confirmed rather than what implements
+it.
+
+# What the headers did not fix (#94)
+
+The four headers were taken from "each file's own first well-formed table
+rather than retyped" (`7d8176e`), and for `PLAN.md` the first well-formed table
+is the legend at `:12` — `| Doc | Owner | Contents |`. That is a three-cell
+header over `T-12`…`T-40`, whose rows have four cells, so GFM renders three
+columns and **drops the Notes cell of all 29 rows**: rendered, T-12 produces
+three `<td>` where T-01 produces four, and the Notes text is simply absent. It
+is #84's defect class again — silent, because the row still renders — and it is
+recorded in [`MISHEADED_TABLES`] rather than fixed here, because `PLAN.md` is
+the lead's file (D-05). The rule it illustrates is the one both findings share:
+a table has one header, and copying one from elsewhere in the file is retyping
+with extra steps.
 """
 
 import re
@@ -209,6 +235,15 @@ MIN_TAG_FILES = 2
 MIN_TABLES = 12
 MIN_TABLE_ROWS = 150
 
+# Floors for #93's run check, per document. A run of id-bearing rows is the unit
+# the rule is stated over, and a parser that found no runs would report every
+# document headed. Measured at `bc47b41`: PLAN.md 2 runs / 40 rows,
+# VERIFY-FINDINGS.md 4 runs / 76 rows.
+MIN_PLAN_RUNS = 2
+MIN_PLAN_RUN_ROWS = 20
+MIN_FINDINGS_RUNS = 3
+MIN_FINDINGS_RUN_ROWS = 40
+
 #: Rows that are malformed on this tree today, keyed by `(document, first cell)`
 #: and carrying the finding that owns each.
 #:
@@ -239,51 +274,49 @@ MALFORMED_ROWS = {
     ),
 }
 
+#: Whole tables whose header disagrees with every row under it, keyed by
+#: `(document, first body row's first cell)` with the finding that owns each.
+#:
+#: **A sibling of [`MALFORMED_ROWS`] rather than 29 entries in it.** One wrong
+#: header makes every row of its table malformed at once, and 29 entries that
+#: all say the same sentence would bury the finding instead of recording it. The
+#: key names the table by its first body row — `T-12` — because that survives
+#: the header being rewritten, which is exactly the edit that deletes this entry.
+#:
+#: **A deferral, not an exemption**, on [`MALFORMED_ROWS`]' terms: the table is
+#: named in the test's output with its finding, and
+#: `test_the_misheaded_table_list_is_not_stale` fails if an entry stops naming a
+#: table whose rows disagree with its own header.
+MISHEADED_TABLES = {
+    (PLAN.name, "T-12"): (
+        "#94. **The fix for #93 put the wrong header on half the task table.** "
+        "`PLAN.md:361` was given `| Doc | Owner | Contents |` — three cells, and the "
+        "legend table's header from `:12`, not this table's `| # | Task | Owner | "
+        "Notes |`. Every row from T-12 to T-40 has four cells, so GFM renders three "
+        "columns and **drops the Notes cell of all 29 rows**: measured by rendering, "
+        "T-12 produces 3 `<td>` where T-01 produces 4, and the Notes text "
+        "`OWNERSHIP CORRECTED` is absent from the output. This is #84's own defect "
+        "class (silent, because the row still renders) and it is worse than the "
+        "paragraph it replaced, where every cell was lost but nothing claimed "
+        "otherwise. **Fix: replace `:361` with `| # | Task | Owner | Notes |`** — the "
+        "same header the table's first half uses at `:341`. Delete this entry when "
+        "the header matches."
+    ),
+}
+
 #: Pipe-runs that are not tables, keyed by `(document, first cell)` with the
 #: finding that owns each.
 #:
-#: **The same defect class as #84, one level up: rows that look like table rows
-#: and are not in a table.** A run with no delimiter row is a paragraph to every
-#: GFM renderer, so its rows render as text, its columns do not exist, and there
-#: is no header for the check above to count against — which is why the check
-#: above cannot report these and this list has to.
-#:
-#: **A deferral, not an exemption**, on the same terms as [`MALFORMED_ROWS`]:
-#: each is named in the test's output with its finding, and
-#: `test_the_headerless_run_list_is_not_stale` fails if an entry stops describing
-#: a headerless run — so the fix (add the delimiter row, or reflow the prose so
-#: the table is not split) forces the entry's deletion rather than leaving it to
-#: rot. Deferred because both documents are the lead's (D-05).
-#:
-#: Measured at this sha: `PLAN.md` renders 15 tables out of 16 pipe-runs, and
-#: `VERIFY-FINDINGS.md` 2 out of 5 — checked by rendering both documents with
-#: `markdown-it`'s `gfm-like` preset and with Python-Markdown's `tables`
-#: extension, which agree.
-MALFORMED_RUNS = {
-    (PLAN.name, "T-12"): (
-        "#84. The task table at `PLAN.md:341` (header `| # | Task | Owner | Notes |`) "
-        "ends at T-11; prose was inserted at `:355`–`:360` and the table resumes at "
-        "`:361` **without a header or delimiter row**, so T-12 through T-39 — 28 rows, "
-        "the whole second half of the task list — render as paragraphs, not as a table. "
-        "The source still looks like a table, so reading the file satisfies the reader "
-        "while rendering destroys it. Fix: move the `:355`–`:360` prose below `:388`, or "
-        "give `:361` its own header and delimiter row."
-    ),
-    (FINDINGS.name, "61"): (
-        "#84. `VERIFY-FINDINGS.md:79`–`:98` (findings 61–80) resumes the findings table "
-        "after prose without a header or delimiter row, so 20 lines render as a "
-        "paragraph. Fix: give the run a header and delimiter row, or move the prose."
-    ),
-    (FINDINGS.name, "81"): (
-        "#84. `VERIFY-FINDINGS.md:432`–`:433` (findings 81–82) is the same orphan — a "
-        "2-line run under no header. It is the smallest of the four, and worth fixing "
-        "first because it is the one a reader is most likely to skim past."
-    ),
-    (FINDINGS.name, "83"): (
-        "#84. `VERIFY-FINDINGS.md:479`–`:484` (findings 83–88) is the same orphan, 6 "
-        "lines."
-    ),
-}
+#: **EMPTY, and that is the point.** The four runs this listed until `7d8176e` —
+#: `PLAN.md:361` (T-12…T-39) and `VERIFY-FINDINGS.md:79`, `:432`, `:479` — were
+#: given headers by the lead, so every run in both documents is now a table and
+#: `test_every_row_run_is_immediately_headed` passes on its own merits rather
+#: than through this list. The mechanism stays because the next orphan has to be
+#: deferrable without weakening the check, and because an empty list that the
+#: staleness test still checks is what makes the difference between "nothing is
+#: broken" and "nobody looked" visible in the code.
+MALFORMED_RUNS = {}
+
 
 #: Task ids PLAN.md names but never defines, with the finding that owns each.
 #:
@@ -536,40 +569,120 @@ def tables(text):
 
 
 def headerless_runs(doc, text):
-    """`(doc, first_line, n_lines, first_cell)` for pipe-runs that are not tables.
+    """`(doc, first_line, n_lines, first_cell, n_ids)` per run that is not a table.
 
-    **The half of #84 the header comparison cannot see.** A run with no
-    delimiter row is not a table at all: GFM renders it as a paragraph, so every
-    row in it loses its columns and there is no header to count cells against.
-    The rows still *look* like table rows in the source, which is why this is
-    the same reading-satisfies-the-author defect as a dropped cell.
+    **The half of #84 the header comparison cannot see, and the rule #93 states
+    as its own finding: a run of well-formed rows with no table above it is not
+    a table.** A run whose second line is not a delimiter row is a paragraph to
+    every GFM renderer, so every row in it loses its columns and there is no
+    header for [`malformed_rows`] to count against — the rows still *look* like
+    table rows in the source, which is the same reading-satisfies-the-author
+    defect as a dropped cell, one level up.
 
-    Measured three ways, which agree on these four runs: the structural rule
-    above, `markdown-it`'s `gfm-like` preset, and Python-Markdown's `tables`
-    extension. `PLAN.md` has 16 pipe-runs and 15 tables — the run at
-    `:361`–`:388` (T-12…T-39, 28 lines, the second half of the task table, split
-    off from `:341` by prose inserted in the middle) is a paragraph.
-    `VERIFY-FINDINGS.md` has 5 runs and 2 tables: `:79`–`:98`, `:432`–`:433`
-    and `:479`–`:484` are orphans of the same kind. This function is what keeps
-    the check below from reporting "clean" over them. (The renderers are not
-    quoted as agreeing in general; see the module docstring for the one table
-    where they differ.)
+    Three details, each of them a defect this function was written against:
+
+    * **The run breaks on any non-matching line, including a blank one.** That
+      is what [`pipe_runs`] does by construction: a run is a maximal block of
+      consecutive `|`-starting lines.
+    * **The header must be *immediately* above — there is no searching backwards
+      past a blank line.** The lead's first scanner did search backwards and
+      reported all four broken runs as headed; it is recorded as the wrong
+      instrument in #93, and the wrongness is not academic, because "a header
+      exists somewhere above this" is true of nearly every line in a document
+      made of tables, so the predicate stops discriminating.
+    * **A header that is present but the wrong width is *not* this check's** —
+      that is [`malformed_rows`], which counts cells against it. Measured on
+      this tree at `bc47b41`: `PLAN.md:361` was headed by nothing (reported
+      here, deferred in [`MALFORMED_RUNS`]); at the next commit it was headed by
+      a 3-cell row over 4-cell rows (reported there, deferred in
+      [`MISHEADED_TABLES`]). Both were rendering defects and they have different
+      causes, which is why one function does not try to report both.
+
+    `n_ids` counts the rows in the run whose first cell is a task or finding id
+    — `T-nn` in `PLAN.md`, a bare integer in `VERIFY-FINDINGS.md` — because that
+    is the measure of what the loss costs, and it is what the failure message
+    leads with.
     """
     return [
-        (doc, run[0][0], len(run), cells(run[0][1])[0].strip())
+        (
+            doc,
+            run[0][0],
+            len(run),
+            cells(run[0][1])[0].strip(),
+            sum(1 for _, line in run if is_row_id(cells(line)[0].strip())),
+        )
         for run in pipe_runs(text)
         if len(run) < 2 or not is_delimiter(run[1][1])
     ]
 
 
+def is_row_id(first_cell):
+    """True for a cell that can only be a table's first column.
+
+    `T-01`, `T-01a`, or a bare integer — the two documents' row id families.
+    Prose never starts a line with either, which is what makes this a usable
+    discriminator for "content at stake" rather than a guess.
+    """
+    return (
+        re.fullmatch(r"T-\d{2}[a-z]?", first_cell) is not None
+        or first_cell.isdigit()
+    )
+
+
+def id_runs(text):
+    """`(first_line, n_lines)` per maximal run of id-bearing rows.
+
+    #93's own unit: a run of lines that can only be table rows, broken by any
+    line that is not one — including a blank line. Each must be immediately
+    preceded by a header and a delimiter row, which is what
+    [`headerless_runs`] checks; this exists separately because it is the
+    population the check has to have *found* for its verdict to mean anything,
+    and a scan that matches nothing reports a clean document.
+    """
+    runs, run = [], []
+    for number, line in enumerate(text.splitlines(), start=1):
+        if line.startswith("|") and is_row_id(cells(line)[0].strip()):
+            run.append(number)
+        elif run:
+            runs.append((run[0], len(run)))
+            run = []
+    if run:
+        runs.append((run[0], len(run)))
+    return runs
+
+
 def malformed_rows(doc, text):
-    """`(doc, line, expected, got, first_cell)` for every row off its header."""
+    """`(doc, line, expected, got, first_cell, table_key)` for every row off its header.
+
+    `table_key` is the first body row's first cell — how a table is named in
+    [`MISHEADED_TABLES`]. A line number would not do: the header being fixed is
+    the edit that deletes the entry, and it moves nothing, but the rows around
+    it move constantly.
+    """
+    out = []
+    for _, n_cells, rows in tables(text):
+        key = rows[0][2] if rows else ""
+        out += [
+            (doc, line, n_cells, got, first, key)
+            for line, got, first in rows
+            if got != n_cells
+        ]
+    return out
+
+
+def live_malformed_rows(doc, text):
+    """[`malformed_rows`] minus the rows the two deferral lists name.
+
+    One filter, used by both the gate and the test that drives it, so a mutation
+    test cannot pass by filtering differently from the check it is testing.
+    """
     return [
-        (doc, line, n_cells, got, first)
-        for _, n_cells, rows in tables(text)
-        for line, got, first in rows
-        if got != n_cells
+        row
+        for row in malformed_rows(doc, text)
+        if (row[0], row[4]) not in MALFORMED_ROWS
+        and (row[0], row[5]) not in MISHEADED_TABLES
     ]
+
 
 
 class PlanTraceabilityTests(unittest.TestCase):
@@ -657,6 +770,30 @@ class PlanTraceabilityTests(unittest.TestCase):
             f"integrity check is reading almost nothing. Rows are what carry the "
             f"cells; without them there is nothing to disagree with a header.",
         )
+
+        # #93's floors. The run check asserts that every run is headed, and its
+        # verdict is empty when the parser finds no runs — so the population it
+        # looked at is asserted here, in the same pass that produces the verdict.
+        # Measured at `bc47b41`: PLAN.md 2 runs of 11 + 29 rows, VERIFY-FINDINGS
+        # 4 runs. The floors sit below that for the usual reason.
+        for name, text, min_runs, min_ids in (
+            (PLAN.name, self.plan, MIN_PLAN_RUNS, MIN_PLAN_RUN_ROWS),
+            (FINDINGS.name, self.findings, MIN_FINDINGS_RUNS, MIN_FINDINGS_RUN_ROWS),
+        ):
+            runs = id_runs(text)
+            self.assertGreaterEqual(
+                len(runs),
+                min_runs,
+                f"found {len(runs)} runs of id-bearing rows in {name}; the run "
+                f"check would call a document clean on the strength of very "
+                f"little. A document made of tables has runs in it.",
+            )
+            self.assertGreaterEqual(
+                sum(n for _, n in runs),
+                min_ids,
+                f"the {len(runs)} runs in {name} hold only {sum(n for _, n in runs)} "
+                f"rows, so the header above each one governs almost nothing.",
+            )
 
     def test_every_task_a_commit_names_has_a_row(self):
         """#71: T-26 was created, worked and landed with no row anywhere."""
@@ -880,28 +1017,19 @@ class PlanTraceabilityTests(unittest.TestCase):
 
     def test_every_table_row_has_its_headers_cell_count(self):
         """#84: a split row renders anyway, so nothing notices it was split."""
-        problems = []
-        for doc, text in ((PLAN.name, self.plan), (FINDINGS.name, self.findings)):
-            problems.extend(malformed_rows(doc, text))
-
-        deferred = 0
-        live = []
-        for row in problems:
-            doc, _, _, _, first = row
-            if (doc, first) in MALFORMED_ROWS:
-                deferred += 1
-                continue
-            live.append(row)
+        documents = ((PLAN.name, self.plan), (FINDINGS.name, self.findings))
+        problems = [row for doc, text in documents for row in malformed_rows(doc, text)]
+        live = [row for doc, text in documents for row in live_malformed_rows(doc, text)]
 
         self.assertEqual(
             [],
-            [(doc, line, expected, got) for doc, line, expected, got, _ in live],
+            [(doc, line, expected, got) for doc, line, expected, got, _, _ in live],
             "these table rows have a different number of cells than their own "
             "header, which means either a literal `|` split a cell or a cell was "
             "written past the last column:\n"
             + "\n".join(
                 f"  {doc}:{line}  {got} cells, header has {expected}  (starts {first!r})"
-                for _, line, expected, got, first in live
+                for doc, line, expected, got, first, _ in live
             )
             + "\n\nThe row still *renders*, which is why this was committed green "
             "three times (#84): a split cell is invisible in the output. Rewrite "
@@ -911,16 +1039,39 @@ class PlanTraceabilityTests(unittest.TestCase):
             "rewrite, and a test that edited the document it checks could report a "
             "tree it had just made clean.",
         )
+        # Every deferred row is accounted for by a named entry, so a deferral
+        # cannot cover more than it claims. Stated over the *set difference*
+        # rather than a count of entries, because one misheaded-table entry
+        # covers many rows and a total alone would not say which.
+        named = {
+            (row[0], row[4]) for row in problems
+        } & set(MALFORMED_ROWS)
+        named |= {
+            (doc, table)
+            for doc, table in {(row[0], row[5]) for row in problems}
+            if (doc, table) in MISHEADED_TABLES
+        }
         self.assertEqual(
-            len(MALFORMED_ROWS), deferred, "a deferred row is no longer reported"
+            set(MALFORMED_ROWS) | set(MISHEADED_TABLES),
+            named,
+            "a deferral entry names something that is not a malformed row or a "
+            "misheaded table on this tree — it is covering nothing, or covering "
+            "something it does not describe",
         )
+        for (doc, table), reason in sorted(MISHEADED_TABLES.items()):
+            rows = [row for row in problems if row[0] == doc and row[5] == table]
+            print(
+                f"  misheaded table, deferred: {doc} table starting at row "
+                f"{table!r} — {len(rows)} rows disagree with their header. "
+                f"{reason[:100]}…"
+            )
 
     def test_the_malformed_row_list_is_not_stale(self):
         """Deferrals are checked, so the list cannot outlive the defect."""
         known = {
             (doc, first)
             for doc, text in ((PLAN.name, self.plan), (FINDINGS.name, self.findings))
-            for doc, _, _, _, first in malformed_rows(doc, text)
+            for doc, _, _, _, first, _ in malformed_rows(doc, text)
         }
         stale = sorted(entry for entry in MALFORMED_ROWS if entry not in known)
         self.assertEqual(
@@ -932,132 +1083,149 @@ class PlanTraceabilityTests(unittest.TestCase):
             f"deferral list turns into a place where problems are forgotten.",
         )
 
-    def test_every_table_block_is_actually_a_table(self):
-        """#84's other half: rows that are not in a table render as paragraphs.
+    def test_the_misheaded_table_list_is_not_stale(self):
+        """A whole-table deferral expires the same way a row's does.
+
+        The check is that the entry still names a table with rows disagreeing
+        with its own header — so fixing the header at `PLAN.md:361` fails this
+        test until the entry is deleted, rather than leaving a deferral in place
+        over a table that no longer needs one.
+        """
+        # Every row of the named table, not just the malformed ones: the entry
+        # claims "this header is wrong for this table", and a table reduced to
+        # one disagreeing row is still that.
+        live = {
+            (doc, table)
+            for doc, text in ((PLAN.name, self.plan), (FINDINGS.name, self.findings))
+            for doc, _, _, _, _, table in malformed_rows(doc, text)
+        }
+        stale = sorted(entry for entry in MISHEADED_TABLES if entry not in live)
+        self.assertEqual(
+            [],
+            stale,
+            f"these MISHEADED_TABLES entries no longer name a table whose rows "
+            f"disagree with its header: {stale}. The header was fixed — delete the "
+            f"entry, and the row check above is then asserting over that table "
+            f"for the first time.",
+        )
+
+    def test_every_row_run_is_immediately_headed(self):
+        """#93: a run of well-formed rows with no header above it is not a table.
 
         The check above counts cells against a header. This one asks the question
-        that has to come first — whether there *is* a header — and it exists
-        because the answer is no for 55 lines of these two documents. Without it
-        this file would print "21 tables over 2 documents" and assert both
-        documents clean while the second half of the task list renders as prose.
+        that has to come first — whether there *is* a header, immediately above —
+        and it exists because the answer was no for 56 lines of these two
+        documents (`PLAN.md:361`, `VERIFY-FINDINGS.md:79`, `:432`, `:479`) while
+        every one of those rows had a perfect cell count. Without it this file
+        would print "17 tables over 2 documents" and assert both documents clean
+        while the second half of the task list rendered as prose.
         """
         problems = [
-            (doc, line, n, first)
+            run
             for doc, text in ((PLAN.name, self.plan), (FINDINGS.name, self.findings))
-            for doc, line, n, first in headerless_runs(doc, text)
+            for run in headerless_runs(doc, text)
         ]
         deferred, live = [], []
-        for row in problems:
-            (deferred if (row[0], row[3]) in MALFORMED_RUNS else live).append(row)
+        for run in problems:
+            (deferred if (run[0], run[3]) in MALFORMED_RUNS else live).append(run)
 
         self.assertEqual(
             [],
             live,
-            "these runs of `|`-lines have no header and no delimiter row, so no "
-            "GFM renderer shows them as a table — they are paragraphs:\n"
+            "these runs of `|`-lines are not preceded by a header row and a "
+            "delimiter row, so no GFM renderer shows them as a table — they are "
+            "paragraphs:\n"
             + "\n".join(
                 f"  {doc}:{line}  {n} lines, first cell {first!r}"
-                for doc, line, n, first in live
+                + (f", {n_ids} of them rows with an id" if n_ids else "")
+                for doc, line, n, first, n_ids in live
             )
-            + "\n\nA blank line or an intervening paragraph ends a GFM table for "
-            "good; it does not resume. Either move the prose below the rows, or "
-            "give the run its own header and `|---|` delimiter row. Add the "
-            "delimiter the table always needed rather than deleting the lines: "
-            "the rows are the content, and every one of them is currently "
-            "rendered as text.",
+            + "\n\nA blank line or any other non-row line ends a GFM table for "
+            "good; it does not resume, and it does not matter that a header "
+            "exists further up. Either give the run its own header and `|---|` "
+            "delimiter row, or move the prose that split it below the rows. Add "
+            "the header rather than deleting the rows: the rows are the content, "
+            "and every one of them is currently rendered as text.",
         )
         self.assertEqual(
             len(MALFORMED_RUNS),
             len(deferred),
-            "a deferred headerless run is no longer reported",
+            "a deferred run is no longer reported",
         )
-        # Stated in the output, because the assertion above is green and a green
-        # run is the thing a reader trusts without reading this test.
+        # Stated in the output, because the assertion above is green — and a
+        # green run is exactly the thing a reader trusts without reading.
         print(
             "table shape: "
             + "; ".join(
-                f"{doc} renders {len(tables(text))} of {len(pipe_runs(text))} pipe-runs "
-                f"as tables"
+                f"{doc} {len(tables(text))} of {len(pipe_runs(text))} pipe-runs are "
+                f"tables and its {len(id_runs(text))} id-bearing runs "
+                f"({sum(n for _, n in id_runs(text))} rows) are headed"
                 for doc, text in ((PLAN.name, self.plan), (FINDINGS.name, self.findings))
             )
-            + " — the rest are not tables at all:\n"
-            + "\n".join(
-                f"    {doc}:{line}  {n} lines, first cell {first!r}"
-                for doc, line, n, first in sorted(problems)
-            )
         )
 
-    def test_the_headerless_run_list_is_not_stale(self):
-        """The same deferral contract as [`MALFORMED_ROWS`], checked."""
-        known = {
-            (doc, first)
-            for doc, text in ((PLAN.name, self.plan), (FINDINGS.name, self.findings))
-            for doc, _, _, first in headerless_runs(doc, text)
-        }
-        stale = sorted(entry for entry in MALFORMED_RUNS if entry not in known)
-        self.assertEqual(
-            [],
-            stale,
-            f"these MALFORMED_RUNS entries no longer describe a run without a "
-            f"header: {stale}. The run was given a delimiter row, or reflowed — "
-            f"delete the entry, and note that a green run of the test above is "
-            f"then a stronger statement than it was.",
-        )
+    def test_the_headerless_run_check_notices_a_removed_header(self):
+        """The #93 detector, driven over the exact state it was written for.
 
-    def test_the_headerless_run_check_notices_a_split_table(self):
-        """The detector above, driven over a run it must reject (#26).
+        The mutation is the real defect, restored: the header and delimiter rows
+        the lead inserted at `PLAN.md:361` and `:362` are removed in memory, so
+        the run of T-12…T-40 rows is again what it was before `7d8176e` — a
+        paragraph of perfect rows. The check must name the run, and it must name
+        it by what is *in* the run: 29 ids, the second half of the task table.
 
-        The mutation is #84's shape: a paragraph inserted into the middle of a
-        real table. It leaves both halves looking like tables in the source and
-        makes the second one a paragraph, which is what happened to `PLAN.md` at
-        `:361`.
+        This is the DoD for #93. A structural check that has never been shown to
+        fail on the state it was written against is a check nobody has watched
+        work, which is the failure this whole file keeps coming back to.
         """
         before = [
-            (doc, line, n, first)
+            run
             for doc, text in ((PLAN.name, self.plan), (FINDINGS.name, self.findings))
-            for doc, line, n, first in headerless_runs(doc, text)
+            for run in headerless_runs(doc, text)
         ]
         self.assertEqual(
-            sorted(MALFORMED_RUNS),
-            sorted((doc, first) for doc, _, _, first in before),
-            f"this test needs a baseline of exactly the deferred runs to mutate "
-            f"from; got {before}",
+            [],
+            before,
+            f"this test needs a fully headed baseline to remove a header from; "
+            f"every run is already governed, and these are not: {before}",
         )
 
-        task_table = next(
-            run
-            for run in pipe_runs(self.plan)
-            if is_delimiter(run[1][1]) and any(line.startswith("| T-09 |") for _, line in run)
+        rows = self.plan.splitlines()
+        # Find the header by its *position*, not its text: at this sha the header
+        # at `:361` is wrong for its table (#94), and this test must keep working
+        # when the lead replaces it with the right one.
+        first_row = next(
+            n for n, line in enumerate(rows, start=1) if line.startswith("| T-12 |")
         )
-        block = "\n".join(line for _, line in task_table)
-        split_at = next(
-            index for index, (_, line) in enumerate(task_table) if line.startswith("| T-05 |")
+        self.assertTrue(
+            is_delimiter(rows[first_row - 2]) and rows[first_row - 3].startswith("|"),
+            f"the task table's second half is not headed at {PLAN.name}:"
+            f"{first_row - 2}; this test removes that header and needs it there",
         )
-        cut = task_table[split_at][0]
-        mutated = self.plan.replace(
-            block,
-            "\n".join(line for _, line in task_table[:split_at])
-            + "\n\nA paragraph inserted into the middle of a table, which ends it.\n\n"
-            + "\n".join(line for _, line in task_table[split_at:]),
-            1,
-        )
-        self.assertNotEqual(mutated, self.plan, "the mutation did not change the plan")
+        mutated = "\n".join(rows[: first_row - 3] + rows[first_row - 1 :])
 
         found = headerless_runs(PLAN.name, mutated)
-        # Compared as a set difference rather than by line number: the insertion
-        # shifts every line after it, and a test that hardcoded the new line
-        # number would be asserting the size of the paragraph it inserted.
-        appeared = {(first, n) for _, _, n, first in found} - {
-            (first, n) for _, _, n, first in before
-        }
         self.assertEqual(
-            {("T-05", len(task_table) - split_at)},
-            appeared,
-            f"splitting a real table with a paragraph did not produce exactly one "
-            f"new headerless run. Runs before: {before}. After: {found}. This is "
-            f"the defect that produced the T-12 run at `PLAN.md:361`, and the "
-            f"detector is reachable only because `tables()` asks for a delimiter "
-            f"row before it agrees a run is a table.",
+            1,
+            len(found),
+            f"removing the header above the T-12 run did not leave exactly one "
+            f"unheaded run. Reported: {found}",
+        )
+        doc, line, n_lines, first, n_ids = found[0]
+        self.assertEqual("T-12", first, f"the unheaded run was reported as {found}")
+        # Two rows were deleted above it, so the run starts two lines earlier.
+        self.assertEqual(first_row - 2, line)
+        self.assertEqual(
+            29,
+            n_lines,
+            f"the run was counted as {n_lines} lines; T-12…T-40 is 29 rows, and "
+            f"a report that understates the run is how a 29-row loss reads as a "
+            f"one-row one",
+        )
+        self.assertEqual(
+            29,
+            n_ids,
+            f"the run was counted as {n_ids} id-bearing rows; every one of the 29 "
+            f"carries a `T-nn`, so the report understates what the paragraph costs",
         )
 
     def test_the_table_check_notices_a_split_cell(self):
@@ -1067,14 +1235,15 @@ class PlanTraceabilityTests(unittest.TestCase):
         `|`, written into a task-table row, which is what `9eaf11d` shipped and
         what a green gate did not see.
         """
-        clean = malformed_rows(PLAN.name, self.plan)
+        clean = live_malformed_rows(PLAN.name, self.plan)
         self.assertEqual(
-            [("T-09")],
-            [first for _, _, _, _, first in clean],
-            f"this test needs a baseline of exactly the one deferred row to mutate "
-            f"from; got {clean}",
+            [],
+            clean,
+            f"this test needs a plan whose live defects are all deferred, so the "
+            f"mutation is the only thing it can be reporting; got {clean}",
         )
-
+        # The split row goes into the *first* half of the task table, whose header
+        # is right — so what this test reports is the pipe and not #94's header.
         anchor = next(
             line for line in self.plan.splitlines() if line.startswith("| T-08 |")
         )
@@ -1085,29 +1254,24 @@ class PlanTraceabilityTests(unittest.TestCase):
         mutated = self.plan.replace(anchor, anchor + "\n" + split_row, 1)
         self.assertNotEqual(mutated, self.plan, "the mutation did not change the plan")
 
-        found = malformed_rows(PLAN.name, mutated)
-        self.assertTrue(
-            any(first == "T-99" and got == expected + 2 for _, _, expected, got, first in found),
-            f"a row whose cell contains an unescaped `|` was not reported as having "
-            f"too many cells. Reported: {found}. The literal pipe in "
-            f"`map(|(key, _, _)| *key)` splits the cell, the row still renders, and "
-            f"that is #84 — the defect this check exists for and the one it is "
-            f"reachable at only if the count is taken after removing the edge "
-            f"pipes.",
-        )
-        # The unmutated plan reports only the deferred row in the same run, so
-        # the comparison above is not two runs of different code.
+        found = live_malformed_rows(PLAN.name, mutated)
         self.assertEqual(
-            [first for _, _, _, _, first in clean],
-            ["T-09"],
-            f"the baseline moved between the two halves of this test: {clean}",
+            [("T-99", 6)],
+            [(first, got) for _, _, _, got, first, _ in found],
+            f"a row whose cell contains an unescaped `|` was not the only live "
+            f"defect reported. Reported: {found}. The literal pipe in "
+            f"`map(|(key, _, _)| *key)` splits the cell into 6, the row still "
+            f"renders, and that is #84 — the defect this check exists for and the "
+            f"one it is reachable at only if the count is taken after removing the "
+            f"edge pipes.",
         )
         print(
             f"table check: {sum(len(tables(t)) for t in (self.plan, self.findings))} "
-            f"tables over 2 documents; the mutated plan reports "
-            f"{[first for _, _, _, _, first in found]} — the fabricated T-99 row (the "
-            f"cell-splitting one) plus the {len(MALFORMED_ROWS)} deferred row that is "
-            f"in the real plan too"
+            f"tables over 2 documents, "
+            f"{sum(len(rows) for t in (self.plan, self.findings) for _, _, rows in tables(t))} "
+            f"rows in them; the mutated plan's only live defect is "
+            f"{[first for _, _, _, _, first, _ in found]} — the fabricated row whose "
+            f"cell contains `map(|(key, _, _)| *key)`"
         )
 
 
