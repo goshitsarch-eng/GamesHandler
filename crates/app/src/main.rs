@@ -15,15 +15,25 @@
 //! `update()` mutates state and `view()` renders it, and every non-trivial
 //! decision lives in `gamehandler-core`, where it is tested without a display.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::Parser;
 use cosmic::app::ApplicationExt;
+use cosmic::iced::futures::StreamExt;
+use cosmic::iced::futures::channel::mpsc::{UnboundedSender, unbounded as unbounded_channel};
 use cosmic::widget::{container, icon, nav_bar, text, toaster};
-use gamehandler_core::models::{Library, SORT_MODES};
+use gamehandler_core::models::{Game, Library, SORT_MODES};
+use gamehandler_core::netpaths::NetpathsShares;
+use gamehandler_core::paths::{self, SystemEnv};
+use gamehandler_core::plugins::{PluginEnv, SystemPluginEnv};
 use gamehandler_core::runners::families::ReleaseInfo;
-use gamehandler_core::runners::{RunnerManager, SystemLaunchEnv};
+use gamehandler_core::runners::{
+    LAUNCH_GRACE_SECONDS, RunnerManager, SystemLaunchEnv, prefix_drive_c,
+};
+use gamehandler_core::runners::launch::tool_command;
+use gamehandler_core::runners::{desktop, launch};
 use gamehandler_core::settings::{COLOR_SCHEMES, Settings, VIEW_MODES};
 use gamehandler_core::{APP_ID, APP_NAME, VERSION};
 
@@ -159,10 +169,8 @@ fn list_games() -> ExitCode {
 /// Why `--launch` cannot start this game, and the code to exit with.
 ///
 /// Returns `(stderr text, exit code)`. Every path is currently a failure,
-/// because the launch itself is not ported yet — `runners::launch`,
-/// `mark_played` and the P-46 immediate-failure grace check are T-03's next
-/// module. When they land, the success case (`(None, 0)`) is added here and
-/// the caller stops printing on it; the two failure paths below do not change.
+/// because this caller is not ported yet — see [`launch_game`] for what "yet"
+/// means precisely now that `runners::launch` *is* reachable.
 ///
 /// # Why an unported launch is an error and not a silent success
 ///
@@ -185,8 +193,8 @@ fn launch_failure(library: &Library, game_id: &str) -> (String, u8) {
     };
     (
         format!(
-            "{APP_NAME}: could not launch {}: launching is not implemented in \
-             this build",
+            "{APP_NAME}: could not launch {}: the --launch command is not \
+             implemented in this build",
             game.name
         ),
         1,
@@ -198,6 +206,33 @@ fn launch_failure(library: &Library, game_id: &str) -> (String, u8) {
 /// Ported from `main.py:_launch_from_cli` as far as the library allows: the
 /// lookup and its message are Python's, and the launch itself is
 /// [`launch_failure`]'s second arm.
+///
+/// # What the remaining gap is, measured against the tree rather than the row
+///
+/// This function's doc used to say the launch "is not ported yet —
+/// `runners::launch`". **That sentence is now false and is replaced rather than
+/// left standing:** as of T-29 `launch::launch` has a real caller —
+/// [`launch_and_watch`], on the worker [`Message::LaunchGame`] spawns — and
+/// `CreateDesktopShortcut` writes `gamehandler --launch <id>` into a `.desktop`
+/// file. So the unported part is no longer the launch; it is *this* caller, and
+/// the work left is small and specific: the reference's
+/// `main.py:_launch_from_cli` is the lookup sentence (already here), the
+/// `Could not launch “{name}”: {exc}` sentence (the same one `LaunchStarted`
+/// carries), `mark_played`, and `started.failure(LAUNCH_GRACE_SECONDS)` with
+/// the `“{name}” stopped right away: {reason}` sentence.
+///
+/// It is left undone deliberately, not overlooked. **It is not T-29's:** the
+/// `--launch` verb is **T-07's**, whose row owns **P-70** and records it as
+/// `NOT DONE: #31 — both CLI verbs are still stubs`. Whoever takes #31 should
+/// take both halves of it, and one of the two (`--list`) has since landed —
+/// so this stub and [`list_lines`]' comment above are the two ends of the same
+/// finding, and fixing this half under T-29's name would have closed T-07's gap
+/// silently inside another task's commit, which is what D-52 exists to stop.
+///
+/// One more property worth recording, because it is what makes the honesty
+/// claim checkable: `launch_failure` is *pure* over `(&Library, &str)`. That is
+/// why the tests below can pin the exact sentences a real `--launch` prints,
+/// which is not true of a function that spawns.
 fn launch_game(game_id: &str) -> ExitCode {
     let (message, code) = launch_failure(&Library::new(None), game_id);
     eprintln!("{message}");
@@ -505,22 +540,68 @@ pub enum Message {
     /// selector rather than waiting until Save.
     SetFormLinux(bool),
     /// Start a title. `playGame()`; marks it played and begins the grace watch.
+    ///
+    /// The launch itself happens on a worker: `launch()` forks a runner, creates
+    /// the prefix directory and may copy the bundled DXVK runtime into it, which
+    /// is not work for the thread that draws the frame. The outcome comes back
+    /// as [`Message::LaunchStarted`] and the watch as
+    /// [`Message::LaunchWatchFinished`], in that order, from one worker.
     LaunchGame(GameId),
+    /// The runner process exists — or the attempt failed, before any grace.
+    ///
+    /// This is the message that splits the reference's `playGame` where it is
+    /// actually split: `launch()` may raise, and everything after it —
+    /// `mark_played`, the "Launching…" toast, the close-on-launch hide — happens
+    /// only if it did not (`bridge.py:461-476`). `Err` carries the rendered
+    /// `Could not launch “{name}”: {exc}`, built where the name and the error are
+    /// both in hand rather than re-derived from an id.
+    LaunchStarted {
+        game_id: GameId,
+        result: Result<(), String>,
+    },
     /// The grace watch ended.
     ///
     /// `reason` is `None` when the title was still running when the grace
-    /// period expired, which is the success case; `Some(_)` is the runner's
-    /// failure report, shown as a toast with the window brought back.
+    /// period expired, which is the success case — and the reference does
+    /// nothing at all with it (`report`, `bridge.py:478-483`), so neither does
+    /// this. `Some(_)` is the runner's failure report, shown as a toast with the
+    /// window brought back.
     LaunchWatchFinished {
         game_id: GameId,
         reason: Option<String>,
     },
     /// Run `winecfg` or `winetricks` against the game's prefix.
     RunPrefixTool { game_id: GameId, tool: PrefixTool },
+    /// The prefix tool was started, or could not be.
+    PrefixToolStarted {
+        game_id: GameId,
+        tool: PrefixTool,
+        result: Result<(), String>,
+    },
     /// Open the prefix folder in the desktop's file manager. `openPrefix()`.
     OpenPrefixFolder(GameId),
+    /// The prefix folder was opened — the one outcome that reaches the user is
+    /// a failure, because `openPrefix` has no success notice: the file manager
+    /// window *is* the feedback (`bridge.py:503-518`).
+    ///
+    /// No `game_id`, deliberately: the reply names nothing the handler needs,
+    /// and a field carried for symmetry is a field no one reads — the shape
+    /// finding #81 was filed about.
+    PrefixFolderOpened { result: Result<(), String> },
     /// Write a `.desktop` shortcut. `createShortcut()`.
     CreateDesktopShortcut(GameId),
+    /// The shortcut was written, or could not be. The path is the whole
+    /// message, so — as with [`Message::PrefixFolderOpened`] — there is no id
+    /// to carry.
+    ShortcutCreated { result: Result<PathBuf, String> },
+    /// Hide the window, or bring it back. The `requestHide`/`requestShow`
+    /// signal pair (`bridge.py:159-160`), which `Main.qml:170-177` answers with
+    /// `visible = false` and `visible = true` + `raise()` + `requestActivate()`.
+    ///
+    /// A message rather than a direct call because it needs the framework's
+    /// window id, which only [`App`] holds — the same reason [`Message::Quit`]
+    /// is answered there. `true` is `requestHide`, `false` is `requestShow`.
+    SetWindowHidden(bool),
 
     // ---- Covers -----------------------------------------------------------
     /// Fetch artwork for a saved game. `fetchCover()`.
@@ -1091,6 +1172,21 @@ impl Shell {
     ///   [`Message::InstallPlugin`] and [`Message::PluginInstallFinished`] —
     ///   the refresh, the button that runs the reference's install command, and
     ///   the outcome it reports back.
+    /// - the launch flow, from T-29: [`Message::LaunchGame`],
+    ///   [`Message::LaunchStarted`], [`Message::LaunchWatchFinished`],
+    ///   [`Message::RunPrefixTool`], [`Message::PrefixToolStarted`],
+    ///   [`Message::OpenPrefixFolder`], [`Message::PrefixFolderOpened`],
+    ///   [`Message::CreateDesktopShortcut`] and [`Message::ShortcutCreated`] —
+    ///   `playGame`, `runPrefixTool`, `openPrefix` and `createShortcut`
+    ///   (`bridge.py:461-533`) and the four replies their deferred halves come
+    ///   back on. Each of the four entry points performs its lookup and its
+    ///   guards here and hands the blocking part — a fork, a `mkdir`, an
+    ///   `xdg-open`, a file write — to a worker; each reply is what that worker
+    ///   sends. Two are worth naming for what they *do not* do: an id the
+    ///   library does not hold is silence in three of the four (only `playGame`
+    ///   says "Select a game first"), and `LaunchWatchFinished { reason: None }`
+    ///   — the title that is still running — is silent in the reference
+    ///   (`report`, `:478-483`), so it is silent here.
     ///
     /// `ClearFilters` is one of them rather than two writes at the call site so
     /// that the search box and the category can never be observed cleared one
@@ -1105,6 +1201,21 @@ impl Shell {
     /// that writes what is already there, a correct guarded handler and an
     /// unwritten arm produce the same silence — the D-34 shape, in the samples
     /// rather than in the handler.
+    ///
+    /// # The three arms that are empty on purpose
+    ///
+    /// `Quit` and [`Message::SetWindowHidden`] are answered by [`App::update`],
+    /// which holds the window — and their arms here must stay empty, because an
+    /// arm that moved the window would need the `Core` this type deliberately
+    /// has none of. They are *excluded by name* from the guard below, exactly as
+    /// `Quit` already was.
+    ///
+    /// `LaunchWatchTick` is the third and is a different case: it needs no
+    /// exclusion, because it genuinely has no effect — §3.3 chose one grace
+    /// timeout over a poll, so nothing constructs it and its arm does nothing by
+    /// decision rather than by omission. That is why it no longer carries a
+    /// `TODO(T-29)` marker, which would now read as work still owed.
+    /// `dispatch_coverage` is what fails if a poll ever starts emitting it.
     ///
     /// That list is not a comment. `only_the_written_handlers_change_anything`
     /// drives every message in `every_message` through this function and
@@ -1366,17 +1477,162 @@ impl Shell {
                     form.is_linux = is_linux;
                 }
             }
-            // TODO(T-29): `mark_played`, spawn the grace watch, and honour
-            // `close_on_launch`.
-            Message::LaunchGame(_game_id) => {}
-            // TODO(T-29): toast the reason on `Some`, and bring the window back.
-            Message::LaunchWatchFinished { game_id: _game_id, reason: _reason } => {}
-            // TODO(T-29): `runners::run_tool` in a blocking task.
-            Message::RunPrefixTool { game_id: _game_id, tool: _tool } => {}
-            // TODO(T-29): `xdg-open` via `std::process`, off the UI thread.
-            Message::OpenPrefixFolder(_game_id) => {}
-            // TODO(T-29): `runners::desktop::create_desktop_shortcut`.
-            Message::CreateDesktopShortcut(_game_id) => {}
+            // `playGame()` (`bridge.py:461-485`). The lookup and its sentence are
+            // the reference's first two lines: an id the library does not hold
+            // is "Select a game first", not silence — this is the one entry
+            // point of the four that says so.
+            Message::LaunchGame(game_id) => {
+                let Some(game) = self.state.library.get(&game_id).cloned() else {
+                    return self.state.toast_task("Select a game first".to_string());
+                };
+                let runners = self.state.runner_manager();
+                // One worker for both messages, so the "Launching…" report
+                // cannot overtake the launch that justifies it and the grace
+                // cannot begin before the process exists. The shape is
+                // `view::runners::install_runner_task`'s — a thread and a
+                // channel, because the work is blocking and there is more than
+                // one thing to say — and the receiver's drop ends the stream.
+                let (sender, receiver) = unbounded_channel::<Message>();
+                std::thread::spawn(move || launch_and_watch(&game, &runners, &sender));
+                return cosmic::app::Task::stream(receiver.map(cosmic::Action::App));
+            }
+            // Everything `playGame` does *after* a successful `launch()`:
+            // `mark_played`, the "Launching…" toast, and the close-on-launch
+            // hide (`bridge.py:470-476`).
+            Message::LaunchStarted { game_id, result } => {
+                if let Err(message) = result {
+                    return self.state.toast_task(message);
+                }
+                let name = self.state.game_name(&game_id);
+                // The reference's `library.mark_played(game.id)` raises on a
+                // failed save, which in a Qt slot means a traceback and no
+                // notice. Every other store write in this shell reports instead
+                // (`SaveGameForm`), so this one does too — recorded as a
+                // divergence in the arm's own words rather than left as a
+                // silent swallow.
+                let mut tasks = Vec::new();
+                if let Err(error) = self.state.library.mark_played(&game_id) {
+                    tasks.push(self.state.toast_task(format!(
+                        "Could not save “{name}”: {error}"
+                    )));
+                }
+                tasks.push(self.state.toast_task(format!("Launching “{name}”…")));
+                if self.state.settings.close_on_launch {
+                    tasks.push(hide_window(true));
+                }
+                return cosmic::app::Task::batch(tasks);
+            }
+            // `report()` (`bridge.py:478-483`). `None` is the success case and
+            // the reference does nothing with it; `Some` is an error nobody can
+            // see if close-on-launch hid the window, so it is brought back
+            // before the notice is shown.
+            Message::LaunchWatchFinished { game_id, reason } => {
+                let Some(reason) = reason else {
+                    return cosmic::task::none();
+                };
+                let name = self.state.game_name(&game_id);
+                return cosmic::app::Task::batch([
+                    hide_window(false),
+                    self.state
+                        .toast_task(format!("“{name}” stopped right away: {reason}")),
+                ]);
+            }
+            // `runPrefixTool()` (`bridge.py:487-500`). An id the library does
+            // not hold returns silently, which is the reference's own first two
+            // lines — unlike `playGame`, there is no "Select a game first" here.
+            Message::RunPrefixTool { game_id, tool } => {
+                let Some(game) = self.state.library.get(&game_id).cloned() else {
+                    return cosmic::task::none();
+                };
+                if game.is_linux() {
+                    return self.state.toast_task(
+                        "Prefix tools are only available for Windows games".to_string(),
+                    );
+                }
+                let runners = self.state.runner_manager();
+                return cosmic::app::Task::perform(
+                    async move {
+                        let result = start_prefix_tool(&game, &runners, tool);
+                        Message::PrefixToolStarted {
+                            game_id: game.id.clone(),
+                            tool,
+                            result,
+                        }
+                    },
+                    cosmic::Action::App,
+                );
+            }
+            // `Opening {tool} for “{name}”` on success; `str(exc)` on failure,
+            // which is the reference's bare exception text with no prefix
+            // (`bridge.py:495-499`). `tool` is spelled the way the reference
+            // spells it — the `winecfg` / `winetricks` string the QML sends.
+            Message::PrefixToolStarted { game_id, tool, result } => {
+                let name = self.state.game_name(&game_id);
+                let text = match result {
+                    Ok(()) => format!("Opening {} for “{name}”", tool.command()),
+                    Err(message) => message,
+                };
+                return self.state.toast_task(text);
+            }
+            // `openPrefix()` (`bridge.py:503-518`). Silent for an unknown id, a
+            // sentence for a Linux game, and no success notice at all: the file
+            // manager window that opens *is* the report.
+            Message::OpenPrefixFolder(game_id) => {
+                let Some(game) = self.state.library.get(&game_id).cloned() else {
+                    return cosmic::task::none();
+                };
+                if game.is_linux() {
+                    return self.state
+                        .toast_task("Linux games do not use a Wine prefix".to_string());
+                }
+                return cosmic::app::Task::perform(
+                    async move {
+                        let result = open_prefix_folder(&game);
+                        Message::PrefixFolderOpened { result }
+                    },
+                    cosmic::Action::App,
+                );
+            }
+            // The only silent success in the launch flow, and it is the
+            // reference's: `QDesktopServices.openUrl` reports nothing when it
+            // works (`bridge.py:517`).
+            Message::PrefixFolderOpened { result } => {
+                return match result {
+                    Ok(()) => cosmic::task::none(),
+                    Err(message) => self.state.toast_task(message),
+                };
+            }
+            // `createShortcut()` (`bridge.py:520-533`). Silent for an unknown id;
+            // `shortcut_command` builds the command, so the shortcut reaches this
+            // install the same way the reference's reaches its own.
+            Message::CreateDesktopShortcut(game_id) => {
+                let Some(game) = self.state.library.get(&game_id).cloned() else {
+                    return cosmic::task::none();
+                };
+                return cosmic::app::Task::perform(
+                    async move {
+                        let command = shortcut_command(&game);
+                        let result = desktop::create_desktop_shortcut(&game, &command, None)
+                            .map_err(|error| format!("Could not create the shortcut: {error}"));
+                        Message::ShortcutCreated { result }
+                    },
+                    cosmic::Action::App,
+                );
+            }
+            Message::ShortcutCreated { result } => {
+                return match result {
+                    Ok(path) => self
+                        .state
+                        .toast_task(format!("Shortcut created at {}", path.display())),
+                    Err(message) => self.state.toast_task(message),
+                };
+            }
+            // `requestHide`/`requestShow` are answered by [`App::update`], which
+            // holds the window id — the same split as [`Message::Quit`], and for
+            // the same reason. `Shell` has no `Core` and must not grow one: it is
+            // a function of `State` alone, which is what makes every arm here
+            // callable from a test.
+            Message::SetWindowHidden(_hidden) => {}
 
             // ---- Covers ----------------------------------------------------
             // TODO(T-11): the saved-game fetch; `covers::fetch_cover` is
@@ -1504,8 +1760,22 @@ impl Shell {
                     .push(cosmic::widget::toaster::Toast::new(text))
                     .map(cosmic::Action::App);
             }
-            // TODO(T-29): one tick of the grace watch, if the polling shape is
-            // chosen over a single grace timeout (`architecture.md` §3.3).
+            // **Empty by decision, not by omission — and T-29 is the task that
+            // decided it.** `architecture.md` §3.3 offers two shapes for the
+            // grace watch and names one: "`LaunchedGame.failure(timeout=6.0)` …
+            // blocks up to `LAUNCH_GRACE_SECONDS` then returns `None`. That
+            // blocking wait moves verbatim into `spawn_blocking` inside the
+            // `LaunchGame` task." One grace timeout is what landed
+            // (`launch_and_watch` below), so there is no tick to handle and no
+            // production code anywhere constructs this variant. The arm stays so
+            // that the choice is visible: a poll that starts emitting it fails
+            // `dispatch_coverage`, because an emission must not land in a body
+            // that does nothing.
+            //
+            // (The variant itself cannot be deleted yet: `view/runners.rs:1772`
+            // constructs it in a test asserting that page *declines* messages it
+            // does not own — UX's file, and a reason the deletion is a separate
+            // conversation rather than an edit here.)
             Message::LaunchWatchTick => {}
         }
         cosmic::task::none()
@@ -1530,6 +1800,245 @@ impl State {
             .push(cosmic::widget::toaster::Toast::new(text))
             .map(cosmic::Action::App)
     }
+
+    /// The name to put in a sentence about `game_id`, or `""` when the library
+    /// no longer holds it.
+    ///
+    /// A reply can outlive the entry it describes — a delete while a launch is
+    /// in flight is the ordinary way — and the reference's sentences are built
+    /// from a game object it captured *before* the work started. Re-reading it
+    /// here is the closest thing to that capture, and an empty name is what the
+    /// reference would print if the object had been mutated in place.
+    fn game_name(&self, game_id: &str) -> String {
+        self.library
+            .get(game_id)
+            .map(|game| game.name.clone())
+            .unwrap_or_default()
+    }
+
+    /// A manager for the configured runners directory, owned rather than
+    /// borrowed so it can cross into a worker.
+    ///
+    /// `RunnerManager` is a `PathBuf` and nothing else, so this is a copy of one
+    /// field rather than a second scan: `RunnerManager::new(&SystemLaunchEnv)`
+    /// would re-derive the same directory, and deriving it from the field
+    /// instead keeps the manager that was configured at startup the only source
+    /// of truth for where runners live.
+    fn runner_manager(&self) -> RunnerManager {
+        RunnerManager::at(self.runners.runners_directory().to_path_buf())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The launch flow
+// ---------------------------------------------------------------------------
+
+/// The hide/show pair the window is driven with.
+///
+/// `bridge.py`'s `requestHide`/`requestShow` signals (`:159-160`), answered by
+/// the view with `visible = false` and `visible = true` + `raise()` +
+/// `requestActivate()` (`Main.qml:170-177`). The port's three calls map
+/// one-for-one — see [`App::update`], which is where they are issued, because
+/// only `App` holds the window id.
+fn hide_window(hidden: bool) -> cosmic::app::Task<Message> {
+    cosmic::app::Task::done(cosmic::Action::App(Message::SetWindowHidden(hidden)))
+}
+
+/// `launch()` and then the grace watch, on one worker, reporting both.
+///
+/// This is `playGame`'s body from `launch(game, self.runner_manager)` down
+/// (`bridge.py:464-485`), minus the parts that need state — see
+/// [`Message::LaunchStarted`]. It runs on the thread [`Message::LaunchGame`]
+/// spawns rather than on the UI thread, and that is the port's one structural
+/// divergence here: the reference calls `launch()` from a Qt slot, so its
+/// prefix `mkdir`, its DXVK copy and its fork all block the frame. Nothing
+/// observable changes — `Popen` returning is the same event either way — and the
+/// suite that would have caught a *behavioural* difference is the core module's
+/// own, which drives real children.
+///
+/// The two sends are ordered and both are best-effort: a send fails only when
+/// the receiver is gone, i.e. the task was dropped, and there is then nobody to
+/// report to.
+fn launch_and_watch(game: &Game, runners: &RunnerManager, sender: &UnboundedSender<Message>) {
+    let env = SystemLaunchEnv;
+    let resolver = NetpathsShares::new(&SystemEnv);
+    let mut started = match launch::launch(game, runners, &env, &resolver) {
+        Err(error) => {
+            // `f"Could not launch “{game.name}”: {exc}"` (`bridge.py:468`).
+            let _ = sender.unbounded_send(Message::LaunchStarted {
+                game_id: game.id.clone(),
+                result: Err(format!("Could not launch “{}”: {error}", game.name)),
+            });
+            return;
+        }
+        Ok(started) => started,
+    };
+    let _ = sender.unbounded_send(Message::LaunchStarted {
+        game_id: game.id.clone(),
+        result: Ok(()),
+    });
+    // `started.failure()` with `LaunchedGame.failure`'s own default, which is
+    // `LAUNCH_GRACE_SECONDS` (`runners.py:1360`) — the single timeout §3.3
+    // chose over a poll, and the reason `LaunchWatchTick` has no producer.
+    let reason = started.failure(Duration::from_secs_f64(LAUNCH_GRACE_SECONDS));
+    let _ = sender.unbounded_send(Message::LaunchWatchFinished {
+        game_id: game.id.clone(),
+        reason,
+    });
+}
+
+/// `runners::tool_command` followed by `subprocess.Popen` (`bridge.py:492-494`).
+///
+/// `tool.command()` is the string the reference receives from the QML —
+/// `"winecfg"` or `"winetricks"` — so the core function's `UnknownTool` arm is
+/// unreachable from here by construction rather than by luck.
+fn start_prefix_tool(
+    game: &Game,
+    runners: &RunnerManager,
+    tool: PrefixTool,
+) -> Result<(), String> {
+    let command = tool_command(game, runners, tool.command(), &SystemLaunchEnv)
+        .map_err(|error| error.to_string())?;
+    let Some((program, arguments)) = command.argv.split_first() else {
+        // Unreachable: both `Ok` arms of `tool_command` push a binary first
+        // (`launch.rs:473`, `:479`). Refused rather than asserted, because a
+        // panic on a worker is a dead application where a notice is a sentence.
+        return Err("the runner produced no command to run".to_string());
+    };
+    // `subprocess.Popen(argv, env=env)` **replaces** the environment; `envs`
+    // alone would layer the map over the inherited one, which is a different
+    // child. `command.env` is `env.environ()` plus the prefix variables
+    // (`launch.rs:451`), so the replacement is complete.
+    std::process::Command::new(program)
+        .args(arguments)
+        .env_clear()
+        .envs(&command.env)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        // Detached and unreaped, exactly as `Popen` leaves it — and as
+        // `launch()` leaves its own `additional_app` helper. `winecfg` outlives
+        // the click that opened it; waiting here would block the worker for as
+        // long as the user leaves it open.
+        .spawn()
+        .map(|_child| ())
+        .map_err(|error| error.to_string())
+}
+
+/// `openPrefix`'s body from the prefix resolution down (`bridge.py:509-517`).
+///
+/// The one reportable failure is the directory creation — the reference prints
+/// `Could not open the prefix folder: {exc}` and returns *without* opening
+/// anything, because a file manager pointed at a path that does not exist is a
+/// worse answer than a sentence. `QDesktopServices.openUrl`'s own return value
+/// is discarded in the reference (`:517`) and is discarded here.
+fn open_prefix_folder(game: &Game) -> Result<(), String> {
+    let prefix = prefix_folder(game);
+    let target = match prefix_drive_c(&prefix) {
+        // `drive_c.parent` — the prefix itself, which is what a user wants to
+        // browse when the title installed through Proton's `pfx` indirection.
+        Some(drive_c) => drive_c.parent().map(Path::to_path_buf).unwrap_or(prefix),
+        None => prefix,
+    };
+    std::fs::create_dir_all(&target)
+        .map_err(|error| format!("Could not open the prefix folder: {error}"))?;
+    // `QUrl.fromLocalFile(str(target.resolve()))` — resolved, so a prefix under
+    // a symlinked home opens at its real location. `canonicalize` cannot fail
+    // here (the directory was just created and its parents exist), and the
+    // fallback is the unresolved path rather than an error: the reference has no
+    // failure to report at this point.
+    let resolved = target.canonicalize().unwrap_or(target);
+    let _ = std::process::Command::new("xdg-open")
+        .arg(&resolved)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    Ok(())
+}
+
+/// A game's Wine prefix: its own `prefix_path`, or `<prefixes_dir>/<id>`.
+///
+/// `Path(game.prefix_path or str(config.prefixes_dir() / game.id))`
+/// (`bridge.py:509`) — Python's `or` is a truthiness test, so the empty string
+/// falls through to the default and a whitespace-only path does not. This is
+/// `runners::game_prefix`'s rule, restated here because that function is
+/// private to `core`: `openPrefix` resolves the same path `launch` does, and the
+/// two must not drift.
+fn prefix_folder(game: &Game) -> PathBuf {
+    if game.prefix_path.is_empty() {
+        paths::prefixes_dir().join(&game.id)
+    } else {
+        PathBuf::from(&game.prefix_path)
+    }
+}
+
+/// `f"{_launcher_command()} --launch {game.id}"` (`bridge.py:525`).
+fn shortcut_command(game: &Game) -> String {
+    format!("{} --launch {}", launcher_command(), game.id)
+}
+
+/// The command a desktop shortcut runs to reach this install
+/// (`_launcher_command`, `bridge.py:91-96`).
+///
+/// The reference's two branches are kept: a `gamehandler` on `PATH` when there
+/// is one, and the bare name otherwise — which is where the port's fallback
+/// differs, because `python3 -m gamehandler` has no meaning for a binary
+/// (`architecture.md`, §"the fallback becomes just `gamehandler` since the
+/// binary is always the launcher").
+///
+/// The `PATH` **lookup is kept** rather than replaced with
+/// `std::env::current_exe()`, which is the honest reading of that note and the
+/// more conservative one: a shortcut written from inside a Flatpak or a
+/// development build must name the command a *user* has, not the path this
+/// process happens to be running from.
+///
+/// `which` is [`gamehandler_core::plugins::PluginEnv`]'s rather than a second
+/// `PATH` scan. It is the tree's `shutil.which` port, down to CPython's
+/// empty-`PATH`-entry and default-path rules, which is exactly the lookup the
+/// reference performs.
+fn launcher_command() -> String {
+    let found = SystemPluginEnv.which("gamehandler");
+    let Some(found) = found else {
+        return "gamehandler".to_string();
+    };
+    let text = found.to_string_lossy().into_owned();
+    // `shlex.quote(found) if " " in found else found` — the *reference* quotes
+    // only for a space, so a path holding a `$` or a `"` is written unquoted
+    // there and is written unquoted here. That is a defect in the reference
+    // (`Exec=` needs the spec's own quoting, and `shlex.quote`'s single quotes
+    // are not it), reproduced rather than silently fixed: a shortcut that
+    // changes shape under the port is a parity change nobody asked for.
+    if text.contains(' ') {
+        shlex_quote(&text)
+    } else {
+        text
+    }
+}
+
+/// `shlex.quote` (`Lib/shlex.py`), which `_launcher_command` reaches through
+/// `shlex.quote`.
+///
+/// CPython's three cases: the empty string becomes `''`, a string made only of
+/// `[A-Za-z0-9_]`, `@%+=:,./-` is returned unchanged, and anything else is
+/// single-quoted with each `'` rewritten as `'"'"'`. Only the last case is
+/// reachable from [`launcher_command`] — it calls this only for a value
+/// containing a space, and a space is not in the safe set — so the other two are
+/// here because they are what the function *is*, not because a caller needs
+/// them.
+fn shlex_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    let safe = value.chars().all(|character| {
+        character.is_ascii_alphanumeric()
+            || character == '_'
+            || "@%+=:,./-".contains(character)
+    });
+    if safe {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 /// The pages whose body is still a placeholder: the task that will build each.
@@ -1794,6 +2303,30 @@ impl cosmic::Application for App {
             return match self.core.main_window_id() {
                 Some(id) => cosmic::iced::window::close(id),
                 None => cosmic::task::none(),
+            };
+        }
+        // The other two that need it, and they are the same need: `requestHide`
+        // and `requestShow` act on the framework's window, which `Shell` has no
+        // handle on. The reference answers them with `visible = false` and
+        // `visible = true` + `raise()` + `requestActivate()`
+        // (`Main.qml:170-177`); iced's `minimize` is its hide and its unminimize
+        // with `gain_focus` is its show-and-raise — the same pair libcosmic
+        // itself uses to bring a window back.
+        //
+        // `Message::SetWindowHidden` is deliberately *not* answered in
+        // `Shell::update`: a shell that could move the window would need a
+        // `Core`, and every arm in it is callable from a test precisely because
+        // it has none. The empty arm there carries the note.
+        if let Message::SetWindowHidden(hidden) = &message {
+            let Some(id) = self.core.main_window_id() else {
+                return cosmic::task::none();
+            };
+            return match hidden {
+                true => cosmic::iced::window::minimize(id, true),
+                false => cosmic::app::Task::batch([
+                    cosmic::iced::window::minimize(id, false),
+                    cosmic::iced::window::gain_focus(id),
+                ]),
             };
         }
         self.shell.update(message)
@@ -2553,6 +3086,12 @@ mod tests {
         Message::CoverFileChosen(_) => ("CoverFileChosen", Message::CoverFileChosen(Some("/tmp/c.png".to_string()))),
         Message::DismissToast(_) => ("DismissToast", Message::DismissToast(cosmic::widget::toaster::ToastId::default())),
         Message::Quit => ("Quit", Message::Quit),
+        // `true`, not `false`: `LaunchStarted` emits `true` when close-on-launch
+        // is set and `false` when it is not, so `true` is the sample a mutation
+        // of that field would have to move. Neither value does anything in this
+        // shell — the arm is `App::update`'s — so this sample is here to make the
+        // variant constructible, not to be measured.
+        Message::SetWindowHidden(_) => ("SetWindowHidden", Message::SetWindowHidden(true)),
         Message::SetColorScheme(_) => ("SetColorScheme", Message::SetColorScheme("light".to_string())),
         // A value *other than the default*: on a default shell `"grid"` and
         // `"name"` write what is already there, which makes a guarded setter
@@ -2600,17 +3139,49 @@ mod tests {
                             value: true,
                         }),
         Message::SetFormLinux(_) => ("SetFormLinux", Message::SetFormLinux(true)),
+        // `"g"` is a game the fixture's library holds and it is **Windows**, so
+        // all four entry points reach the half that returns a task rather than
+        // the guard that toasts: the lookup succeeds and none of them is the
+        // Linux refusal. The task is never driven (`observe` reads `units()` and
+        // drops it), which is what keeps a fork, an `xdg-open` and a `.desktop`
+        // write out of the test process — and it is why the samples can name a
+        // real game without any of the four touching the disk.
         Message::LaunchGame(_) => ("LaunchGame", Message::LaunchGame("g".to_string())),
+        // `result: Ok(())`, not `Err`: the `Ok` arm is the one that writes state
+        // (`mark_played`) *and* returns a task, so it is the arm a regression to
+        // `{}` would hide. The `Err` arm's only effect is a toast, which the
+        // `LaunchWatchFinished` sample below already covers for the same
+        // mechanism.
+        Message::LaunchStarted { .. } => ("LaunchStarted", Message::LaunchStarted {
+                            game_id: "g".to_string(),
+                            result: Ok(()),
+                        }),
+        // `Some(reason)`, not `None`. `None` is the still-running case and the
+        // reference does nothing with it, so a sample of `None` would make this
+        // arm indistinguishable from an unwritten one — the D-34 shape, in the
+        // sample rather than in the handler. `the_still_running_case_is_silent`
+        // is the control arm for the `None` half.
         Message::LaunchWatchFinished { .. } => ("LaunchWatchFinished", Message::LaunchWatchFinished {
                             game_id: "g".to_string(),
-                            reason: None,
+                            reason: Some("the runner exited with status 1".to_string()),
                         }),
         Message::RunPrefixTool { .. } => ("RunPrefixTool", Message::RunPrefixTool {
                             game_id: "g".to_string(),
                             tool: PrefixTool::WineCfg,
                         }),
+        Message::PrefixToolStarted { .. } => ("PrefixToolStarted", Message::PrefixToolStarted {
+                            game_id: "g".to_string(),
+                            tool: PrefixTool::Winetricks,
+                            result: Ok(()),
+                        }),
         Message::OpenPrefixFolder(_) => ("OpenPrefixFolder", Message::OpenPrefixFolder("g".to_string())),
+        Message::PrefixFolderOpened { .. } => ("PrefixFolderOpened", Message::PrefixFolderOpened {
+                            result: Err("Could not open the prefix folder: permission denied".to_string()),
+                        }),
         Message::CreateDesktopShortcut(_) => ("CreateDesktopShortcut", Message::CreateDesktopShortcut("g".to_string())),
+        Message::ShortcutCreated { .. } => ("ShortcutCreated", Message::ShortcutCreated {
+                            result: Ok(PathBuf::from("/tmp/gamehandler-fixture.desktop")),
+                        }),
         Message::FetchCover(_) => ("FetchCover", Message::FetchCover("g".to_string())),
         Message::CoverFetchFinished { .. } => ("CoverFetchFinished", Message::CoverFetchFinished {
                             game_id: "g".to_string(),
@@ -2816,12 +3387,18 @@ mod tests {
     /// from this list; a new handler landing appears in it. Neither can pass
     /// unnoticed, which is what keeps the `T-0x` markers honest.
     ///
-    /// # The one blind spot, and the one exclusion
+    /// # The two exclusions, and the one blind spot
     ///
     /// - **`Quit`** is excluded by name. It is handled by [`App::update`] and
     ///   not by [`Shell::update`], because it closes the framework's window;
     ///   `Shell`'s arm for it is deliberately empty, so counting it here would
     ///   mean counting an empty arm as a handler.
+    /// - **`Message::SetWindowHidden`** is excluded by the same rule and for the
+    ///   same reason: `App::update` answers it, because only `App` holds the
+    ///   window id. T-29 added this arm and this exclusion together — the
+    ///   alternative was to put the hide inside `LaunchStarted`'s body, which
+    ///   would have needed a `Core` on [`Shell`] and cost every other arm its
+    ///   callability from a test.
     /// - **`DismissToast`** is *not* excluded, but it *is* invisible: the arm is
     ///   real (`toasts.remove(id)`) and no test can build an id naming a live
     ///   toast, so it cannot be told apart from `{}` — see
@@ -2833,6 +3410,12 @@ mod tests {
     ///   without anything failing; the sentence a reviewer trusts to know what
     ///   is live is the list, so there is no longer a number beside it.
     ///
+    /// `Message::LaunchWatchTick` is neither excluded nor listed, and that is
+    /// the honest place for it: it is measured like every other message, it has
+    /// no effect, and it must not. `LaunchWatchTick` reaching this assertion's
+    /// `changed` would mean its arm had grown a body — which is the change a
+    /// future poll would have to make deliberately.
+    ///
     /// [`observe`] counts a returned [`cosmic::Task`] as well as a state
     /// change, so the *other* class of invisible handler — one whose only
     /// effect is the task it returns, which is the shape T-09's `FetchCover`
@@ -2841,9 +3424,15 @@ mod tests {
     fn only_the_written_handlers_change_anything() {
         let mut changed: Vec<&str> = every_message()
             .into_iter()
-            // `Quit` is `App::update`'s arm, so `Shell::update`'s body for it is
-            // deliberately empty and it is not part of the claim.
-            .filter(|message| !matches!(message, Message::Quit))
+            // The two `App::update` arms. `Shell::update`'s bodies for them are
+            // deliberately empty — both need the framework's window — so they
+            // are not part of the claim. See the doc above.
+            .filter(|message| {
+                !matches!(
+                    message,
+                    Message::Quit | Message::SetWindowHidden(_)
+                )
+            })
             .filter(|message| {
                 let mut shell = shell_with_work_to_do();
                 is_handled(&mut shell, message.clone())
@@ -2918,6 +3507,28 @@ mod tests {
             "FormFieldChanged",
             "FormToggleChanged",
             "SetFormLinux",
+            // T-29's nine. The four entry points, each of which is live the
+            // moment a Play button exists — `view/widgets.rs`'s card and row
+            // take the `on_press` that produces `LaunchGame`, and the game
+            // form's three buttons produce the rest — plus the five replies
+            // their deferred halves come back on. Every one of the four is here
+            // for the *lookup* and the guards alone: what they return is a task
+            // no test drives, so the fork, the `xdg-open` and the `.desktop`
+            // write stay out of the test process while the arm that asks for
+            // them is still measured.
+            //
+            // `LaunchWatchTick` is deliberately absent: it has an empty arm and
+            // does nothing, so it has nothing to be listed for. The doc above
+            // says why that is a decision rather than an omission.
+            "LaunchGame",
+            "LaunchStarted",
+            "LaunchWatchFinished",
+            "RunPrefixTool",
+            "PrefixToolStarted",
+            "OpenPrefixFolder",
+            "PrefixFolderOpened",
+            "CreateDesktopShortcut",
+            "ShortcutCreated",
         ];
         // `DismissToast` is written and cannot be observed; see the doc above.
         expected.sort_unstable();
@@ -2969,6 +3580,139 @@ mod tests {
             "if this ever fails, a `ToastId` a test can construct now names a \
              live toast — which means `Toasts` grew the accessor this test was \
              written without, and `DismissToast` can be covered for real"
+        );
+    }
+
+    /// **The grace watch reports only when the title died — both directions, on
+    /// the same fixture.**
+    ///
+    /// This is the control arm for [`Message::LaunchWatchFinished`], and it is
+    /// needed because that arm has a property no other arm in this file has:
+    /// one of its two branches is *supposed* to do nothing. `reason: None` is
+    /// the success case — the title was still running when the grace expired —
+    /// and the reference does nothing with it (`bridge.py:478-483`; `report` is
+    /// called and the watch simply ends).
+    ///
+    /// The guard above cannot see the difference. `LaunchWatchFinished` is in
+    /// its `expected` list because the `Some` branch is effectful, so deleting
+    /// the `let Some(reason) = reason else` and always hiding-and-toasting
+    /// leaves that guard green while every *successful* launch raises a
+    /// spurious "stopped right away" notice. That mutation is what the first
+    /// half of this test fails on.
+    ///
+    /// # Why the macro's own sample cannot cover this
+    ///
+    /// [`message_variants`]'s sample for this variant carries `Some(..)`, for
+    /// the D-34 reason: `None` is silent, so a `None` sample would make a
+    /// correct arm indistinguishable from an unwritten one and the guard would
+    /// pass either way. That choice is right, and it is precisely why the
+    /// *silent* branch needs a test of its own — every instrument in the guard
+    /// points at the loud one.
+    ///
+    /// The fixture is the same one in both halves, the id is one the library
+    /// really holds (`"g"`, and `game_name` answers `""` for an id it does not,
+    /// so a broken lookup would silently agree with the quiet half), and the
+    /// only thing that differs between the two calls is `reason`.
+    #[test]
+    fn the_grace_watch_reports_only_when_the_title_died() {
+        // The success case: still running when `LAUNCH_GRACE_SECONDS` expired.
+        let mut running = shell_with_work_to_do();
+        let quiet = observe(
+            &mut running,
+            Message::LaunchWatchFinished {
+                game_id: "g".to_string(),
+                reason: None,
+            },
+        );
+        assert!(
+            !quiet.state_changed && quiet.task_units == 0,
+            "a title that was still running produced something: {quiet:?}. \
+             `None` is the success case and the reference does nothing with it"
+        );
+        assert!(
+            format!("{:?}", running.state.toasts).contains("num_elems: 0"),
+            "a title that stayed up pushed a toast — the mutation this test \
+             exists for is an arm that reports unconditionally"
+        );
+
+        // The failure case, on a fresh copy of the same fixture, so the two
+        // halves differ in `reason` and in nothing else.
+        let mut died = shell_with_work_to_do();
+        let loud = observe(
+            &mut died,
+            Message::LaunchWatchFinished {
+                game_id: "g".to_string(),
+                reason: Some("the runner exited with status 1".to_string()),
+            },
+        );
+        assert!(
+            format!("{:?}", died.state.toasts).contains("num_elems: 1"),
+            "a title that died must be reported — the reference restores the \
+             window and toasts “{{name}}” stopped right away: {{reason}}, and \
+             an unreported failure is the whole reason this watch exists"
+        );
+        assert!(
+            loud.task_units >= 2,
+            "the failure case batches the window restore (`Task::done`) and the \
+             toast (`Toasts::push`'s expiry task), so it must ask the runtime \
+             for at least two units; it asked for {}",
+            loud.task_units
+        );
+    }
+
+    /// **`LaunchWatchTick` does nothing, and that is the decision rather than
+    /// an omission.**
+    ///
+    /// The guard above measures this variant and finds no effect, but it cannot
+    /// *say* so: an assertion comparing two lists shows what is in them, and
+    /// `LaunchWatchTick` is correctly in neither. So the decision
+    /// (`architecture.md` §3.3 names one blocking `failure(6.0)` over a poll,
+    /// and [`launch_and_watch`] follows it) is pinned here instead.
+    ///
+    /// The instrument is the same one the guard uses, so "does nothing" means
+    /// what it means there — no state change and no task — rather than "the arm
+    /// looks empty in the source". This fails the moment the arm grows a body
+    /// without the watch growing a producer, which is the shape a
+    /// half-migrated poll would take: half a tick loop is worse than none.
+    ///
+    /// It is not a claim that the variant is unreachable — `view/runners.rs`
+    /// constructs it in a test of its own — and it does not lock the design in
+    /// place: a future poll renames this test rather than deleting it.
+    #[test]
+    fn the_watch_tick_has_no_effect() {
+        let mut shell = shell_with_work_to_do();
+        assert!(
+            !is_handled(&mut shell, Message::LaunchWatchTick),
+            "`LaunchWatchTick` grew an effect. That is not forbidden — but it \
+             means the watch became a poll, and the arm and its producer must \
+             then land together, or `dispatch_coverage` sees an emission \
+             landing in a body that does something without saying what"
+        );
+    }
+
+    /// **`Shell`'s `SetWindowHidden` arm is empty, so the guard's exclusion of
+    /// it is honest rather than a hiding place.**
+    ///
+    /// The guard above filters this variant out *by name* — because
+    /// [`App::update`] answers it and [`Shell`] has no `Core` to answer it with
+    /// — and an exclusion that conceals the thing it excludes is worse than no
+    /// exclusion at all: the doc beside the filter says the arm is empty, and
+    /// without this nothing checks that it stays so. A body growing here would
+    /// be an effect that no instrument in this file measures.
+    ///
+    /// It asserts *emptiness*, not correctness. What the message must actually
+    /// do is recorded where it is done, in [`App::update`]'s own comment, and
+    /// is reachable by no test because building a `cosmic::Core` is the wall
+    /// #33 was filed about.
+    #[test]
+    fn shells_window_arm_is_empty_because_app_owns_it() {
+        let mut shell = shell_with_work_to_do();
+        let effect = observe(&mut shell, Message::SetWindowHidden(true));
+        assert!(
+            !effect.state_changed && effect.task_units == 0,
+            "`Shell` answered `SetWindowHidden` itself: {effect:?}. The guard \
+             excludes this variant because `App::update` owns it, so anything \
+             done here is done where nothing looks"
         );
     }
 
