@@ -391,9 +391,13 @@ fn list_body<'a>(
 /// **Measured, not assumed:** with this function inlined back into the loop,
 /// replacing `game.last_played` with `0.0` leaves the whole suite green — every
 /// row would read `"Never played"` and nothing would notice. With it extracted,
-/// [`tests::a_rows_labels_carry_the_games_own_timestamp`] fails on that
+/// `tests::a_rows_labels_carry_the_games_own_timestamp` fails on that
 /// mutation. The call-site mutation that remains is `list_body` passing the
 /// wrong `now`, which is unobservable for the reason above.
+///
+/// That test's name is a plain code span: it lives in this module's private
+/// `mod tests`, which rustdoc does not document, so the bracketed form is a
+/// broken intra-doc link rather than a pointer.
 fn row_labels(game: &Game, runners: &RunnerManager, now: f64) -> (String, String) {
     (
         widgets::resolved_runner_label(runners, game),
