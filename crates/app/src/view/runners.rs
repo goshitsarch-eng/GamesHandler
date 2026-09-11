@@ -1,0 +1,1155 @@
+//! The Runners page — `RunnersPage.qml`, `ux.md` §5, PLAN P-32…P-39.
+//!
+//! # The split, and where it differs from [`super::widgets`]
+//!
+//! [`super::widgets`] is generic over the message type and reads no state; this
+//! module fixes `Message` and reads [`State`], because a *page* is where the
+//! two meet and pretending otherwise would put the binding somewhere less
+//! visible. What it keeps from that module is the part that matters: every
+//! decision a test can make is a **pure function over data** in the first half
+//! of this file, and [`view`] is thin enough to be nothing but arrangement.
+//!
+//! ```text
+//! installed_rows   → who is installed, and whether each can be removed
+//! release_rows     → which builds are offered, and which are already here
+//! status_line      → the tri-state sentence under "Available versions"
+//! family_note      → the two-line description under the family selector
+//! guide_subtitle   → "proton · maintained by GloriousEggroll"
+//! release_detail   → "Proton-GE · GE-Proton9-5.tar.gz · 412 MB"
+//! progress_fraction → whether the bar is drawn, and how full
+//! ```
+//!
+//! Every one of those is asserted without a renderer.
+//!
+//! # What is *not* here yet, and why the shape is a parameter rather than a read
+//!
+//! [`view`] takes a [`RunnersView`] — a borrowed bundle of the page's inputs —
+//! rather than reaching into [`State`] itself. Two of those inputs have no home
+//! in `State` today:
+//!
+//! * **the installed rows**, because building them runs `wine --version`
+//!   ([`WineRunner::version`]), which spawns a process with a fifteen-second
+//!   bound. The reference evaluates `installedRunners` as a QML `Property`, so
+//!   it runs on every read; a libcosmic `view()` is called on every frame, and
+//!   spawning there would be a hang with a friendly face. The rows must be
+//!   computed off the render path and held, which is a `State` field.
+//! * **the family selector's current value**, which the reference keeps in a
+//!   QML-local `property string selectedFamilyId: "proton-ge"` and which
+//!   Python's `_releases_family` mirrors.
+//!
+//! Taking them as parameters keeps this module compiling and testable while
+//! that contract is settled, and it is the honest shape regardless: it is what
+//! makes [`view`] callable from a test with no `State` at all.
+//!
+//! # Not implemented, and named rather than stubbed
+//!
+//! [`update`] handles every message whose whole effect is local state. It
+//! returns `None` — *this page does not handle that* — for `FetchReleases` and
+//! `InstallRunner`, whose real work is a blocking network call. Those need a
+//! concrete [`HttpClient`] injected from this crate (DECISIONS D-26), and
+//! `crates/app` has no networking dependency at all. An arm that set
+//! `ReleasesStatus::Loading` and returned `Task::none()` would leave the page
+//! loading forever *and* look implemented to
+//! `only_the_written_handlers_change_anything`, which is the defect class this
+//! project keeps finding.
+//!
+//! [`WineRunner::version`]: gamehandler_core::runners::WineRunner::version
+//! [`HttpClient`]: gamehandler_core::runners::proton::HttpClient
+
+use cosmic::app::Task;
+use cosmic::widget::{Column, Row, Space, button, container, divider, icon, progress_bar, text};
+use cosmic::Element;
+use cosmic::iced::{Alignment, Background, Border, Length};
+use gamehandler_core::runners::families::{
+    ReleaseInfo, RunnerFamily, RunnerGuide, families, runner_guide_details,
+};
+use gamehandler_core::runners::proton;
+use gamehandler_core::runners::{ProtonRunner, Runner, SYSTEM_WINE};
+use std::path::Path;
+
+use crate::state::{ReleasesStatus, State};
+use crate::Message;
+
+use super::badge::badge;
+
+// ---------------------------------------------------------------------------
+// The decisions, as data
+// ---------------------------------------------------------------------------
+
+/// One row of the "Installed" list. `bridge.py:621-646`.
+///
+/// `removable` is System Wine's row being the only one that is not: the
+/// reference sets it `False` there because there is nothing of GameHandler's to
+/// delete — and the id is [`SYSTEM_WINE`], the same constant Python puts on the
+/// row (`runners.py:39,414`), not a word invented here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledRow {
+    /// The runner id the remove action names.
+    pub runner_id: String,
+    /// The display name.
+    pub name: String,
+    /// The status line under it — a version, "Not installed on this system", or
+    /// the family label.
+    pub detail: String,
+    /// Whether the build can actually be launched with. Drives the status icon:
+    /// `emblem-checked` when true, `data-warning` when false.
+    pub available: bool,
+    /// Whether the delete button is drawn at all.
+    pub removable: bool,
+}
+
+/// One row of "Available versions". `bridge.py:672-681`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseRow {
+    /// The release tag, which the install action names.
+    pub tag: String,
+    /// `"<family> · <asset> · <n> MB"`.
+    pub detail: String,
+    /// Whether a build for this tag is already on disk, which swaps the Install
+    /// button for the badge.
+    pub installed: bool,
+}
+
+/// One row of the guide. `bridge.py:663-670`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuideRow {
+    pub title: String,
+    pub subtitle: String,
+    pub advice: String,
+    /// Empty means the "Visit project" button is not drawn
+    /// (`RunnersPage.qml:233`).
+    pub homepage: String,
+}
+
+/// The rows the "Installed" section shows, System Wine first.
+///
+/// Split from [`view`] because building it is the expensive part: the system
+/// runner's `detail` is `wine --version`, which is a subprocess.
+pub fn installed_rows(system: &dyn Runner, protons: &[ProtonRunner]) -> Vec<InstalledRow> {
+    let available = system.is_available();
+    let mut rows = vec![InstalledRow {
+        runner_id: SYSTEM_WINE.to_string(),
+        name: "System Wine".to_string(),
+        detail: if available {
+            system.version()
+        } else {
+            "Not installed on this system".to_string()
+        },
+        available,
+        removable: false,
+    }];
+    rows.extend(protons.iter().map(|proton| InstalledRow {
+        runner_id: proton.id().to_string(),
+        name: proton.name().to_string(),
+        detail: proton.family_label(),
+        available: true,
+        removable: true,
+    }));
+    rows
+}
+
+/// The rows "Available versions" shows for the current family.
+///
+/// `runners_directory` is what decides `installed`: Python asks the manager,
+/// which is a filesystem question, and the answer changes when a build is
+/// installed or removed — so it is read here rather than cached in the release
+/// list, which is refetched far less often.
+pub fn release_rows(releases: &[ReleaseInfo], runners_directory: &Path) -> Vec<ReleaseRow> {
+    releases
+        .iter()
+        .map(|release| ReleaseRow {
+            tag: release.tag.clone(),
+            detail: release_detail(release),
+            installed: proton::is_release_installed(runners_directory, release),
+        })
+        .collect()
+}
+
+/// `"<family name> · <asset name> · <n> MB"`, the line under a release's tag.
+///
+/// `size_mb` is `round`ed, as `bridge.py:677` does — a build shown as
+/// "412.6 MB" would be a number the reference never displays. The family's name
+/// comes from the catalogue rather than from the release, which carries only
+/// its id; an id naming no family is shown as-is rather than as an empty gap,
+/// because that is what a lookup miss should look like to a user.
+pub fn release_detail(release: &ReleaseInfo) -> String {
+    let family = families()
+        .iter()
+        .find(|family| family.id == release.family_id)
+        .map_or(release.family_id.as_str(), |family| family.name);
+    format!(
+        "{} · {} · {} MB",
+        family,
+        release.name,
+        release.size_mb().round() as i64
+    )
+}
+
+/// The sentence under "Available versions", or `None` when the list speaks for
+/// itself.
+///
+/// `None` covers exactly the case the reference hides the label in
+/// (`RunnersPage.qml:158`): a ready, non-empty list. Every other status is a
+/// string, and the error one carries the message verbatim — Python's
+/// `releasesStatus` is `"error: <message>"` and the QML strips the seven
+/// characters itself, so the prefix is part of the wire format and the strip is
+/// here rather than at the call site.
+pub fn status_line(status: &ReleasesStatus, release_count: usize) -> Option<String> {
+    match status {
+        ReleasesStatus::Ready if release_count > 0 => None,
+        ReleasesStatus::Loading => Some("Fetching the latest builds…".to_string()),
+        ReleasesStatus::Error(message) => {
+            Some(format!("Could not fetch builds — {message}"))
+        }
+        ReleasesStatus::Ready | ReleasesStatus::Idle => {
+            Some("No builds found for this family.".to_string())
+        }
+    }
+}
+
+/// The two lines under the family selector: the description, then who
+/// maintains it when anyone does. `RunnersPage.qml:131-139`.
+pub fn family_note(family: &RunnerFamily) -> String {
+    if family.maintainer.is_empty() {
+        family.description.to_string()
+    } else {
+        format!("{}\nMaintained by {}", family.description, family.maintainer)
+    }
+}
+
+/// `"proton · maintained by GloriousEggroll"`, or just the kind.
+///
+/// The kind is capitalised, which `bridge.py:666` does on the Python side
+/// (`.capitalize()`) — so the capital is part of the data the page is handed,
+/// not a rendering choice made here.
+pub fn guide_subtitle(guide: &RunnerGuide) -> String {
+    if guide.maintainer.is_empty() {
+        guide.kind.clone()
+    } else {
+        format!("{} · maintained by {}", guide.kind, guide.maintainer)
+    }
+}
+
+/// The guide rows, ready to draw.
+pub fn guide_rows() -> Vec<GuideRow> {
+    runner_guide_details()
+        .into_iter()
+        .map(|guide| GuideRow {
+            subtitle: guide_subtitle(&guide),
+            title: guide.title,
+            advice: guide.advice,
+            homepage: guide.homepage,
+        })
+        .collect()
+}
+
+/// The progress bar's fraction, or `None` when it is not drawn.
+///
+/// `RunnersPage.qml:33-38` shows the bar when `backend.busy` is true and
+/// `backend.progress` is at least zero, clamped up by `Math.max(0, progress)`
+/// over a `0..1` range. `busy` is *either* long job ([`State::busy`]), so the
+/// easy-install path's progress draws this page's bar too — which is the
+/// reference's own coupling and is preserved rather than tidied, because a bar
+/// that vanished when the other job started would be a regression a user sees.
+///
+/// The sign test is the `-1.0` sentinel: [`State::progress`] is `None` when
+/// idle, so both spellings collapse to the same `None` here.
+pub fn progress_fraction(state: &State) -> Option<f32> {
+    if !state.busy() {
+        return None;
+    }
+    state.progress.filter(|value| *value >= 0.0).map(|value| value.max(0.0))
+}
+
+/// The index of `family_id` in the catalogue, for the selector.
+pub fn family_index(family_id: &str) -> Option<usize> {
+    families().iter().position(|family| family.id == family_id)
+}
+
+// ---------------------------------------------------------------------------
+// The view
+// ---------------------------------------------------------------------------
+
+/// Everything the page draws, borrowed.
+///
+/// A struct rather than six arguments because the two `&[..]` and the two
+/// `&str` are easy to transpose and impossible to read at a call site.
+pub struct RunnersView<'a> {
+    /// From [`installed_rows`], computed off the render path.
+    pub installed: &'a [InstalledRow],
+    /// The family the release list belongs to.
+    pub selected_family: &'a str,
+    /// The fetch state.
+    pub status: &'a ReleasesStatus,
+    /// From [`release_rows`].
+    pub releases: &'a [ReleaseRow],
+    /// From [`progress_fraction`].
+    pub progress: Option<f32>,
+}
+
+/// The page.
+pub fn view<'a>(page: &'a RunnersView<'_>) -> Element<'a, Message> {
+    let mut body = Column::new().spacing(12).width(Length::Fill);
+
+    if let Some(fraction) = page.progress {
+        body = body.push(progress_bar::determinate_linear(fraction).width(Length::Fill));
+    }
+
+    // ---- Installed ---------------------------------------------------------
+    body = body
+        .push(text::title3("Installed"))
+        .push(
+            text::body("Available for launching and for the per-game runner picker.").width(Length::Fill),
+        );
+
+    for row in page.installed {
+        body = body.push(installed_card(row));
+    }
+
+    if page.installed.len() <= 1 {
+        body = body.push(text::body(
+            "No downloaded runners yet. Install a Proton or Wine build below, \
+             then assign it to a game.",
+        ));
+    }
+
+    body = body.push(divider::horizontal::default());
+
+    // ---- Download a build --------------------------------------------------
+    body = body
+        .push(text::title3("Download a build"))
+        .push(text::body(
+            "GameHandler fetches these archives from each maintainer's own release \
+             page, the same upstream sources ProtonPlus uses. Nothing is bundled or \
+             re-hosted here.",
+        ));
+
+    let names: Vec<String> = families().iter().map(|f| f.name.to_string()).collect();
+    let selected = family_index(page.selected_family);
+    body = body.push(
+        Row::new()
+            .push(text::body("Family:"))
+            .push(cosmic::widget::dropdown(
+                names,
+                selected,
+                move |index| Message::FetchReleases {
+                    family: families()[index].id.to_string(),
+                },
+            ))
+            .spacing(8)
+            .align_y(Alignment::Center),
+    );
+
+    if let Some(family) = selected.and_then(|index| families().get(index)) {
+        body = body.push(text::body(family_note(family)));
+        // Disabled for the same reason as the guide's link button below.
+        body = body.push(button::link(family.homepage()));
+    }
+
+    // ---- Available versions ------------------------------------------------
+    body = body.push(text::title3("Available versions"));
+
+    if let Some(line) = status_line(page.status, page.releases.len()) {
+        body = body.push(text::body(line));
+    }
+
+    for release in page.releases {
+        body = body.push(release_card(release));
+    }
+
+    body = body.push(divider::horizontal::default());
+
+    // ---- The guide ---------------------------------------------------------
+    body = body
+        .push(text::title3("Which runner should I use?"))
+        .push(text::body(
+            "Proton builds are the usual choice for Windows games; standalone Wine \
+             is lighter and better for some older titles. Each entry links to the \
+             project that maintains it.",
+        ));
+
+    for guide in guide_rows() {
+        body = body.push(guide_card(&guide));
+    }
+
+    cosmic::widget::scrollable(body).into()
+}
+
+/// A row of the Installed list: status icon, name, detail, and a delete button
+/// on everything removable.
+fn installed_card(row: &InstalledRow) -> Element<'_, Message> {
+    let status_icon = if row.available {
+        "emblem-checked"
+    } else {
+        "data-warning"
+    };
+
+    let mut line = Row::new()
+        .push(icon::from_name(status_icon).size(24))
+        .push(
+            Column::new()
+                .push(text::heading(row.name.clone()))
+                .push(text::caption(row.detail.clone()))
+                .spacing(2)
+                .width(Length::Fill),
+        )
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+
+    if row.removable {
+        line = line.push(
+            button::icon(icon::from_name("delete"))
+                .on_press(Message::UninstallRunner(row.runner_id.clone())),
+        );
+    }
+
+    card(line.into())
+}
+
+/// A release row: tag, detail, and either the badge or the Install button.
+fn release_card(row: &ReleaseRow) -> Element<'_, Message> {
+    let mut line = Row::new()
+        .push(
+            Column::new()
+                .push(text::heading(row.tag.clone()))
+                .push(text::caption(row.detail.clone()))
+                .spacing(2)
+                .width(Length::Fill),
+        )
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+
+    if row.installed {
+        line = line.push(badge("Installed"));
+    } else {
+        line = line.push(
+            button::standard("Install")
+                .leading_icon(icon::from_name("download"))
+                .on_press(Message::InstallRunner {
+                    tag: row.tag.clone(),
+                }),
+        );
+    }
+
+    card(line.into())
+}
+
+/// A guide row: title, a "Visit project" link when there is one, the
+/// kind-and-maintainer line, and the advice.
+fn guide_card(guide: &GuideRow) -> Element<'static, Message> {
+    let mut heading = Row::new()
+        .push(text::title4(guide.title.clone()))
+        .push(Space::new().width(Length::Fill))
+        .width(Length::Fill);
+
+    if !guide.homepage.is_empty() {
+        // TODO(T-11): a `Button` with no `on_press` renders **disabled**, which is
+        // the honest state until a `Message::OpenUrl` exists — the affordance
+        // is where the reference puts it, and it is visibly not wired.
+        heading = heading.push(button::link("Visit project".to_string()));
+    }
+
+    card(
+        Column::new()
+            .push(heading)
+            .push(text::caption(guide.subtitle.clone()))
+            .push(text::body(guide.advice.clone()))
+            .spacing(2)
+            .width(Length::Fill)
+            .into(),
+    )
+}
+
+/// The card surface, matching `super::widgets`' `card_style`.
+///
+/// Repeated rather than shared because that one is a private function of a
+/// module over `&Game`, and T-14 owns it. If a third page needs it, it moves;
+/// two is not yet a pattern worth a module of its own, and a card whose surface
+/// came from somewhere else would be the second visual idiom.
+fn card<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+    container(content)
+        .width(Length::Fill)
+        .padding(12)
+        .style(card_style)
+        .into()
+}
+
+fn card_style(theme: &cosmic::Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(
+            theme.cosmic().background(false).base.into(),
+        )),
+        border: Border {
+            radius: 14.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The handler
+// ---------------------------------------------------------------------------
+
+/// The line a removal ends in, either way.
+///
+/// A pure function rather than a `format!` inside the arm, and the reason is
+/// testability rather than taste: a removal's toast is its **only** observable.
+/// `Toasts` keeps its queue in a private `SlotMap` and exposes no iterator —
+/// `push`, `remove` and nothing else (`src/widget/toaster/mod.rs:155-204`) — so
+/// no test can read back the string that was pushed. A line built inline in the
+/// arm is therefore untestable by construction, and an error text dropped there
+/// is invisible: the arm still returns a task and still clears
+/// [`State::releases_status`], so a test that only drove `update` would stay
+/// green while the user was told nothing.
+///
+/// Extracted for the same reason [`release_detail`] and [`status_line`] are —
+/// one visible decision, one function, one test — and generic over the error so
+/// both halves can be driven without a runner directory to fail against.
+fn uninstall_line<E: std::fmt::Display>(runner_id: &str, result: Result<(), E>) -> String {
+    match result {
+        Ok(()) => format!("Removed {runner_id}"),
+        Err(error) => format!("Could not remove {runner_id}: {error}"),
+    }
+}
+
+/// The Runners page's half of the dispatcher.
+///
+/// `None` means *this page does not handle that message*, which is a different
+/// statement from `Some(Task::none())` — see this module's header for which
+/// messages are which and why `FetchReleases`/`InstallRunner` are declined
+/// rather than half-written.
+///
+/// Each arm below is one of `bridge.py`'s async `done`/`fail` closures, ported
+/// as the state transition they are.
+pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
+    match message {
+        // `fetchReleases` clears the list and marks the fetch in flight before
+        // the work starts (`bridge.py:697-700`), so a stale list is never shown
+        // under a loading label.
+        Message::FetchReleases { family } => {
+            state.releases_family = family.clone();
+            state.releases_status = ReleasesStatus::Loading;
+            state.releases.clear();
+            Some(Task::none())
+        }
+        // `done`/`fail` in one arm, because the guard is the same for both:
+        // a reply for a family the user has navigated away from is dropped
+        // (`bridge.py:705-706`).
+        Message::ReleasesFetchFinished { family, result } => {
+            if *family != state.releases_family {
+                return Some(Task::none());
+            }
+            match result {
+                Ok(found) => {
+                    state.releases = found.clone();
+                    state.releases_status = ReleasesStatus::Ready;
+                }
+                Err(message) => {
+                    state.releases_status = ReleasesStatus::Error(message.clone());
+                }
+            }
+            Some(Task::none())
+        }
+        // `_progress_cb` (`bridge.py:730-732`).
+        Message::RunnerProgress(fraction) => {
+            state.progress = Some(*fraction);
+            Some(Task::none())
+        }
+        // `done` and `fail` both clear the guard and the bar before they
+        // differ, so they are written once and the message is the only
+        // difference (`bridge.py:745-760`).
+        Message::RunnerInstallFinished(result) => {
+            state.runner_busy = false;
+            state.progress = None;
+            let line = match result {
+                Ok(tag) => format!(
+                    "Installed {tag}. You can now choose it when adding or editing a game."
+                ),
+                Err(message) => format!("Failed to install: {message}"),
+            };
+            Some(push_toast(state, line))
+        }
+        // Synchronous in the reference too (`bridge.py:772`), and its two
+        // messages are the whole observable.
+        //
+        // Nothing else is touched, and that is Python's shape rather than an
+        // omission: `uninstallRunner` assigns no field of the bridge at all, it
+        // only notifies (`bridge.py:772-782`). The success path's extra
+        // `releasesChanged.emit()` re-reads `installed` on every row, and this
+        // port gets that for nothing because [`release_rows`] calls
+        // `is_release_installed` while it builds the rows — the badge is
+        // recomputed on the next render, so no state change is needed to ask for
+        // it. An earlier revision set [`ReleasesStatus::Idle`] here to stand in
+        // for that emit, which was wrong twice over: the reference's status is
+        // written by `fetchReleases` and its callbacks and nowhere else
+        // (`bridge.py:697,708,714`), and `Idle` with a non-empty list is a state
+        // the reference cannot reach — it renders "No builds found for this
+        // family." directly above the list, because [`status_line`]'s `Idle` arm
+        // is the same sentence as its empty-`Ready` one.
+        Message::UninstallRunner(runner_id) => {
+            let line = uninstall_line(
+                runner_id,
+                proton::uninstall(state.runners.runners_directory(), runner_id),
+            );
+            Some(push_toast(state, line))
+        }
+        _ => None,
+    }
+}
+
+/// `notify` (`bridge.py`), which every path above ends in.
+fn push_toast(state: &mut State, line: String) -> Task<Message> {
+    state
+        .toasts
+        .push(cosmic::widget::toaster::Toast::new(line))
+        .map(cosmic::Action::App)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gamehandler_core::runners::{RunnerManager, WineRunner};
+
+    fn released(tag: &str, name: &str, size: i64) -> ReleaseInfo {
+        ReleaseInfo::new(tag, name, "https://example.invalid/a.tar.gz", size)
+    }
+
+    // ---- installed_rows ---------------------------------------------------
+
+    /// System Wine is first, always, and it is the row that is not removable.
+    /// The reference makes the same pair of claims in one place
+    /// (`bridge.py:621-632`), and a reordering would move the row a user
+    /// reaches for first.
+    #[test]
+    fn system_wine_is_first_and_is_the_only_row_that_cannot_be_removed() {
+        let system = WineRunner::with_binary(None);
+        let rows = installed_rows(&system, &[]);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "System Wine");
+        assert!(!rows[0].removable);
+        assert!(
+            !rows[0].available,
+            "a WineRunner with no binary is not available"
+        );
+        assert_eq!(rows[0].detail, "Not installed on this system");
+    }
+
+    /// The system row's id is [`SYSTEM_WINE`], pinned to Python's own value.
+    ///
+    /// No widget draws this field — the row is not removable, so no button
+    /// carries it — which is exactly why it is worth a test: `"system"` is a
+    /// plausible-looking id that reads correctly in every render and names no
+    /// runner at all. `"system"` is in fact the **family** id
+    /// (`runners.py:416`, the family the plain-Wine entry declares), so the two
+    /// are one keystroke apart and the row would
+    /// look right in every visual check. `bridge.py:624` puts `SYSTEM_WINE` on
+    /// the row and `uninstall` matches on that value (`proton.rs:1085`), so the
+    /// id is load-bearing the moment anything reaches for it.
+    ///
+    /// The second assertion is the one that pins the *value* rather than the
+    /// constant: `assert_eq!(rows[0].runner_id, SYSTEM_WINE)` alone would pass
+    /// for any pair of equal strings, including a second constant that shadowed
+    /// the first.
+    #[test]
+    fn the_system_row_names_python_s_runner_id_and_not_the_family_id() {
+        let rows = installed_rows(&WineRunner::with_binary(None), &[]);
+        assert_eq!(rows[0].runner_id, SYSTEM_WINE);
+        assert_eq!(
+            rows[0].runner_id, "wine-system",
+            "the id is Python's value, not a second spelling of it"
+        );
+        assert_ne!(
+            rows[0].runner_id, "system",
+            "\"system\" is the family id, and a row carrying it names no runner"
+        );
+    }
+
+    /// A downloaded build is always removable and always available — the
+    /// reference hard-codes both (`bridge.py:637-640`), because a build that
+    /// was discovered on disk is by construction launchable and by
+    /// construction GameHandler's to delete.
+    #[test]
+    fn a_downloaded_build_is_removable_and_its_detail_is_its_family() {
+        let system = WineRunner::with_binary(None);
+        let protons = vec![ProtonRunner::new(
+            "/runners/GE-Proton9-5",
+            "proton-ge",
+            "GE-Proton9-5",
+        )];
+
+        let rows = installed_rows(&system, &protons);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].runner_id, "GE-Proton9-5");
+        assert_eq!(rows[1].detail, "Proton-GE");
+        assert!(rows[1].removable);
+        assert!(rows[1].available);
+    }
+
+    /// The system row's detail is the version probe when there is a binary, and
+    /// that is a subprocess — which is why `installed_rows` is not called from
+    /// [`view`]. The test asserts the *branch*, using a binary that answers.
+    #[test]
+    fn an_available_system_wine_reports_its_version_rather_than_absence() {
+        let root = std::env::temp_dir().join(format!("gh-runners-wine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let wine = root.join("wine");
+        std::fs::write(&wine, "#!/bin/sh\necho 'wine-9.0'\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&wine, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let system = WineRunner::with_binary(Some(wine));
+        let rows = installed_rows(&system, &[]);
+        assert!(rows[0].available);
+        assert_eq!(rows[0].detail, "wine-9.0");
+        assert_ne!(rows[0].detail, "Not installed on this system");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- release_detail ---------------------------------------------------
+
+    /// The three parts, in the reference's order and with the size rounded.
+    #[test]
+    fn a_release_detail_names_the_family_the_asset_and_the_whole_megabytes() {
+        // 432_000_000 bytes is 412.0 MiB; 412.6 rounds to 413.
+        let release = released("GE-Proton9-5", "GE-Proton9-5.tar.gz", 432_600_000);
+        assert_eq!(release_detail(&release), "Proton-GE · GE-Proton9-5.tar.gz · 413 MB");
+    }
+
+    /// `round()` is half-away-from-zero on a `.5`, and the reference writes
+    /// `round(release.size_mb)` — a detail that reads "412 MB" where Python
+    /// says "413" is a parity break in the only place a user sees the number.
+    #[test]
+    fn a_half_megabyte_rounds_up_as_python_rounds_it() {
+        let exact = 413.5 * 1024.0 * 1024.0;
+        let release = released("t", "a.tar.gz", exact as i64);
+        assert_eq!(release_detail(&release), "Proton-GE · a.tar.gz · 414 MB");
+    }
+
+    /// An id naming no family is shown as itself. A lookup miss must not render
+    /// as a blank, which is what an `unwrap_or_default` here would produce.
+    #[test]
+    fn an_unknown_family_id_is_shown_rather_than_dropped() {
+        let mut release = released("t", "a.tar.gz", 1024 * 1024);
+        release.family_id = "proton-nonesuch".to_string();
+        assert_eq!(release_detail(&release), "proton-nonesuch · a.tar.gz · 1 MB");
+    }
+
+    // ---- status_line ------------------------------------------------------
+
+    /// The one case the label is hidden in, and the three it is not.
+    #[test]
+    fn the_status_line_is_absent_exactly_when_a_ready_list_speaks_for_itself() {
+        assert_eq!(status_line(&ReleasesStatus::Ready, 3), None);
+        assert_eq!(
+            status_line(&ReleasesStatus::Ready, 0).as_deref(),
+            Some("No builds found for this family."),
+            "a ready but empty list still needs the sentence"
+        );
+        assert_eq!(
+            status_line(&ReleasesStatus::Loading, 0).as_deref(),
+            Some("Fetching the latest builds…")
+        );
+    }
+
+    /// The error message is carried verbatim behind the reference's own words.
+    /// `bridge.py` stores `f"error: {message}"` and the QML strips seven
+    /// characters; the port strips it at the source, so the prefix cannot leak
+    /// into the sentence a user reads.
+    #[test]
+    fn a_fetch_error_is_shown_behind_the_reference_s_own_words() {
+        let status = ReleasesStatus::Error("rate limit exceeded".to_string());
+        assert_eq!(
+            status_line(&status, 0).as_deref(),
+            Some("Could not fetch builds — rate limit exceeded")
+        );
+    }
+
+    /// `Idle` is "nothing asked for yet", which a user meets as an empty list —
+    /// the same sentence as a ready-and-empty one, because they are the same
+    /// thing to look at.
+    #[test]
+    fn idle_reads_as_empty_rather_than_as_a_blank_line() {
+        assert_eq!(
+            status_line(&ReleasesStatus::Idle, 0).as_deref(),
+            Some("No builds found for this family.")
+        );
+    }
+
+    // ---- family_note ------------------------------------------------------
+
+    #[test]
+    fn a_family_note_appends_the_maintainer_only_when_there_is_one() {
+        let family = &families()[0];
+        assert!(family_note(family).contains("Maintained by"));
+
+        let mut orphan = families()[0].clone();
+        orphan.maintainer = "";
+        assert_eq!(family_note(&orphan), orphan.description);
+        assert!(!family_note(&orphan).contains("Maintained by"));
+    }
+
+    /// The note is two lines when there is a maintainer — the QML joins them
+    /// with a newline (`RunnersPage.qml:136`), and a port that used a space
+    /// would be one line of run-on text.
+    #[test]
+    fn the_family_note_breaks_between_the_description_and_the_maintainer() {
+        let family = &families()[0];
+        let note = family_note(family);
+        assert_eq!(note.lines().count(), 2);
+        assert!(note.lines().nth(1).unwrap().starts_with("Maintained by"));
+    }
+
+    // ---- guide_subtitle ---------------------------------------------------
+
+    #[test]
+    fn a_guide_subtitle_is_the_kind_and_the_maintainer_or_just_the_kind() {
+        let rows = guide_rows();
+        assert!(rows[0].subtitle.contains("maintained by WineHQ"));
+
+        let mut orphan = rows[0].clone();
+        orphan.subtitle = guide_subtitle(&RunnerGuide {
+            title: "x".to_string(),
+            kind: "proton".to_string(),
+            advice: String::new(),
+            maintainer: String::new(),
+            homepage: String::new(),
+        });
+        assert_eq!(orphan.subtitle, "proton");
+    }
+
+    /// The guide is the system row plus one per family — nine, which is P-33's
+    /// acceptance criterion, and it is asserted against the catalogue rather
+    /// than against the literal so a family added to `families.rs` moves it.
+    #[test]
+    fn the_guide_has_one_row_per_family_plus_system_wine() {
+        let rows = guide_rows();
+        assert_eq!(rows.len(), families().len() + 1);
+        assert_eq!(rows[0].title, "System Wine");
+        assert_eq!(rows.len(), 9);
+    }
+
+    /// `System Wine`'s homepage is set, so its "Visit project" button is
+    /// drawn; the reference hides the button only on an empty url.
+    #[test]
+    fn every_guide_row_that_has_a_homepage_names_one_a_button_can_open() {
+        for row in guide_rows() {
+            assert!(
+                row.homepage.starts_with("https://"),
+                "{} has no usable homepage: {:?}",
+                row.title,
+                row.homepage
+            );
+        }
+    }
+
+    // ---- progress_fraction ------------------------------------------------
+
+    fn state() -> State {
+        State::new(
+            gamehandler_core::models::Library::new(None),
+            gamehandler_core::settings::Settings::load(None),
+            RunnerManager::at("/nonexistent"),
+        )
+    }
+
+    /// Idle: no bar, which is the `-1.0` sentinel and the `busy` guard together.
+    #[test]
+    fn no_job_means_no_progress_bar() {
+        assert_eq!(progress_fraction(&state()), None);
+    }
+
+    /// Busy with no fraction yet: still no bar, because `progress >= 0` is
+    /// false — the reference distinguishes "working, progress unknown" from
+    /// "working, 40% done", and only the second draws a determinate bar.
+    #[test]
+    fn a_busy_job_with_no_fraction_yet_draws_no_bar() {
+        let mut state = state();
+        state.runner_busy = true;
+        assert_eq!(progress_fraction(&state), None);
+        assert!(state.busy());
+    }
+
+    /// Busy with a fraction: the bar is drawn at that fraction, and the
+    /// fraction is clamped at zero rather than allowed to go negative.
+    #[test]
+    fn a_busy_job_with_a_fraction_draws_the_bar_at_that_fraction() {
+        let mut state = state();
+        state.runner_busy = true;
+        state.progress = Some(0.4);
+        assert_eq!(progress_fraction(&state), Some(0.4));
+
+        state.progress = Some(-0.25);
+        assert_eq!(
+            progress_fraction(&state),
+            None,
+            "a negative fraction is the idle sentinel, not a bar before the start"
+        );
+    }
+
+    /// `busy` is *either* job, so the easy-install path moves this page's bar
+    /// too. That coupling is the reference's (`RunnersPage.qml:35` reads
+    /// `backend.busy`) and is preserved rather than tidied.
+    #[test]
+    fn the_easy_install_job_moves_this_pages_bar_as_well() {
+        let mut state = state();
+        state.easy_busy = true;
+        state.progress = Some(0.6);
+        assert_eq!(progress_fraction(&state), Some(0.6));
+    }
+
+    // ---- family_index -----------------------------------------------------
+
+    /// The selector's current value is an id from the catalogue, and an id that
+    /// names nothing is `None` — which the view renders as "no selection"
+    /// rather than silently as the first entry.
+    #[test]
+    fn the_selected_family_is_looked_up_by_id_and_an_unknown_one_is_no_selection() {
+        assert_eq!(family_index("proton-ge"), Some(0));
+        assert_eq!(family_index("proton-cachyos"), families().iter().position(|f| f.id == "proton-cachyos"));
+        assert_eq!(family_index("proton-nonesuch"), None);
+        assert_eq!(family_index(""), None, "the initial state is empty, not a family");
+    }
+
+    // ---- update -----------------------------------------------------------
+
+    /// A fetch request clears the previous family's list *and* marks the fetch
+    /// in flight, before any work starts. A port that only set the status would
+    /// show the old family's builds under the new family's name.
+    #[test]
+    fn requesting_a_family_clears_the_previous_list_and_marks_it_loading() {
+        let mut state = state();
+        state.releases = vec![released("old", "old.tar.gz", 1024)];
+        state.releases_status = ReleasesStatus::Ready;
+
+        let task = update(&mut state, &Message::FetchReleases { family: "proton-ge".to_string() });
+        assert!(task.is_some(), "FetchReleases is this page's message");
+        assert_eq!(state.releases_family, "proton-ge");
+        assert_eq!(state.releases_status, ReleasesStatus::Loading);
+        assert!(state.releases.is_empty(), "the previous family's list must go");
+    }
+
+    /// The stale guard, in both directions. This is the one that matters: a
+    /// slow reply for a family the user has left must not overwrite the list
+    /// they are looking at.
+    #[test]
+    fn a_reply_for_a_family_the_user_has_left_is_dropped() {
+        let mut state = state();
+        state.releases_family = "proton-cachyos".to_string();
+        state.releases_status = ReleasesStatus::Loading;
+        let fresh = vec![released("cachy", "a.tar.gz", 1024)];
+
+        // A reply for the family the user is on gets stored.
+        update(
+            &mut state,
+            &Message::ReleasesFetchFinished {
+                family: "proton-cachyos".to_string(),
+                result: Ok(fresh.clone()),
+            },
+        );
+        assert_eq!(state.releases, fresh);
+        assert_eq!(state.releases_status, ReleasesStatus::Ready);
+
+        // A late reply for the family they left does not, and does not touch
+        // the status either.
+        update(
+            &mut state,
+            &Message::ReleasesFetchFinished {
+                family: "proton-ge".to_string(),
+                result: Ok(vec![released("stale", "s.tar.gz", 2048)]),
+            },
+        );
+        assert_eq!(state.releases, fresh, "the stale reply overwrote the live list");
+        assert_eq!(state.releases_status, ReleasesStatus::Ready);
+    }
+
+    /// A failure carries its message into the status, which is the only place
+    /// the user can read it.
+    #[test]
+    fn a_failed_fetch_stores_its_message_for_the_status_line() {
+        let mut state = state();
+        state.releases_family = "proton-ge".to_string();
+        update(
+            &mut state,
+            &Message::ReleasesFetchFinished {
+                family: "proton-ge".to_string(),
+                result: Err("rate limit exceeded".to_string()),
+            },
+        );
+        assert_eq!(
+            state.releases_status,
+            ReleasesStatus::Error("rate limit exceeded".to_string())
+        );
+        assert_eq!(
+            status_line(&state.releases_status, state.releases.len()).as_deref(),
+            Some("Could not fetch builds — rate limit exceeded")
+        );
+    }
+
+    /// An install finishing clears the guard and the bar whichever way it went.
+    /// The reference writes that pair before the success/failure branch
+    /// (`bridge.py:753-759`), so a port that only cleared them on success would
+    /// leave the page permanently busy after one failure.
+    #[test]
+    fn an_install_finishing_clears_the_guard_on_success_and_on_failure() {
+        for result in [
+            Ok("GE-Proton9-5".to_string()),
+            Err("checksum mismatch".to_string()),
+        ] {
+            let mut state = state();
+            state.runner_busy = true;
+            state.progress = Some(0.5);
+
+            let task = update(&mut state, &Message::RunnerInstallFinished(result));
+            assert!(!state.runner_busy, "the guard must clear either way");
+            assert_eq!(state.progress, None, "the bar must clear either way");
+            assert!(
+                task.is_some(),
+                "the toast is the observable, and it is a task"
+            );
+        }
+    }
+
+    /// Progress is stored as given, and the bar's own rule decides what to do
+    /// with it — so a progress tick for a job that has not started cannot make
+    /// the bar appear.
+    #[test]
+    fn a_progress_tick_is_stored_and_the_bar_rule_decides() {
+        let mut state = state();
+        update(&mut state, &Message::RunnerProgress(0.25));
+        assert_eq!(state.progress, Some(0.25));
+        assert_eq!(
+            progress_fraction(&state),
+            None,
+            "not busy, so no bar, however much progress was reported"
+        );
+    }
+
+    /// The messages this page does not own are declined rather than swallowed,
+    /// which is what lets the caller leave them as TODOs without this page
+    /// claiming them.
+    #[test]
+    fn a_message_this_page_does_not_own_is_declined_rather_than_swallowed() {
+        let mut state = state();
+        for message in [
+            Message::SetInstallerSearch("x".to_string()),
+            Message::RefreshPlugins,
+            Message::LaunchWatchTick,
+        ] {
+            assert!(
+                update(&mut state, &message).is_none(),
+                "{message:?} is not the Runners page's"
+            );
+        }
+    }
+
+    /// The two network-bound messages are **declined, not half-written**.
+    ///
+    /// This is the guard on the module's own honesty: if someone later writes
+    /// the `Loading` transition for `FetchReleases` without writing the fetch,
+    /// this test goes red rather than the page looking implemented. The
+    /// `InstallRunner` busy guard is the same shape.
+    ///
+    /// `FetchReleases` **is** handled (as the state transition above); it is the
+    /// *task* that is missing, and that is recorded in the module header rather
+    /// than by declining the message — declining it would drop the transition
+    /// that is already correct.
+    #[test]
+    fn installing_is_declined_because_the_download_is_not_implemented() {
+        let mut state = state();
+        assert!(
+            update(&mut state, &Message::InstallRunner { tag: "t".to_string() }).is_none(),
+            "InstallRunner needs the injected HttpClient, and returning a state \
+             change without it would render as a busy page that never finishes"
+        );
+        assert!(!state.runner_busy);
+    }
+
+    // ---- uninstall_line ----------------------------------------------------
+
+    /// A failed removal says *what* went wrong and *which* runner it was about.
+    ///
+    /// `uninstallRunner`'s `except` (`bridge.py:775-782`) is where this line
+    /// comes from, and the runner id is the half that says which build is still
+    /// on disk. The `contains` is a second, deliberately different claim from
+    /// the `assert_eq!`: it is the one that survives a line that keeps its shape
+    /// but drops the error tail — `Could not remove GE-Proton9-5` is a sentence
+    /// a user reads as a refusal with no reason, and it would pass an equality
+    /// test written against whatever the port produced.
+    #[test]
+    fn a_failed_removal_carries_the_error_text_and_the_runner_id() {
+        let line = uninstall_line("GE-Proton9-5", Err("permission denied".to_string()));
+        assert_eq!(line, "Could not remove GE-Proton9-5: permission denied");
+        assert!(
+            line.contains("permission denied"),
+            "the runner's own error is the only part that says what to fix: {line:?}"
+        );
+        assert!(
+            line.contains("GE-Proton9-5"),
+            "and the id is the only part that says which build survived: {line:?}"
+        );
+    }
+
+    /// The other half, which must not acquire the error wording. The two arms
+    /// are one `match` apart and a port that shared one `format!` would tell a
+    /// user their removal failed when it succeeded.
+    #[test]
+    fn a_removal_that_worked_says_so_without_an_error_tail() {
+        assert_eq!(
+            uninstall_line::<String>("GE-Proton9-5", Ok(())),
+            "Removed GE-Proton9-5"
+        );
+    }
+
+    /// The arm itself, driven for real through a failure it can reach without a
+    /// filesystem: removing System Wine is refused by `proton::uninstall` before
+    /// it looks at the directory (`proton.rs:1085`), so this needs no fixture.
+    ///
+    /// What this does **not** cover, and cannot: the *text* of the toast. The
+    /// toast is the only observable of this arm and `Toasts` exposes no reader
+    /// (`toaster/mod.rs:155-204` — `push` and `remove` are the whole surface),
+    /// so the line is covered instead by
+    /// [`a_failed_removal_carries_the_error_text_and_the_runner_id`] calling
+    /// [`uninstall_line`] directly. The arm is one call away from it, which is
+    /// as much as the observable allows.
+    ///
+    /// The status claim is the interesting half: `_releases_status` is written
+    /// by `fetchReleases` and its two callbacks and **nowhere else**
+    /// (`bridge.py:697,708,714`; the only other write is the constructor's
+    /// `"idle"`, `bridge.py:136`), and `uninstallRunner` assigns nothing at all
+    /// (`bridge.py:772-782`). Asserted over every state rather than one, because
+    /// the defect this guards against is not a wrong *value* — it is an arm that
+    /// writes the field at all. An earlier revision of this arm set `Idle` here
+    /// to stand in for the reference's `releasesChanged.emit()`; that is a state
+    /// the reference cannot reach with a non-empty list, and it renders
+    /// "No builds found for this family." above the builds.
+    #[test]
+    fn a_refused_removal_is_handled_and_leaves_the_release_status_alone() {
+        for before in [
+            ReleasesStatus::Idle,
+            ReleasesStatus::Loading,
+            ReleasesStatus::Ready,
+            ReleasesStatus::Error("rate limit exceeded".to_string()),
+        ] {
+            let mut state = state();
+            state.releases_status = before.clone();
+
+            let task = update(
+                &mut state,
+                &Message::UninstallRunner(SYSTEM_WINE.to_string()),
+            );
+
+            assert!(task.is_some(), "a removal is this page's to handle");
+            assert_eq!(
+                state.releases_status, before,
+                "only fetchReleases writes the release status"
+            );
+            assert!(!state.runner_busy, "a removal is not a busy job");
+        }
+    }
+}

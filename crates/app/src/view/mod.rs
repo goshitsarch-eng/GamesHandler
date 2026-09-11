@@ -38,7 +38,10 @@
 //! [`State`]: crate::App
 //! [`Message`]: crate::Message
 
+pub mod badge;
 pub mod cover;
+pub mod installers;
 pub mod meta;
 pub mod metrics;
+pub mod runners;
 pub mod widgets;
