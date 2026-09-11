@@ -49,15 +49,63 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn read(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_else(|err| {
+/// Panic with the right diagnosis when a path under the repo root cannot be
+/// read.
+///
+/// There are two ways that happens and they call for completely different
+/// actions, so telling them apart is the whole point. `CARGO_MANIFEST_DIR` is
+/// baked in at compile time: a `target/` directory copied between checkouts (or
+/// shared via `CARGO_TARGET_DIR`) can hand cargo an artifact built from a
+/// *different* source tree, and cargo will reuse it whenever the fingerprints
+/// match. The second case looks like a bug in this test and is not.
+///
+/// All three of `Cargo.toml`, `build-aux/` and `data/` are probed, not just the
+/// first, because the tree that bites is a real checkout of something else: a
+/// scratch copy at `/tmp/wire-test` has a `Cargo.toml` of its own, so a guard
+/// keyed on that alone does not fire on it. What such a copy does not have is
+/// the artefacts this test actually reads.
+fn explain(path: &Path, err: &std::io::Error) -> ! {
+    let root = repo_root();
+    let absent: Vec<&str> = ["Cargo.toml", "build-aux", "data"]
+        .into_iter()
+        .filter(|name| !root.join(name).exists())
+        .collect();
+    if !absent.is_empty() {
         panic!(
             "cannot read {}: {err}\n\
-             If this file was renamed, the path is derived from \
-             gamehandler_core::APP_ID and both must change together.",
-            path.display()
-        )
-    })
+             This test was COMPILED in {}, which is not the GameHandler \
+             checkout: {} is not there. So it is stale build output rather \
+             than a missing file — a target/ directory copied from another \
+             tree will do this, and so will building that tree with \
+             CARGO_TARGET_DIR pointing at this one. Run `cargo clean -p \
+             gamehandler` (or touch this file) to rebuild it here.",
+            path.display(),
+            root.display(),
+            absent.join(", ")
+        );
+    }
+    panic!(
+        "cannot read {}: {err}\n\
+         If this artefact was renamed, note that the path is derived from \
+         gamehandler_core::APP_ID and the two must change together.",
+        path.display()
+    )
+}
+
+fn read(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_else(|err| explain(path, &err))
+}
+
+/// The paths in a directory, sorted. The listing goes through [`explain`] too,
+/// so a stale build root says so here as well rather than printing a bare
+/// `No such file or directory` that reads as a defect in this test.
+fn list_dir(dir: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = fs::read_dir(dir)
+        .unwrap_or_else(|err| explain(dir, &err))
+        .map(|entry| entry.expect("readable directory entry").path())
+        .collect();
+    paths.sort();
+    paths
 }
 
 /// The value of the one `Key=Value` line with this key.
@@ -89,9 +137,8 @@ fn app_id_matches_the_desktop_entry() {
     let app_id = gamehandler_core::APP_ID;
     let data = repo_root().join("data");
 
-    let mut entries: Vec<PathBuf> = fs::read_dir(&data)
-        .unwrap_or_else(|err| panic!("cannot list {}: {err}", data.display()))
-        .map(|entry| entry.expect("readable directory entry").path())
+    let mut entries: Vec<PathBuf> = list_dir(&data)
+        .into_iter()
         .filter(|path| path.extension().is_some_and(|ext| ext == "desktop"))
         .collect();
     entries.sort();

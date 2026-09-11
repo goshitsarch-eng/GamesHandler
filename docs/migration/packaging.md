@@ -537,9 +537,20 @@ prints the full table instead, for a diagnostic sweep.
    tree). No completed tree reports `SKIP`, never `ok`, and prints which half
    did run.
 
-    The list is deliberately short and deliberate: a stage that asserted every
-    installed path would duplicate the manifest's own three metadata installs,
-    which stage 9 already covers by content.
+    The list is not short by *count*: it holds every file the `gamehandler`
+    module installs except the binary, and half 1 additionally reads the
+    manifest's own install commands and fails for any destination the list does
+    not cover — so a new install cannot be added to the manifest without being
+    covered here. **Correction (task #23).** This paragraph originally read "a
+    stage that asserted every installed path would duplicate the manifest's own
+    three metadata installs, which stage 9 already covers by content", and that
+    was wrong twice over. Stage 9 loads **two** of the three metadata files (the
+    desktop entry and the metainfo; never the icon), and it validates their
+    *content*, not that the Flatpak installs them or where. The installed
+    destinations of all three were checked by nothing: renaming one in the
+    manifest, or deleting the icon's install line, left every stage green while
+    the shipped desktop file's `Icon=com.goshapps.GameHandler` resolved to
+    nothing.
 
 Output contract: one machine-greppable line per stage to stdout — `### <stage>`,
 then `ok|FAIL|SKIP <stage>` — with sub-check lines indented so they never

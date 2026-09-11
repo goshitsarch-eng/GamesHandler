@@ -1231,6 +1231,21 @@ Observed in the wild during this work — a run with both a failed stage and an
 unrequested `flatpak-build` skip exited 1, with the incompleteness reported in
 the summary alongside it.
 
+**Amendment (tasks #23/#24): a stage has to be able to say "the caller asked".**
+The rule above was stated before any stage could express it. `finish_skip` takes
+the `requested` flag, but a stage's only channel to the runner is a number, and
+99 and 77 were already spoken for as "this did not run" (→ exit 3). Stage 10 is
+the stage that needs the distinction: its installed-copies half is missing
+*either* because `--skip-flatpak` was passed (requested) *or* because no
+flatpak-builder was ever available (not requested) — the same absent
+`build-flatpak/files/`, two entirely different meanings. It now returns **98**
+for the first and 99 for the second, and `run_stage` maps 98 to
+`finish_skip ... 1`. Without that, an explicit `--skip-flatpak` in a checkout
+with no build output reported an *unrequested* skip and exited 3: the script
+failing the caller for using the flag exactly as documented, which is the
+overcorrection Option 2 was rejected for. 98/99 are a stage's private
+convention; the exit code is the interface.
+
 **Interaction with the Flatpak build lock (the sibling change in the same
 file).** The lock and this decision answer the same underlying worry — "can this
 run's result be believed?" — and they must not contradict each other:

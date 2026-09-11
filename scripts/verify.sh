@@ -27,10 +27,14 @@
 #   8  smoke-test            scripts/smoke-test.sh — CLI + headless GUI
 #   9  desktop-metainfo      desktop-file-validate + appstreamcli validate
 #  10  flatpak-contents      the built Flatpak carries the files no validator
-#                            looks at: the application's own licence text and
-#                            the Authenticode trust root. Added by T-23, after
-#                            the GPL text turned out to be missing from the
-#                            Flatpak with every one of stages 1-9 green.
+#                            looks at: the application's own licence text, the
+#                            Authenticode trust root, and the three metadata
+#                            installs — which stage 9 reads for well-formedness
+#                            (two of them) but never for presence or path.
+#                            Added by T-23, after the GPL text turned out to be
+#                            missing from the Flatpak with every one of stages
+#                            1-9 green; widened to the metadata installs and to
+#                            the manifest's whole install set by tasks #23/#24.
 #
 # Stages 7-10 are one critical section under a `flock`, because all four read or
 # write build-flatpak/ and stage 7 writes it destructively. The lock note above
@@ -307,13 +311,30 @@ stage_test() {
 # ---------------------------------------------------------------------------
 # Stage 4 — oracle freshness
 #
-# gen_oracle.py derives its repo root from its own path (parents[3]) and writes
-# its fixtures next to itself. To keep this script read-only with respect to the
-# repo we stage a throwaway copy of the *only* package it imports (`gamehandler`
-# — the generator imports gamehandler.models and gamehandler.settings and
-# nothing else) plus the generator, at the same depth, in a temp dir, so the
-# generator writes there and the repo is untouched. The fixtures on disk are
+# TWO generators write into one fixture directory, and this stage must run both:
+#
+#   gen_oracle.py           oracle.json and the *.in.json / *.out.json pairs
+#                           (the file-shaped fixtures)
+#   run_runners_vectors.py  runners_vectors.cases.json and .answers.json
+#                           (the function-shaped ones; --suite writes the case
+#                           list, the answers are that list fed back in)
+#
+# Both derive their repo root from their own path (parents[3]) and write next to
+# themselves. To keep this script read-only with respect to the repo we stage a
+# throwaway copy of the *only* package they import (`gamehandler` — gen_oracle
+# imports gamehandler.models and gamehandler.settings, run_runners_vectors
+# imports gamehandler.runners and gamehandler.models, and nothing else between
+# them) plus both generators, at the same depth, in a temp dir, so the
+# generators write there and the repo is untouched. The fixtures on disk are
 # hashed before and after as a belt-and-braces assertion that this stayed true.
+#
+# Running only the first — which is what this stage did from T-17 until task
+# #26 — leaves the second generator's two outputs permanently `Only in <repo>`,
+# so the diff can never be clean and the stage fails unconditionally. It landed
+# that way in 8df5ed8 (the stage) and c72e2e1 (the fixtures, the same commit
+# that added the second generator) and stayed that way for every commit since:
+# read as "the oracle is stale" rather than as "this check is broken", which is
+# the failure mode the check exists to prevent, with the sign flipped.
 # ---------------------------------------------------------------------------
 ORACLE_REL="docs/migration/oracle"
 FIXTURES_REL="$ORACLE_REL/fixtures"
@@ -326,7 +347,9 @@ fixture_hashes() {
 
 stage_oracle() {
     local gen="$ROOT/$ORACLE_REL/gen_oracle.py"
+    local vectors="$ROOT/$ORACLE_REL/run_runners_vectors.py"
     [ -f "$gen" ] || { echo "no such file: $ORACLE_REL/gen_oracle.py"; return 1; }
+    [ -f "$vectors" ] || { echo "no such file: $ORACLE_REL/run_runners_vectors.py"; return 1; }
 
     local before
     before="$(fixture_hashes)"
@@ -339,11 +362,24 @@ stage_oracle() {
     # version happened to write them.
     find "$tmp/gamehandler" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
     cp "$gen" "$tmp/docs/migration/oracle/gen_oracle.py"
+    cp "$vectors" "$tmp/docs/migration/oracle/run_runners_vectors.py"
 
+    # Both generators, in this order: gen_oracle.py creates fixtures/, which the
+    # two redirections below write into. The interpreters are the same python3
+    # the rest of the stage uses; neither generator needs aiohttp (that is the
+    # cargo-sources generator, stage 6), the app, or the network.
     local rc=0
-    ( cd "$tmp" && python3 docs/migration/oracle/gen_oracle.py ) || rc=$?
+    (
+        cd "$tmp" || exit 1
+        python3 docs/migration/oracle/gen_oracle.py || exit $?
+        python3 docs/migration/oracle/run_runners_vectors.py --suite \
+            >docs/migration/oracle/fixtures/runners_vectors.cases.json || exit $?
+        python3 docs/migration/oracle/run_runners_vectors.py \
+            <docs/migration/oracle/fixtures/runners_vectors.cases.json \
+            >docs/migration/oracle/fixtures/runners_vectors.answers.json || exit $?
+    ) || rc=$?
     if [ "$rc" -ne 0 ]; then
-        echo "the generator failed with status $rc (see its output above)"
+        echo "a generator failed with status $rc (see its output above)"
         rm -rf "$tmp"
         return 1
     fi
@@ -355,7 +391,13 @@ stage_oracle() {
         echo "The checked-in oracle is STALE relative to the Python implementation."
         echo "The diff above is what regenerating produces; the checked-in copy"
         echo "comes first, the regenerated copy second."
-        echo "Fix: run 'python3 $ORACLE_REL/gen_oracle.py' and commit the result."
+        echo "Fix: regenerate with BOTH generators and commit the result --"
+        echo "  python3 $ORACLE_REL/gen_oracle.py"
+        echo "  python3 $ORACLE_REL/run_runners_vectors.py --suite \\"
+        echo "      > $FIXTURES_REL/runners_vectors.cases.json"
+        echo "  python3 $ORACLE_REL/run_runners_vectors.py \\"
+        echo "      < $FIXTURES_REL/runners_vectors.cases.json \\"
+        echo "      > $FIXTURES_REL/runners_vectors.answers.json"
         rm -rf "$tmp"
         return 1
     fi
@@ -584,57 +626,162 @@ stage_desktop_metainfo() {
 #
 # Stage 9 loads the desktop entry and the metainfo and asks whether they are
 # *well-formed*. Nothing in stages 1-9 asks whether the Flatpak contains them —
-# or the application's own licence, or the Authenticode trust root — because
-# none of those files is an input to a validator. That gap is not hypothetical:
-# T-16 moved the build from meson (which ran data/meson.build's install_data) to
-# cargo, dropped the licence install with it, and every stage stayed green while
-# the Flatpak shipped a GPL-3 binary with no licence. T-23.
+# or the application's own licence, or the Authenticode trust root, or the icon
+# — because none of those files is an input to a validator. That gap is not
+# hypothetical: T-16 moved the build from meson (which ran data/meson.build's
+# install_data) to cargo, dropped the licence install with it, and every stage
+# stayed green while the Flatpak shipped a GPL-3 binary with no licence. T-23.
+#
+# The list is every file the gamehandler module installs *except the binary*,
+# and what covers each one before this stage gets to it:
+#
+#   LICENSE, the trust root   nothing at all.
+#   desktop entry, metainfo   stage 9 reads their *content* for well-formedness
+#                             (on the built copy when there is one). Nothing read
+#                             the manifest to see that they are installed, or
+#                             where. An installed path is a name, and no
+#                             validator compares a name to the app id the window
+#                             reports — D-28's hole, one level over.
+#   the icon                  nothing. Not "nothing for its destination": nothing
+#                             at all, from any stage (task #23). Delete its
+#                             install line and ten stages stay green while the
+#                             desktop file's Icon= resolves to nothing.
+#
+# T-23's commit message ends "The three metadata installs stay covered by stage
+# 9." That is off by one — stage 9 loads two of the three, and never their
+# installed paths — and it is corrected here, next to the count it gets wrong,
+# rather than rewritten into that message, which is history.
 #
 # Two halves, deliberately:
 #
-#   1. the manifest declares an install for each file. This needs no build tree,
-#      so it still runs when flatpak-builder cannot (an offline vendoring gap,
-#      say) — the check that would have caught the original defect must not be
-#      hostage to the build succeeding. It reads the manifest rather than
-#      restating what it says: the assertion is "some command in here installs
-#      to this destination", and it fails if that command is deleted.
+#   1. the manifest declares an install for each file, *and* declares no install
+#      in this module that the list above omits. This needs no build tree, so it
+#      still runs when flatpak-builder cannot (an offline vendoring gap, say) —
+#      the check that would have caught the original defect must not be hostage
+#      to the build succeeding. It reads the manifest rather than restating what
+#      it says: the assertion is "some command in here installs to this
+#      destination", and it fails if that command is deleted. The completeness
+#      half is what makes the list a check rather than a memory: adding an
+#      install to the manifest without adding it to the list is a failure here.
 #   2. when a build tree exists, the installed bytes are compared against the
 #      repository's own copy. Byte-identity is the point — an install line that
 #      points at the wrong file passes half 1 and fails here.
 #
 # A missing build tree is reported as SKIP, never as a pass: the sub-check lines
-# still print, so a SKIP that got half-way is legible.
+# still print, so a SKIP that got half-way is legible. Which *kind* of SKIP it is
+# matters to the exit code (D-31): with --skip-flatpak the absent tree is the
+# flag's own consequence and costs nothing, so the stage returns 98 rather than
+# 99 there.
 # ---------------------------------------------------------------------------
 
-# Does any module install <src> to <dest>? Accepts ${FLATPAK_DEST}/... and
-# /app/... spellings by matching on the destination tail, and requires the
-# source too: matching the destination alone passes an install line that copies
-# the wrong file there (found by mutation — `COPYING ${FLATPAK_DEST}/.../LICENSE`
-# passed a destination-only check). `<src> ` is matched with its trailing space
-# so `LICENSE` is not satisfied by the `LICENSE` inside its own destination.
+# Does the manifest install <src> to <dest>?
+#
+# Matched on *arguments*, not on a substring of the command line (task #22). The
+# substring version accepted two false passes, both measured against it:
+#
+#   cp LICENSE /tmp/x && install -Dm0644 COPYING ${FLATPAK_DEST}/.../LICENSE
+#   : install -Dm0644 LICENSE ${FLATPAK_DEST}/.../LICENSE
+#
+# The first installs the wrong file; the second is a shell no-op that installs
+# nothing at all. Both were reported as "ok manifest installs LICENSE to ...".
+# So: the command must *begin* with `install` (an install chained onto another
+# command with `&&` is therefore not matched — it reads as a failure, which is
+# the safe direction, and the manifest's convention is one install per
+# build-command), and the token immediately before the destination token must be
+# exactly the source. ${FLATPAK_DEST}/... and /app/... spellings are accepted by
+# matching on the destination tail. It is still a string match on a command and
+# not an execution of it; it is now a match on the argument that decides the
+# outcome rather than on any substring that happens to appear.
 DECLARES_PY='
-import json, sys
+import json, shlex, sys
 doc = json.load(open(sys.argv[1]))
 src, dest = sys.argv[2], sys.argv[3]
+
+def is_dest(token):
+    return token == dest or token.endswith("/" + dest)
+
 for module in doc.get("modules", []):
     commands = module.get("build-commands", []) + module.get("post-install", [])
     for command in commands:
-        if dest in command and (src + " ") in command:
-            sys.exit(0)
+        if not command.startswith("install "):
+            continue
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            continue
+        for i, token in enumerate(tokens):
+            if i >= 1 and is_dest(token) and tokens[i - 1] == src:
+                sys.exit(0)
 sys.exit(1)
 '
 
-# <repository path>|<path under /app> — the files whose absence no validator
-# can see. Kept in step with the manifest by this stage, not by memory.
+# Is every install in the gamehandler module covered by FLATPAK_CONTENTS?
+#
+# The one thing a hardcoded list cannot do is notice an addition to the thing it
+# lists. This reads the module's own install commands and fails for any
+# destination that is neither in the list nor the binary (which stages 7-8
+# exercise by running it). Called with the destinations as arguments, so the list
+# stays the single source of truth for what is covered.
+COMPLETENESS_PY='
+import json, shlex, sys
+doc = json.load(open(sys.argv[1]))
+covered = set(sys.argv[2:])
+MODULE = "gamehandler"
+EXCEPT = {"bin/gamehandler"}
+
+def rel(token):
+    for prefix in ("${FLATPAK_DEST}/", "/app/"):
+        if token.startswith(prefix):
+            return token[len(prefix):]
+    return None
+
+installs = []
+for module in doc.get("modules", []):
+    if module.get("name") != MODULE:
+        continue
+    commands = module.get("build-commands", []) + module.get("post-install", [])
+    for command in commands:
+        if not command.startswith("install "):
+            continue
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            continue
+        destination = rel(tokens[-1]) if tokens else None
+        if destination is not None:
+            installs.append(destination)
+
+uncovered = sorted({d for d in installs if d not in covered and d not in EXCEPT})
+for destination in uncovered:
+    print("the manifest installs " + destination + " and no entry in this")
+    print("stage covers it -- add it here, or say in the list why it is exempt")
+sys.exit(1 if uncovered else 0)
+'
+
+# <repository path>|<path under /app> — every file the gamehandler module
+# installs except the binary. Kept in step with the manifest by the completeness
+# check above, not by memory.
 FLATPAK_CONTENTS=(
     "LICENSE|share/licenses/$APP_ID/LICENSE"
     "data/microsoft-identity-verification-root-ca-2020.pem|share/gamehandler/microsoft-identity-verification-root-ca-2020.pem"
+    "data/$APP_ID.desktop|share/applications/$APP_ID.desktop"
+    "data/$APP_ID.metainfo.xml|share/metainfo/$APP_ID.metainfo.xml"
+    "data/icons/hicolor/scalable/apps/$APP_ID.svg|share/icons/hicolor/scalable/apps/$APP_ID.svg"
 )
 
 stage_flatpak_contents() {
     local rc=0 entry src dest
+    local -a covered=()
+    for entry in "${FLATPAK_CONTENTS[@]}"; do covered+=("${entry#*|}"); done
 
     echo "manifest: ${MANIFEST#"$ROOT"/}"
+    if python3 -c "$COMPLETENESS_PY" "$MANIFEST" "${covered[@]}"; then
+        echo "ok   every install in the gamehandler module is covered here (${#covered[@]} files)"
+    else
+        echo "FAIL the manifest installs a file this stage does not cover"
+        rc=1
+    fi
+
     for entry in "${FLATPAK_CONTENTS[@]}"; do
         src="${entry%%|*}"
         dest="${entry#*|}"
@@ -659,6 +806,11 @@ stage_flatpak_contents() {
     if [ ! -d "$tree" ]; then
         echo "no build tree at ${tree#"$ROOT"/}: the installed copies were NOT checked"
         echo "  run without --skip-flatpak to build one (stages 7-8)"
+        # 98 = a skip the caller asked for, 99 = one a missing prerequisite
+        # forced. Only the second costs a non-zero exit (D-31), and under
+        # --skip-flatpak the absent tree is the flag's own consequence — the same
+        # call the runner already makes for desktop-metainfo.
+        [ "${SKIP_FLATPAK:-0}" -eq 1 ] && return 98
         return 99
     fi
 
@@ -712,6 +864,13 @@ run_stage() {
     "$fn" >"$STAGE_LOG" 2>&1 || rc=$?
     case "$rc" in
         0)  finish_ok ;;
+        # 99 and 77 are the stage saying "this did not run", and the run is
+        # therefore incomplete: exit 3 (D-31). 98 is the stage saying "the caller
+        # asked for this one" — a skip either way, but not evidence that the run
+        # was truncated, so it stays a legitimate 0. A stage chooses between them
+        # itself, because only the stage knows whether the missing thing was an
+        # option or a toolchain.
+        98) finish_skip "requested by the caller, not a missing prerequisite — see ${STAGE_LOG#"$ROOT"/}" 1 ;;
         99) finish_skip "prerequisite missing — see ${STAGE_LOG#"$ROOT"/}" ;;
         77) finish_skip "no display available — see ${STAGE_LOG#"$ROOT"/}" ;;
         *)  finish_fail ;;
