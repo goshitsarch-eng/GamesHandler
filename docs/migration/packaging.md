@@ -454,47 +454,88 @@ test_qml_smoke.py:106-130), fail on renderer/panic errors, with the
 
 ## 6. `scripts/verify.sh` design
 
-Single entry point. (Note: no `scripts/` directory exists at HEAD — greenfield.)
+**Implemented at T-17.** Single entry point. (This section was written before
+`scripts/` existed; the notes below record where the implementation departed
+from the design and why.)
 
 ```
-scripts/verify.sh [--offline] [--skip-flatpak]
+scripts/verify.sh [--skip-flatpak] [--skip-smoke] [--keep-going] [--offline] [--hold SECONDS]
 ```
 
-Stages, in order. **Fail fast**: `set -euo pipefail`; each stage prints
-`### <stage>` on entry and `ok <stage> (<time>)` on success; any failure
-prints `FAIL <stage>` plus the failing command's tail and exits non-zero
-immediately (no point running the smoke test if clippy failed).
+Stages, in order. **Fail fast** by default: each stage prints `### <stage>` on
+entry and `ok <stage> (<time>)` on success; a failure prints `FAIL <stage>`
+plus the tail of that stage's log and exits non-zero immediately (no point
+running the smoke test if clippy failed). `--keep-going` runs every stage and
+prints the full table instead, for a diagnostic sweep.
 
-1. `cargo build` (workspace root). Catches compile breaks first; keeps later
-   stages' errors meaningful.
-2. `cargo clippy --all-targets -- -D warnings`. **Must run at OUR workspace
-   root only, never inside the libcosmic checkout [spike]**: libcosmic's own
-   `cosmic-config-derive/src/lib.rs:3` (`use syn;`) trips
-   `clippy::single_component_path_imports`, and path-dependency members do
-   not get `--cap-lints allow`. As a git dependency of our workspace, cargo
-   caps its lints and our clippy run is unaffected. Host prerequisite: the
-   `clippy` component must be installed (on Fedora it was missing and needed
-   the `clippy` package; in the Flatpak SDK it arrives via rust-stable).
-3. `cargo test`. Unit + business-logic + integration + manifest tests
-   (sections 5.1–5.5). Must pass with no display server and no GPU
-   (unset `DISPLAY`/`WAYLAND_DISPLAY` in this stage to prove it).
-4. `cargo-sources.json` freshness: regenerate from `Cargo.lock` to a temp
-   file, `diff` against the committed copy, and assert all `Cargo.lock` git
-   URLs have `type: git` entries (section 2.2). Fails with "run
-   flatpak-cargo-generator.py and commit the result".
-5. `flatpak-builder` (build; `--skip-flatpak` skips stages 5–7 for fast
-   local iteration). Uses the same flags as `build-aux/flatpak/build.sh:10-18`
-   (`--force-clean`, `--install-deps-from=flathub`, `--default-branch=stable`).
-   `--offline` passes `--disable-network` after sources are fetched.
-6. Headless smoke test (section 7): launch under headless compositor +
-   software Vulkan; fail on panic/renderer errors.
-7. `desktop-file-validate` + `appstreamcli validate --no-net` on the
-   installed files (successor to `data/meson.build:15-34`'s
-   `validate-desktop`/`validate-metainfo` tests).
+1. `build` — `cargo build` (workspace root). Catches compile breaks first;
+   keeps later stages' errors meaningful.
+2. `clippy` — `cargo clippy --all-targets -- -D warnings`. **Runs at OUR
+   workspace root only, never inside the libcosmic checkout [spike]**:
+   libcosmic's own `cosmic-config-derive/src/lib.rs:3` (`use syn;`) trips
+   `clippy::single_component_path_imports`, and path-dependency members do not
+   get `--cap-lints allow`. As a git dependency of our workspace, cargo caps
+   its lints and our clippy run is unaffected. Host prerequisite: the `clippy`
+   component must be installed (on Fedora it was missing and needed the
+   `clippy` package; in the Flatpak SDK it arrives via rust-stable).
+3. `test` — `cargo test`. Unit + business-logic + integration + manifest tests
+   (sections 5.1–5.5). Runs with `DISPLAY`/`WAYLAND_DISPLAY`/`WAYLAND_SOCKET`
+   unset, so it must pass with no display server and no GPU.
+4. `oracle-freshness` — regenerate `docs/migration/oracle/fixtures/` from the
+   Python implementation and fail if the checked-in copy differs. `gen_oracle.py`
+   resolves its repo root from its own path (`parents[3]`) and writes its
+   fixtures beside itself, so the stage stages a throwaway copy of the
+   `gamehandler` package plus the generator, at the same depth, in a temp dir.
+   (The generator imports `gamehandler.models` and `gamehandler.settings` and
+   nothing else, which is what makes the copy sufficient.) The fixtures on disk
+   are SHA-256 hashed before and after and asserted unchanged, so the "verify
+   never dirties the tree" rule is checked rather than assumed.
+5. `python-tests` — the existing Python suite (`python3 -m unittest discover
+   -s tests -t .`, per README.md:261 — **not** pytest, which the repo does not
+   use and this host does not have) must stay green. DECISIONS D-17.
+6. `cargo-sources` — `cargo-sources.json` freshness: regenerate from
+   `Cargo.lock` to a temp file, compare as a *set* of canonicalised entries
+   (the generator's entry order is an implementation detail; the entry set is
+   the contract), and assert every `Cargo.lock` git URL has a `type: git`
+   entry (section 2.2). This is the one stage that needs something a clean
+   checkout does not contain — the generator lives in `flatpak/flatpak-builder-
+   tools` and imports `aiohttp` — so it **SKIPs loudly** with install
+   instructions rather than failing obscurely. It looks in `$FLATPAK_CARGO_
+   GENERATOR`, on `PATH`, and in the usual cache paths, and prefers a
+   `venv/bin/python` beside the script when one exists.
+7. `flatpak-build` — `flatpak-builder`, with the flags from
+   `build-aux/flatpak/build.sh` (`--force-clean`, `--install-deps-from=flathub`,
+   `--default-branch=stable`) plus `--state-dir=.flatpak-builder` and
+   `--repo=flatpak-repo`. **Correction:** `--offline` passes
+   `--disable-download`; flatpak-builder 1.4.10 has no `--disable-network`
+   flag, which the original text of this section named.
+8. `smoke-test` — delegates to `scripts/smoke-test.sh` (section 7.2). Its
+   four sub-checks are echoed indented under the stage line, so a pass is
+   legible without opening the log. Exit 77 from the script (no compositor
+   available) is reported as `SKIP`, never as `ok`.
+9. `desktop-metainfo` — `desktop-file-validate` + `appstreamcli validate
+   --no-net`, on the copies inside `build-flatpak/files/share/` when they exist
+   and on `data/` otherwise. Successor to `data/meson.build:15-34`'s
+   `validate-desktop`/`validate-metainfo` tests. An invalid file fails the
+   stage; a *missing* validator reports `SKIP` with install instructions rather
+   than `ok`, because the stage did not actually run — silence there would be a
+   fake pass.
 
-Output contract: one line per stage to stdout, machine-greppable
-(`ok|FAIL|SKIP <stage>`); full tool output goes to `target/verify-logs/`
-(per-stage files) and only the tail is echoed on failure.
+Output contract: one machine-greppable line per stage to stdout — `### <stage>`,
+then `ok|FAIL|SKIP <stage>` — with sub-check lines indented so they never
+collide with it. Full tool output goes to `target/verify-logs/<stage>.log`;
+that file is written from the start of each stage so it can be tailed while a
+long stage runs, and only its tail is echoed on failure.
+
+**Read-only with respect to the repository.** Every stage writes only to
+gitignored paths (`target/`, `.flatpak-builder/`, `build-flatpak/`,
+`flatpak-repo/`). The script records `git status --porcelain` before and after
+and prints a warning if the two differ, because a verify script that leaves the
+tree dirty cannot be run in CI or before a commit.
+
+**SKIPs are not passes.** The summary names the skipped stages and says so
+explicitly; the script's exit status is non-zero only for real failures, so a
+green run with a SKIP is possible and is meant to be read as incomplete.
 
 ---
 
@@ -573,6 +614,56 @@ prints an actionable hint when no display is available. iced panics instead
 (N-01/N-02, task T-08), which would make level 3 fail by crashing rather than
 by reporting. Fix N-01 before relying on level 3.
 
+### 7.2a The implemented recipe (`scripts/smoke-test.sh`, T-17)
+
+Four sub-checks, each reported as `ok|FAIL|SKIP`:
+
+| Check | What it asserts | Level |
+| --- | --- | --- |
+| `cli-version` | `--version` exits 0 with `GameHandler X.Y.Z`, with no display | 3 |
+| `cli-list` | `--list` exits 0 with no display (D-12) | 3 |
+| `no-display-diagnostic` | the **GUI** path with neither display variable set prints a message and exits non-zero, with no panic (D-12a / N-01, N-02) | 3 |
+| `gui-stays-up` | under a display server, the GUI is still running after `--hold` seconds, printed no panic, and terminates on SIGTERM rather than hanging | 1 |
+
+Exit status: `0` all runnable checks passed · `1` at least one failed · `77`
+only the CLI checks ran because no display was available. The `77` case prints
+"NOT a pass: the GUI has not been exercised", and `verify.sh` reports it as
+`SKIP`, not `ok`. A `SKIP` can therefore never be mistaken for a green smoke
+test.
+
+**Measured facts about the sandbox and the host** (T-17, this machine):
+
+- **Neither `weston` nor `Xvfb` is present** — not on the host, and not in
+  `org.freedesktop.Sdk//25.08` (checked with `flatpak run --command=sh --devel
+  … -c 'command -v weston'`). They are not Flatpak apps on Flathub either. So
+  the "headless compositor on PATH" route needs an out-of-band install and is
+  *not* assumed. The script auto-detects both when they do exist, in that
+  order, and teardown is scoped to the process it started.
+- **The ambient session works and was used**: with `WAYLAND_DISPLAY=wayland-1`
+  the app stayed alive for the whole interval and terminated on SIGTERM. This
+  is the level-1 pass, on a real compositor.
+- **`flatpak build` does not inherit the manifest's sockets.** It assembles its
+  sandbox from explicit flags (`flatpak-build(1)`), so the two the app needs —
+  `--socket=wayland` and `--socket=fallback-x11` — are passed by the script.
+  Without them winit sees no socket even with `WAYLAND_DISPLAY` set.
+- **`--env` is needed too.** A socket alone is not enough: the display
+  variable must be forwarded explicitly with `--env=WAYLAND_DISPLAY=…`, because
+  the ambient value is not inherited.
+- **`--die-with-parent` matters.** In `build-dir` mode a killed `flatpak build`
+  wrapper otherwise leaves the sandboxed app running.
+- The script prefers `flatpak run com.goshapps.GameHandler` when the app is
+  installed (real sandbox, manifest finish-args) and falls back to
+  `flatpak build <dir>` so it also works on a build tree that was never
+  installed.
+
+**CI recipe.** Install `weston` (or `Xvfb`) in the CI image and run
+`scripts/smoke-test.sh`; no GPU, no Vulkan, no `/dev/dri`. Without one, run it
+with `--compositor 'CMD'` pointed at whatever display server the runner has.
+The `--app-cmd` flag exists so the failure path can be exercised on purpose:
+`--app-cmd /app/bin/7z` must fail with "exited … before the hold interval",
+and a fixture that stays alive while printing `panicked at` must fail with
+"alive but printed a panic". Both were verified.
+
 ### 7.3 Why this is now a much smaller risk
 
 This was written expecting "loader + ICD + compositor socket agreeing — three
@@ -593,11 +684,23 @@ smoke test can be trusted at any level.
 
 ## 8. Top packaging risks (for the code phase)
 
-1. **Transitive git deps drifting** (section 2.1): six git sources must stay
-   in `cargo-sources.json`; a libcosmic rev bump can add a seventh silently.
-   Mitigation: the freshness/git-presence check in `verify.sh` stage 4.
-2. **Headless-GPU CI flakiness** (section 7.3): loader/ICD/compositor recipe
-   must be pinned; fallbacks ranked and reported, never faked.
+1. **Transitive git deps drifting** (section 2.1): git sources must stay in
+   `cargo-sources.json`; a libcosmic rev bump can add one silently. Mitigation:
+   the freshness/git-presence check in `verify.sh` stage 6. **Updated at T-17:**
+   `Cargo.lock` now carries **11** distinct git URLs, not the six §2.1
+   predicted — `pop-os/cosmic-protocols`, `pop-os/freedesktop-icons`,
+   `pop-os/dbus-settings-bindings`, `wash2/accesskit`, `iced-rs/cryoglyph` and
+   `pop-os/libcosmic` (the six), plus `jackpot51/rust-atomicwrites`,
+   `pop-os/smithay-clipboard`, `pop-os/softbuffer`, `pop-os/window_clipboard`
+   and `pop-os/winit`. The check enumerates them from `Cargo.lock` rather than
+   from a hardcoded list, which is why it stays correct as the set grows.
+2. **Headless-GPU CI flakiness** (section 7.3): the loader/ICD question is
+   settled (there is none — software rendering, D-11); what remains is a
+   compositor. **Updated at T-17:** the recipe is pinned in §7.2a and works on
+   this host over the ambient session, but **no headless compositor is
+   available here or in the SDK**, so a CI box must install `weston` or
+   `Xvfb`. Without one the check SKIPs (exit 77) and says so — never a fake
+   green.
 3. **`--device` minimization vs controllers** (section 3): `dri`-only is the
    goal, `all` is the fallback; needs a real gamepad-through-launched-game
    test to close.
