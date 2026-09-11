@@ -43,6 +43,17 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 results = {}
 
+
+def _sha(path):
+    """SHA-256 of a fixture file.
+
+    `oracle.json` deliberately references its fixtures by name and hash rather
+    than embedding their contents: the byte-level fixtures are already written
+    alongside it, and duplicating them made the summary larger than everything
+    it summarised.
+    """
+    return __import__("hashlib").sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
 # ---------------------------------------------------------------- 1. from_dict
 # Adversarial Game.from_dict inputs -> normalized field values.
 from_dict_cases = {
@@ -95,7 +106,8 @@ def roundtrip(label, raw_text, is_library=True):
         "input": raw_text,
         "count": len(lib),
         "names": [g.name for g in lib.all()],
-        "output_bytes": out.read_text(encoding="utf-8"),
+        "out_file": out.name,
+        "out_sha256": _sha(out),
     }
 
 libcases = {
@@ -186,7 +198,7 @@ for label, data in settings_cases.items():
     out = OUT / f"settings_{label}.out.json"
     s.save(path=out)
     results["settings"][label] = {"input": data, "to_dict": s.to_dict(),
-                                  "output_bytes": out.read_text(encoding="utf-8")}
+                                  "out_file": out.name, "out_sha256": _sha(out)}
 # non-dict settings file
 p = OUT / "settings_notdict.in.json"
 p.write_text("[1,2,3]", encoding="utf-8")
@@ -216,7 +228,8 @@ lib.save()
 results["float_format"] = {
     "note": "Python's rendering of each f64 in save() output, plus the raw dumps() form",
     "cases": {label: {"value": repr(v), "json_dumps": json.dumps(v)} for label, v in float_cases},
-    "saved_bytes": out.read_text(encoding="utf-8"),
+    "out_file": out.name,
+    "out_sha256": _sha(out),
 }
 
 # Out-of-f64-range and huge-integer literals in the source file. Python accepts
@@ -246,6 +259,161 @@ for label, text in oob_cases.items():
         except Exception as exc:
             notes["sort_ok"] = f"{type(exc).__name__}: {exc}"
     results["out_of_range"][label] = notes
+
+# --------------------------------------- 7b. realistic timestamps and their bits
+# Added after the adversarial review found that the float fixtures below were
+# composed entirely of "nice" values that sit in serde_json's accurate range,
+# so they could not catch its 1-ULP f64 reader error on real data. These are
+# seeded random *realistic* timestamps plus their exact IEEE-754 bit patterns,
+# which is the only thing that pins the decode path.
+import random, struct
+# 300 is ample: serde_json's default reader errs on ~15-20% of realistic
+# timestamps, so P(a buggy port matches all 300) is below 1e-20. Keeping the
+# corpus small keeps the committed fixtures small -- each entry is a full
+# 31-field Game, so the cost is linear in the count.
+_rng = random.Random(0x6772_6864)  # fixed seed: the fixture must not move
+_ts = [_rng.uniform(1.5e9, 2.0e9) for _ in range(300)]
+_realistic = [{"id": "%032x" % i, "name": "ts%04d" % i, "added": v, "last_played": v}
+              for i, v in enumerate(_ts)]
+p = OUT / "floats_roundtrip.in.json"
+p.write_text(json.dumps(_realistic, indent=2), encoding="utf-8")
+_lib = Library(path=p)
+out = OUT / "floats_roundtrip.out.json"
+_lib.path = out
+_lib.save()
+results["float_roundtrip"] = {
+    "note": (
+        "Realistic time.time()-shaped values. serde_json's DEFAULT f64 reader is "
+        "1 ULP wrong on a large fraction of these; `float_roundtrip` fixes it. A "
+        "correct port re-saves these bytes unchanged. Compare BITS, not decimals."
+    ),
+    "count": len(_ts),
+    "expected_bits_be_hex": [struct.pack(">d", v).hex() for v in _ts],
+    "in_file": "floats_roundtrip.in.json",
+    "out_file": "floats_roundtrip.out.json",
+    "out_sha256": _sha(out),
+    "out_sha256_note": "regression guard; the byte-level check reads out_file",
+}
+
+# ---------------------------------------------- 7c. wrong-typed / hostile fields
+# Only `added`/`last_played` are validated by from_dict; every other field is
+# stored as-is. `{"name": 123}` is MORE reachable than the null-timestamp bug:
+# it takes the library view down at the DEFAULT sort, with no setting change.
+# NOTE: each body must be a JSON *list* of objects. Library.load rejects a bare
+# dict as "not a list" and yields an empty library, so a missing [ ] here would
+# silently produce a fixture that tests nothing (this happened once).
+#
+# The fourth element records whether the entry is expected to SURVIVE loading.
+# `name: null` does not: `if game.name:` is falsy for None, so the entry is
+# dropped. That is real behaviour and worth pinning, but it means "loaded
+# nothing" is not by itself a sign of a broken fixture — hence the flag.
+_typed = [
+    ("name_is_int", '[{"id": "%s", "name": 123}]' % ("a"*32), "a"*32, True),
+    ("name_is_null", '[{"id": "%s", "name": null}]' % ("b"*32), "b"*32, False),
+    ("name_is_list", '[{"id": "%s", "name": ["x"]}]' % ("c"*32), "c"*32, True),
+    ("appid_is_str", '[{"id": "%s", "name": "G", "steam_appid": "42"}]' % ("d"*32), "d"*32, True),
+    ("appid_huge", '[{"id": "%s", "name": "G", "steam_appid": %d}]' % ("e"*32, 10**40), "e"*32, True),
+    ("appid_inf", '[{"id": "%s", "name": "G", "steam_appid": Infinity}]' % ("f"*32), "f"*32, True),
+    ("category_is_int", '[{"id": "%s", "name": "G", "category": 42}]' % ("1"*32), "1"*32, True),
+    ("exe_path_is_null", '[{"id": "%s", "name": "G", "exe_path": null}]' % ("2"*32), "2"*32, True),
+    ("toggles_are_str", '[{"id": "%s", "name": "G", "mangohud": "yes"}]' % ("3"*32), "3"*32, True),
+]
+results["wrong_types"] = {}
+for label, text, gid, expect_survives in _typed:
+    p = OUT / f"wrongtype_{label}.in.json"
+    p.write_text(text, encoding="utf-8")
+    lib = Library(path=p)
+    game = lib.get(gid)
+    # A fixture that loads nothing when the entry was expected to survive means
+    # the body is malformed and the case would silently assert nothing.
+    assert (game is not None) == expect_survives, (
+        f"fixture {label}: expected survives={expect_survives}, got {game is not None}: {text!r}"
+    )
+    notes = {"count": len(lib), "entry_survives": game is not None}
+    if game is not None:
+        notes["stored"] = {
+            k: f"{type(v).__name__}:{v!r}" if not isinstance(v, (int, float, bool))
+            else repr(v)
+            for k, v in [("name", game.name), ("steam_appid", game.steam_appid),
+                         ("category", game.category), ("exe_path", game.exe_path),
+                         ("mangohud", game.mangohud)]
+        }
+        # Which sorts survive? This is the user-visible consequence.
+        notes["sorts"] = {}
+        for mode in SORT_MODES:
+            try:
+                lib.all(sort=mode)
+                notes["sorts"][mode] = "ok"
+            except Exception as exc:
+                notes["sorts"][mode] = f"{type(exc).__name__}: {exc}"
+    results["wrong_types"][label] = notes
+
+# ------------------------------------- 7d. encoding, BOM, dup keys, nesting, link
+def _probe(label, raw_bytes, ident=None, as_settings=False):
+    p = OUT / f"{label}.in.json"
+    p.write_bytes(raw_bytes)
+    notes = {}
+    if as_settings:
+        try:
+            notes["settings_default"] = Settings.load(path=p).to_dict()["color_scheme"]
+        except Exception as exc:
+            notes["settings_raised"] = f"{type(exc).__name__}: {exc}"
+    else:
+        try:
+            lib = Library(path=p)
+            notes["count"] = len(lib)
+            notes["names"] = [g.name for g in lib.all()]
+            out = OUT / f"{label}.out.json"
+            lib.path = out
+            lib.save()
+            notes["out_file"] = out.name
+            notes["out_sha256"] = _sha(out)
+        except Exception as exc:
+            notes["raised"] = f"{type(exc).__name__}: {exc}"
+    return notes
+
+_ident = ("a"*32)
+deep_body = '[{"id": "%s", "name": "Deep", "junk": %s}, {"id": "%s", "name": "Sib"}]' % (
+    "b"*32, "["*1000 + "]"*1000, "c"*32)
+results["encoding_and_shape"] = {
+    # Python catches UnicodeDecodeError in Library.load but NOT in Settings.load.
+    # The settings asymmetry is a startup crash in the Python app (bridge.py
+    # calls Settings.load in Backend.__init__); the port must not copy it.
+    "bad_utf8_library": _probe("bad_utf8_library",
+                               b'[{"id": "' + b'd'*32 + b'", "name": "Bad\xff"}]'),
+    "bad_utf8_settings": _probe("bad_utf8_settings",
+                                b'{"color_scheme": "dark"\xff}', as_settings=True),
+    # BOM: Python rejects -> empty library -> the NEXT save() writes "[]" over
+    # the user's file. Data loss in both implementations; pinned so the port is
+    # not made *worse* than the original.
+    "bom": _probe("bom", b'\xef\xbb\xbf[{"id": "' + b'e'*32 + b'", "name": "X"}]'),
+    # Duplicate JSON *keys* (not duplicate ids): Python keeps the last. A typed
+    # serde derive would error here, so parsing via Value first is load-bearing.
+    "duplicate_keys": _probe("duplicate_keys",
+                             b'[{"id": "' + b'f'*32 + b'", "name": "first", "name": "second"}]'),
+    # Nesting: Python handles 50k deep. serde_json's recursion limit is 128.
+    "deep_nesting": _probe("deep_nesting", deep_body.encode()),
+}
+
+# Save replaces a symlink rather than following it, so the link is destroyed and
+# the original target keeps stale content. Python behaves this way; pinned so
+# the port is not *newer* than the original in a surprising direction.
+_sym = OUT / "symlink_target.json"
+_sym.write_text("[]", encoding="utf-8")
+_link = OUT / "symlink.in.json"
+if _link.is_symlink() or _link.exists():
+    _link.unlink()
+_link.symlink_to(_sym)
+_lib = Library(path=_link)
+# Explicit id: Game's default_factory is uuid4, which would make this fixture
+# differ on every run (caught by the two-run determinism check).
+_lib.add(Game(id="9" * 32, name="Through the link"))
+results["symlink_save"] = {
+    "note": "save() writes target.with_suffix('.json.tmp') then replace(path)",
+    "link_still_symlink_after_save": _link.is_symlink(),
+    "target_bytes": _sym.read_text(encoding="utf-8"),
+    "link_bytes": _link.read_text(encoding="utf-8"),
+}
 
 # ------------------------------------------------- 8. where Rust must DIVERGE
 # Everything above is behaviour the Rust port must reproduce. This section is

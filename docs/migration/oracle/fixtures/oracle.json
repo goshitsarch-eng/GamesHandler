@@ -650,19 +650,22 @@
       "input": "[]",
       "count": 0,
       "names": [],
-      "output_bytes": "[]"
+      "out_file": "empty_file.out.json",
+      "out_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     },
     "not_a_list": {
       "input": "{\"name\": \"oops\"}",
       "count": 0,
       "names": [],
-      "output_bytes": "[]"
+      "out_file": "not_a_list.out.json",
+      "out_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     },
     "malformed": {
       "input": "{not json at all",
       "count": 0,
       "names": [],
-      "output_bytes": "[]"
+      "out_file": "malformed.out.json",
+      "out_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     },
     "nan_values": {
       "input": "[{\"id\": \"pppppppppppppppppppppppppppppppp\", \"name\": \"NaN game\", \"added\": NaN, \"last_played\": Infinity}]",
@@ -670,7 +673,8 @@
       "names": [
         "NaN game"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"NaN game\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"pppppppppppppppppppppppppppppppp\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
+      "out_file": "nan_values.out.json",
+      "out_sha256": "915f3d7a23d13a777f93287f06c4e2c6d1a4f25cac5e59fe4638990b6ecfc81d"
     },
     "non_dict_entries": {
       "input": "[\"a string\", 42, null, {\"id\": \"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\", \"name\": \"Real\"}]",
@@ -678,7 +682,8 @@
       "names": [
         "Real"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Real\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
+      "out_file": "non_dict_entries.out.json",
+      "out_sha256": "90fc82407aba6efde32d39c247065bcfe6c5947401250f334494388ec7e2bc24"
     },
     "empty_name": {
       "input": "[{\"id\": \"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\", \"name\": \"\"}, {\"id\": \"ssssssssssssssssssssssssssssssss\", \"name\": \"Kept\"}]",
@@ -686,7 +691,8 @@
       "names": [
         "Kept"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Kept\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"ssssssssssssssssssssssssssssssss\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
+      "out_file": "empty_name.out.json",
+      "out_sha256": "6969fc5994e8f9ca28eb616e774d00d2e85edf20991a3e3ef4b3d613e17297bc"
     },
     "duplicate_ids": {
       "input": "[{\"id\": \"tttttttttttttttttttttttttttttttt\", \"name\": \"First\"}, {\"id\": \"tttttttttttttttttttttttttttttttt\", \"name\": \"Second\"}]",
@@ -694,7 +700,8 @@
       "names": [
         "Second"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Second\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"tttttttttttttttttttttttttttttttt\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
+      "out_file": "duplicate_ids.out.json",
+      "out_sha256": "c328b52b86cde622298c71567afca5e979b330b705b5c87c0b86878b4d11e7b3"
     },
     "unicode_out": {
       "input": "[{\"id\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\", \"name\": \"Pok\u00e9mon \u2014 \u2713\", \"category\": \"\u65e5\u672c\u8a9e\"}]",
@@ -702,7 +709,8 @@
       "names": [
         "Pok\u00e9mon \u2014 \u2713"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Pok\\u00e9mon \\u2014 \\u2713\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"\\u65e5\\u672c\\u8a9e\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
+      "out_file": "unicode_out.out.json",
+      "out_sha256": "c427977945888ca2540eff74e9268778a3d1a6a3e5f2192329d812a683ff5e0b"
     },
     "blank_category": {
       "input": "[{\"id\": \"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\", \"name\": \"A\", \"category\": \"  \"}, {\"id\": \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\", \"name\": \"B\", \"category\": \"RPG\"}]",
@@ -711,13 +719,15 @@
         "A",
         "B"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"A\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"  \",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"B\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"RPG\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
+      "out_file": "blank_category.out.json",
+      "out_sha256": "4035b608fb5b2ffedee09a3978a9a1e86ba3f056de708e5856e403998bd6f24f"
     },
     "trailing_garbage": {
       "input": "[{\"id\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\", \"name\": \"X\"}] trailing",
       "count": 0,
       "names": [],
-      "output_bytes": "[]"
+      "out_file": "trailing_garbage.out.json",
+      "out_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     }
   },
   "sorting": {
@@ -826,7 +836,8 @@
         "default_virtual_desktop": false,
         "close_on_launch": false
       },
-      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+      "out_file": "settings_clean.out.json",
+      "out_sha256": "7ccb4eadd1d28a630fde62915f1407c34804ed2803af1772517a31f5bd0eae07"
     },
     "bad_scheme": {
       "input": {
@@ -852,7 +863,8 @@
         "default_virtual_desktop": false,
         "close_on_launch": false
       },
-      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+      "out_file": "settings_bad_scheme.out.json",
+      "out_sha256": "7ccb4eadd1d28a630fde62915f1407c34804ed2803af1772517a31f5bd0eae07"
     },
     "bad_view": {
       "input": {
@@ -878,7 +890,8 @@
         "default_virtual_desktop": false,
         "close_on_launch": false
       },
-      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+      "out_file": "settings_bad_view.out.json",
+      "out_sha256": "7ccb4eadd1d28a630fde62915f1407c34804ed2803af1772517a31f5bd0eae07"
     },
     "bad_sort": {
       "input": {
@@ -904,7 +917,8 @@
         "default_virtual_desktop": false,
         "close_on_launch": false
       },
-      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+      "out_file": "settings_bad_sort.out.json",
+      "out_sha256": "7ccb4eadd1d28a630fde62915f1407c34804ed2803af1772517a31f5bd0eae07"
     },
     "unknown_key": {
       "input": {
@@ -931,7 +945,8 @@
         "default_virtual_desktop": false,
         "close_on_launch": false
       },
-      "output_bytes": "{\n  \"color_scheme\": \"light\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+      "out_file": "settings_unknown_key.out.json",
+      "out_sha256": "f3768201dc6753523f4e11a2fae1a479e9d59e239ee14b3696fd9ded2c8cdb3e"
     },
     "null_scheme": {
       "input": {
@@ -957,7 +972,8 @@
         "default_virtual_desktop": false,
         "close_on_launch": false
       },
-      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+      "out_file": "settings_null_scheme.out.json",
+      "out_sha256": "7ccb4eadd1d28a630fde62915f1407c34804ed2803af1772517a31f5bd0eae07"
     },
     "all_defaults": {
       "input": {
@@ -983,7 +999,8 @@
         "default_virtual_desktop": false,
         "close_on_launch": false
       },
-      "output_bytes": "{\n  \"color_scheme\": \"dark\",\n  \"view_mode\": \"grid\",\n  \"sort_mode\": \"name\",\n  \"default_runner\": \"wine-system\",\n  \"default_mangohud\": false,\n  \"default_gamemode\": false,\n  \"default_prefer_sdl\": false,\n  \"default_esync\": true,\n  \"default_fsync\": true,\n  \"default_dxvk\": true,\n  \"default_vkd3d\": true,\n  \"default_nvapi\": false,\n  \"default_fsr\": false,\n  \"default_battleye\": true,\n  \"default_eac\": true,\n  \"default_gamescope\": false,\n  \"default_virtual_desktop\": false,\n  \"close_on_launch\": false\n}"
+      "out_file": "settings_all_defaults.out.json",
+      "out_sha256": "7ccb4eadd1d28a630fde62915f1407c34804ed2803af1772517a31f5bd0eae07"
     },
     "not_a_dict": {
       "to_dict": {
@@ -1068,7 +1085,8 @@
         "json_dumps": "100.0"
       }
     },
-    "saved_bytes": "[\n  {\n    \"name\": \"exp_single_digit\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000000\",\n    \"added\": 1e-07,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"exp_single_digit_pos\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000001\",\n    \"added\": 10000000.0,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"exp_two_digit\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000002\",\n    \"added\": 1e-10,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"exp_two_digit_pos\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000003\",\n    \"added\": 1e+23,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"frac\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000006\",\n    \"added\": 0.30000000000000004,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"int_precision_limit\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"0000000000000000000000000000000a\",\n    \"added\": 9007199254740992.0,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"max_f64\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000008\",\n    \"added\": 1e+308,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"min_subnormal\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000009\",\n    \"added\": 5e-324,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"small_whole\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"0000000000000000000000000000000d\",\n    \"added\": 100.0,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"third\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000007\",\n    \"added\": 0.3333333333333333,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"typical_ts\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"0000000000000000000000000000000b\",\n    \"added\": 1700000000.5,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"whole_large\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000004\",\n    \"added\": 1e+16,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"whole_large2\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000005\",\n    \"added\": 1e+17,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"zero\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"0000000000000000000000000000000c\",\n    \"added\": 0.0,\n    \"last_played\": 0.0\n  }\n]"
+    "out_file": "floats.out.json",
+    "out_sha256": "19cb0a468df735e656445d87c2038df330e467c09f13aa75921e94a2e7ecb5a5"
   },
   "out_of_range": {
     "overflow_to_inf": {
@@ -1106,6 +1124,490 @@
       "last_played": "0.0",
       "sort_ok": true
     }
+  },
+  "float_roundtrip": {
+    "note": "Realistic time.time()-shaped values. serde_json's DEFAULT f64 reader is 1 ULP wrong on a large fraction of these; `float_roundtrip` fixes it. A correct port re-saves these bytes unchanged. Compare BITS, not decimals.",
+    "count": 300,
+    "expected_bits_be_hex": [
+      "41db5ca8f13f3df5",
+      "41db6167ea0c8850",
+      "41d8f95444674b4f",
+      "41db3f6d89585b4e",
+      "41da24ad8a78a99e",
+      "41da916b28959ad2",
+      "41daede9a544e890",
+      "41dab96957d5e832",
+      "41d762efac33b3ee",
+      "41dda8b98763c34b",
+      "41db940da4ea0188",
+      "41dd7378f3f6ff0c",
+      "41dd325ab210705e",
+      "41dd2671028971a2",
+      "41dd96af092180a0",
+      "41d77c117f2f6dfc",
+      "41dd353de10b5b6f",
+      "41dcbcdebfd97d48",
+      "41da660be4878739",
+      "41dab100fd4e7ab0",
+      "41dc9a03945dba68",
+      "41db04eb0c43e3b1",
+      "41d690d4d26e5c62",
+      "41d7efd89cdab29f",
+      "41dd33408311edf6",
+      "41dcc655a9739bb2",
+      "41da199ad03bea7a",
+      "41dbc217117540e5",
+      "41dbdfa54a5519de",
+      "41d75602591911f6",
+      "41d879ea6f6d1bbe",
+      "41db589061aaf8ea",
+      "41dcc12c46bae092",
+      "41da454f6df602c0",
+      "41d938e00c135aa5",
+      "41d68f76c0e3b994",
+      "41dbe287f3469596",
+      "41d7a47fecf51b67",
+      "41da84dc2d4d569e",
+      "41dac0014041ecb0",
+      "41ddb6f7c17b75d4",
+      "41d89d4962f3cf8d",
+      "41d7d17159987145",
+      "41d992fd324e7884",
+      "41da60e26a5edab8",
+      "41da14568eb66d95",
+      "41db5d0ed05442da",
+      "41dd8705b806f226",
+      "41d8cef4888a7574",
+      "41d90a599aa51a33",
+      "41db477d5f3b6331",
+      "41da4ebd700b4024",
+      "41dace1def0199fb",
+      "41dd0fa75ededdc4",
+      "41d75d5dcd488f0f",
+      "41d8f0a04e84bdbb",
+      "41dca8e3ac984ad3",
+      "41d9332ec6a74765",
+      "41dc05d828e21732",
+      "41dd74f930c9c8ef",
+      "41dbf15e9e095846",
+      "41db0f6c943ea878",
+      "41dd668ea6b4e263",
+      "41d994560c2e15d2",
+      "41dc2f830b481872",
+      "41da9135660434b2",
+      "41db55eaa230e2b0",
+      "41d72dc363d93da3",
+      "41dd37bd7b1361bb",
+      "41d91ebdbf03cf04",
+      "41dbe10efc78e27c",
+      "41d9cdbbd1c7c820",
+      "41d7c794828a284c",
+      "41d6ec94f8e2b978",
+      "41d71bd8fba3810d",
+      "41d6ff6d1b97d326",
+      "41d9e0f6cc677693",
+      "41d7deceb4b8d58f",
+      "41d93e7b2e684c24",
+      "41db84e343eff6f6",
+      "41d7538109b2cce1",
+      "41db5b3d93bacad0",
+      "41ddb72198690856",
+      "41da0fd1710f630b",
+      "41dc7dbf688b03f3",
+      "41dac335326ca644",
+      "41db0c9859502f82",
+      "41dd2c867fc8d45b",
+      "41d7cb9f11c6168b",
+      "41dabe7b03f1ac2c",
+      "41da199728d7e776",
+      "41d810b79f667584",
+      "41d9c7d7b01426a7",
+      "41dc10c5af40a922",
+      "41d6c78fbf870b2e",
+      "41d6e737a5f48b9e",
+      "41daa6f0eedfee7b",
+      "41d70586b35db074",
+      "41dbcbc9751de30e",
+      "41dce0cb59ee5a90",
+      "41d8f6157bc17876",
+      "41d661233569adff",
+      "41da7018a5cceaff",
+      "41d9efa5aba1b70d",
+      "41d94bb6e05b09a0",
+      "41da04ce4e8dcf1c",
+      "41d81148d2914df2",
+      "41dd5149c0ddf21a",
+      "41dc60426db95fe8",
+      "41d9aed7b4eb7669",
+      "41d6868d1de51dba",
+      "41dc6c0fbfba9104",
+      "41dcb24dd0d74ee7",
+      "41dbbdcbc4675450",
+      "41dcd2174ff6c24d",
+      "41d80767ea72adc6",
+      "41d8602350a92d2b",
+      "41dc5ad257628e45",
+      "41db189bf3175b1c",
+      "41d886d65b3fd380",
+      "41d95708743823ff",
+      "41da5970c791da32",
+      "41d8bd34da46ebf6",
+      "41d6a6a71e25e067",
+      "41d6b1330a44e824",
+      "41d8ac9a85c0a8cf",
+      "41d90cca6acb6f5a",
+      "41dcbfde3ba5e397",
+      "41db1e9dcb8df6f1",
+      "41db15e6630a16c8",
+      "41d7578b1843d6ac",
+      "41da6ac565c55727",
+      "41d9c512b4206c12",
+      "41dd30447ff8c4d8",
+      "41d974ccbce6f960",
+      "41dba9e9a93f296e",
+      "41dbd883a35f327f",
+      "41dc1a2b7ff9e12a",
+      "41dd6b8c5957b79f",
+      "41dcaf37b8daeb0f",
+      "41d70646a7e5e1ff",
+      "41d96ed9c1c9a7fb",
+      "41da7cccfbbdad7a",
+      "41d91dad384b3532",
+      "41dd7b5c3b492cc9",
+      "41d74099cd656aff",
+      "41da051677a41142",
+      "41d8e88218d1d2da",
+      "41dc8459452203e6",
+      "41d70ac394e2ebaf",
+      "41d6bdd9eb715e17",
+      "41d70af4a5c36ee3",
+      "41daba6ac47f17c2",
+      "41d8d1917d16b356",
+      "41dcfc751468ca88",
+      "41d89c30cb9e50d4",
+      "41d6918dbe67ddf1",
+      "41d8670bc35801d0",
+      "41d9834652cddb03",
+      "41d6d6f40b84b326",
+      "41d73810a0dc9e36",
+      "41dc2e2d41a009d2",
+      "41dab2922a4764f6",
+      "41d8acd89d33b413",
+      "41d8751fab0d7b51",
+      "41da38df2889bc46",
+      "41da8ea0d3c8ff25",
+      "41dc282972bb6bf2",
+      "41d6b7679e8316e9",
+      "41d925cbbb621a86",
+      "41d8719f39c113ab",
+      "41dbe8caab52c41a",
+      "41d6c96219764a91",
+      "41da10a87312a57b",
+      "41d8d10bc5f83e4c",
+      "41dbabd212641120",
+      "41d7df85fe029781",
+      "41dc95b4170e94ca",
+      "41dbd63f4a61fbe4",
+      "41d91ca3136ee170",
+      "41d853aa6507deb8",
+      "41da78effc094d9d",
+      "41d82d83c3ee4f76",
+      "41db4371e05a7ca2",
+      "41da657b44f19a5c",
+      "41dac93d484abf59",
+      "41d7d46f5fde1f03",
+      "41dd73ef69659d3c",
+      "41d6a61be15841e3",
+      "41dd6cf1267fee06",
+      "41dd3adec794f0fe",
+      "41dd067a2b1915aa",
+      "41d86476035f0ade",
+      "41d7ad3b38246157",
+      "41dadaaa563a9e9e",
+      "41d967e811e26f8f",
+      "41d98761a9c07372",
+      "41daa6d078e569b5",
+      "41db168104b8e6a3",
+      "41dacee6bf4db9c5",
+      "41d948daf01e23b4",
+      "41d85a55f36d0f12",
+      "41dba88e8ce07d52",
+      "41daef056b106023",
+      "41d8e154b6805069",
+      "41dbcd533d299f7b",
+      "41db71303b08acb3",
+      "41dc01c2b82121da",
+      "41d80eae6dbbafa1",
+      "41daac3e4f96d6dc",
+      "41dd007c77f4704c",
+      "41d6e6778f3134de",
+      "41d817944d6cfe5d",
+      "41dda06a11a7c405",
+      "41dd5523295d1b34",
+      "41db0b7ddef476b2",
+      "41dbbba246d882a2",
+      "41db7eb20313d569",
+      "41d6d1f2d46ce7ce",
+      "41d67159d30c711e",
+      "41d95cadfd01323d",
+      "41dbc19b13808a91",
+      "41d827f83b90364c",
+      "41ddbaa36ce8bbe9",
+      "41d856b3b4ba5773",
+      "41d7ce8693a0ccf1",
+      "41d6ceb5271f2ef6",
+      "41d78b7acc0cfe1a",
+      "41dbee31db61a71e",
+      "41d92ac0d7b34876",
+      "41dbeacff4f256fa",
+      "41dab8382b0f7ead",
+      "41db93b804ab4c11",
+      "41db9975bededc82",
+      "41d8c2add6b78a0a",
+      "41dae4a9340b7156",
+      "41db24d330f8ac01",
+      "41ddb85ab52993b3",
+      "41d6ee571122502c",
+      "41d89a04c47cd5c9",
+      "41d84f56ba513b89",
+      "41d79d0e0d0d4fdf",
+      "41d69c027f5d619c",
+      "41da4456cb52c632",
+      "41dd816ca9369806",
+      "41d7954ca5c5e26e",
+      "41dd7d62eaf65c7a",
+      "41ddc277ba97b06e",
+      "41da1f54b0870d51",
+      "41d8fa46f0cba15b",
+      "41d7de2df8e22499",
+      "41db0019d8578f82",
+      "41d9f2eaa77d99dd",
+      "41d6c5f27d3de517",
+      "41d8c2193c9c3b94",
+      "41dc60558c346e08",
+      "41d709405e2009ed",
+      "41dca1caed5f3627",
+      "41d756830d4834eb",
+      "41d91dc5fdb6631b",
+      "41d8ab116c086ba3",
+      "41dd38fdf4207f05",
+      "41d7a6f28f0069e3",
+      "41dbd2e962eabbed",
+      "41d897e0e52ed22c",
+      "41dc0716b1d74eac",
+      "41d79c74bd82879a",
+      "41db1c38a0e43972",
+      "41dba69d7b4abb4a",
+      "41d76cabcc63c321",
+      "41d910fae03f5c98",
+      "41d8cfb691e49297",
+      "41d72fa62385dec9",
+      "41da477168813e6b",
+      "41d846022373c6c1",
+      "41d7a764fe254785",
+      "41dafb16a492c300",
+      "41d763f41c5cdded",
+      "41d6b0605cdf6b3b",
+      "41db4a1b20b29de9",
+      "41daf7e4b812b935",
+      "41d8d09f6aa20591",
+      "41d9903514c34ccc",
+      "41dd9c017da0057a",
+      "41d7110c0dcf35ca",
+      "41d77dc8278d4099",
+      "41d9e5c7a7c5971f",
+      "41dbce759471a10d",
+      "41da638e32370f60",
+      "41dba34ec332430c",
+      "41da9cd666b5a2f4",
+      "41dbd4b1274a6816",
+      "41d8690131e6d41b",
+      "41d92b6fbc212a8c",
+      "41d8a4014f42ca3c",
+      "41d78783d49f9d5c",
+      "41dbfdeef8075bbd",
+      "41d9a1b1657ccd60",
+      "41d9b690b35dd6db",
+      "41d905a0adae45df"
+    ],
+    "in_file": "floats_roundtrip.in.json",
+    "out_file": "floats_roundtrip.out.json",
+    "out_sha256": "903bef5e948fa92f8519993fd822d2c017a1a795c86b50d65fdabe3fff07e52d",
+    "out_sha256_note": "regression guard; the byte-level check reads out_file"
+  },
+  "wrong_types": {
+    "name_is_int": {
+      "count": 1,
+      "entry_survives": true,
+      "stored": {
+        "name": "123",
+        "steam_appid": "0",
+        "category": "str:'Uncategorized'",
+        "exe_path": "str:''",
+        "mangohud": "False"
+      },
+      "sorts": {
+        "name": "AttributeError: 'int' object has no attribute 'lower'",
+        "recent": "AttributeError: 'int' object has no attribute 'lower'",
+        "added": "AttributeError: 'int' object has no attribute 'lower'"
+      }
+    },
+    "name_is_null": {
+      "count": 0,
+      "entry_survives": false
+    },
+    "name_is_list": {
+      "count": 1,
+      "entry_survives": true,
+      "stored": {
+        "name": "list:['x']",
+        "steam_appid": "0",
+        "category": "str:'Uncategorized'",
+        "exe_path": "str:''",
+        "mangohud": "False"
+      },
+      "sorts": {
+        "name": "AttributeError: 'list' object has no attribute 'lower'",
+        "recent": "AttributeError: 'list' object has no attribute 'lower'",
+        "added": "AttributeError: 'list' object has no attribute 'lower'"
+      }
+    },
+    "appid_is_str": {
+      "count": 1,
+      "entry_survives": true,
+      "stored": {
+        "name": "str:'G'",
+        "steam_appid": "str:'42'",
+        "category": "str:'Uncategorized'",
+        "exe_path": "str:''",
+        "mangohud": "False"
+      },
+      "sorts": {
+        "name": "ok",
+        "recent": "ok",
+        "added": "ok"
+      }
+    },
+    "appid_huge": {
+      "count": 1,
+      "entry_survives": true,
+      "stored": {
+        "name": "str:'G'",
+        "steam_appid": "10000000000000000000000000000000000000000",
+        "category": "str:'Uncategorized'",
+        "exe_path": "str:''",
+        "mangohud": "False"
+      },
+      "sorts": {
+        "name": "ok",
+        "recent": "ok",
+        "added": "ok"
+      }
+    },
+    "appid_inf": {
+      "count": 1,
+      "entry_survives": true,
+      "stored": {
+        "name": "str:'G'",
+        "steam_appid": "inf",
+        "category": "str:'Uncategorized'",
+        "exe_path": "str:''",
+        "mangohud": "False"
+      },
+      "sorts": {
+        "name": "ok",
+        "recent": "ok",
+        "added": "ok"
+      }
+    },
+    "category_is_int": {
+      "count": 1,
+      "entry_survives": true,
+      "stored": {
+        "name": "str:'G'",
+        "steam_appid": "0",
+        "category": "42",
+        "exe_path": "str:''",
+        "mangohud": "False"
+      },
+      "sorts": {
+        "name": "ok",
+        "recent": "ok",
+        "added": "ok"
+      }
+    },
+    "exe_path_is_null": {
+      "count": 1,
+      "entry_survives": true,
+      "stored": {
+        "name": "str:'G'",
+        "steam_appid": "0",
+        "category": "str:'Uncategorized'",
+        "exe_path": "NoneType:None",
+        "mangohud": "False"
+      },
+      "sorts": {
+        "name": "ok",
+        "recent": "ok",
+        "added": "ok"
+      }
+    },
+    "toggles_are_str": {
+      "count": 1,
+      "entry_survives": true,
+      "stored": {
+        "name": "str:'G'",
+        "steam_appid": "0",
+        "category": "str:'Uncategorized'",
+        "exe_path": "str:''",
+        "mangohud": "str:'yes'"
+      },
+      "sorts": {
+        "name": "ok",
+        "recent": "ok",
+        "added": "ok"
+      }
+    }
+  },
+  "encoding_and_shape": {
+    "bad_utf8_library": {
+      "count": 0,
+      "names": [],
+      "out_file": "bad_utf8_library.out.json",
+      "out_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "bad_utf8_settings": {
+      "settings_raised": "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 23: invalid start byte"
+    },
+    "bom": {
+      "count": 0,
+      "names": [],
+      "out_file": "bom.out.json",
+      "out_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "duplicate_keys": {
+      "count": 1,
+      "names": [
+        "second"
+      ],
+      "out_file": "duplicate_keys.out.json",
+      "out_sha256": "ec12abc73ce3bf01845aa95d293fd94742547e23bbef12f07fcab6bcd3a806cf"
+    },
+    "deep_nesting": {
+      "count": 2,
+      "names": [
+        "Deep",
+        "Sib"
+      ],
+      "out_file": "deep_nesting.out.json",
+      "out_sha256": "fc60bbb5a6bdf62bf76284ec243e72ee2965900dee2f953745d19e1dc5222f4d"
+    }
+  },
+  "symlink_save": {
+    "note": "save() writes target.with_suffix('.json.tmp') then replace(path)",
+    "link_still_symlink_after_save": false,
+    "target_bytes": "[]",
+    "link_bytes": "[\n  {\n    \"name\": \"Through the link\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"99999999999999999999999999999999\",\n    \"added\": 1700000000.0,\n    \"last_played\": 0.0\n  }\n]"
   },
   "rust_divergences": {
     "note": "Cases where the Rust port MUST NOT match the Python result recorded elsewhere in this file. Each entry names the governing decision.",
