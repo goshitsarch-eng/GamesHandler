@@ -199,6 +199,248 @@ Current shortcuts (`Main.qml:121-143`, cheat-sheet `SettingsPage.qml:132-135`):
 
 ---
 
+## 12. Metadata and branding decisions (T-18)
+
+Everything in this section was settled against the real tools (`desktop-file-validate`,
+`appstreamcli validate`, the pinned libcosmic/iced sources, and a standalone decode
+probe against `image` 0.25.10 at the pinned feature set). Where a claim comes from a
+source trace, the file and line are given; where it comes from a measurement, the
+measurement is given, because "it validates" is not evidence that an entry *means*
+anything — see 12.3 for the case where it means nothing.
+
+### 12.1 Desktop entry (`data/com.goshapps.GameHandler.desktop`)
+
+**Question.** The entry read `Categories=Qt;KDE;Game;`, which registers the app as a
+Qt/KDE application. The libcosmic build links neither.
+
+**Observed.** `desktop-file-validate` accepts `Qt;KDE;Game;` silently, so this was
+wrong-but-validated. It *does* check categories: changing one to `BogusCategory`
+produces `error: … contains an unregistered value "BogusCategory"` plus
+`hint: … does not contain a registered main category`, exit 1. `Game` is a registered
+main category, so `Categories=Game;` validates with no hint at all.
+
+**Options considered.**
+1. `Categories=Game;` — drop the toolkit tags, keep the app category.
+2. `Categories=Utility;Game;` — a manager is arguably a utility, not a game.
+3. Add `Qt;KDE;` back for menu placement — the reason they were there.
+
+**Choice.** Option 1.
+
+**Why.** The desktop file must not name a toolkit the binary does not link (that is the
+registration `test_packaging.py`'s identity contract has no opinion on, but a reviewer
+would). `Game` is both a registered main category and the category the application's
+*own* generated shortcuts use (`runners.py:1467`), so the app and its shortcuts appear
+in the same menu section — that consistency is worth more than the menu-placement
+argument for `Utility;`, which would split them. The search surface is
+`Keywords=Wine;Proton;Windows;Games;Emulation;`, unchanged.
+
+### 12.2 Window class identity (`StartupWMClass`)
+
+**Question.** Does the libcosmic window set a `WM_CLASS`/`app_id` that a shell can
+associate with the desktop entry?
+
+**Observed (source trace, not assumption).** `libcosmic/src/app/mod.rs:70` sets
+`window_settings.platform_specific.application_id = App::APP_ID.to_string()`, and
+`iced/winit/src/conversion.rs:202,213` pass that same string to
+`WindowAttributesX11::with_name(class, instance)` and
+`WindowAttributesWayland::with_name(...)`, with no case folding or transformation. So
+both the X11 `WM_CLASS` (class *and* instance) and the Wayland `app_id` are exactly
+`App::APP_ID`, which is `com.goshapps.GameHandler` (`crates/core/src/lib.rs:31`).
+
+**What is *not* asserted, and it matters here.** Only the *shape* of that const is
+tested in Rust — `app_id_is_reverse_domain` (`crates/core/src/lib.rs:74-90`) asserts
+≥3 dotted components, a `com.` prefix and no empty component. It does **not** assert the
+literal string. The exact value's agreement with the desktop file is pinned only on the
+Python side, and only for Python's own copy of the constant
+(`tests/test_packaging.py::test_permanent_identity_is_consistent` reads `APP_ID` from
+`gamehandler/__init__.py`, not from Rust). So `App::APP_ID`, the desktop file's basename
+and the Flatpak app id agree today because the same string was typed in three places,
+not because anything checks it.
+
+**Choice.** `StartupWMClass=com.goshapps.GameHandler`, and a Rust test asserting the
+exact literal (recorded in 12.8 — the const is not this task's to edit).
+
+**Why.** Without it, a desktop that matches by `WM_CLASS` rather than by app id cannot
+find the launcher entry, and the window shows a generic icon. The value has to equal
+`App::APP_ID`, and it is correct here because the relationship was traced through the
+pinned sources and the constant's value is readable — not because anything checks it,
+which is why 12.8 asks for the test that would. Note that `StartupWMClass` is *also*
+what makes the taskbar icon resolve at all: see 12.3.
+
+### 12.3 Icons — what the desktop actually needs
+
+**Question.** Only one scalable SVG exists. Is a fixed-size icon required anywhere, and
+does the metainfo reference an icon that does not exist?
+
+**Observed.**
+- The metainfo contains no `<icon>` and no `<screenshots>` element (`grep` over the
+  file: no match). Nothing references a missing icon, and `<icon>` is not required for
+  a `desktop-application` — the shell resolves `Icon=` from the desktop entry.
+- The shell resolves `Icon=com.goshapps.GameHandler` through the icon-theme spec, and
+  hicolor's `scalable/apps/` directory is a valid location for it. GNOME, KDE and COSMIC
+  all render a scalable SVG app icon.
+- **libcosmic never sets an OS window icon.** `iced/winit/src/conversion.rs:94` sets one
+  only from `window::Settings::icon`, and libcosmic's `iced_settings()` never populates
+  that field (`src/app/mod.rs:65-89` — it sets `exit_on_close_request`, the application
+  id, the size limits, `transparent`; there is no `icon` line). So on X11 there is no
+  `_NET_WM_ICON` and the taskbar icon comes from the `WM_CLASS` → desktop entry →
+  `Icon=` lookup — which is why 12.2 is load-bearing for the icon, not just for window
+  grouping.
+- The in-app path goes through `cosmic-freedesktop-icons`, which prefers PNG but falls
+  back to SVG (`freedesktop-icons/src/lib.rs:314-317`: `png_path.or(svg_path).or(xpm_path)`
+  unless `force_svg`), and iced has SVG rendering enabled at this revision. So an
+  SVG-only install resolves there too. (libcosmic's own `about` widget takes its icon
+  from the caller — `examples/about/src/main.rs:68` passes
+  `widget::icon::from_name(Self::APP_ID)`; `about.rs` itself only names symbolic icons
+  for links. C1's About page should pass `from_name(APP_ID)` the same way.)
+- No rasteriser is available on this machine (`rsvg-convert`, `inkscape`, ImageMagick
+  all absent), and the Flatpak build has no such step.
+
+**Choice.** Ship the scalable SVG alone; add no fixed-size PNGs.
+
+**Why.** Nothing in the pipeline needs one: not the metainfo, not the icon-theme
+lookup, not the in-app lookup, and not the Flatpak manifest (which installs the SVG
+directly, `com.goshapps.GameHandler.json:93`). Adding sized PNGs would mean generating
+raster art in a build whose manifest we do not control, for a benefit no current shell
+requires. **This is a decision to revisit only with a screenshot showing a fuzzy
+taskbar icon**, and the fix at that point is a `make install`-time export step in the
+manifest, not hand-committed PNGs.
+
+### 12.4 R-11: `.webp` covers — the decoder, not the filename
+
+**Question.** libcosmic's `image` dependency is pinned to `features = ["ico","jpeg","png"]`
+(`libcosmic/Cargo.toml:139-143`), but `copy_custom_cover` stores a user's `.webp`
+verbatim (`covers.py:296-307`). Which fix — libcosmic's `animated-image` feature, or
+transcoding `.webp` to PNG on import in `core::covers`?
+
+**Observed (measured, not read).** A standalone probe against `image` 0.25.10 at exactly
+the pinned feature set, calling what iced calls
+(`ImageReader::open(p).with_guessed_format()?.decode()`, cf.
+`iced/graphics/src/image.rs:52`):
+
+| Input | pinned features | with `image/webp` |
+|---|---|---|
+| a real `.webp` | `FAIL: The image format WebP is not supported` | `OK format=WebP 1024x1536` |
+| a real `.ico` from Windows exe icon extraction (432 KB, produced by `gamehandler.exe_icons.extract_icon`) | `OK format=Ico 256x256` | `OK format=Ico 256x256` |
+| PNG bytes stored in a file named `.jpg` | `OK format=Png 2x2` | `OK format=Png 2x2` |
+
+The last two rows are the two facts that are easy to get wrong:
+- The `.ico` path is **already fine** — `image`'s `"ico"` feature implies `bmp` + `png`
+  (`image/Cargo.toml`), so `save_exe_icon`'s artefact (`covers.py:312`) decodes today.
+  No fix is needed there, and R-11 should not be read as implicating it.
+- Decoding **sniffs content, not the extension**, so PNG-in-a-`.jpg`-named file works.
+  That matters because it is a normal outcome, not an edge case: `save_cover_from_urls`
+  writes to a hardcoded `<id>.jpg` (`covers.py:283`) while the candidate list includes
+  `portrait.png` (`covers.py:40`) — so a game whose only available asset is the PNG gets
+  **PNG bytes in a `.jpg` file** whenever Steam's CDN serves it.
+
+Cost of the feature, from `Cargo.lock` and `cargo-sources.json`: `image-webp 0.2.4` and
+`gif 0.13.3` are already locked and already vendored — reachable today only through
+`resvg`, which `iced_tiny_skia` pulls in for SVG. So enabling `image/webp` and
+`image/gif` adds **no new vendored crate**; only `async-fs` is genuinely absent from
+both `Cargo.lock` and `cargo-sources.json`. (Vendored is not the same as *usable*: those
+two crates being present is exactly why "it's already in Cargo.lock" is not an argument,
+in either direction.)
+
+**Options considered.**
+1. Enable libcosmic's `animated-image` (`Cargo.toml:26-32`) — turns on `image/webp`,
+   `image/gif` and `dep:async-fs`.
+2. Transcode `.webp` → PNG on import in `core::covers`, adding `image` as a direct
+   dependency of `crates/core` with `features=["webp"]`.
+3. Do nothing, and lose `.webp` covers silently.
+
+**Choice.** Option 1 — enable the decoder.
+
+**Why.**
+1. **Option 2 does not fix the library that exists.** What a user has is a
+   `games.json` whose `cover_path` already points at `<id>.webp` — written by the
+   Python app, which stays on this branch and shares the same data directory (D-02).
+   Transcoding at import only affects covers imported by the Rust app *afterwards*; it
+   leaves every already-stored `.webp` unrenderable, because there is nothing to
+   transcode on the read path. Only a decoder fixes both the existing file and the new
+   one. This is the decisive argument, and it is a parity argument as much as a
+   technical one.
+2. **Option 1 preserves byte parity; option 2 knowingly breaks it.** `copy_custom_cover`
+   copies verbatim and keeps the source suffix, so `<id>.webp` is the same file with the
+   same name in both applications. Transcoding would store different bytes under a
+   different name for the same user action — an observable divergence in the user's own
+   data directory, in a migration whose first priority is behaving like the original.
+   Option 2 also cannot be had without inventing a filename policy for the
+   already-existing `.webp` (convert in place? leave it and render nothing?) — and D-02's
+   "the Python app keeps working on the same data" removes the free choices.
+3. **Option 1 is ~one crate.** `async-fs` plus a little; everything else the feature
+   needs is already vendored. Against a per-render or per-import transcode in the read
+   path, that is the smaller change and the smaller risk surface.
+4. Option 3 is excluded by R-11 itself: "silently dropping support is not [fine]".
+
+**Accepted costs, stated so they are not mistaken for benefits.** `animated-image` is
+granularity-locked: it also turns on GIF and pulls `async-fs`, neither of which this app
+uses — the app produces `.jpg`, `.png`, `.ico` and `.webp` and no animation. The feature
+name is a misnomer for our purpose ("codec coverage"), so nobody should read it as a
+promise of `AnimatedImage` widgets in the cover UI. And enabling it means
+`build-aux/flatpak/cargo-sources.json` must be **regenerated** (`async-fs` is absent
+from it today), which `scripts/verify.sh` stage 6 enforces.
+
+**Not mine to land:** the feature list is in `crates/app/Cargo.toml` (app owner) and the
+vendored-source regeneration is `build-aux/flatpak/` (packaging owner).
+
+### 12.5 A requirement on the cover UI, from the same investigation (T-14)
+
+The cover tile must never branch on a file's **extension** to decide whether or how to
+render it, and must not treat `<id>.jpg` as a promise of JPEG bytes:
+
+- `<id>.jpg` may hold PNG bytes (12.4, `covers.py:40,283`) — a normal outcome, not a
+  corner case.
+- `<id>.ico` holds icon bytes from exe extraction, and letterboxes rather than fills
+  (V1's plate).
+- `<id>.webp` is the only user-imported case, and after 12.4's fix is a plain decode.
+
+iced's `ImageReader::with_guessed_format()` already satisfies this
+(`iced/graphics/src/image.rs:126-131`), so the requirement is a *constraint on the
+port's own code*: read `cover_path` as an opaque path, hand the bytes to the image
+loader, and let the decoder sniff. Any "is this really a JPEG?" check written in Rust,
+or a format chosen from the suffix, would reintroduce the bug in the new code.
+
+### 12.6 `StartupNotify=true` — kept, on evidence
+
+Worth recording because the wrong inference is seductive: winit has no
+`libstartup-notification`, so one could conclude that `StartupNotify=true` is a lie for
+a libcosmic app and remove it. It is not. iced reads `XDG_ACTIVATION_TOKEN` from the
+environment and passes it to the compositor
+(`iced/winit/src/conversion.rs:30-47`, applied at `:218-221`, and the variable is
+scrubbed before children inherit it). That is the modern startup-notification protocol,
+so the launcher's "starting…" state does get cleared. Left as-is.
+
+### 12.7 P-71: the generated shortcuts validate
+
+The shortcuts are generated at runtime by `create_desktop_shortcut`
+(`runners.py:1449-1473`) as `gamehandler --launch <id>`, escaped by `escape_desktop_value`
+/`desktop_exec` (`:1429-1446`). Both a representative game and a hostile one
+(`Name=Bad%\nExec=/bin/sh\nName=Injected`) were generated with the real Python code and
+run through `desktop-file-validate`: **exit 0 on both**, with the newline escaped to a
+literal `\n` rather than injecting an `Exec=` key. `Categories=Game;` in the generated
+file now matches the application's own entry (12.1). Nothing in the generated form needs
+changing; the Rust port must reproduce it, and the behaviour to port is already pinned
+by `tests/test_security.py:422-444` — `test_percent_is_escaped_only_in_exec` (the `%%`
+doubling, which matters because a field code in a game's own arguments would otherwise
+be expanded by the shell) and `test_a_malicious_game_name_cannot_inject_desktop_keys`.
+Both are T-03 porting gates, not new work.
+
+### 12.8 Open items handed to other owners
+
+Reported rather than fixed, because the files are not this task's to edit:
+
+| Item | Owner | Detail |
+|---|---|---|
+| `.webp` decode | app + packaging | Enable libcosmic's `animated-image` in `crates/app/Cargo.toml`, then regenerate `cargo-sources.json` (12.4). |
+| `APP_ID` is not pinned to its literal | app (`crates/app` or `crates/core`) | `app_id_is_reverse_domain` (`crates/core/src/lib.rs:74-90`) checks the shape only. Add `assert_eq!(APP_ID, "com.goshapps.GameHandler")`, or a test that the desktop file's basename stem matches, so the four-way agreement in 12.2 cannot drift silently. |
+| `data/meson.build` | lead | Still referenced by `meson.build:15` (`subdir('data')`) and read by `tests/test_packaging.py:200,209-222`; it now serves the Python tree only. Deleting it needs both files changed in the same commit, and the LICENSE install it performs has no replacement in the Flatpak manifest. |
+| Authenticode trust root | packaging | `data/microsoft-identity-verification-root-ca-2020.pem` is read by `gamehandler/installers.py:534-546` (four candidate paths, one of which is `/app/share/gamehandler/`), and installed by Meson (`gamehandler/meson.build:36-39`). No Rust file references it yet, and the Flatpak manifest does not install it — so the T-04 port needs it and the manifest needs a line for it. |
+| README credits "Platform" | credits / T-06 | The README's credit sections are rendered from `credits.py:377` and pinned verbatim by `tests/test_credits.py:101-110`, so the Qt/Kirigami/PySide6 platform entries cannot be updated in the README alone; they must change in `credits.py` (and the README regenerated) when `core::credits` lands. |
+| Dark-by-default (R4) | lead, D-13 | Untouched here: the README still advertises dark by default. Whatever D-13 decides, the README sentence changes with it. |
+
+---
+
 ## Appendix A — Backend contract the UI binds to (unchanged by this doc, listed for the implementer)
 
 `gamehandler/bridge.py`: `Backend` QObject — properties `games, categories, sortOptions, sortMode, viewMode, categoryFilter, searchText, colorScheme, defaultRunner, defaultToggles, closeOnLaunch, runnerChoices, installedRunners, runnerFamilies, runnerGuide, releases, releasesStatus, busy, progress, installers, installerSearch, installerCategory, installerCategories, plugins, pluginsIntro, creditSections, whyAllInOne, acknowledgement, aboutText, appVersion, appId, librarySize, formCategories`; Slots `quit, saveGame, getGame, newGameTemplate, removeGame, playGame, runPrefixTool, openPrefix, createShortcut, fetchCover, fetchCoverForForm, importCustomCover, urlToLocalFile, coverUrlFor, fetchReleases, installRelease, uninstallRunner, installEasy, completeEasyInstall, cancelEasyInstall, installPlugin, refreshPlugins, setDefaultToggle`; signals `notify, gameInstalled, requestHide, requestShow, gamesChanged, categoriesChanged, settingsChanged, runnersChanged, releasesChanged, installersChanged, pluginsChanged, busyChanged, progressChanged, coverFetched, easyInstallNeedsExe`. Threading model (`bridge.py:147-166`): worker threads + queued `_dispatch` → in Rust becomes `Task`/`subscription` + `tokio::spawn` — backend-team concern, noted so toast/progress ordering expectations survive.

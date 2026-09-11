@@ -1,11 +1,19 @@
 # GameHandler
 
 GameHandler is a modern game manager for Linux, focused on running **Windows games**
-via **Wine** and **Proton**, built with a clean **Qt 6 + Kirigami** interface.
+via **Wine** and **Proton**.
 
 Current release: **0.7.2**. This patch fixes package-aware test discovery on
 hosts without PySide6: the test-only Kirigami stub now loads Qt types lazily,
 so the core tests run and the optional QML smoke test skips as intended.
+
+> **This branch is porting the interface to Rust.** GameHandler is being
+> rewritten from Python 3 + PySide6/QML (Qt 6, styled with Kirigami) to **Rust**
+> with **libcosmic**, the COSMIC desktop toolkit. Both trees are present here
+> and both are documented below: the Python application is the parity reference
+> and still runs exactly as described, and the Rust workspace under `crates/` is
+> what 0.8.0 ships. See [The Rust application](#the-rust-application) for what
+> builds today and `docs/migration/PLAN.md` for the task list.
 
 It is a **front-end, not a compatibility layer**. Every Windows game it launches runs
 on [Wine](https://www.winehq.org), usually through a [Proton](https://github.com/ValveSoftware/Proton)
@@ -20,8 +28,7 @@ and [Bottles](https://usebottles.com). Full acknowledgements are
 
 ## Features
 
-- Dark mode by default, plus system and light themes — both first-class in the
-  Kirigami interface
+- Dark mode by default, plus system and light themes — both first-class
 - Grid and list library views, search, categories, sorting, and per-game edit
 - Generated cover art for titles without artwork, so the grid never looks empty
 - Custom cover art, automatic Steam lookup by game name, and — for anything
@@ -51,17 +58,27 @@ flatpak install flathub org.freedesktop.Platform.VulkanLayer.gamescope//25.08
 
 ## Tech stack
 
-| Area | Choice |
-| --- | --- |
-| Language | Python 3 |
-| UI toolkit | Qt 6 + Kirigami (`PySide6` + QML) |
-| Build system | Meson |
-| Packaging | Flatpak (KDE runtime) |
-| Runners | System Wine plus downloaded Proton/Wine builds |
+| Area | Rust application (0.8.0, `crates/`) | Python application (0.7.2, parity reference) |
+| --- | --- | --- |
+| Language | Rust (edition 2024, floor 1.93) | Python 3 |
+| UI toolkit | libcosmic (COSMIC desktop toolkit), software renderer | Qt 6 + Kirigami (`PySide6` + QML) |
+| Build system | Cargo workspace | Meson |
+| Packaging | Flatpak (Freedesktop 25.08 + rust-stable) | not packaged on this branch — run from source |
+| Runners | System Wine plus downloaded Proton/Wine builds | same |
 
 ## Requirements
 
-System packages (Debian/Ubuntu names):
+To build and run the Rust application:
+
+```
+rustup / cargo        # 1.93 or newer; the Flatpak uses the rust-stable SDK extension
+flatpak flatpak-builder  # only to build the Flatpak
+flatpak install flathub org.freedesktop.Sdk.Extension.rust-stable  # only for the Flatpak
+wine                  # to actually launch Windows games
+osslsigncode          # version 2.14+ verifies Easy Installer Authenticode signatures
+```
+
+To run the Python application (Debian/Ubuntu names):
 
 ```
 python3-pyside6.qtcore python3-pyside6.qtgui python3-pyside6.qtwidgets python3-pyside6.qtqml python3-pyside6.qtquick
@@ -76,9 +93,46 @@ On Arch: `pyside6 kirigami qqc2-desktop-style`. On Fedora:
 (`pip install PySide6`), as long as the distribution provides the Kirigami QML
 modules and `qqc2-desktop-style`.
 
-Optional helpers: `winetricks`, `mangohud`, `gamemode`, `umu-run`.
+Optional helpers (both applications): `winetricks`, `mangohud`, `gamemode`,
+`umu-run`.
 
-## Running from source
+## The Rust application
+
+The Rust workspace is `crates/core` (the ported logic, with no GUI dependency at
+all, so it is testable headless) and `crates/app` (the libcosmic interface plus
+the `--list` / `--launch` / `--version` command line).
+
+**What runs today:** the workspace builds, `cargo test` passes, and the CLI
+entry point parses and dispatches before anything GUI-shaped is touched, so
+`--launch` never needs a display. The library pages, the pages in
+`docs/migration/PLAN.md` §4 and the ported logic land task by task — check
+`docs/migration/PLAN.md` §6 before relying on a feature here.
+
+```bash
+cargo build                  # build the workspace
+cargo run -- --version       # print the app name and the Cargo.toml version
+cargo run -- --list          # print the library's ids and names
+cargo run                    # the interface
+```
+
+Run the test suite — headless, no display and no GPU required:
+
+```bash
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
+`scripts/verify.sh` is the single verification entry point for the Rust side. It
+runs the build, clippy, the tests, the compatibility-oracle freshness check, the
+Python suite, the vendored `cargo-sources.json` check, the Flatpak build, a
+headless smoke test and the desktop/metainfo validation, and reports one line
+per stage:
+
+```bash
+bash scripts/verify.sh --keep-going   # add --skip-flatpak for a fast local run
+```
+
+## Running the Python application from source
 
 No install step is required for development — the package runs directly:
 
@@ -104,7 +158,7 @@ Print the version:
 python3 -m gamehandler --version
 ```
 
-## Building / installing with Meson
+## Building / installing the Python application with Meson
 
 ```bash
 meson setup build --prefix=/usr
@@ -115,19 +169,24 @@ sudo meson install -C build  # installs the `gamehandler` launcher, desktop file
 
 ## Building the Flatpak
 
+The Flatpak on this branch builds the **Rust** application. The Python
+application is not packaged here any more; run it from source as above.
+
 ```bash
 ./build-aux/flatpak/build.sh
 flatpak --user install --reinstall dist/gamehandler-0.7.2.flatpak
 flatpak run com.goshapps.GameHandler
 ```
 
-The Flatpak uses the KDE 6.10 runtime (which ships Qt 6 and the Kirigami QML
-modules) on the Wine `stable-25.08` BaseApp and inherits the Freedesktop
-`Compat.i386` and `GL32` extensions. PySide6 is built from the official Qt
-source release against the runtime's own Qt. `--allow=multiarch` is required
-for 32-bit Windows games and downloaded Wine/Proton builds, and
-`--filesystem=xdg-run/gvfs` lets games on mounted network shares launch from
-inside the sandbox.
+The bundle name follows the version in the Cargo workspace, so it changes with
+the version bump. The manifest uses the Freedesktop 25.08 runtime and SDK with
+the `rust-stable` extension on the Wine `stable-25.08` BaseApp, and inherits the
+Freedesktop `Compat.i386` and `GL32` extensions. The build is offline: every
+crate it needs is vendored in `build-aux/flatpak/cargo-sources.json`, generated
+from `Cargo.lock`. `--allow=multiarch` is required for 32-bit Windows games and
+downloaded Wine/Proton builds, and `--filesystem=xdg-run/gvfs` lets games on
+mounted network shares launch from inside the sandbox.
+
 The package bundles a checksum-pinned osslsigncode build for authenticated
 Easy Installer downloads. The Microsoft Identity Verification Root CA used for
 Ubisoft's Azure Trusted Signing chain comes from Microsoft's official PKI
@@ -254,8 +313,13 @@ Every runner family names its maintainer in the app, every compatibility toggle 
 
 ## Running the tests
 
-The core logic (library persistence, runner command building, multi-family
-Proton/Wine release parsing) is covered by headless unit tests:
+### Python suite — the behavioural reference
+
+The Python suite is the contract the Rust port is written against: it pins how
+the library, the runner command lines, the download handling and the security
+checks behave, and it stays green while both trees are on this branch. The core
+logic (library persistence, runner command building, multi-family Proton/Wine
+release parsing) is covered by headless unit tests:
 
 ```bash
 python3 -m unittest discover -s tests -t .
@@ -265,10 +329,31 @@ No PySide6 installation is needed for the core tests. The offscreen QML smoke
 test runs when PySide6 is installed and is reported as skipped otherwise.
 Discovery itself never imports the stub’s Qt types.
 
+### Rust suite
+
+```bash
+cargo test
+```
+
+It runs with `DISPLAY` and `WAYLAND_DISPLAY` unset — `crates/core` has no GUI
+dependency, so the logic tests need no display server and no GPU. The Rust
+equivalents assert *behaviour* against the same cases the Python suite covers
+(archive-extraction confinement, desktop-file escaping, runner environment
+construction, JSON round-trips) rather than matching pixels.
+
+`bash scripts/verify.sh` runs both suites together with the rest of the pipeline,
+including a check that fails when `build-aux/flatpak/cargo-sources.json` is stale
+against `Cargo.lock`, and a check that fails when the frozen Python-compatibility
+fixtures in `docs/migration/oracle/` no longer match the Python implementation.
+
 ## Project layout
 
 ```
-gamehandler/            # Python package (application code)
+crates/                 # Rust workspace — the shipped application (0.8.0)
+  core/                 # gamehandler-core: models, settings, paths, runners,
+                        # installers, covers. No GUI dependency at all (enforced)
+  app/                  # gamehandler: the libcosmic interface and the CLI
+gamehandler/            # Python package — the parity reference (0.7.2)
   main.py               # CLI entry point + Qt application bootstrap
   bridge.py             # the QML-facing backend (library, runners, installers…)
   theme.py              # light/dark/system color schemes
@@ -289,8 +374,18 @@ gamehandler/            # Python package (application code)
   runners.py            # runner families, downloads, launch helpers
   netpaths.py           # network-share (GVFS) path resolution
   config.py             # XDG paths
-bin/gamehandler.in      # installed launcher template
-data/                   # desktop entry, AppStream metainfo, icon
-build-aux/flatpak/      # Flatpak manifest
-tests/                  # headless unit tests (incl. an offscreen QML smoke test)
+bin/gamehandler.in      # installed launcher template (Python, Meson)
+data/                   # desktop entry, AppStream metainfo, icon, trust root
+build-aux/flatpak/      # Flatpak manifest + vendored cargo sources
+scripts/verify.sh       # the single verification entry point
+docs/migration/         # the migration plan, decisions and parity inventory
+tests/                  # Python headless unit tests (incl. an offscreen QML smoke test)
 ```
+
+`data/` is shared by both applications: the Flatpak manifest installs the
+desktop entry, the AppStream metainfo and the icon from there
+(`data/meson.build` installs the same three files, plus the project LICENSE,
+for a Meson/source install). The Microsoft Authenticode trust root also lives
+in `data/`, and the Python tree's Meson build installs that one from
+`gamehandler/meson.build` — it is what `installers.py` verifies Easy Installer
+signatures against.

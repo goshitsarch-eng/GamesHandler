@@ -8,9 +8,10 @@
   <description>
     <p>
       GameHandler is a modern game manager for Linux, focused on running Windows
-      games through Wine and Proton. It provides a Qt 6 and Kirigami
-      interface for organising your library, downloading Proton and Wine
-      builds, and launching games in isolated prefixes.
+      games through Wine and Proton. It provides a native interface built with
+      libcosmic, the COSMIC desktop toolkit, for organising your library,
+      downloading Proton and Wine builds, and launching games in isolated
+      prefixes.
     </p>
     <p>
       GameHandler is a front-end, not a compatibility layer. Windows games run on
@@ -35,6 +36,9 @@
     </ul>
   </description>
   <launchable type="desktop-id">com.goshapps.GameHandler.desktop</launchable>
+  <provides>
+    <binary>gamehandler</binary>
+  </provides>
   <url type="homepage">https://github.com/goshitsarch-eng/GamesHandler</url>
   <url type="bugtracker">https://github.com/goshitsarch-eng/GamesHandler/issues</url>
   <developer id="com.goshapps">
@@ -42,6 +46,30 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.8.0" date="2026-09-11">
+      <description>
+        <p>
+          The interface has been rewritten on libcosmic, the COSMIC desktop
+          toolkit, in Rust. Nothing of the Python and Qt 6/Kirigami stack
+          remains in the shipped application: the library, the runner
+          downloads, the launch environment and the cover handling are a Rust
+          workspace now, and the Flatpak is built from a Cargo lockfile on the
+          Freedesktop runtime instead of a Meson build on the KDE runtime.
+        </p>
+        <p>
+          Nothing about your data changes. The library and settings files are
+          read and written in the same format as before — byte for byte,
+          including numeric timestamps — so an existing installation keeps its
+          games, covers, prefixes and preferences, and either version can open
+          the same data directory.
+        </p>
+        <p>
+          Light and dark themes remain first-class alongside following the
+          system theme, and the interface renders on the CPU, so it opens a
+          window on a machine with no working GPU.
+        </p>
+      </description>
+    </release>
     <release version="0.7.2" date="2026-09-05">
       <description>
         <p>Fix headless unittest discovery without PySide6 by loading the
