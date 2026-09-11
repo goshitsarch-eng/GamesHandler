@@ -241,6 +241,20 @@ impl CoverHit {
 /// database handle alive across an overlay.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingInstall {
+    /// The installer's id, which is what [`crate::Message::CompleteEasyInstall`]
+    /// needs to build the library entry.
+    ///
+    /// **This field was missing, and its absence made the entry unusable.** The
+    /// reference's `_pending_installs[token]` holds the `Installer` *object*
+    /// (`bridge.py:888`), and `completeEasyInstall` hands it straight back to
+    /// `_finish_easy_install` (`:928`), which calls `game_from_install(installer,
+    /// …)`. A name and a prefix cannot do that: the port could describe a
+    /// pending install and could not complete one, which is the shape #65 names
+    /// — the state exists, the thing it exists for does not. The id is stored
+    /// rather than the `&'static Installer` because this struct is `Clone`d into
+    /// a `BTreeMap` that outlives any borrow, and `installer_by_id` is the
+    /// lookup that recovers it.
+    pub installer_id: String,
     /// The installer's display name, for the dialog and the kept-prefix toast.
     pub installer_name: String,
     /// The prefix the installer ran in.
@@ -762,6 +776,48 @@ pub struct State {
     pub installer_search: String,
     /// was `_installer_category`, defaulting to "All".
     pub installer_category: String,
+    /// The cards the Installers page draws, for the two filters it holds.
+    ///
+    /// Held rather than computed in `view_body` for a reason that is not
+    /// performance: `view_body` returns `Element<'_>` borrowed from `&self`, so
+    /// a catalog built inside its `Page::Installers` arm would be a local the
+    /// returned element outlives — the E0515 that killed the first T-11/T-12
+    /// wiring attempt. The three fields below are the same fact the Runners
+    /// page's `installed`/`release_rows` are: everything a page draws has to
+    /// live somewhere that outlives the frame.
+    ///
+    /// It is **not** a cache with a staleness problem of its own: the two
+    /// writers are [`Self::refresh_installers`]' only callers, which are the same
+    /// function that changes an input.
+    pub installer_catalog: Vec<crate::view::installers::InstallerRow>,
+    /// The category filter's options: `installer_categories()`' result.
+    ///
+    /// Cached rather than called at render because it returns an owned
+    /// `Vec<String>` and the page takes a slice — the same lifetime reason as
+    /// [`Self::installer_catalog`], not a filesystem one.
+    pub installer_categories: Vec<String>,
+    /// The runner selector's `(id, label)` options — `runner_choices()`.
+    ///
+    /// Cached for the Runners page's reason rather than the two above:
+    /// `RunnerManager::choices` reads the runners directory and scans `PATH`,
+    /// and a frame is the wrong rate for either.
+    pub installer_runners: Vec<(String, String)>,
+    /// The install that is running right now, or `None`.
+    ///
+    /// The reference keeps this in the worker closure (`installEasy`'s
+    /// `work`/`done` close over `installer`, `prefix`, `resolved_runner_id` and
+    /// `game_id`, `bridge.py:857-895`). A Rust worker has no closure to hold
+    /// them and cannot reach `State`, so one of the two has to carry them across
+    /// — and the shell is the side that has to *interpret* the reply, because
+    /// `EasyInstallWizardFinished` carries only `found` and `returncode`. The
+    /// alternative would have been widening that documented variant's shape to
+    /// re-send data the shell already had.
+    ///
+    /// It is the same record [`Self::easy_pending`] holds, which is the
+    /// reference's own shape: `_pending_installs[token]` is written when the
+    /// wizard ends without a located executable, and the entry it writes is the
+    /// same four fields this holds while the install is still running.
+    pub running_install: Option<PendingInstall>,
     /// was `_releases` — the list for [`Self::releases_family`] only.
     pub releases: Vec<ReleaseInfo>,
     /// was `_releases_family` — which family [`Self::releases`] describes.
@@ -854,6 +910,10 @@ impl State {
             category_filter: "All".to_string(),
             installer_search: String::new(),
             installer_category: "All".to_string(),
+            installer_catalog: Vec::new(),
+            installer_categories: Vec::new(),
+            installer_runners: Vec::new(),
+            running_install: None,
             releases: Vec::new(),
             releases_family: String::new(),
             releases_status: ReleasesStatus::Idle,
@@ -889,6 +949,29 @@ impl State {
     /// `bridge.py:719-720` — the spinner is on when either long job is.
     pub fn busy(&self) -> bool {
         self.runner_busy || self.easy_busy
+    }
+
+    /// Recompute the three things the Installers page draws, from the filters it
+    /// holds.
+    ///
+    /// This is `_get_installers` (`bridge.py:813-828`) pulled off the render
+    /// path: the reference recomputes it in a QML `Property` getter on every
+    /// read, which a port cannot do because the element borrows what it is
+    /// handed (see [`Self::installer_catalog`]). So the two filters call this
+    /// when they change and the shell calls it once at construction, which is
+    /// `refresh_plugins`' shape and for the same reason.
+    ///
+    /// The catalog and the categories are both derived here rather than at the
+    /// call sites so they cannot be refreshed one without the other: a card
+    /// whose category the filter cannot offer is #74, and that defect was
+    /// exactly one of these two lists being updated and the other not.
+    pub fn refresh_installers(&mut self) {
+        self.installer_catalog = crate::view::installers::installer_rows(
+            &self.installer_search,
+            &self.installer_category,
+        );
+        self.installer_categories = crate::view::installers::installer_categories();
+        self.installer_runners = crate::view::installers::runner_choices(&self.runners);
     }
 
     /// The next form-cover token, consuming the current one.

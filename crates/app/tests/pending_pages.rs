@@ -62,11 +62,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The pages whose body is still `pending_page`, and nothing else.
+/// The pages whose body is still a placeholder, and nothing else.
 ///
 /// **Edit this list when you land a page.** Deleting the name is the edit; the
 /// test fails until you make it, and names the page when it does. This is the
 /// only hand-maintained copy of the fact, and it is hand-maintained on purpose.
+///
+/// **Empty as of T-38**, which landed the last page (`Installers`) and the flow
+/// behind it. The deletion was made by the landing commit itself, which is what
+/// the paragraph above asks for; the test below reports "PORTED, but still
+/// listed in PINNED_PENDING — delete the line" until it is.
 ///
 /// The set this must equal is parsed out of the page dispatch in
 /// `crates/app/src/main.rs` — `view_body`'s `match self.state.page` — so it is
@@ -74,9 +79,7 @@ use std::path::{Path, PathBuf};
 /// deliberately not copied: an earlier version of this comment listed it, and
 /// the list went stale while the test beside it stayed correct. A hand-copied
 /// fact that no assertion reads has nothing to keep it honest.
-const PINNED_PENDING: [&str; 1] = [
-    "Installers",
-];
+const PINNED_PENDING: [&str; 0] = [];
 
 /// The repository root, derived rather than hardcoded.
 ///

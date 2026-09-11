@@ -23,7 +23,11 @@ use clap::Parser;
 use cosmic::app::ApplicationExt;
 use cosmic::iced::futures::StreamExt;
 use cosmic::iced::futures::channel::mpsc::{UnboundedSender, unbounded as unbounded_channel};
-use cosmic::widget::{container, icon, nav_bar, text, toaster};
+use cosmic::widget::{icon, nav_bar, toaster};
+use gamehandler_core::installers::{
+    Installer, SystemClock, build_installer_command, download_installer, game_from_install,
+    installer_by_id, prepare_prefix, wait_for_installer, wait_for_prefix_idle,
+};
 use gamehandler_core::models::{Game, Library, SORT_MODES};
 use gamehandler_core::netpaths::NetpathsShares;
 use gamehandler_core::paths::{self, SystemEnv};
@@ -701,6 +705,22 @@ pub enum Message {
     },
     /// Abandon an interrupted install, keeping the prefix it made.
     CancelEasyInstall(String),
+    /// The install's worker gave up before there was a wizard to watch.
+    ///
+    /// **An addition to `architecture.md` §2.2's variant set, and it is there
+    /// because the set had no channel for a real path.** `installEasy` runs its
+    /// `work()` through `_async`, whose `fail` branch (`bridge.py:152-163`) does
+    /// three things on any exception: clear `_easy_busy`, reset the progress,
+    /// and `notify(f"Could not install {name}: {message}")`. Every one of the
+    /// documented variants describes a *later* stage — a download that failed
+    /// has no `found`, no `returncode` and no pending prefix. Without this
+    /// variant the worker's error would either be swallowed or reported without
+    /// clearing the guard, and a page stuck `busy` forever is the exact failure
+    /// `view::installers`' header warns an arm must not have.
+    ///
+    /// It carries only the error text: the installer's name is in
+    /// [`State::running_install`], which is the record this message consumes.
+    EasyInstallFailed { message: String },
     /// The install produced a game. The `gameInstalled` signal.
     EasyInstallFinished { game_id: GameId, message: String },
 
@@ -896,6 +916,11 @@ impl Shell {
         // `bridge.py` gets the same non-empty answer because its `plugins`
         // Property is evaluated on first read.
         state.refresh_plugins(&gamehandler_core::plugins::SystemPluginEnv);
+        // The Installers page's three arguments, for the same reason and with
+        // the same failure otherwise: an unrefreshed catalog renders "No
+        // matching installers" over a catalog of nine, which is a page that
+        // looks like an empty search rather than like a page nothing filled.
+        state.refresh_installers();
         Self {
             state,
             nav_model: build_nav_model(),
@@ -1005,9 +1030,10 @@ impl Shell {
 
     /// The body under the sidebar, for whichever page is showing.
     ///
-    /// This is the page dispatch: one arm per [`Page`], and the arms that call
-    /// `pending_page` are the pages that have not been ported. Two things about
-    /// its shape are load-bearing and neither is cosmetic.
+    /// This is the page dispatch: one arm per [`Page`], and **every arm now
+    /// draws the real page** — T-38 wired the last one, `Page::Installers`, and
+    /// [`PENDING_PAGES`] went with it. Two things about the shape are
+    /// load-bearing and neither is cosmetic.
     ///
     /// # It is a method on `Shell`, not a free function and not a method on `App`
     ///
@@ -1027,8 +1053,9 @@ impl Shell {
     /// # The arms are written out
     ///
     /// There is no wildcard arm, so adding a [`Page`] is a compile error until
-    /// it is given a body. Each unported arm names the task that will build it,
-    /// on screen as well as in the code, so a page that has not landed says so.
+    /// it is given a body. While an arm was unported it named the task that
+    /// would build it, on screen as well as in the code, so a page that had not
+    /// landed said so.
     fn view_body(&self) -> cosmic::Element<'_, Message> {
         match self.state.page {
             Page::Library => {
@@ -1047,8 +1074,32 @@ impl Shell {
                 };
                 view::library::view(page)
             }
-            // TODO(T-12): the release list and the install progress.
-            Page::Installers => pending_page(Page::Installers, "T-12"),
+            // The catalog, the two filters and the runner selector, all
+            // borrowed from `State` rather than built here: a catalog computed
+            // in this arm would be a local the returned element outlives. See
+            // `State::installer_catalog`.
+            //
+            // The `InstallersView` really is a local, and the element it
+            // produces does borrow *through* it — but not *from* it: every field
+            // it holds is a reference into `self.state`, and `view` takes the
+            // struct by value, so what the element carries out of this arm is
+            // `&self.state.*` and not `&page`. T-38 changed `view`'s signature
+            // from `&'a InstallersView<'_>` to `InstallersView<'a>` for exactly
+            // this arm; the doc on that function has the compiler error that
+            // the reference form produces.
+            Page::Installers => {
+                let page = view::installers::InstallersView {
+                    catalog: &self.state.installer_catalog,
+                    search: &self.state.installer_search,
+                    category: &self.state.installer_category,
+                    categories: &self.state.installer_categories,
+                    runners: &self.state.installer_runners,
+                    runner_id: &self.state.settings.default_runner,
+                    busy: view::installers::installing(&self.state),
+                    progress: view::installers::progress_fraction(&self.state),
+                };
+                view::installers::view(page)
+            }
             // T-11/T-12. Both bundles are borrowed from `State` rather than
             // built here: building the installed rows spawns `wine --version`,
             // and this runs once per frame. [`view::runners::refresh`] is the
@@ -1677,30 +1728,112 @@ impl Shell {
             }
 
             // ---- Easy installers -------------------------------------------
-            // TODO(T-13) / T-10: the installer page's two filters.
-            Message::SetInstallerSearch(_text) => {}
-            Message::SetInstallerCategory(_category) => {}
-            // TODO(T-13): guard on `easy_busy`.
+            // `_set_installer_search` / `_set_installer_category`
+            // (`bridge.py:789-806`), which are the page's own business and are
+            // answered by the page. What is *not* the page's business is the
+            // catalog those two filters select from: it is derived state on
+            // `State`, so the shell recomputes it here rather than leaving the
+            // page to write a field it does not own.
+            Message::SetInstallerSearch(_) | Message::SetInstallerCategory(_) => {
+                let task = view::installers::update(&mut self.state, &message)
+                    .unwrap_or_else(cosmic::task::none);
+                self.state.refresh_installers();
+                return task;
+            }
+            // `installEasy` (`bridge.py:831-903`): the guards, then the worker.
             Message::StartEasyInstall {
-                installer_id: _installer_id,
-                runner_id: _runner_id,
-            } => {}
-            Message::EasyInstallProgress(_fraction) => {}
-            // TODO(T-13): `found = None` stores a `PendingInstall` under the
-            // game id and opens the picker — the `easyInstallNeedsExe` path.
-            Message::EasyInstallWizardFinished {
-                found: _found,
-                returncode: _returncode,
-            } => {}
-            // TODO(T-13): a cancelled or empty path takes the
-            // `CancelEasyInstall` route.
-            Message::CompleteEasyInstall { token: _token, path: _path } => {}
-            Message::CancelEasyInstall(_token) => {}
-            // TODO(T-13): `Library::add`, then `notify`.
-            Message::EasyInstallFinished {
-                game_id: _game_id,
-                message: _message,
-            } => {}
+                installer_id,
+                runner_id,
+            } => {
+                return start_easy_install(&mut self.state, &installer_id, &runner_id);
+            }
+            // `_progress_cb` → `_set_progress` (`bridge.py:733-735`), the same
+            // one-line write the Runners page's `RunnerProgress` is.
+            Message::EasyInstallProgress(fraction) => {
+                self.state.progress = Some(fraction);
+            }
+            // `done(result)` (`bridge.py:874-895`): the found branch finishes the
+            // install, the other stores it and asks for an executable.
+            Message::EasyInstallWizardFinished { found, returncode } => {
+                return easy_install_wizard_finished(&mut self.state, found.as_deref(), returncode);
+            }
+            // `completeEasyInstall` (`bridge.py:921-936`): `as_local_path` of
+            // nothing is the cancel path, which is why that check comes first.
+            Message::CompleteEasyInstall { token, path } => {
+                return complete_easy_install(&mut self.state, &token, path.as_deref());
+            }
+            // `cancelEasyInstall` (`bridge.py:937-948`).
+            Message::CancelEasyInstall(token) => {
+                return cancel_easy_install(&mut self.state, &token);
+            }
+            // `gameInstalled` (`bridge.py:918`). The library add has already
+            // happened by the time this arrives — the reference adds first and
+            // emits second, and the arm that emits is the arm that adds, so
+            // there is no second place for a game to enter the library from.
+            //
+            // The reference answers the signal in `Main.qml:154-158`, and both
+            // halves of that answer are here: `root.showPage("library")` — the
+            // user is moved to the entry they just made, which is the only way
+            // they can see it landed — and a **long** passive notification
+            // carrying a **Play** action, because "installing a store launcher
+            // is only half the job — the user still has to open it and sign in,
+            // so offer that right here".
+            //
+            // `show_page` is the one writer of both page records, which is why
+            // the navigation is a call to it rather than a write to
+            // `state.page`: `Shell::new`'s `debug_assert!(self.pages_agree())`
+            // is the check that a second writer would break.
+            //
+            // # The one thing the reference does that this does not
+            //
+            // Clicking the toast's action in QQC2 **dismisses the
+            // notification** and then runs it. Here the action is
+            // `Message::LaunchGame` and the toast stays until its own duration
+            // expires; the action button is real, the game launches, and the
+            // difference is that the toast can sit there for up to
+            // `Duration::Long` afterwards. Closing it too needs a variant
+            // carrying both the game id and the `ToastId` the action closure is
+            // handed — not built, and named here rather than left as a
+            // difference a reader would have to find by launching something.
+            Message::EasyInstallFinished { game_id, message } => {
+                let navigate = self.show_page(Page::Library);
+                let toast = self
+                    .state
+                    .toasts
+                    .push(
+                        toaster::Toast::new(message)
+                            // `"long"` is QQC2's own word in the reference, and
+                            // `toaster::Duration::Long` is 15 s — the toolkit's
+                            // spelling of the same idea, not a number chosen
+                            // here.
+                            .duration(toaster::Duration::Long)
+                            .action("Play".to_string(), move |_| {
+                                Message::LaunchGame(game_id.clone())
+                            }),
+                    )
+                    .map(cosmic::Action::App);
+                return cosmic::app::Task::batch([navigate, toast]);
+            }
+            // `fail(message)` (`bridge.py:896-900`): clear the guard, reset the
+            // bar, and say why — in that order, because a notice over a page
+            // that is still disabled reads as a second install being possible.
+            Message::EasyInstallFailed { message } => {
+                let name = self
+                    .state
+                    .running_install
+                    .take()
+                    .map(|record| record.installer_name);
+                self.state.easy_busy = false;
+                self.state.progress = None;
+                let text = match name {
+                    Some(name) => format!("Could not install {name}: {message}"),
+                    // Unreachable from the worker, which only runs while a
+                    // record exists. Reported without a name rather than
+                    // dropped, because a failure nobody sees is worse.
+                    None => message.clone(),
+                };
+                return self.state.toast_task(text);
+            }
 
             // ---- Plugins ---------------------------------------------------
             // `refreshPlugins()` — re-read the host and rebuild the rows.
@@ -2041,12 +2174,391 @@ fn shlex_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
+// ---------------------------------------------------------------------------
+// The easy-install flow (P-53…P-59)
+// ---------------------------------------------------------------------------
+
+/// The download's own timeout, `download_installer`'s `timeout: int = 60`
+/// (`installers.py:602`).
+const INSTALLER_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// `installEasy`'s guards and its setup, then the worker
+/// (`bridge.py:832-857`).
+///
+/// # The four refusals, and which of them speak
+///
+/// The reference's pre-flight is four checks with three different answers, and
+/// the differences are the kind that get flattened by a rewrite:
+///
+/// - already busy → `"Another install is already running"` (`:833-835`);
+/// - an installer id that is not in the catalog → **silence**
+///   (`except KeyError: return`, `:836-839`);
+/// - a runner that is not installed → `"{name} is not available. Download a
+///   runner first."` (`:840-843`);
+/// - a prefix that cannot be created → `"Could not create a prefix for {name}:
+///   {exc}"` (`:844-847`).
+///
+/// The third is the one worth reading twice: the runner is resolved *through*
+/// `runner_manager.get`, which falls back to system Wine for an id it does not
+/// know, so this refusal is about a Wine that is not there and not about a bad
+/// parameter.
+///
+/// # The order that matters
+///
+/// `_easy_busy` is set **after** the prefix exists (`:849`). Setting it first
+/// and clearing it in each of the three `return` arms would work and would be
+/// three places to forget; the reference's order is kept because it is the one
+/// that cannot leak.
+fn start_easy_install(
+    state: &mut State,
+    installer_id: &str,
+    runner_id: &str,
+) -> cosmic::app::Task<Message> {
+    if state.easy_busy {
+        return state.toast_task("Another install is already running".to_string());
+    }
+    let Ok(installer) = installer_by_id(installer_id) else {
+        return cosmic::task::none();
+    };
+    // `runner_id or self.settings.default_runner` — Python's `or` is a
+    // truthiness test, so the empty string means "the default", which is what
+    // the page's selector sends before anything has been chosen.
+    let resolved = if runner_id.is_empty() {
+        state.settings.default_runner.clone()
+    } else {
+        runner_id.to_string()
+    };
+    {
+        let runner = state.runners.get(&resolved, &SystemLaunchEnv);
+        if !runner.is_available() {
+            let text = format!("{} is not available. Download a runner first.", runner.name());
+            return state.toast_task(text);
+        }
+    }
+    // Generated before the install so a cancelled wizard leaves a prefix named
+    // for the entry the user gets if they try again (`installers.py:649-652`).
+    let game_id = gamehandler_core::models::new_id();
+    let prefix = match prepare_prefix(&game_id) {
+        Ok(prefix) => prefix,
+        Err(error) => {
+            let text = format!("Could not create a prefix for {}: {error}", installer.name);
+            return state.toast_task(text);
+        }
+    };
+    // From here the reference is already busy (`:849-852`).
+    state.easy_busy = true;
+    state.progress = Some(0.0);
+    state.running_install = Some(crate::state::PendingInstall {
+        installer_id: installer.id.to_string(),
+        installer_name: installer.name.to_string(),
+        prefix: prefix.clone(),
+        runner_id: resolved.clone(),
+        game_id,
+    });
+    let runners = state.runner_manager();
+    let (sender, receiver) = unbounded_channel::<Message>();
+    std::thread::spawn(move || easy_install_worker(installer, runners, prefix, resolved, &sender));
+    // The notice and the work are one task, so the page cannot be busy with
+    // nothing on screen saying why — the shape
+    // `view::runners::install_runner_task` uses for the same reason.
+    cosmic::app::Task::batch([
+        state.toast_task(format!("Downloading {}…", installer.name)),
+        cosmic::app::Task::stream(receiver.map(cosmic::Action::App)),
+    ])
+}
+
+/// `installEasy`'s `work()` (`bridge.py:857-872`), on the worker thread.
+///
+/// Four phases, in the reference's order: download and verify, tell the user
+/// the vendor's wizard is starting, run it, then wait for the executable it
+/// should have produced. Every failure leaves through
+/// [`Message::EasyInstallFailed`], which is the only terminal message that
+/// clears the busy guard on this path — see that variant for why the
+/// documented set needed it.
+///
+/// `runner_id` is resolved to a runner here rather than being carried in, for
+/// the reason `Message::LaunchGame` re-derives its manager: a `Box<dyn Runner>`
+/// is not `Send`, and the manager — which is a `PathBuf` and a directory scan —
+/// is.
+fn easy_install_worker(
+    installer: &'static Installer,
+    runners: RunnerManager,
+    prefix: PathBuf,
+    runner_id: String,
+    sender: &UnboundedSender<Message>,
+) {
+    let launch_env = SystemLaunchEnv;
+    let fail = |message: String| {
+        let _ = sender.unbounded_send(Message::EasyInstallFailed { message });
+    };
+    let progress = |fraction: f64| {
+        let _ = sender.unbounded_send(Message::EasyInstallProgress(fraction as f32));
+    };
+    let archive = match download_installer(
+        installer,
+        &paths::downloads_dir(),
+        Some(&progress),
+        INSTALLER_DOWNLOAD_TIMEOUT,
+        &crate::http::UreqClient,
+        &launch_env,
+    ) {
+        Ok(archive) => archive,
+        Err(error) => return fail(error.to_string()),
+    };
+    // `bridge.py:859-865`, emitted from the worker because it must arrive
+    // *after* the download: the point of the sentence is that the vendor's
+    // window is about to appear, and a notice that precedes a two-minute
+    // download says the opposite.
+    let _ = sender.unbounded_send(Message::Notify(format!(
+        "Launching the {} installer… Finish the vendor wizard, then close it — \
+         GameHandler adds it as soon as the install lands.",
+        installer.name
+    )));
+    let runner = runners.get(&runner_id, &launch_env);
+    let command =
+        match build_installer_command(&*runner, &prefix, installer, &archive, &launch_env) {
+            Ok(command) => command,
+            Err(error) => return fail(error.to_string()),
+        };
+    // `Path(prefix).mkdir(parents=True, exist_ok=True)` (`bridge.py:867`),
+    // which is redundant here — `prepare_prefix` made it — and is kept because
+    // the reference's line sits between the two steps that need it.
+    let _ = std::fs::create_dir_all(&prefix);
+    // `subprocess.run(argv, env=env, cwd=str(archive.parent), check=False)`
+    // (`:868-870`): the *download's* directory, which is where an installer that
+    // resolves its payload relative to its own location finds it.
+    let cwd = archive
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let returncode = match run_installer(&command, &cwd) {
+        Ok(code) => code,
+        Err(error) => return fail(error.to_string()),
+    };
+    // `wait_for_installer(runner, env, prefix, installer.expected_exe)`
+    // (`:871`) — P-56's loop: poll for the expected executable, slice the
+    // wineserver wait so a leftover store client cannot hide a finished
+    // install, and give up at `INSTALL_SETTLE_TIMEOUT_SECONDS` (six hours).
+    let found = wait_for_installer(
+        &*runner,
+        &command.env,
+        &prefix,
+        installer.expected_exe,
+        &SystemClock,
+        &|runner, env, seconds| {
+            wait_for_prefix_idle(runner, env, seconds, &SystemLaunchEnv)
+        },
+    );
+    let _ = sender.unbounded_send(Message::EasyInstallWizardFinished { found, returncode });
+}
+
+/// The vendor's wizard as a child process, inherited stdio and all.
+///
+/// `subprocess.run(argv, env=env, cwd=…, check=False)` — so the environment is
+/// **replaced**, not layered (`env_clear` first, as in `start_prefix_tool`),
+/// and the exit status is reported rather than turned into an error.
+///
+/// A child killed by a signal has no exit code; `-1` is what
+/// `core::runners::launch` reports for the same case and for the same reason
+/// (Python's `returncode` would be the negated signal, a number that names
+/// nothing a user can act on).
+fn run_installer(command: &gamehandler_core::runners::Command, cwd: &Path) -> std::io::Result<i32> {
+    let Some((program, arguments)) = command.argv.split_first() else {
+        // Unreachable: `build_installer_command` refuses an empty argv with
+        // `InstallerError::EmptyCommand` before returning.
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the runner produced no command to run",
+        ));
+    };
+    let status = std::process::Command::new(program)
+        .args(arguments)
+        .env_clear()
+        .envs(&command.env)
+        .current_dir(cwd)
+        .status()?;
+    Ok(status.code().unwrap_or(-1))
+}
+
+/// `done(result)` (`bridge.py:874-895`): the found branch finishes the install,
+/// the other one stores it and asks the user for an executable.
+///
+/// The not-found branch leaves `easy_busy` **true**, which is the reference's
+/// own asymmetry and not an oversight: the install is not abandoned, it is
+/// waiting for the user, and `completeEasyInstall`/`cancelEasyInstall` are the
+/// two ways it ends. A port that cleared the guard here would let a second
+/// install start on top of a pending one — P-59's guard, defeated by the only
+/// path that has something to lose.
+fn easy_install_wizard_finished(
+    state: &mut State,
+    found: Option<&Path>,
+    returncode: i32,
+) -> cosmic::app::Task<Message> {
+    // A reply whose install is gone — the task was dropped, or a cancel raced
+    // it. Nothing to interpret it against, so nothing is reported: this is the
+    // same silence `Message::LaunchWatchFinished` keeps for a game the library
+    // no longer holds.
+    let Some(record) = state.running_install.clone() else {
+        return cosmic::task::none();
+    };
+    let Some(executable) = found else {
+        // `suffix = f" (installer exited {returncode})" if returncode else ""`
+        // — a zero exit says nothing worth appending.
+        let suffix = if returncode != 0 {
+            format!(" (installer exited {returncode})")
+        } else {
+            String::new()
+        };
+        let text = format!(
+            "Could not find the {} executable in the prefix{suffix}. Pick it \
+             yourself if the install finished.",
+            record.installer_name
+        );
+        state.running_install = None;
+        // Keyed by the game id, which is what the reference uses as the token
+        // (`bridge.py:888-889`).
+        state.easy_pending.insert(record.game_id.clone(), record);
+        return state.toast_task(text);
+    };
+    finish_easy_install(state, &record, executable)
+}
+
+/// `completeEasyInstall` (`bridge.py:921-936`).
+///
+/// The pending entry is popped **first**, and that order is the reference's: a
+/// token nobody holds is a silent return that clears no guard, and the cancel
+/// this falls into when the user picked nothing finds a map that no longer has
+/// the entry — so the kept-prefix notice does *not* fire on this path. That is
+/// the reference's behaviour, measured (`:923` pops, `:947` toasts only when
+/// the pop found something), and it is kept rather than tidied into the more
+/// obvious "cancel always toasts".
+fn complete_easy_install(
+    state: &mut State,
+    token: &str,
+    path: Option<&str>,
+) -> cosmic::app::Task<Message> {
+    // `pending = self._pending_installs.pop(token, None)` (`:923`), the pop
+    // itself and not a lookup followed by one.
+    let Some(record) = state.easy_pending.remove(token) else {
+        return cosmic::task::none();
+    };
+    match path {
+        // `as_local_path(file_url)` — the picker hands a path, and the URL
+        // decoding the reference does on the way is the chooser's own job
+        // (T-15); what reaches here is already the path or nothing.
+        Some(path) if !path.is_empty() => finish_easy_install(state, &record, Path::new(path)),
+        // The cancel of a token that has already been popped, which is the
+        // reference's own shape: `cancelEasyInstall` clears the guards either
+        // way and finds nothing to toast about.
+        _ => cancel_easy_install(state, token),
+    }
+}
+
+/// `cancelEasyInstall` (`bridge.py:937-948`).
+///
+/// The guards are cleared whether or not a pending install was found: the
+/// reference clears them before the `if pending` (`:940-943`), so a cancel for a
+/// token that is not there still un-busies the page. That is the behaviour that
+/// makes this function the *only* way out of the busy state the not-found branch
+/// leaves behind, so getting it wrong is a page stuck disabled forever.
+fn cancel_easy_install(state: &mut State, token: &str) -> cosmic::app::Task<Message> {
+    let record = state.easy_pending.remove(token);
+    state.easy_busy = false;
+    state.progress = None;
+    state.running_install = None;
+    let Some(record) = record else {
+        return cosmic::task::none();
+    };
+    let text = format!(
+        "Kept the {} prefix. Add it later from Add Game if you want.",
+        record.installer_name
+    );
+    state.toast_task(text)
+}
+
+/// `_finish_easy_install` (`bridge.py:905-919`): the entry, the guards, and the
+/// signal.
+///
+/// # What is not here, and why it is named rather than skipped
+///
+/// `bridge.py:907-911` sets the entry's cover to the executable's own icon —
+/// `game.cover_path = str(save_exe_icon(exe_path, game_id))`, with an empty
+/// string when that raises. **`save_exe_icon` has no counterpart in this tree:**
+/// it is `covers.py:307-317` over `exe_icons.extract_icon`, and `core::exe_icons`
+/// does not exist (`crates/core/src/lib.rs` names it as planned and nothing
+/// else does). So the entry is created with no cover, which is the reference's
+/// *own* fallback for a file whose icon cannot be read — a real state, not a
+/// placeholder — and P-58's "with the vendor icon" is therefore **unmet**, not
+/// deferred to Phase 3. The port that closes it is `core::exe_icons`, which
+/// task T-05 owns.
+fn finish_easy_install(
+    state: &mut State,
+    record: &crate::state::PendingInstall,
+    executable: &Path,
+) -> cosmic::app::Task<Message> {
+    let Ok(installer) = installer_by_id(&record.installer_id) else {
+        // The record names an id the catalog does not have, which cannot happen
+        // from `StartEasyInstall` — it resolves the recipe before writing the
+        // record. Reported as a failure rather than unwrapped, because the
+        // guards below have to run either way.
+        let message = format!("unknown installer {}", record.installer_id);
+        state.easy_busy = false;
+        state.progress = None;
+        state.running_install = None;
+        return state.toast_task(format!("Could not install {}: {message}", record.installer_name));
+    };
+    let game = game_from_install(
+        installer,
+        executable,
+        &record.prefix,
+        &record.runner_id,
+        Some(&record.game_id),
+    );
+    let game_id = game.id.clone();
+    let name = game.name.clone();
+    let added = state.library.add(game);
+    state.easy_busy = false;
+    state.progress = None;
+    state.running_install = None;
+    // The reference's `_library_updated()` follows the add; here the library is
+    // read by the view directly, so the only thing left to tell anyone is the
+    // shell — and a failed save is reported instead of raised, which is the same
+    // divergence `Message::LaunchStarted` records for `mark_played`.
+    if let Err(error) = added {
+        return state.toast_task(format!("Could not save “{name}”: {error}"));
+    }
+    // `gameInstalled.emit(game.id, f"Installed “{game.name}”")` (`:918`) — the
+    // signal, as a message, which is what carries the id to the toast's Play
+    // action.
+    cosmic::app::Task::done(cosmic::Action::App(Message::EasyInstallFinished {
+        game_id,
+        message: format!("Installed “{name}”"),
+    }))
+}
+
 /// The pages whose body is still a placeholder: the task that will build each.
 ///
-/// # Why this exists
+/// **Empty, and T-38 emptied it.** It held one entry — `(Page::Installers,
+/// "T-12")` — which was the last page still routed through `pending_page`; the
+/// install flow landed that page, and the entry and the placeholder function
+/// went with it.
+///
+/// # The entry named a task that was not the one that removed it
+///
+/// `"T-12"` was right when the line was written and is the reason the two ids
+/// have to be read apart rather than reconciled into one. T-12 built
+/// `view/installers.rs` and deliberately left the page pinned, because at that
+/// point seven of its nine P-items were unmet and dispatching it would have
+/// deleted the last entry in this list while the page underneath was inert —
+/// `#68`. T-38 is the install flow itself, so it is the task that meets those
+/// items and the task that owns the deletion. A reader who finds `T-12` in the
+/// git log of the line this doc describes is looking at the pin, not at the
+/// landing.
+///
+/// # Why this existed
 ///
 /// T-08 is the shell: the sidebar, the routing and the toaster. Each page's own
-/// content is a later task, and until it lands that page's body says so **on
+/// content was a later task, and until it landed that page's body said so **on
 /// screen** as well as in the code — a page that rendered an empty body would
 /// read as a bug in the shell, which is the wrong thing to go looking for.
 ///
@@ -2054,27 +2566,39 @@ fn shlex_quote(value: &str) -> String {
 /// **invisible**: it compiles, it renders, and it satisfies every test that
 /// checks the process came up. `gui-stays-up` in `scripts/smoke-test.sh` asserts
 /// exactly that and nothing more, so a build whose whole interface is six
-/// placeholders passes the gate suite. This list is what makes the placeholders
+/// placeholders passed the gate suite. This list is what made the placeholders
 /// countable, and `the_pending_pages_are_exactly_the_ones_whose_body_says_so`
 /// is what counts them — against the rendered body, not against this list.
 ///
-/// # Landing a page is one deletion
+/// # Landing a page was one deletion
 ///
-/// This is a slice, not a `[(Page, &str); N]`, and that is deliberate: a
-/// fixed-length array would make removing a line a two-part edit — delete the
-/// line, then correct the length — and the second part is mechanical. A
+/// This is a slice, not a `[(Page, &str); N]`, and that was deliberate: a
+/// fixed-length array would have made removing a line a two-part edit — delete
+/// the line, then correct the length — and the second part is mechanical. A
 /// mechanical edit forced by a failure message that says the count is pinned
 /// "deliberately" is how a gate stops meaning anything: the reader learns to
-/// clear red by editing a constant. With a slice, the one edit is the one that
-/// carries the meaning, and the test above is what holds the other half — it
-/// reads what `view_body` actually draws.
+/// clear red by editing a constant. With a slice, the one edit was the edit
+/// that carried the meaning, and the test above holds the other half — it reads
+/// what `view_body` actually draws.
 ///
-/// **T-19's acceptance is that this is empty**, at which point the placeholder
-/// function goes with the last entry.
+/// # Why the empty slice and `pending_task` survive the deletion
+///
+/// The list is now `[]` and every arm of [`Shell::view_body`] draws a real page,
+/// so `pending_task` returns `None` for all nine and the test above asserts, for
+/// each of them, that the body does **not** draw the placeholder. That is a
+/// claim with content: it fails the moment a page is moved back behind a
+/// placeholder, which is exactly the regression the guard was built for. The
+/// const and the function stay so that the *mechanism* is still the thing under
+/// test rather than a description of it — deleting them would leave the test
+/// asserting a property of a table that no longer exists.
+///
+/// **The placeholder function itself is gone**, with the last entry, as this
+/// doc used to say it would be. `crates/app/tests/pending_pages.rs` locates a
+/// page's arm by the text `pending_page` in `view_body`, so a page cannot
+/// quietly be sent back to a placeholder: there is no longer a function to send
+/// it to.
 #[cfg(test)]
-const PENDING_PAGES: &[(Page, &str)] = &[
-    (Page::Installers, "T-12"),
-];
+const PENDING_PAGES: &[(Page, &str)] = &[];
 
 /// The task that will build `page`, or `None` once its body has landed.
 #[cfg(test)]
@@ -2083,21 +2607,6 @@ fn pending_task(page: Page) -> Option<&'static str> {
         .iter()
         .find(|(pending, _)| *pending == page)
         .map(|(_, task)| *task)
-}
-
-/// The body of a page that has not been ported yet.
-///
-/// The task is named on screen as well as in the code. See `PENDING_PAGES`,
-/// which is `cfg(test)`-gated and so cannot be linked from here.
-fn pending_page(page: Page, task: &str) -> cosmic::Element<'_, Message> {
-    container(
-        cosmic::widget::column::with_capacity(2)
-            .push(text::title2(page.label()))
-            .push(text::body(format!("This page has not been ported yet ({task}).")))
-            .spacing(12),
-    )
-    .center(cosmic::iced::Length::Fill)
-    .into()
 }
 
 /// What one message does to a shell, as far as a test can see it.
@@ -3254,6 +3763,14 @@ mod tests {
                             game_id: "g".to_string(),
                             message: "installed".to_string(),
                         }),
+        // The failure text is not a placeholder for the same reason the plugin
+        // id is not: the handler builds its sentence from
+        // `State::running_install`, which the fixture holds, so a message that
+        // named an installer's *own* name would be a second source for a fact
+        // that has one. The text here is what `_async`'s `fail` passes through.
+        Message::EasyInstallFailed { .. } => ("EasyInstallFailed", Message::EasyInstallFailed {
+                            message: "the download failed".to_string(),
+                        }),
         Message::RefreshPlugins => ("RefreshPlugins", Message::RefreshPlugins),
         // `"mangohud"` rather than a placeholder string: the reference's
         // `installPlugin` returns silently for an id that does not resolve
@@ -3364,6 +3881,56 @@ mod tests {
         // also the honest state for a shell nothing has refreshed yet.
         shell.state.plugins.clear();
         shell.state.plugins_intro.clear();
+        // The easy-install state machine's fixture, and the one place in this
+        // function where the state deliberately holds two records the real flow
+        // keeps apart.
+        //
+        // `easy_busy` is set for a reason that is not about observation at all:
+        // **with it false, `StartEasyInstall` would start a real install.**
+        // `state.runners` points at the user's real runners directory, so on a
+        // machine that has proton-ge and a Wine, the arm would create a prefix,
+        // spawn the worker and download the vendor's installer from the network
+        // — from inside `cargo test`. The guard reads `is_handled`, not branch
+        // coverage, so holding the guard is enough to measure the arm, and it
+        // measures the *refusal* branch, which is a real one. That is the same
+        // trade this fixture makes elsewhere: crafted state so a handler acts,
+        // without the handler reaching the outside world.
+        shell.state.easy_busy = true;
+        // `Some(0.25)` and not `Some(0.5)`, which is the sample
+        // `EasyInstallProgress` carries: a handler that wrote what was already
+        // there would be reported as an unwritten arm (D-34).
+        shell.state.progress = Some(0.25);
+        // The in-flight record and the pending record, held together. In the
+        // real flow they are mutually exclusive — `easy_install_wizard_finished`
+        // moves the record from one to the other — and the fixture holds both
+        // because the guard drives every message against **one** shell rather
+        // than one per message. Nothing branches on the combination:
+        // `EasyInstallWizardFinished` reads `running_install` and
+        // `CompleteEasyInstall` reads `easy_pending`, so neither observes the
+        // other's field. If a future handler does branch on the pair, this
+        // fixture is where the impossible state will show up as a surprise.
+        //
+        // `installer_id` is `"steam"`, a real catalog id, because
+        // `finish_easy_install` resolves it and a fixture naming an id the
+        // catalog lacks would drive the failure branch of a working handler.
+        shell.state.running_install = Some(PendingInstall {
+            installer_id: "steam".to_string(),
+            installer_name: "Steam".to_string(),
+            prefix: std::env::temp_dir().join("gh-install-fixture-prefix"),
+            runner_id: "proton-ge".to_string(),
+            game_id: "install-fixture".to_string(),
+        });
+        // Keyed by the token `CompleteEasyInstall`'s sample uses.
+        shell.state.easy_pending.insert(
+            "t".to_string(),
+            PendingInstall {
+                installer_id: "steam".to_string(),
+                installer_name: "Steam".to_string(),
+                prefix: std::env::temp_dir().join("gh-install-fixture-prefix"),
+                runner_id: "proton-ge".to_string(),
+                game_id: "install-fixture".to_string(),
+            },
+        );
         shell
     }
 
@@ -3529,6 +4096,49 @@ mod tests {
             "PrefixFolderOpened",
             "CreateDesktopShortcut",
             "ShortcutCreated",
+            // T-38's nine. Live because the Installers page draws the search
+            // box, the category selector and the Install button that produce the
+            // first three, and the other six are the install's own replies.
+            //
+            // `SetInstallerSearch` and `SetInstallerCategory` are here because
+            // their samples write `installer_search`/`installer_category`, and
+            // that write is the only part of the arm this guard can see.
+            //
+            // The half it *cannot* see is the point of those two arms: the
+            // catalog the page draws is derived, and an arm that ran the filter
+            // and forgot `State::refresh_installers` would be listed here all the
+            // same, because the search text still changed. This comment used to
+            // claim otherwise — that the refresh "would still be observed here,
+            // because `refresh_installers` writes three fields" — and deleting
+            // the refresh left this test green, which is how the claim was
+            // measured false. `a_filter_rebuilds_the_catalog_the_page_draws` is
+            // the assertion that closes it; the arm runs the refresh
+            // unconditionally rather than only when `view::installers::update`
+            // returns `Some`, because the two filter arms return `Some` and do
+            // their work in the state.
+            //
+            // `StartEasyInstall` is measured at its **first refusal** — the
+            // fixture holds `easy_busy` — for the reason written on
+            // `shell_with_work_to_do`: the alternative is a real download from
+            // inside the test process.
+            //
+            // The five replies are here because the fixture holds the state they
+            // need (`running_install`, `easy_pending`, a progress that is not
+            // the sample's), and each of them is a message `Shell::update` must
+            // answer or the install's UI is stuck: `EasyInstallWizardFinished`
+            // and `CompleteEasyInstall` are the two ways an install finishes,
+            // `CancelEasyInstall` the only way out of the not-found state, and
+            // `EasyInstallFailed` the only arm that clears the guard when the
+            // worker gives up.
+            "SetInstallerSearch",
+            "SetInstallerCategory",
+            "StartEasyInstall",
+            "EasyInstallProgress",
+            "EasyInstallWizardFinished",
+            "CompleteEasyInstall",
+            "CancelEasyInstall",
+            "EasyInstallFailed",
+            "EasyInstallFinished",
         ];
         // `DismissToast` is written and cannot be observed; see the doc above.
         expected.sort_unstable();
@@ -3713,6 +4323,512 @@ mod tests {
             "`Shell` answered `SetWindowHidden` itself: {effect:?}. The guard \
              excludes this variant because `App::update` owns it, so anything \
              done here is done where nothing looks"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // T-38: the easy-install flow (P-53…P-59)
+    // -----------------------------------------------------------------------
+
+    /// A shell with the *starting* easy-install state and a library at a temp
+    /// path.
+    ///
+    /// [`shell_with_work_to_do`] primes the two install records and the busy
+    /// guard so the handler guard can observe `StartEasyInstall` at its first
+    /// refusal; these tests need the state a user has before pressing Install,
+    /// so they clear what it primed.
+    ///
+    /// The library is the fixture's own temp one, and that is load-bearing
+    /// rather than tidy: [`finish_easy_install`] calls `Library::add`, which
+    /// saves, so a shell built over the real `games.json` would write the
+    /// running user's library from a test.
+    fn shell_for_installs() -> Shell {
+        let mut shell = shell_with_work_to_do();
+        shell.state.easy_busy = false;
+        shell.state.progress = None;
+        shell.state.running_install = None;
+        shell.state.easy_pending.clear();
+        shell
+    }
+
+    /// The record [`start_easy_install`] writes, for the tests that need one
+    /// already in place.
+    ///
+    /// `installer_id` is `"steam"`, a real catalog id: every path that consumes
+    /// this record resolves the recipe through `installer_by_id`, so a fixture
+    /// naming an id the catalog lacks would drive the failure branch of a
+    /// handler that is working.
+    fn install_record(prefix: &Path, game_id: &str) -> PendingInstall {
+        PendingInstall {
+            installer_id: "steam".to_string(),
+            installer_name: "Steam".to_string(),
+            prefix: prefix.to_path_buf(),
+            runner_id: "proton-ge".to_string(),
+            game_id: game_id.to_string(),
+        }
+    }
+
+    /// A real directory of this test's own.
+    ///
+    /// P-57 is a claim about a **path that still exists** — "cancel keeps the
+    /// prefix" — so the fixture has to be a directory that can be checked
+    /// afterwards, not a name.
+    fn install_prefix(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("gh-install-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// **A second install is refused while one is running — P-59's other
+    /// half.**
+    ///
+    /// `InstallersPage.qml:125` is `enabled: !backend.busy`, which disables the
+    /// button; this is the guard *behind* the button (`bridge.py:833-835`), and
+    /// it is the one that matters for a message that reached `update` without a
+    /// press: a re-sent task, a shortcut, or a future caller of
+    /// `Message::StartEasyInstall`.
+    ///
+    /// # The installer id is one the catalog does not hold, on purpose
+    ///
+    /// The mutation this test exists for is *deleting the busy guard*, and the
+    /// assertion it fails on has to be reachable without starting a real
+    /// install. With `"steam"` the arm would go on to resolve a runner and, on
+    /// a machine that has proton-ge, create a prefix and download a vendor
+    /// installer **from inside `cargo test`**. With an id the catalog lacks,
+    /// the next statement is `except KeyError: return`'s silence — so the
+    /// mutated arm produces nothing at all and this test fails on its first
+    /// assertion, deterministically, on every machine.
+    #[test]
+    fn an_install_in_flight_refuses_a_second_one() {
+        let mut shell = shell_for_installs();
+        shell.state.easy_busy = true;
+
+        let effect = observe(
+            &mut shell,
+            Message::StartEasyInstall {
+                installer_id: "no-such-installer".to_string(),
+                runner_id: "proton-ge".to_string(),
+            },
+        );
+
+        assert!(
+            effect.task_units > 0,
+            "a refused install said nothing: {effect:?}. The reference answers a \
+             second `installEasy` with `notify(\"Another install is already \
+             running\")` (`bridge.py:833-835`), and a silence here is a user \
+             pressing Install and seeing nothing happen at all"
+        );
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("Another install is already running"),
+            "the refusal is not the reference's sentence; toasts: {:?}",
+            shell.state.toasts
+        );
+        assert!(
+            shell.state.running_install.is_none() && !shell.state.easy_pending.values().any(
+                |record| record.game_id == "no-such-installer"
+            ),
+            "a refused install wrote a record — the guard is supposed to leave \
+             the state exactly as it found it"
+        );
+    }
+
+    /// **An installer id the catalog does not hold is silent, not reported.**
+    ///
+    /// `bridge.py:836-839` is `except KeyError: return` — the reference says
+    /// nothing at all, and the difference from the busy refusal is the point:
+    /// the user pressed a button that exists, over a card built from this very
+    /// catalog, so an id that does not resolve is a *code* fault and a toast
+    /// about it would be a sentence no user can act on.
+    ///
+    /// It is also the branch that keeps the busy guard's test honest — see that
+    /// test — so a mutation that turns this silence into a notice breaks both.
+    #[test]
+    fn an_installer_id_the_catalog_does_not_hold_is_silent() {
+        let mut shell = shell_for_installs();
+        let before = format!("{:?}", shell.state);
+
+        let effect = observe(
+            &mut shell,
+            Message::StartEasyInstall {
+                installer_id: "no-such-installer".to_string(),
+                runner_id: "proton-ge".to_string(),
+            },
+        );
+
+        assert!(
+            !effect.state_changed && effect.task_units == 0,
+            "`except KeyError: return` produced something: {effect:?}"
+        );
+        assert_eq!(
+            format!("{:?}", shell.state),
+            before,
+            "the whole state moved, not just the part this test names"
+        );
+    }
+
+    /// **A wizard that found no executable stores the install and leaves the
+    /// page busy — both halves of `done(result)`'s else branch.**
+    ///
+    /// `bridge.py:874-895`: nothing found means `_pending_installs[token] = {…}`
+    /// and a notice, and **`_easy_busy` is deliberately left `True`**. That
+    /// asymmetry is what `cancelEasyInstall` and `completeEasyInstall` exist to
+    /// end, and a port that cleared the guard here would let a second install
+    /// start on top of a pending one — P-59's guard, defeated by the only path
+    /// with something to lose.
+    ///
+    /// The suffix is conditional on the return code (`:885-886`), so the same
+    /// test drives both codes on two fresh shells: a port that always appended
+    /// it, or never, fails on one of them.
+    #[test]
+    fn a_wizard_that_found_no_executable_stores_the_install_and_stays_busy() {
+        for (returncode, suffix) in [(1, " (installer exited 1)"), (0, "")] {
+            let prefix = install_prefix(&format!("not-found-{returncode}"));
+            let mut shell = shell_for_installs();
+            shell.state.easy_busy = true;
+            shell.state.running_install = Some(install_record(&prefix, "install-1"));
+
+            let effect = observe(
+                &mut shell,
+                Message::EasyInstallWizardFinished {
+                    found: None,
+                    returncode,
+                },
+            );
+
+            assert!(
+                effect.task_units > 0,
+                "the user is not told the executable was not found: {effect:?}"
+            );
+            assert!(
+                format!("{:?}", shell.state.toasts).contains(&format!(
+                    "Could not find the Steam executable in the prefix{suffix}. Pick it \
+                     yourself if the install finished."
+                )),
+                "the notice is not the reference's sentence for return code \
+                 {returncode}; toasts: {:?}",
+                shell.state.toasts
+            );
+            assert!(
+                shell.state.easy_pending.contains_key("install-1"),
+                "the pending install is not stored, so `completeEasyInstall` and \
+                 `cancelEasyInstall` have no token to answer"
+            );
+            assert!(
+                shell.state.running_install.is_none(),
+                "the in-flight record outlived the wizard it describes"
+            );
+            assert!(
+                shell.state.easy_busy,
+                "the guard was cleared while an install is waiting for the user — \
+                 the page becomes pressable again and a second install starts over \
+                 a pending one"
+            );
+            assert!(
+                prefix.exists() && shell.state.library.get("install-1").is_none(),
+                "P-57: the prefix is kept and **no** library entry is made until \
+                 the user says what to run"
+            );
+        }
+    }
+
+    /// **A cancel clears both guards and keeps the prefix — P-57.**
+    ///
+    /// `bridge.py:937-948`. The guards are cleared *before* the `if pending`
+    /// (`:940-943`), which is why this function is the only way out of the busy
+    /// state the not-found branch leaves behind; the notice fires only when
+    /// there really was a prefix to keep.
+    ///
+    /// The "keeps the prefix" half is asserted on a directory that exists, not
+    /// on the sentence that mentions it: a port that removed the prefix and
+    /// printed the same words would pass a text-only check, and deleting a
+    /// user's half-finished Wine prefix is the failure the sentence promises
+    /// against.
+    #[test]
+    fn a_cancel_clears_the_guards_and_keeps_the_prefix() {
+        let prefix = install_prefix("cancel");
+        let mut shell = shell_for_installs();
+        shell.state.easy_busy = true;
+        shell.state.progress = Some(0.4);
+        shell.state
+            .easy_pending
+            .insert("tok".to_string(), install_record(&prefix, "install-2"));
+
+        let effect = observe(&mut shell, Message::CancelEasyInstall("tok".to_string()));
+
+        assert!(effect.task_units > 0, "a cancel said nothing: {effect:?}");
+        assert!(
+            format!("{:?}", shell.state.toasts)
+                .contains("Kept the Steam prefix. Add it later from Add Game if you want."),
+            "the kept-prefix notice is not the reference's sentence; toasts: {:?}",
+            shell.state.toasts
+        );
+        assert!(
+            !shell.state.easy_busy && shell.state.progress.is_none(),
+            "a cancel left the page busy or the bar drawn — P-57's cancel is the \
+             only exit from the not-found state, so a guard left on here is a page \
+             that can never install anything again"
+        );
+        assert!(
+            shell.state.easy_pending.is_empty(),
+            "the pending record survived the cancel it was cancelled by"
+        );
+        assert!(prefix.exists(), "the prefix was deleted");
+    }
+
+    /// **A cancel for a token nobody holds still clears the guards, and says
+    /// nothing.**
+    ///
+    /// The second half of the same reference block, and the one a tidy rewrite
+    /// loses: the guards are cleared outside the `if pending`, so this really
+    /// does un-busy the page, while the notice is inside it and does not fire.
+    /// Asserting the two together is what keeps a mutation from satisfying one
+    /// by breaking the other.
+    #[test]
+    fn a_cancel_for_a_token_nobody_holds_still_clears_the_guards() {
+        let mut shell = shell_for_installs();
+        shell.state.easy_busy = true;
+        shell.state.progress = Some(0.4);
+
+        let effect = observe(
+            &mut shell,
+            Message::CancelEasyInstall("nobody-holds-this".to_string()),
+        );
+
+        assert!(
+            effect.state_changed && effect.task_units == 0,
+            "the guards were not cleared, or a prefixless cancel spoke: {effect:?}"
+        );
+        assert!(!shell.state.easy_busy && shell.state.progress.is_none());
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("num_elems: 0"),
+            "a cancel with nothing to keep promised to keep something; toasts: {:?}",
+            shell.state.toasts
+        );
+    }
+
+    /// **The found branch makes a library entry with the recipe's own fields —
+    /// `_finish_easy_install` (`bridge.py:905-919`).**
+    ///
+    /// Four of the five assertions are about `game_from_install` rather than
+    /// about this file, and that is deliberate: the point of the arm is *which*
+    /// values reach the library, and an arm that passed the wrong prefix or the
+    /// wrong runner would produce an entry that looks fine in a listing and
+    /// fails on launch.
+    ///
+    /// # What is not asserted, because it is not built
+    ///
+    /// `cover_path`. The reference sets it to the executable's own icon
+    /// (`:907-911`) and **this tree has no `exe_icons`** — see
+    /// [`finish_easy_install`]. The assertion below pins the empty string the
+    /// reference's own `except` clause produces, so the day T-05 lands, this
+    /// test fails and says which field changed rather than quietly agreeing
+    /// with the new behaviour.
+    #[test]
+    fn a_wizard_that_found_the_executable_makes_a_library_entry() {
+        let prefix = install_prefix("found");
+        let exe = prefix.join("drive_c/Steam/steam.exe");
+        let mut shell = shell_for_installs();
+        shell.state.easy_busy = true;
+        shell.state.running_install = Some(install_record(&prefix, "install-3"));
+
+        let _ = observe(
+            &mut shell,
+            Message::EasyInstallWizardFinished {
+                found: Some(exe.clone()),
+                returncode: 0,
+            },
+        );
+
+        assert!(
+            !shell.state.easy_busy && shell.state.running_install.is_none(),
+            "the install's guards outlived the install"
+        );
+        assert!(
+            shell.state.easy_pending.is_empty(),
+            "a finished install is not a pending one — the user is not asked for \
+             an executable that was already found"
+        );
+        let game = shell
+            .state
+            .library
+            .get("install-3")
+            .expect("the install became a library entry");
+        assert_eq!(game.name, "Steam");
+        assert_eq!(game.exe_path, exe.to_string_lossy());
+        assert_eq!(game.prefix_path, prefix.to_string_lossy());
+        assert_eq!(game.runner, "proton-ge");
+        assert_eq!(game.kind, "windows");
+        assert_eq!(
+            game.cover_path, "",
+            "P-58's vendor icon: `save_exe_icon` has no port in this tree, so the \
+             entry carries the reference's own empty-string fallback. If this \
+             fails because T-05 landed, the assertion to change is this one"
+        );
+    }
+
+    /// **`completeEasyInstall` finishes an install the wizard could not, and
+    /// a cancel is what an empty path means.**
+    ///
+    /// `bridge.py:921-936`. The pop comes first, which is why the cancel this
+    /// falls into finds nothing to promise about — the reference's own
+    /// asymmetry, and the thing a tidy rewrite would "fix" into a second
+    /// kept-prefix notice the user never sees in Python.
+    #[test]
+    fn a_located_executable_finishes_the_install_and_an_empty_path_cancels_it() {
+        let prefix = install_prefix("complete");
+        let exe = prefix.join("drive_c/Steam/steam.exe");
+
+        let mut finished = shell_for_installs();
+        finished
+            .state
+            .easy_pending
+            .insert("tok".to_string(), install_record(&prefix, "install-4"));
+        let _ = observe(
+            &mut finished,
+            Message::CompleteEasyInstall {
+                token: "tok".to_string(),
+                path: Some(exe.to_string_lossy().into_owned()),
+            },
+        );
+        assert!(
+            finished.state.library.get("install-4").is_some(),
+            "the located executable did not become the entry's executable"
+        );
+
+        let mut cancelled = shell_for_installs();
+        cancelled.state.easy_busy = true;
+        cancelled
+            .state
+            .easy_pending
+            .insert("tok".to_string(), install_record(&prefix, "install-5"));
+        let _ = observe(
+            &mut cancelled,
+            Message::CompleteEasyInstall {
+                token: "tok".to_string(),
+                path: None,
+            },
+        );
+        assert!(
+            !cancelled.state.easy_busy && cancelled.state.library.get("install-5").is_none(),
+            "an empty path is a cancel: the guards clear and no entry is made"
+        );
+        assert!(
+            format!("{:?}", cancelled.state.toasts).contains("num_elems: 0"),
+            "the token was popped before the cancel, so the reference's \
+             `cancelEasyInstall` finds nothing and says nothing — a kept-prefix \
+             notice here is a sentence Python never prints; toasts: {:?}",
+            cancelled.state.toasts
+        );
+    }
+
+    /// **The install's own reply moves the user to the library and toasts with
+    /// a Play action — `Main.qml:154-158`.**
+    ///
+    /// Two behaviours and one duration, and `observe` can see all three: the
+    /// page records (the navigation), the batch's unit count (the toast's
+    /// expiry task is a second unit), and the toast's own `Debug`, which carries
+    /// both the message and its action's description.
+    ///
+    /// The reference's comment on the action is the reason it is not optional:
+    /// "installing a store launcher is only half the job — the user still has to
+    /// open it and sign in, so offer that right here". An entry that lands in
+    /// the library and a page that stays where it was is the user having to
+    /// find what they just installed.
+    ///
+    /// The `game_id` is carried into the action's closure, which is why it is a
+    /// `String` and not a reference: `Toast::action` takes `'static`. A port
+    /// that dropped it would build the button and launch nothing.
+    #[test]
+    fn the_installed_toast_offers_play_and_moves_to_the_library() {
+        let mut shell = shell_for_installs();
+        // Somewhere other than the page the message navigates to, so the
+        // navigation has something to do.
+        let _ = shell.show_page(Page::Settings);
+
+        let effect = observe(
+            &mut shell,
+            Message::EasyInstallFinished {
+                game_id: "install-6".to_string(),
+                message: "Installed “Steam”".to_string(),
+            },
+        );
+
+        assert_eq!(
+            shell.state.page,
+            Page::Library,
+            "`root.showPage(\"library\")` did not happen, so the entry the user \
+             just made is on a page they are not looking at"
+        );
+        assert!(
+            shell.pages_agree(),
+            "the navigation bypassed `show_page` and left the sidebar out of step"
+        );
+        // One unit, and it is the toast's expiry rather than the navigation:
+        // `show_page` adds `page_entry_task`'s work only when it *arrives*, and
+        // only `Page::Runners` has any (it fetches the release list). So the
+        // count here measures the toast, and the navigation is measured by the
+        // two records this test asserts above — a batch whose other half is
+        // `Task::none()` asking for one unit is the correct answer, and an
+        // assertion of `>= 2` here would have been a claim about `Page::Library`
+        // having entry work it does not have.
+        assert!(
+            effect.task_units >= 1,
+            "the toast's expiry task is missing, so the toast appears and never \
+             leaves; the arm asked for {}",
+            effect.task_units
+        );
+        let toasts = format!("{:?}", shell.state.toasts);
+        assert!(
+            toasts.contains("Installed “Steam”"),
+            "the reference's message is the one `gameInstalled` carried; toasts: \
+             {toasts}"
+        );
+        assert!(
+            toasts.contains("Play"),
+            "the toast has no action — the reference passes \"Play\" as \
+             `showPassiveNotification`'s third argument, and without it the user \
+             has to find the entry themselves; toasts: {toasts}"
+        );
+    }
+
+    /// **The failure branch clears the guard, resets the bar, and says why.**
+    ///
+    /// `bridge.py:896-900`, reachable here only from
+    /// [`Message::EasyInstallFailed`] — the variant `architecture.md` §2.2's set
+    /// had no room for. All three parts matter: a page left `busy` cannot start
+    /// another install, a bar left drawn claims work that is not happening, and
+    /// an unreported failure is a press that did nothing.
+    ///
+    /// The name in the sentence comes from [`State::running_install`] rather
+    /// than from the message, which is why the fixture holds one.
+    #[test]
+    fn a_failed_install_reports_the_installers_name_and_clears_the_guard() {
+        let prefix = install_prefix("failed");
+        let mut shell = shell_for_installs();
+        shell.state.easy_busy = true;
+        shell.state.progress = Some(0.3);
+        shell.state.running_install = Some(install_record(&prefix, "install-7"));
+
+        let effect = observe(
+            &mut shell,
+            Message::EasyInstallFailed {
+                message: "the download failed".to_string(),
+            },
+        );
+
+        assert!(effect.task_units > 0, "a failed install said nothing");
+        assert!(
+            format!("{:?}", shell.state.toasts)
+                .contains("Could not install Steam: the download failed"),
+            "the notice is not `f\"Could not install {{name}}: {{message}}\"`; \
+             toasts: {:?}",
+            shell.state.toasts
+        );
+        assert!(
+            !shell.state.easy_busy && shell.state.progress.is_none(),
+            "the guard or the bar outlived the failure, so the page cannot be \
+             used to try again"
         );
     }
 
@@ -3981,6 +5097,121 @@ mod tests {
         assert!(
             !drawn.iter().any(|text| text.contains("has not been ported yet")),
             "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
+        );
+    }
+
+    /// **The Installers page draws the catalog and not the placeholder — the
+    /// page T-38 landed, and the one the arm had to be rewritten for.**
+    ///
+    /// The counterpart of the Plugins test above. `view::installers`'s own tests
+    /// pin the rows, the filters and the guard, and none of them can see whether
+    /// [`Shell::view_body`] calls the page at all — which was literally true
+    /// until T-38, when the arm was `pending_page(Page::Installers, "T-12")` and
+    /// every assertion in that module passed over a page no user could reach.
+    ///
+    /// # The assertion that is about the *shell* rather than the page
+    ///
+    /// `shell.state.installer_catalog` is not read from the page: it is the
+    /// field `State::refresh_installers` fills and `Shell::new` primes. So
+    /// requiring the drawn names to be the whole nine is also the check that the
+    /// priming happened — an unprimed shell draws `EMPTY_TEXT` over an empty
+    /// list, which looks like a search that matched nothing rather than like a
+    /// page nothing filled.
+    #[test]
+    fn the_installers_page_draws_the_catalog_and_not_the_placeholder() {
+        let mut shell = Shell::new();
+        let _ = shell.show_page(Page::Installers);
+        let drawn = drawn_strings(shell.view_body());
+
+        assert_eq!(
+            shell.state.installer_catalog.len(),
+            gamehandler_core::installers::installers().len(),
+            "`Shell::new` left the primed catalog short of the whole recipe list"
+        );
+        assert!(
+            drawn
+                .iter()
+                .any(|text| text == crate::view::installers::INTRO),
+            "the page's own explainer is not drawn; drawn: {drawn:?}"
+        );
+        for row in &shell.state.installer_catalog {
+            assert!(
+                drawn.iter().any(|text| text == &row.name),
+                "{} is in the catalog but not drawn; drawn: {drawn:?}",
+                row.name
+            );
+        }
+        assert!(
+            drawn.iter().any(|text| text == "Install"),
+            "no card drew an Install button; drawn: {drawn:?}"
+        );
+        // The tooltip sentence is deliberately **not** asserted here, and the
+        // reason is measured rather than assumed: `iced_widget`'s `Tooltip`
+        // traverses only its `content` in `operate` (`tooltip.rs:372-383`), so a
+        // `drawn_strings` of this page returns the button's "Install" and never
+        // the sentence beside it. An assertion here would be a test of
+        // `install_tooltip`'s own body, which already has one. See
+        // `installer_card` for the note beside the wrap.
+        assert!(
+            !drawn.iter().any(|text| text.contains("has not been ported yet")),
+            "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
+        );
+    }
+
+    /// **The filter arms rebuild the catalog, and the guard above could not see
+    /// it if they stopped.**
+    ///
+    /// This test exists because of a mutation that *survived*. The `expected`
+    /// list on `only_the_written_handlers_change_anything` carries a sentence
+    /// saying `SetInstallerSearch`/`SetInstallerCategory` are listed "for a
+    /// reason that is not the filter" — that an arm which ran the filter and
+    /// forgot `State::refresh_installers` "would still be observed here, because
+    /// `refresh_installers` writes three fields". Deleting the
+    /// `self.state.refresh_installers();` line from the arm left that guard
+    /// green, so the sentence was false: the two samples change
+    /// `installer_search`/`installer_category` on their own, and that write is
+    /// what puts them in `changed`. A guard whose stated reason is false is the
+    /// defect this repository calls #69, and the repair is the assertion that
+    /// was missing rather than a softer sentence.
+    ///
+    /// # What is asserted
+    ///
+    /// The catalog after the message is `installer_rows` of the state *after*
+    /// the message — which is the whole of what the refresh does. The control is
+    /// the first assertion: the needle must really narrow the list, or "the
+    /// catalog equals the filtered rows" would be satisfied by a filter that
+    /// matched everything and a refresh that did nothing. The count is the
+    /// un-primed-and-primed distinction from the page test above, measured here
+    /// as a change rather than as a size.
+    #[test]
+    fn a_filter_rebuilds_the_catalog_the_page_draws() {
+        let mut shell = Shell::new();
+        let before = shell.state.installer_catalog.len();
+        // From the data layer, not a literal: the needle is narrowed by the
+        // same function the page filters with, so a catalog that grew a second
+        // Steam-matching recipe keeps this test honest.
+        let narrowed = crate::view::installers::installer_rows("steam", "");
+        assert!(
+            narrowed.len() < before,
+            "\"steam\" no longer narrows the catalog ({before} rows before, {} after), \
+             so the assertion below would hold for an arm that did nothing",
+            narrowed.len()
+        );
+
+        let _ = shell.update(Message::SetInstallerSearch("steam".to_string()));
+
+        assert_eq!(
+            shell.state.installer_catalog,
+            crate::view::installers::installer_rows(
+                &shell.state.installer_search,
+                &shell.state.installer_category
+            ),
+            "the arm wrote the search text but did not rebuild the catalog from it, \
+             so the page still draws the rows it drew before the user typed"
+        );
+        assert_eq!(
+            shell.state.installer_catalog, narrowed,
+            "the rebuilt catalog is not the filtered list"
         );
     }
 
@@ -4678,9 +5909,13 @@ mod tests {
     /// assertion's own literals, so the claim is made against the rendered
     /// element instead.
     ///
-    /// **T-19's acceptance is that [`PENDING_PAGES`] is empty**, at which point
-    /// this test asserts that no page draws a placeholder and `pending_page` is
-    /// deleted with the last entry.
+    /// **T-19's acceptance was that [`PENDING_PAGES`] is empty, and T-38 got
+    /// there** — by landing the last page rather than by clearing the table.
+    /// This test is the evidence for that ordering: it failed at T-38 with
+    /// `Installers is listed in PENDING_PAGES as T-12 but its body does not
+    /// draw the placeholder`, and printed the real page's nine cards, until the
+    /// entry was deleted. What it asserts now is that no page draws a
+    /// placeholder — the same claim, with the list empty.
     #[test]
     fn the_pending_pages_are_exactly_the_ones_whose_body_says_so() {
         let mut shell = Shell::new();

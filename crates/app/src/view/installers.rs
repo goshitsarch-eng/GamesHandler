@@ -33,41 +33,38 @@
 //! The page is complete as a *view*, and since T-04/T-34 the catalog is real
 //! data rather than a promise: [`installer_rows`] builds it from
 //! `core::installers`, so P-51 (the nine cards) and P-52 (the search box and the
-//! Launchers/Apps filter) are met here and tested. What is still missing is
-//! named rather than left to look finished:
+//! Launchers/Apps filter) are met here and tested.
 //!
-//! * **The page is still routed to `pending_page`, and that is deliberate.**
-//!   `Page::Installers` is the last entry in `PENDING_PAGES` (`main.rs`) and the
-//!   only entry in `PINNED_PENDING` (`crates/app/tests/pending_pages.rs`), and
-//!   it stays there: P-53…P-59 are the install flow — its own prefix, the
-//!   download and its verification, the wizard wait, the Locate fallback, the
-//!   library entry, the concurrent guard — and none of them is here. A page that
-//!   drew nine cards and an Install button wired to nothing would be #65
-//!   exactly, which is why the entry is not deleted and the dispatch arm is not
-//!   changed: under D-52 the task is not LANDED while an id in its scope is
-//!   unmet. **The install flow is its own task, T-38.**
-//! * **The runner choices** for the "Runner for new installs" selector, which
-//!   are [`RunnerManager::choices`] ([`runner_choices`]) and belong in the
-//!   page's arguments for the same off-the-render-path reason
-//!   [`super::runners`] gives. The page is unreachable, so no caller passes them
-//!   yet.
-//! * **The Install button's tooltip.** [`install_tooltip`] carries
-//!   `InstallersPage.qml:126`'s sentence and is tested, and **no card applies
-//!   it**: `grep -rn 'tooltip' crates/app/src/` finds this file only. The
-//!   reference sets `QQC2.ToolTip.text` on the button that `install_press` feeds,
-//!   so the card is missing a sentence the reference shows. Named here rather
-//!   than left as a tested function with no caller, which reads as coverage — and
-//!   left unimplemented because the button it decorates is T-38's.
+//! **T-38 wired it**: `Page::Installers` is no longer routed to `pending_page`,
+//! the page is the body `Shell::view_body` draws for it, and the install flow
+//! behind the Install button lives in `main.rs` (`start_easy_install` and the
+//! five replies it answers). `PENDING_PAGES` is empty and
+//! `crates/app/tests/pending_pages.rs`'s `PINNED_PENDING` with it. That paragraph
+//! used to say the page "is the last entry in `PENDING_PAGES` (`main.rs`) and the
+//! only entry in `PINNED_PENDING`", and it stayed true for as long as it took to
+//! land the flow — a sentence about the code that outlives the line it describes
+//! is the defect this file's own header warns about, so it moved with the entry
+//! rather than after it.
+//!
+//! What is still missing is named rather than left to look finished:
+//!
+//! * **The runner choices** for the "Runner for new installs" selector are
+//!   [`runner_choices`] over [`RunnerManager::choices`], and they reach the page
+//!   through `State::installer_runners`, primed by `State::refresh_installers`
+//!   — the same off-the-render-path reason [`super::runners`] gives for its own
+//!   two bundles.
 //! * **The file chooser** behind P-57's "Locate exe" dialog, which is T-15 and
 //!   stays with UX (this task's brief says so explicitly). The reference's
 //!   `easyInstallNeedsExe` path is `Message::EasyInstallWizardFinished`, and
-//!   this page does not open the chooser.
+//!   this page does not open the chooser. As of T-38 the shell *stores* the
+//!   pending install and toasts the reference's sentence, so what is missing is
+//!   the picker and the `CompleteEasyInstall` token it would feed — not the
+//!   state the token names.
 //!
 //! Nothing here is stubbed with a placeholder that looks implemented: the
 //! catalog arrives through [`InstallersView::catalog`], which is
 //! [`installer_rows`]' result, so the cards are exercised by tests today and the
-//! page renders the real nine the moment it is wired, with no change to this
-//! file beyond the caller passing them.
+//! page renders the real nine.
 //!
 //! # The concurrent-install guard is the reference's, and it is *not* a lock
 //!
@@ -337,7 +334,22 @@ pub struct InstallersView<'a> {
 }
 
 /// The page.
-pub fn view<'a>(page: &'a InstallersView<'_>) -> Element<'a, Message> {
+///
+/// # The argument is taken by value, and that was T-38's one change here
+///
+/// This took `&'a InstallersView<'_>` until T-38 wired the page into
+/// [`crate::Shell::view_body`], and the reference form is **uncallable from a
+/// dispatch arm**: the returned [`Element`]'s lifetime is the borrow of the
+/// `InstallersView`, so a dispatcher that builds one as a local gets
+/// `E0515: cannot return value referencing local variable` — the element
+/// outlives the struct it was handed. Every sibling page's `view` already takes
+/// its arguments by value (`view::library::view(page)`,
+/// `view::runners::view(page)`, `view::plugins::view(page)`,
+/// `view::settings::view(page)`), so this is the odd one joining the
+/// convention rather than a new shape: the render path is byte-for-byte
+/// unchanged, and only the two test call sites moved from `view(&page)` to
+/// `view(page)`.
+pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
     let mut body = Column::new().spacing(12).width(Length::Fill);
 
     // ---- The header toolbar: search and category ---------------------------
@@ -408,7 +420,27 @@ fn installer_card<'a>(row: &'a InstallerRow, busy: bool, runner_id: &str) -> Ele
         // press, which is what P-59's "second refused" looks like in the
         // reference. `on_press_maybe(None)` is how libcosmic spells it, and
         // [`install_press`] is where the decision lives so a test can hold it.
-        button.on_press_maybe(install_press(row, runner_id, busy))
+        let button = button.on_press_maybe(install_press(row, runner_id, busy));
+        // `QQC2.ToolTip.text` on that same button (`InstallersPage.qml:126`).
+        // [`install_tooltip`] carried the sentence with no caller until T-38,
+        // which is a tested function that reads as coverage; the wrap is
+        // `widget::tooltip`, because a libcosmic `Button` has no `.tooltip`
+        // method and this free function is the only tooltip the toolkit
+        // exposes. `Position::Bottom` is QQC2's own default placement.
+        //
+        // **This call site cannot be asserted, and that is measured.** iced's
+        // `Tooltip::operate` traverses `self.content` and nothing else
+        // (`iced_widget/src/tooltip.rs:372-383`), so the page's
+        // `drawn_strings` returns the button's "Install" and never the
+        // sentence — probed, and the probe failed. It is the same wall as
+        // [`install_press`]'s call site one level up: `Operator` cannot read
+        // what a wrapped widget carries. What *is* covered is the sentence
+        // itself, in `install_tooltip`'s own test.
+        cosmic::widget::tooltip(
+            button,
+            text::caption(install_tooltip(&row.name)),
+            cosmic::widget::tooltip::Position::Bottom,
+        )
     };
 
     container(
@@ -1019,11 +1051,14 @@ mod tests {
             busy: false,
             progress: None,
         };
-        // The view is built for real — a card that panicked or borrowed wrongly
-        // fails here — and the identity claim is checked on the rows it draws.
-        let _element: Element<'_, Message> = view(&page);
+        // The identity claim is checked on the rows the page hands the view, and
+        // *before* the view is built: `view` takes its argument by value now, so
+        // the build consumes `page`. The order is the only thing that moved.
         assert_eq!(page.catalog[0].installer_id, "battlenet");
         assert_eq!(page.catalog[1].installer_id, "steam");
+        // The view is built for real — a card that panicked or borrowed wrongly
+        // fails here.
+        let _element: Element<'_, Message> = view(page);
     }
 
     /// The empty catalog still renders — the placeholder path is not a panic,
@@ -1040,6 +1075,6 @@ mod tests {
             busy: false,
             progress: None,
         };
-        let _element: Element<'_, Message> = view(&page);
+        let _element: Element<'_, Message> = view(page);
     }
 }
