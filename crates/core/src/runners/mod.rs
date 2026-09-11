@@ -31,6 +31,7 @@ pub mod archive;
 pub mod env;
 pub mod families;
 pub mod launch_opts;
+pub mod proton;
 pub mod shell;
 
 use std::collections::BTreeMap;
@@ -135,6 +136,13 @@ pub enum RunnerError {
     /// the URL the user can recognise rather than from a fixed sentence — so
     /// this variant carries it rather than formatting one of its own.
     UnreachableShare { message: String },
+    /// A GitHub request failed, or its response was not what the API promises.
+    ///
+    /// Carries the message rather than a status code because the messages here
+    /// are Python's, verbatim — `"Unexpected GitHub releases response"`,
+    /// `"Runner download has an invalid Content-Length"` — and they reach the
+    /// user through the same toasts as the other variants.
+    Http { message: String },
     /// The archive layer refused the download or the staged tree.
     Archive(ArchiveError),
     /// A launch argument string could not be split (Python's `shlex` error).
@@ -180,6 +188,7 @@ impl fmt::Display for RunnerError {
                 f.write_str("System Wine cannot be uninstalled")
             }
             RunnerError::UnreachableShare { message } => f.write_str(message),
+            RunnerError::Http { message } => f.write_str(message),
             // The wrapped errors already carry Python's message.
             RunnerError::Archive(error) => error.fmt(f),
             RunnerError::Shell(error) => error.fmt(f),

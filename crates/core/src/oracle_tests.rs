@@ -1726,6 +1726,25 @@ fn vector_answer(answers: &[Value], index: usize) -> &Value {
 /// command), so only objects are canonicalised, and the recursion exists so
 /// that an object nested inside an array is covered without also sorting the
 /// array.
+///
+/// # Two mechanisms produce an impossible failure, and only one is a bug
+///
+/// This failure looked like noise and was not, so the distinction is worth
+/// having written down before the next one:
+///
+/// * **A stale artefact** — a foreign or half-written binary in `target/`,
+///   which this repo has hit twice from parallel builds sharing the directory.
+///   It **vanishes** on `touch` + rebuild, and there is no source defect.
+/// * **Feature unification**, which is what happened here. It **reproduces and
+///   flips with the build scope**: `cargo test -p gamehandler-core` agrees with
+///   itself every time and `cargo test --workspace` fails every time, because
+///   Cargo unifies `serde_json/preserve_order` in from `cosmic-theme` only in
+///   the wide build.
+///
+/// So the question to ask of an improbable failure is not "is this stale?" but
+/// **"does it reproduce, and does it flip with the build scope?"** Yes to
+/// either means it is real, and `touch`ing files until it goes away is how a
+/// genuine defect gets buried.
 fn canonicalise_object_keys(value: &Value) -> Value {
     match value {
         Value::Object(object) => {
