@@ -1820,6 +1820,10 @@ dependencies = [
 [[package]]
 name = "gamehandler-core"
 version = "0.7.2"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "gethostname"

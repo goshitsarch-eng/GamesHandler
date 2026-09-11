@@ -40,6 +40,14 @@ pub const APP_NAME: &str = "GameHandler";
 /// cannot drift apart.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod json;
+pub mod models;
+pub mod paths;
+pub mod settings;
+
+#[cfg(test)]
+mod oracle_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

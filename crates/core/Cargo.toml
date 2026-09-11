@@ -20,3 +20,28 @@ workspace = true
 # `progress: &dyn Fn(f32)`, and the binary crate wraps it in `spawn_blocking`.
 # Pulling an async runtime in here would make every logic test need a reactor.
 [dependencies]
+# serde/serde_json only. This is the complete dependency set the Python
+# modules being ported here ever needed (`json` + `dataclasses` + `os` + `pathlib`),
+# and keeping it that small is what makes `cargo test -p gamehandler-core`
+# instant and headless.
+serde = { version = "1", features = ["derive"] }
+
+# `float_roundtrip` is REQUIRED, not an optimisation. serde_json's default f64
+# parser is fast but not correctly rounded: measured against 20,000 realistic
+# `time.time()` values, roughly 20% come back one ULP off. A one-ULP error is
+# invisible in a UI and fatal to D-15 — the port would read a timestamp Python
+# wrote and re-save different bytes, so every user's `games.json` would churn on
+# every save. With the feature on, the parser is correctly rounded and the
+# round trip is exact (0 mismatches in the same 20,000).
+#
+# Python's `float()` is correctly rounded, so this is what parity actually
+# requires. The feature switches `de.rs` from `significand as f64` scaled by a
+# `POW10` table (two roundings per value) onto `lexical::parse_concise_float`,
+# and the difference is a hard one: of the 300 seeded timestamps in
+# `docs/migration/oracle/fixtures/floats_roundtrip.in.json`, 58 (19.3%) come
+# back one ULP off without it. `oracle_tests.rs` pins one of those values by
+# name, so dropping this feature fails a test rather than a fixture review.
+#
+# `float_roundtrip` changes no API, which is exactly why it needs the fixture
+# and the named value to hold it in place.
+serde_json = { version = "1", features = ["float_roundtrip"] }
