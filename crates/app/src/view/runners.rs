@@ -644,8 +644,11 @@ fn card_style(theme: &cosmic::Theme) -> container::Style {
 /// **The line is now readable; the call site is not.** The extracted body is
 /// covered: mutating `Err(error) => format!("Could not remove {runner_id}:
 /// {error}")` to drop the error tail fails
-/// [`tests::a_failed_removal_carries_the_error_text_and_the_runner_id`], and
-/// mutating it to `Err(_) => String::new()` fails it too.
+/// `a_failed_removal_carries_the_error_text_and_the_runner_id` — a code span
+/// rather than a link, because that test is a `#[cfg(test)]` item
+/// (`runners.rs:1915`) and rustdoc does not document those, so the bracket form
+/// resolved to nothing — and mutating it to `Err(_) => String::new()` fails it
+/// too.
 ///
 /// Two call-site mutations **survive**, and are recorded rather than papered
 /// over:
@@ -679,7 +682,8 @@ fn uninstall_line<E: std::fmt::Display>(runner_id: &str, result: Result<(), E>) 
 ///
 /// This is [`InstalledRow::runner_id`]'s remaining consumer. The field's other
 /// half — the value [`installed_rows`] puts there — is pinned by
-/// [`tests::the_system_row_names_python_s_runner_id_and_not_the_family_id`];
+/// `the_system_row_names_python_s_runner_id_and_not_the_family_id` (a code span:
+/// a `#[cfg(test)]` item at `runners.rs:1084`, which rustdoc does not document);
 /// this makes the value the button *would* carry readable, so `"system"` cannot
 /// replace it in the helper.
 ///
