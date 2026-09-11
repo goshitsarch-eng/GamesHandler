@@ -793,7 +793,13 @@ mod tests {
     /// |---|---|---|
     /// | `WEBP_COVER` | `Some(24x16)` | 188x218 |
     /// | twelve bytes of PNG header | `None` | 188x218 |
-    /// | a path that does not exist | `None` | differs (it is a plate) |
+    /// | no file at all (`Prey`) | `None` | 78.528x89.6 |
+    ///
+    /// The plate row's height is `spec.height - 2 * 64.2`, the same 89.6 for
+    /// every name; its width is the drawn initials and so moves with the name
+    /// (`Celeste` 76.032, `Bare` 82.496, `""` 27.776 — all measured, all at
+    /// this spec). It is named here because a bare 78.528 would be a number no
+    /// reader could reproduce: it is what `Prey`'s two initials measure.
     ///
     /// The third row is why this test is not worthless — it does separate a
     /// plate from a photograph. The first two are why it needed
