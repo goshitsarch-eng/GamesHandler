@@ -1755,3 +1755,49 @@ An agent that treats a teammate's mid-edit tree as a reportable defect will
 spend the team's time on states that never existed. An agent that silently
 "fixes" another agent's file mid-edit destroys work and hides the problem. Both
 are worse than the two `mut`s.
+
+## D-40. A green test whose assertion a *different* mechanism satisfies
+
+**What happened.** A 30-mutation battery over the new `runners::proton`
+filesystem code found four survivors. Three were vacuous tests, and all three
+had one shape: **a guard that fires earlier produced the error being asserted**,
+so the guard under test never ran.
+
+* the declared-length test passed a release size over the cap, so the
+  release-size guard fired first;
+* the streaming-cap test had the same shape;
+* the broken-symlink test asserted an error that `RENAME_NOREPLACE` raises
+  anyway — so it passed for a guard that runs *after* the entire download and
+  extraction. Same error, same surviving link, download wasted.
+
+The fourth was a false survivor: a mutation that did not compile, counted by the
+harness as a survivor as well as a compile error. That is a measurement error in
+the apparatus rather than in a test, and it belongs to the same family.
+
+**Why this is a new shape, and not D-33 restated.** Every earlier entry in this
+file is a check that passes *without inspecting what it claims* — the assertion
+targets an input, or a hand-written copy of the expected value, or nothing at
+all. Here the assertion targets exactly the right observable. It is simply
+reachable by another route. So the test is honest, the code under test may be
+perfect, and the suite is green — while the property named in the test's own
+title is not being measured.
+
+**The distinguishing question, which is the whole technique.** For each guard,
+ask: *is the code under test the only thing that can produce the asserted
+outcome?* If a second mechanism can produce it, the assertion cannot separate
+them, and the test reports coverage it does not have. The repair is not a
+stronger assertion — it is to make the other mechanisms **unreachable in the
+test**, which is why `install_with` now takes the download cap as a parameter:
+with the real 2 GiB constant no honest test could reach the streaming guard at
+all, so the production path and the tested path are now the same code and the
+earlier guard can be made non-firing.
+
+**How it is found.** Only by mutating the guard you believe is under test and
+observing that nothing changes — the survivors are the signal, and each one must
+then be *explained* rather than merely counted. Two of the four survivors here
+were not defects in the code; one was a defect in the harness; three were
+defects in the tests. A survivor count alone would have conflated all four.
+
+Also required, and now present: a **no-op control mutation** in the battery that
+correctly survives, so the harness is shown to be measuring rather than merely
+reporting `caught`.
