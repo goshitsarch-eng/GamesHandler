@@ -55,16 +55,110 @@ use super::metrics;
 /// sets it (`color: "#ffffff"; opacity: 0.92`).
 const PLATE_TEXT: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.92);
 
-/// A game's cover at a given *width*, its height taken from the tile aspect.
+/// The font size of the picker's "No cover yet", from
+/// `GameFormPage.qml:148-151`.
+const PREVIEW_LABEL_SIZE: f32 = 11.0;
+
+// ---- Widget ids -----------------------------------------------------------
+//
+// iced gives a widget an optional `Id`, and an `Id` is the one part of a widget
+// that is readable from the outside: `Widget::id()` is public and `Tree` — the
+// structure the framework builds from a real element — carries it. Nothing
+// else is. `Widget` has no `as_any`, there is no downcast anywhere in iced, and
+// the nested widgets a builder returns cannot be reached by type.
+//
+// So these ids are the seam the structural tests use, and they are the reason
+// those tests can call the *real* builders rather than a stand-in: the test
+// builds the element the app would build and walks the tree the framework would
+// build from it. An id is inert at runtime — it is not drawn, and a widget
+// without a `Message` has no `update` to route through it — so the cost of
+// having them is a string constant each.
+//
+// They are named for what the node *is*, and a test asserts the whole set for
+// each widget, so a builder that stopped drawing a node fails there rather than
+// rendering something subtly different that no test can see.
+const PLATE_ID: &str = "gamehandler.cover.plate";
+const PICTURE_ID: &str = "gamehandler.cover.picture";
+const INITIALS_ID: &str = "gamehandler.cover.initials";
+const PREVIEW_LABEL_ID: &str = "gamehandler.cover.preview-label";
+
+/// The box a caller wants a cover drawn in, and how to draw it.
 ///
-/// The single-argument form exists for a grid that lays out a column of tiles
-/// and wants them all the same shape; a caller with its own box should use
-/// [`cover_box`] instead, which is what [`card`] and [`row`] do.
-pub fn cover_tile<M: Clone + 'static>(game: &Game, width: f32) -> Element<'_, M> {
-    cover_box(game, width, metrics::tile_height(width), metrics::TILE_RADIUS, false)
+/// A struct rather than five positional arguments because the numbers are easy
+/// to transpose and impossible to read at a call site: `cover_box(game, 36.0,
+/// 50.4, 6.0, true)` says nothing about which of `50.4` and `6.0` is the height
+/// and which the corner radius, and a caller that swapped them would still
+/// compile and still look plausible.
+///
+/// It is also the seam the tests read. Each builder asks for its box through
+/// one of the `*_cover_spec` functions below and then **destructures the
+/// result**, so the numbers exist in exactly one place — a test that pins the
+/// spec is a test on what the widget draws, and there is no second copy at the
+/// call site for the two to drift apart.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CoverSpec {
+    /// The box's width in logical pixels.
+    pub width: f32,
+    /// The box's height in logical pixels.
+    pub height: f32,
+    /// The corner radius applied to the artwork *and* to the plate behind it.
+    pub radius: f32,
+    /// The compact drawing, used by a list row: a smaller maximum initial, and
+    /// a shorter tile. `CoverArt.qml` reaches the same distinction through a
+    /// `compact` property rather than through a second widget.
+    pub compact: bool,
 }
 
-/// A game's cover in an explicit box.
+/// The cover box a library **card** asks for.
+///
+/// The box is the cell less its margins and chrome ([`metrics::card_cover_box`]),
+/// which is the same subtraction the metrics tests assert on. The radius is
+/// [`metrics::TILE_RADIUS`] and the drawing is *not* compact: a tile is the
+/// full-size cover, and only a row is compact.
+pub fn card_cover_spec() -> CoverSpec {
+    let (width, height) = metrics::card_cover_box(
+        metrics::GRID_CELL,
+        metrics::CARD_CHROME_HEIGHT,
+        metrics::CARD_MARGIN,
+    );
+    CoverSpec {
+        width,
+        height,
+        radius: metrics::TILE_RADIUS,
+        compact: false,
+    }
+}
+
+/// The cover box a **list row** asks for.
+///
+/// The fixed strip, not the tile aspect — a row is a fixed-height line whose
+/// text must not move when one game's art is a different shape from the next —
+/// and [`metrics::COMPACT_RADIUS`] for the corner, because the row's cover is
+/// half the size of a tile's.
+pub fn row_cover_spec() -> CoverSpec {
+    CoverSpec {
+        width: metrics::LIST_COVER_WIDTH,
+        height: metrics::LIST_COVER_HEIGHT,
+        radius: metrics::COMPACT_RADIUS,
+        compact: true,
+    }
+}
+
+/// The cover box the game form's **picker** asks for.
+///
+/// `gridUnit * 2` by `gridUnit * 3` (`GameFormPage.qml:141-142`), the compact
+/// radius, and a non-compact drawing: the preview is small but it is a preview
+/// of a tile, not a row.
+pub fn preview_cover_spec() -> CoverSpec {
+    CoverSpec {
+        width: metrics::FORM_PREVIEW_WIDTH,
+        height: metrics::FORM_PREVIEW_HEIGHT,
+        radius: metrics::COMPACT_RADIUS,
+        compact: false,
+    }
+}
+
+/// What [`cover_box`] composes, as a value rather than as control flow.
 ///
 /// The three [`CoverSource`]s differ in more than the picture, and the
 /// difference is a layout decision that has to be made *before* the image is
@@ -75,45 +169,113 @@ pub fn cover_tile<M: Clone + 'static>(game: &Game, width: f32) -> Element<'_, M>
 /// - an **icon** sits inside it, uncropped, inset, on the plate —
 ///   `ContentFit::Contain`;
 /// - a game with **no cover** gets the plate: initials on the game's gradient.
-pub fn cover_box<M: Clone + 'static>(
-    game: &Game,
-    width: f32,
-    height: f32,
-    radius: f32,
-    compact: bool,
-) -> Element<'_, M> {
-    let source = CoverSource::classify(&game.cover_path);
+///
+/// Returning this as a value rather than writing the choice inline is what
+/// makes the choice testable: `cover_box` is then nothing but a renderer for a
+/// plan, and every decision — which composition, how deep the inset, which
+/// words — is a field of the plan that a test can read without a renderer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CoverPlan {
+    /// A photograph alone: the picture fills the box, nothing behind it.
+    Photo,
+    /// An icon inset over the plate. The plate goes *behind* the icon —
+    /// `CoverArt.qml`'s `showPlate: coverUrl === "" || coverIsIcon` — so an
+    /// icon tile reads as artwork on a coloured card rather than as a floating
+    /// logo.
+    IconOnPlate {
+        /// The gap between the icon and the edge of its box.
+        inset: f32,
+    },
+    /// The game's initials on the plate. The initials are not drawn for an
+    /// icon: the QML's `visible` test is `coverUrl === ""`, which an icon
+    /// fails.
+    InitialsOnPlate {
+        /// The string drawn — [`plate_text`]'s answer for this game.
+        text: String,
+    },
+}
 
-    match source {
-        CoverSource::Plate => {
-            let inner = initials_only(game, width, height, compact);
-            plate(game, width, height, radius, inner)
+/// The plan for a game's cover in a **library** context.
+///
+/// The text is carried *in* the plan rather than composed by the widget that
+/// draws it, so "what a tile says" is a value with one definition
+/// ([`plate_text`]) that the test reads directly, and [`cover_box`] has no
+/// string of its own to get wrong.
+pub fn cover_plan(game: &Game) -> CoverPlan {
+    match CoverSource::classify(&game.cover_path) {
+        CoverSource::Photo => CoverPlan::Photo,
+        CoverSource::Icon => CoverPlan::IconOnPlate {
+            inset: metrics::ICON_INSET,
+        },
+        CoverSource::Plate => CoverPlan::InitialsOnPlate {
+            text: plate_text(game),
+        },
+    }
+}
+
+/// The words a library tile draws when there is no artwork: the game's
+/// initials, and nothing else.
+///
+/// `CoverArt.qml`'s text is `art.initials` with `visible: art.coverUrl === ""`.
+/// The "No cover yet" string belongs to the form's picker and is reached
+/// through [`preview_label`] — the two are one function call apart, which is
+/// why each has its own name and its own test.
+pub fn plate_text(game: &Game) -> String {
+    cover::initials(&game.name)
+}
+
+/// The words the game form's picker draws when there is no artwork.
+///
+/// No game is involved: this is a constant for a *state*, not a value derived
+/// from the thing being drawn. That is the difference from [`plate_text`], and
+/// the reason the two cannot be served by one function.
+pub fn preview_label() -> &'static str {
+    cover::NO_COVER_LABEL
+}
+
+/// A game's cover at a given *width*, its height taken from the tile aspect.
+///
+/// The single-argument form exists for a grid that lays out a column of tiles
+/// and wants them all the same shape; a caller with its own box should use
+/// [`cover_box`] instead, which is what [`card`] and [`row`] do.
+pub fn cover_tile<M: Clone + 'static>(game: &Game, width: f32) -> Element<'_, M> {
+    cover_box(
+        game,
+        CoverSpec {
+            width,
+            height: metrics::tile_height(width),
+            radius: metrics::TILE_RADIUS,
+            compact: false,
+        },
+    )
+}
+
+/// A game's cover in an explicit box — a renderer for [`cover_plan`].
+pub fn cover_box<M: Clone + 'static>(game: &Game, spec: CoverSpec) -> Element<'_, M> {
+    match cover_plan(game) {
+        CoverPlan::Photo => framed(game, spec, 0.0),
+        CoverPlan::IconOnPlate { inset } => {
+            let inner = framed(game, spec, inset);
+            plate(game, spec, inner)
         }
-        CoverSource::Icon => {
-            // The plate goes *behind* the icon — `CoverArt.qml`'s
-            // `showPlate: coverUrl === "" || coverIsIcon` — so an icon tile
-            // reads as artwork on a coloured card rather than as a floating
-            // logo. The initials are not drawn: the QML's `visible` test is
-            // `coverUrl === ""`, which an icon fails.
-            let inner = framed(game, width, height, source, radius, metrics::ICON_INSET);
-            plate(game, width, height, radius, inner)
+        CoverPlan::InitialsOnPlate { text } => {
+            let inner = initials_only(text, spec);
+            plate(game, spec, inner)
         }
-        CoverSource::Photo => framed(game, width, height, source, radius, 0.0),
     }
 }
 
 /// A library grid tile: the cover, the name and the subtitle.
 ///
-/// The cover's box comes from [`metrics::card_cover_box`], which is the same
+/// The cover's box comes from [`card_cover_spec`], which is the same
 /// subtraction the metrics tests assert on — so a card whose chrome grows
 /// shortens its cover rather than overlapping it.
 pub fn card<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
     let (cell_w, cell_h) = metrics::GRID_CELL;
-    let (box_w, box_h) =
-        metrics::card_cover_box(metrics::GRID_CELL, metrics::CARD_CHROME_HEIGHT, metrics::CARD_MARGIN);
+    let spec = card_cover_spec();
 
     let body = Column::new()
-        .push(cover_box(game, box_w, box_h, metrics::TILE_RADIUS, false))
+        .push(cover_box(game, spec))
         .push(name_and_subtitle(game))
         .spacing(metrics::CARD_MARGIN)
         .width(Length::Fill);
@@ -130,17 +292,14 @@ pub fn card<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
 
 /// A list row: the cover, the name and the subtitle, laid out horizontally.
 ///
-/// The cover's size is [`metrics::LIST_COVER_WIDTH`] ×
-/// [`metrics::LIST_COVER_HEIGHT`] — a fixed strip, not the tile aspect. A row
-/// is a fixed-height line whose text must not move when one game's art is a
-/// different shape from the next, so the cover is fitted *into* the row rather
-/// than setting its height.
+/// The cover's box comes from [`row_cover_spec`] — the fixed strip, not the
+/// tile aspect. A row is a fixed-height line whose text must not move when one
+/// game's art is a different shape from the next, so the cover is fitted *into*
+/// the row rather than setting its height.
 pub fn row<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
-    let (w, h) = (metrics::LIST_COVER_WIDTH, metrics::LIST_COVER_HEIGHT);
-
     container(
         Row::new()
-            .push(cover_box(game, w, h, metrics::COMPACT_RADIUS, true))
+            .push(cover_box(game, row_cover_spec()))
             .push(name_and_subtitle(game))
             .spacing(metrics::CARD_MARGIN)
             .align_y(Alignment::Center),
@@ -154,7 +313,7 @@ pub fn row<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
 
 /// The game form's cover picker: a small preview, or the words "No cover yet".
 ///
-/// This is the widget `NO_COVER_LABEL` belongs to. `GameFormPage.qml` shows an
+/// This is the widget [`preview_label`] belongs to. `GameFormPage.qml` shows an
 /// `Image` at `gridUnit * 2` by `gridUnit * 3` with
 /// `fillMode: Image.PreserveAspectFit`, and a label in its place when there is
 /// nothing to show — so unlike the library plate this one letterboxes a
@@ -164,18 +323,41 @@ pub fn row<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
 /// The label appears for [`CoverSource::Plate`] only, which is the same
 /// condition the QML puts on `coverPreview.visible` (`source !== ""`): a game
 /// whose cover file has been deleted gets the label, not a broken image.
+///
+/// The condition is read from [`cover_plan`] rather than from a second call to
+/// `classify`, so the picker and the tile agree about which games have
+/// artwork by construction — and so the one thing they *do* differently, words
+/// instead of initials, is visible as a single arm.
 pub fn cover_preview<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
-    let (w, h) = (metrics::FORM_PREVIEW_WIDTH, metrics::FORM_PREVIEW_HEIGHT);
+    let spec = preview_cover_spec();
 
-    match CoverSource::classify(&game.cover_path) {
-        CoverSource::Plate => container(text(cover::NO_COVER_LABEL).size(11.0))
-            .width(Length::Fixed(w))
-            .height(Length::Fixed(h))
-            .align_x(Alignment::Start)
-            .align_y(Alignment::Center)
-            .into(),
-        source => framed(game, w, h, source, metrics::COMPACT_RADIUS, 0.0),
+    match cover_plan(game) {
+        CoverPlan::InitialsOnPlate { .. } => preview_label_widget(spec),
+        CoverPlan::Photo | CoverPlan::IconOnPlate { .. } => framed(game, spec, 0.0),
     }
+}
+
+/// The picker's placeholder: the words, sized into `spec`'s box.
+///
+/// Split out so its id and its size are set in one place, and so the test that
+/// asks "does the picker draw words or initials?" has an element whose root it
+/// can name.
+fn preview_label_widget<'a, M: Clone + 'static>(spec: CoverSpec) -> Element<'a, M> {
+    container(text(preview_label()).size(PREVIEW_LABEL_SIZE))
+        .id(PREVIEW_LABEL_ID)
+        .width(Length::Fixed(spec.width))
+        .height(Length::Fixed(spec.height))
+        .align_x(Alignment::Start)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+/// The game's name, as every game-shaped widget shows it.
+///
+/// Named rather than written inline for the same reason as [`subtitle_of`]: the
+/// card and the row both show it, and a test can read it without a renderer.
+pub fn title_of(game: &Game) -> String {
+    game.name.clone()
 }
 
 /// The name over the subtitle, as every game-shaped widget shows them.
@@ -185,7 +367,7 @@ pub fn cover_preview<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
 /// therefore guaranteed to show the same string.
 fn name_and_subtitle<'a, M: Clone + 'static>(game: &'a Game) -> Element<'a, M> {
     Column::new()
-        .push(text(game.name.clone()).size(14.0))
+        .push(text(title_of(game)).size(14.0))
         .push(text(subtitle_of(game)).size(11.0))
         .spacing(2.0)
         .width(Length::Fill)
@@ -207,26 +389,21 @@ fn subtitle_of(game: &Game) -> String {
     meta::subtitle(game.display_category(), &label)
 }
 
-/// A cover image in a box of exactly `width` × `height`, inset by `inset`.
-fn framed<'a, M: Clone + 'static>(
-    game: &'a Game,
-    width: f32,
-    height: f32,
-    source: CoverSource,
-    radius: f32,
-    inset: f32,
-) -> Element<'a, M> {
+/// A cover image in a box of exactly `spec`'s size, inset by `inset`.
+fn framed<'a, M: Clone + 'static>(game: &'a Game, spec: CoverSpec, inset: f32) -> Element<'a, M> {
+    let source = CoverSource::classify(&game.cover_path);
     let picture = image(image::Handle::from_path(&game.cover_path))
         .content_fit(source.content_fit())
         .width(Length::Fill)
         .height(Length::Fill)
-        .border_radius(radius);
+        .border_radius(spec.radius);
 
     // The inset is applied whether or not it is zero, so the two branches
     // cannot drift in their width/height handling.
     container(picture)
-        .width(Length::Fixed(width))
-        .height(Length::Fixed(height))
+        .id(PICTURE_ID)
+        .width(Length::Fixed(spec.width))
+        .height(Length::Fixed(spec.height))
         .padding(inset)
         .align_x(Alignment::Center)
         .align_y(Alignment::Center)
@@ -236,39 +413,36 @@ fn framed<'a, M: Clone + 'static>(
 /// The initials, centred — what a library tile shows for a game with no cover.
 ///
 /// No words: `CoverArt.qml`'s text is `art.initials` alone. The "No cover yet"
-/// string belongs to [`cover_preview`], and a test below pins the difference.
-fn initials_only<'a, M: Clone + 'static>(
-    game: &'a Game,
-    width: f32,
-    height: f32,
-    compact: bool,
-) -> Element<'a, M> {
+/// string belongs to [`cover_preview`] and arrives through [`preview_label`],
+/// and a test below pins the difference. The string is a parameter rather than
+/// a call to [`plate_text`] here so that this function has no string of its
+/// own to get wrong: it draws what [`cover_plan`] put in the plan.
+fn initials_only<'a, M: Clone + 'static>(text_of_game: String, spec: CoverSpec) -> Element<'a, M> {
     container(
-        text(cover::initials(&game.name))
-            .size(metrics::initials_size(width, height, compact))
+        text(text_of_game)
+            .size(metrics::initials_size(spec.width, spec.height, spec.compact))
             .class(PLATE_TEXT),
     )
+    .id(INITIALS_ID)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
     .into()
 }
 
-/// A gradient plate of exactly `width` × `height` with `content` centred on
-/// it.
+/// A gradient plate of exactly `spec`'s size with `content` centred on it.
 fn plate<'a, M: Clone + 'static>(
     game: &'a Game,
-    width: f32,
-    height: f32,
-    radius: f32,
+    spec: CoverSpec,
     content: Element<'a, M>,
 ) -> Element<'a, M> {
     let accent = cover::accent_of(&game.id);
     container(content)
-        .width(Length::Fixed(width))
-        .height(Length::Fixed(height))
+        .id(PLATE_ID)
+        .width(Length::Fixed(spec.width))
+        .height(Length::Fixed(spec.height))
         .align_x(Alignment::Center)
         .align_y(Alignment::Center)
-        .style(move |_theme| plate_style(accent, radius))
+        .style(move |_theme| plate_style(accent, spec.radius))
         .into()
 }
 
@@ -345,6 +519,11 @@ fn rgb(channels: [u8; 3]) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cosmic::iced::advanced::layout::{Limits, Node};
+    use cosmic::iced::advanced::widget::{Operation, Tree};
+    use cosmic::iced::advanced::Layout;
+    use cosmic::iced::{Font, Pixels, Radius, Rectangle, Size};
+    use cosmic::widget::Id;
     use gamehandler_core::models::Game;
 
     /// The subtitle a widget shows, reached through the same path the widgets
@@ -386,24 +565,45 @@ mod tests {
     /// tile shows initials and no words; the form's picker shows the words and
     /// no initials.
     ///
-    /// Asserted on the strings the two would draw — `initials` for the tile,
-    /// `NO_COVER_LABEL` for the picker — because the two are one function call
-    /// apart and swapping them would still compile, still render, and read as
-    /// a design choice rather than a bug.
+    /// Asserted on the strings the two builders actually hand the traversal —
+    /// `cover_box` for the tile, `cover_preview` for the picker — because the
+    /// two are one function call apart and swapping them would still compile,
+    /// still render, and read as a design choice rather than a bug. This is the
+    /// assertion the audit's "draw the initials in the picker" mutation has to
+    /// get past, and it is made on a real `cover_preview`.
     #[test]
-    fn the_plate_shows_initials_and_the_picker_shows_the_words() {
+    fn a_tile_draws_the_initials_and_a_picker_draws_the_words() {
         let game = Game::new_named("Half-Life 2");
-        assert_eq!(cover::initials(&game.name), "HL");
-        assert_eq!(cover::NO_COVER_LABEL, "No cover yet");
-        assert_ne!(
-            cover::initials(&game.name),
-            cover::NO_COVER_LABEL,
-            "the tile's graphic and the form's placeholder must not be the \
-             same string"
+
+        let mut tile: Element<'_, ()> = cover_box(&game, row_cover_spec());
+        assert_eq!(
+            texts(&traversal(&mut tile)),
+            ["HL"],
+            "a library tile draws the game's initials and nothing else"
         );
-        // The tile's graphic is not the label, and the label is not initials:
-        // neither can be substituted for the other by accident.
-        assert!(!cover::NO_COVER_LABEL.contains("HL"));
+
+        let mut picker: Element<'_, ()> = cover_preview(&game);
+        assert_eq!(
+            texts(&traversal(&mut picker)),
+            [cover::NO_COVER_LABEL],
+            "the form's picker draws the words, not the initials"
+        );
+    }
+
+    /// The same claim through the two builders the library page calls, with the
+    /// subtitle the third string: a game with no category and no runner label
+    /// shows an empty line rather than a dangling separator. That third string
+    /// is the end-to-end half of `meta`'s regression test — it is what a row
+    /// actually shows, after the widget has had its turn.
+    #[test]
+    fn a_card_and_a_row_draw_the_initials_and_never_the_pickers_words() {
+        let game = Game::new_named("Half-Life 2");
+
+        let mut card: Element<'_, ()> = card(&game);
+        assert_eq!(texts(&traversal(&mut card)), ["HL", "Half-Life 2", ""]);
+
+        let mut row: Element<'_, ()> = row(&game);
+        assert_eq!(texts(&traversal(&mut row)), ["HL", "Half-Life 2", ""]);
     }
 
     /// A card's cover box is the one the metrics module computes, and a card
@@ -435,19 +635,210 @@ mod tests {
         );
     }
 
-    /// The list row's cover is the fixed strip, not the tile aspect. Those two
+    /// **The card's initials are the full-size ones.** A card is not a compact
+    /// drawing, so its initials come from `initials_size(w, h, false)` — 64
+    /// points at the card's 188×218 cover box — and not from the compact rule's
+    /// 92.
+    ///
+    /// The claim is made without knowing the font's line-height ratio, which is
+    /// the property that makes this test portable: every string in a card is
+    /// laid out by the same font stack, so the ratio cancels between the
+    /// initials and the game's name and the quotient of the two heights *is*
+    /// the quotient of the two font sizes. Asserting a height in pixels would
+    /// pin the font instead, and fail on a machine with different metrics.
+    ///
+    /// The two candidate answers are written out rather than taken from
+    /// [`metrics::initials_size`], so that a change to the rule cannot make the
+    /// test agree with the widget about the wrong number.
+    #[test]
+    fn a_cards_initials_are_the_full_size_rule_and_not_the_compact_one() {
+        assert_eq!(metrics::initials_size(188.0, 218.0, false), 64.0);
+        assert_eq!(metrics::initials_size(188.0, 218.0, true), 92.0);
+
+        // "Halo" so that the initials "HA" cannot be confused with the name.
+        let game = Game::new_named("Halo");
+        let mut card: Element<'_, ()> = card(&game);
+        let seen = traversal(&mut card);
+        let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
+
+        // `name_and_subtitle` sets the name at 14.0.
+        let expected = 64.0 / 14.0;
+        assert!(
+            (ratio - expected).abs() < 0.05,
+            "the initials/name height quotient should be 64/14 = {expected:.3} \
+             for the full-size rule; got {ratio:.3}, and the compact rule would \
+             give 92/14 = {:.3}",
+            92.0 / 14.0
+        );
+    }
+
+    /// **The row's initials are the compact ones**, which is how the row's
+    /// drawing is told apart from the tile's.
+    ///
+    /// This is also what catches a `row` that stopped asking for
+    /// [`row_cover_spec`] and called [`cover_tile`] instead: the drawn height
+    /// of a row's cover is clamped to the line, so the *box* difference (50.4
+    /// against 54) never reaches the layout — but `cover_tile` passes
+    /// `compact: false`, and the initials fall from 21 points to 12.
+    #[test]
+    fn a_rows_initials_are_the_compact_rule_and_not_the_tiles() {
+        assert_eq!(metrics::initials_size(36.0, 50.4, true), 21.0);
+        assert_eq!(
+            metrics::initials_size(36.0, 54.0, false),
+            12.0,
+            "the tile's rule at the row's width, which is what a row drawn \
+             through `cover_tile` would use"
+        );
+
+        let game = Game::new_named("Halo");
+        let mut row: Element<'_, ()> = row(&game);
+        let seen = traversal(&mut row);
+        let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
+
+        let expected = 21.0 / 14.0;
+        assert!(
+            (ratio - expected).abs() < 0.05,
+            "the initials/name height quotient should be 21/14 = {expected:.3} \
+             for the compact rule; got {ratio:.3}, and the tile's rule would \
+             give 12/14 = {:.3}",
+            12.0 / 14.0
+        );
+    }
+
+    /// The list row's box is the fixed strip, not the tile aspect. Those two
     /// differ, and a refactor that made `row` call `cover_tile` would give
     /// 36×54 instead of 36×50.4 — close enough to look right in a screenshot.
+    ///
+    /// Pinned on the spec rather than on the drawn box because the row clamps
+    /// its cover to the line height, so both boxes are drawn 36×43.2 and the
+    /// *visible* difference is carried by the initials instead — see
+    /// `a_rows_initials_are_the_compact_rule_and_not_the_tiles`, which calls
+    /// the real `row`.
     #[test]
-    fn a_rows_cover_is_the_strip_and_not_the_tile_aspect() {
-        let strip = metrics::LIST_COVER_HEIGHT;
-        let tile = metrics::tile_height(metrics::LIST_COVER_WIDTH);
-        assert_ne!(strip, tile, "the row's cover must not be the 2:3 tile");
+    fn a_rows_spec_is_the_fixed_strip_and_not_the_tile_aspect() {
+        let row = row_cover_spec();
+        assert_eq!(row.width, 36.0);
+        // f32 cannot represent 2.8, so `18 * 2.8` lands on 50.399998; see the
+        // note in `metrics`.
         assert!(
-            (strip - tile).abs() > 0.5,
-            "the two are only {} apart, which is too close to tell apart",
-            (strip - tile).abs()
+            (row.height - 50.4).abs() < 1e-4,
+            "the row's cover should be 18 * 2.8 = 50.4 tall, got {}",
+            row.height
         );
+        assert!(row.compact, "a row is the compact drawing");
+        assert_eq!(metrics::tile_height(row.width), 54.0);
+    }
+
+    /// **What each cover composition is made of**, read off the ids a real
+    /// [`cover_box`] produces: a photograph is the picture alone, an icon is
+    /// the picture inside the plate, and a game with no artwork is the plate
+    /// with its initials on it.
+    ///
+    /// The ids are the whole test, and they are the only way to see this.
+    /// `Widget` has no `as_any` and iced has no downcast, so which nodes a
+    /// builder composed is otherwise invisible from outside it — and a
+    /// photograph given a plate behind it renders plausibly and crops nothing,
+    /// which is what makes it worth an assertion.
+    #[test]
+    fn a_photograph_is_drawn_alone_while_an_icon_and_a_placeholders_are_on_the_plate() {
+        let spec = card_cover_spec();
+
+        let with_photo_game = with_photo("Half-Life 2");
+        let mut photo: Element<'_, ()> = cover_box(&with_photo_game, spec);
+        assert_eq!(
+            ids(&traversal(&mut photo)),
+            [Id::from(PICTURE_ID)],
+            "a photograph fills the box; there is no plate behind it"
+        );
+
+        let with_icon_game = with_icon("Half-Life 2");
+        let mut icon: Element<'_, ()> = cover_box(&with_icon_game, spec);
+        assert_eq!(
+            ids(&traversal(&mut icon)),
+            [Id::from(PLATE_ID), Id::from(PICTURE_ID)],
+            "an icon sits on the plate, the way the QML's `showPlate` says"
+        );
+
+        let bare = Game::new_named("Half-Life 2");
+        let mut placeholder: Element<'_, ()> = cover_box(&bare, spec);
+        assert_eq!(
+            ids(&traversal(&mut placeholder)),
+            [Id::from(PLATE_ID), Id::from(INITIALS_ID)],
+            "a game with no artwork is the plate and its initials"
+        );
+    }
+
+    /// The icon's inset reaches the layout: inside the plate the picture is
+    /// smaller than the box by [`metrics::ICON_INSET`] on every side, because
+    /// an icon is letterboxed rather than cropped.
+    ///
+    /// Read from the laid-out tree, since an `Image` has no id and no
+    /// `operate` — the leaf box is where its size actually lands.
+    #[test]
+    fn an_icons_picture_is_inset_inside_the_plate_by_the_icon_inset() {
+        let spec = card_cover_spec();
+        assert_eq!((spec.width, spec.height), (188.0, 218.0));
+        assert_eq!(metrics::ICON_INSET, 18.0);
+
+        let with_icon_game = with_icon("Half-Life 2");
+        let mut icon: Element<'_, ()> = cover_box(&with_icon_game, spec);
+        assert_eq!(
+            leaves(&mut icon),
+            [Size::new(188.0 - 2.0 * 18.0, 218.0 - 2.0 * 18.0)],
+            "the icon's box should be the plate's, less the inset on each side"
+        );
+
+        // A photograph is cropped to the box instead, so its inset is zero.
+        let with_photo_game = with_photo("Half-Life 2");
+        let mut photo: Element<'_, ()> = cover_box(&with_photo_game, spec);
+        assert_eq!(
+            leaves(&mut photo),
+            [Size::new(188.0, 218.0)],
+            "a photograph fills the box rather than being inset into it"
+        );
+    }
+
+    /// The card's corner radius is the one the style gives the renderer.
+    ///
+    /// This is the only radius in this file whose value can be read back at
+    /// all. A `Container`'s style is never exposed on the widget —
+    /// `Container::id()` returns its *content's* id and there is no getter — so
+    /// the choice is between calling the style function the widget uses and not
+    /// checking the number. What this proves is that the style the card hands
+    /// the renderer carries radius 14; what it cannot prove is anything about a
+    /// radius that reaches no style at all.
+    #[test]
+    fn a_cards_corner_radius_is_the_declared_one() {
+        let style = card_style(&cosmic::Theme::dark());
+        // 14 is `LibraryPage.qml:155`, and `metrics::CARD_RADIUS` is where the
+        // port keeps it: written out, so the assertion fails whether the
+        // constant moves or the style stops reading it.
+        assert_eq!(style.border.radius, Radius::from(14.0));
+        assert_eq!(metrics::CARD_RADIUS, 14.0);
+    }
+
+    /// A plate's corners are the radius its spec asks for — the tile's radius
+    /// for a card, the compact one for a row.
+    ///
+    /// [`plate_style`] is where a radius becomes a `container::Style`, and the
+    /// style is the last point at which it can be read (see the card-radius
+    /// test above). The link this does **not** cover is the argument `plate`
+    /// passes — nothing outside the widget can see a `Style` the widget holds —
+    /// so a `plate` that stopped passing `spec.radius` would survive here. That
+    /// gap is real and is not papered over.
+    #[test]
+    fn a_plates_corners_are_the_radius_its_spec_asks_for() {
+        let card = card_cover_spec();
+        assert_eq!(card.radius, 10.0, "the tile's radius, `CoverArt.qml`");
+        assert_eq!(
+            plate_style(0, card.radius).border.radius,
+            Radius::from(10.0)
+        );
+
+        let row = row_cover_spec();
+        assert_eq!(row.radius, 6.0, "the compact radius, `CoverArt.qml`");
+        assert_eq!(plate_style(0, row.radius).border.radius, Radius::from(6.0));
+        assert_eq!(preview_cover_spec().radius, 6.0);
     }
 
     /// The plate's gradient runs from the shade's first colour at the top: the
@@ -501,6 +892,168 @@ mod tests {
             dx.abs() < 1e-5,
             "the gradient must not run sideways (got dx={dx})"
         );
+    }
+
+    // ---- Reaching the widget a builder returned ---------------------------
+    //
+    // Every test below calls the **real builder** — `card`, `row`,
+    // `cover_box`, `cover_preview` — and reads what came back. That is possible
+    // only through the two things iced exposes about a widget from outside: its
+    // [`Id`], which `Widget::id()` returns and the operation traversal reports,
+    // and the layout the framework computes from it. `Widget` has no `as_any`
+    // in this version and iced has no downcast anywhere, so a builder's return
+    // value cannot be inspected by type — and a `container::Style` cannot be
+    // read back off the widget either, because `Container::id()` returns its
+    // *content's* id and the style is only ever handed to the renderer.
+    //
+    // So each assertion is either "which nodes are present, in what order",
+    // read from the ids those nodes carry, or "what the framework was told
+    // about them" — a bounding box, or a string a text widget handed the
+    // traversal. Both come from a genuine `Widget::layout` and a genuine
+    // `Widget::operate` over a real element, not from a stand-in.
+
+    /// One thing the framework reports about the widget tree.
+    #[derive(Debug, Clone)]
+    struct Seen {
+        id: Option<Id>,
+        bounds: Rectangle,
+        text: Option<String>,
+    }
+
+    /// Collects what a traversal reports. `traverse` calls `operate(self)` so
+    /// the widgets keep descending — the contract `Operation` documents.
+    #[derive(Default)]
+    struct Collect(Vec<Seen>);
+
+    impl Operation for Collect {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
+
+        fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
+            self.0.push(Seen {
+                id: id.cloned(),
+                bounds,
+                text: None,
+            });
+        }
+
+        fn text(&mut self, _id: Option<&Id>, bounds: Rectangle, text: &str) {
+            self.0.push(Seen {
+                id: None,
+                bounds,
+                text: Some(text.to_string()),
+            });
+        }
+    }
+
+    /// A real renderer, for measuring text.
+    ///
+    /// `iced_tiny_skia` is a pure-software backend, so this needs no display
+    /// and draws nothing — `layout` wants it only to ask the font stack how
+    /// wide a string is.
+    fn renderer() -> cosmic::Renderer {
+        cosmic::Renderer::new(Font::default(), Pixels(16.0))
+    }
+
+    /// Lay out a real element and traverse it, and report what the framework
+    /// was told.
+    fn traversal<M: Clone + 'static>(el: &mut Element<'_, M>) -> Vec<Seen> {
+        let renderer = renderer();
+        let mut tree = Tree::new(el.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        // `Widget::layout` and `Widget::operate` both take the renderer by
+        // shared reference — a widget measures text through it and does not
+        // draw — so neither needs a `&mut` here and clippy says so.
+        let node = el.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let mut collect = Collect::default();
+        el.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut collect);
+        collect.0
+    }
+
+    /// The ids the traversal reported, in the order it reported them.
+    fn ids(seen: &[Seen]) -> Vec<Id> {
+        seen.iter()
+            .filter_map(|seen| seen.id.clone())
+            .collect()
+    }
+
+    /// The strings the traversal was handed, in order.
+    fn texts(seen: &[Seen]) -> Vec<&str> {
+        seen.iter()
+            .filter_map(|seen| seen.text.as_deref())
+            .collect()
+    }
+
+    /// The box a drawn string was laid out in.
+    fn drawn<'a>(seen: &'a [Seen], text: &str) -> &'a Rectangle {
+        seen.iter()
+            .find(|seen| seen.text.as_deref() == Some(text))
+            .map(|seen| &seen.bounds)
+            .unwrap_or_else(|| {
+                panic!("nothing drew {text:?}; the traversal drew {:?}", texts(seen))
+            })
+    }
+
+    /// The sizes of the leaves of a real element's laid-out tree, in order.
+    ///
+    /// A leaf is where the picture ends up: `Image` has no `Id` and does not
+    /// implement `operate`, so the only place its box can be read is in the
+    /// layout the framework computed for it.
+    fn leaves<M: Clone + 'static>(el: &mut Element<'_, M>) -> Vec<Size> {
+        fn walk(node: &Node, out: &mut Vec<Size>) {
+            if node.children().is_empty() {
+                out.push(node.size());
+            }
+            for child in node.children() {
+                walk(child, out);
+            }
+        }
+
+        let renderer = renderer();
+        let mut tree = Tree::new(el.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let node = el.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let mut out = Vec::new();
+        walk(&node, &mut out);
+        out
+    }
+
+    /// The path to a real file with exactly these bytes.
+    ///
+    /// [`CoverSource::classify`] reads the file — a path that does not exist is
+    /// a [`CoverSource::Plate`] whatever it is called — so a test that wants a
+    /// photograph or an icon has to put bytes on disk. The name carries no
+    /// extension on purpose: which composition a cover gets is decided from the
+    /// content and never from the suffix (see [`super::cover`]'s module docs),
+    /// and a fixture called `.png` would leave that untested either way.
+    fn cover_fixture(stem: &str, bytes: &[u8]) -> String {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("gamehandler-widgets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a writable temporary directory");
+        // A distinct path per call, so no two tests can read a half-written
+        // file from the other.
+        let path = dir.join(format!("{stem}-{n}"));
+        std::fs::write(&path, bytes).expect("a writable fixture");
+        path.to_string_lossy().into_owned()
+    }
+
+    /// A game whose cover is a photograph: real bytes that are not an ICO.
+    fn with_photo(name: &str) -> Game {
+        let mut game = Game::new_named(name);
+        game.cover_path = cover_fixture("photo", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR");
+        game
+    }
+
+    /// A game whose cover is an icon: real bytes that *are* an ICO.
+    fn with_icon(name: &str) -> Game {
+        let mut game = Game::new_named(name);
+        game.cover_path = cover_fixture("icon", &[0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x10]);
+        game
     }
 
     /// The two 8-bit triples become the colours the plate draws, with no
