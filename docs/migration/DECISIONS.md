@@ -950,3 +950,57 @@ spec. This is the third seam of the same kind, so it is the point at which the
 pattern should be treated as the crate's convention rather than a series of
 one-off decisions: **anything `core` needs from outside the process is injected,
 so `cargo test -p gamehandler-core` stays instant, headless and offline.**
+
+---
+
+## D-28. One identifier, five places: `App::APP_ID` is the single source of truth
+
+**Question.** The application has one identity string that has to appear
+consistently in several artefacts that are validated by different tools, in
+different languages, at different times. Nothing in the build enforces that they
+agree. Where is the value defined, and what keeps the copies in step?
+
+**The dependency, traced in the pinned sources rather than assumed.**
+`libcosmic/src/app/mod.rs:70` sets
+
+```rust
+window_settings.platform_specific.application_id = App::APP_ID.to_string();
+```
+
+and `iced/winit/src/conversion.rs:202,213` passes that same string to
+`WindowAttributesX11::with_name(class, instance)` and to the Wayland
+`WindowAttributesWayland::with_name(...)`. So the X11 `WM_CLASS` (both class and
+instance) and the Wayland `app_id` are **exactly `App::APP_ID`**, with no case
+folding, prefixing or other transformation.
+
+**Choice.** `App::APP_ID` is the single source of truth, and every other
+occurrence is derived from the same literal:
+
+| Artefact | Value | Consumed by | Enforced by |
+|---|---|---|---|
+| `App::APP_ID` (Rust) | `com.goshapps.GameHandler` | winit → `WM_CLASS` + Wayland `app_id` | `cargo test` |
+| desktop file basename | `com.goshapps.GameHandler.desktop` | the shell's launcher | `desktop-file-validate` + Flatpak |
+| `StartupWMClass` | `com.goshapps.GameHandler` | window↔launcher association | `desktop-file-validate` (weakly) |
+| Flatpak manifest `id` | `com.goshapps.GameHandler` | `flatpak-builder`, the sandbox | `flatpak-builder` |
+| metainfo `<launchable>` | `com.goshapps.GameHandler.desktop` | AppStream | `appstreamcli validate` |
+
+**Why this needs writing down.** Each of the five is validated, and *none of the
+validators compares them to each other*. `desktop-file-validate` will accept a
+`StartupWMClass` that matches nothing; `appstreamcli validate` checks that
+`<launchable>` ends in `.desktop` but not that the file exists alongside it;
+`flatpak-builder` does not read `APP_ID`. So a mismatch is possible with every
+tool reporting success — the failure mode is a running app whose window does not
+associate with its launcher icon, which no check in `verify.sh` would catch.
+
+**Consequence — a required check, not a convention.** `verify.sh` must assert
+the five agree. The load-bearing ones are `App::APP_ID` vs the desktop basename
+vs `StartupWMClass`; these are cheap string comparisons against two files and
+should be a test in the workspace rather than a shell assertion, so it runs under
+plain `cargo test` too. Assigned to the Packaging owner, who owns `verify.sh`,
+coordinating with UX for `data/`.
+
+**Note on the name itself.** The `com.goshapps.GameHandler` ID, the `goshapps`
+namespace and the icons are unchanged by this migration — D-02 keeps the app
+identity, and changing the ID would orphan every installed user's data
+directory. The Qt-era `Categories` line is a separate, cosmetic defect being
+corrected under T-18.

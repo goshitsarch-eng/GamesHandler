@@ -428,6 +428,45 @@ the behaviour so it is a known limitation rather than a surprise. Recorded in
 REPORT.md's known-limitations section rather than as a divergence — the port
 inherits it.
 
+### F-N. A cover's extension does not describe its contents
+
+Found while scoping **R-11** (the webp decoder question); recorded here because
+it is a property of the *files the Python app writes*, and it changes what the
+port has to do.
+
+The `.jpg` / `.png` / `.ico` suffix on a stored cover is a naming convention, not
+the format of the bytes:
+
+- `save_cover_from_urls` (`covers.py:283-292`) loops the candidate URLs and
+  writes every one of them to a **hardcoded** destination:
+  `config.covers_dir() / f"{game_id}.jpg"`. The suffix is fixed before the
+  download, so it cannot reflect what arrived.
+- The candidate list (`COVER_ASSETS`, `covers.py:35-43`) includes
+  **`portrait.png`**, and `CDN_ROOTS` (covers.py:31-34) is the Steam CDN, which
+  serves the literal format named in the path. So a game whose only available
+  asset is `portrait.png` stores **PNG bytes in a file called `<id>.jpg`**.
+- `_request` (`covers.py:218`) sends `Accept: */*`, so no content negotiation
+  narrows the response either.
+- `save_exe_icon` (`covers.py:312-322`) writes `<id>.ico` from the icon embedded
+  in a Windows executable — a third format, and the `image` crate's `ico`
+  feature is what decodes it.
+- Only `copy_custom_cover` (`covers.py:296-307`) derives the suffix from the
+  source, and only from `{".png", ".jpg", ".jpeg", ".webp"}`.
+
+**Consequence for the port.** Anything that renders a cover must decide the
+format by **sniffing the content**, never from the file extension. The combined
+requirement is: JPEG, PNG and ICO bytes must all decode, and `.webp` bytes may
+additionally appear inside a custom cover. iced decodes through
+`ImageReader::open(path).with_guessed_format()`, which sniffs, so the port
+satisfies this as long as it does not "optimise" the guess away using the
+suffix.
+
+**Consequence for R-11.** The webp question is about *decoder capability*, not
+about file naming — a `.webp` name is not needed to have webp bytes present, and
+a `.jpg` name does not imply JPEG. R-11's scope is nevertheless still correct:
+webp can only reach disk through `copy_custom_cover`, because every other writer
+emits JPEG, PNG or ICO bytes.
+
 ## 5. Corrections to §1–3 found by the same review
 
 Two claims in the sections above were **weaker than they were written to be**,
