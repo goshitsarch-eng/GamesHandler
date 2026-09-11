@@ -243,6 +243,11 @@ cd "$ROOT"
 STAGE=""
 STAGE_LOG=""
 STAGE_START=0
+# The stage function `run_stage` actually invoked for the current stage. Empty
+# between `begin` and that call, so `finish_ok` can tell "this stage ran and
+# returned 0" from "someone announced this stage and then claimed a result" —
+# see the note in `finish_ok` for what it is there to catch.
+STAGE_RAN=""
 
 # Announce a stage. Every stage goes through here — the `run_stage` calls and the
 # direct `begin <stage>; finish_skip ...` ones alike — which is what makes this
@@ -266,6 +271,9 @@ begin() {
         exit 2
     fi
     ATTEMPTED+=("$STAGE")
+    # Cleared here and set only by `run_stage`, so the marker always describes
+    # *this* stage and never survives into the next one.
+    STAGE_RAN=""
     STAGE_LOG="$LOGDIR/$1.log"
     STAGE_START="$SECONDS"
     printf '### %s\n' "$STAGE"
@@ -282,6 +290,29 @@ echo_subchecks() {
 }
 
 finish_ok()   {
+    # A stage reports `ok` only if `run_stage` ran its function for it. Without
+    # this, `begin cli; finish_ok` — a stage that announces itself and then
+    # claims a pass — was reported as passed and the run exited 0, because
+    # `begin` had already appended the stage to ATTEMPTED and the unrun check in
+    # the exit tail therefore could not see it. That is a false claim about
+    # coverage, made by the file whose job is deciding whether the project is
+    # covered, and it is the same class of defect as the rest of this runner:
+    # a result that was never produced.
+    #
+    # This is a bug in verify.sh rather than a stage outcome, so it is a usage
+    # error (2) like `begin`'s STAGES guard and `run_stage`'s `declare -F` one,
+    # and for the same reason: it should stop the run that introduces it rather
+    # than be reported as a failing stage and send a reader to the code under
+    # test. Nothing is printed first — an `ok` line here would be the very lie
+    # this refuses to tell.
+    if [ -z "$STAGE_RAN" ]; then
+        printf 'verify.sh: %s reported ok, but no stage function ran for it\n' "$STAGE" >&2
+        printf '  `ok` is claimed by `finish_ok`, which reads the exit status\n' >&2
+        printf '  `run_stage` captured from the stage function. A bare\n' >&2
+        printf '  `begin %s; finish_ok` produces no such status.\n' "$STAGE" >&2
+        printf '  call the stage through `run_stage`, or skip it with finish_skip.\n' >&2
+        exit 2
+    fi
     printf 'ok   %-18s (%ds)\n' "$STAGE" "$((SECONDS - STAGE_START))"
     echo_subchecks
     PASSED+=("$STAGE")
@@ -1294,6 +1325,10 @@ run_stage() {
     fi
     begin "$name"
     local rc=0
+    # Set immediately before the call and after `begin` has cleared it, so the
+    # window in which `finish_ok` accepts a stage is exactly the window in which
+    # its function has run.
+    STAGE_RAN="$fn"
     "$fn" >"$STAGE_LOG" 2>&1 || rc=$?
     case "$rc" in
         0)  finish_ok ;;
@@ -1410,9 +1445,21 @@ fi
 # function — and forgetting the `run_stage` line. That is a stage that never
 # announces itself, so it is in neither PASSED nor FAILED nor SKIPPED, and
 # without this branch the run reports every stage green and exits 0 while a
-# stage it advertises never ran. The same applies to a `begin X; finish_ok`
-# that never calls the stage, and to a run_stage naming the wrong function:
-# both claim a result without producing one, and both land here.
+# stage it advertises never ran.
+#
+# This branch sees only the stages that never announced themselves — it reads
+# ATTEMPTED, so a stage that called `begin` and then claimed a result *without
+# running* is invisible to it. That case is not hypothetical: `begin cli;
+# finish_ok` used to report `cli` as passed and the run as 0 (finding #47,
+# pre-existing — it reproduces at 50798f9^ as well as at 50798f9, and the #41
+# fix neither introduced it nor was meant to cover it). It is refused earlier
+# now, in `finish_ok`, which is where the claim is made; this note is here so
+# that the next reader of this branch does not assume it is the backstop for
+# every way a stage can claim a result it did not produce. It is one of them.
+#
+# A `run_stage` naming a function that does not exist is caught too, but not
+# here — `run_stage`'s own `declare -F` guard exits 2 hundreds of lines above,
+# before the stage is even announced.
 #
 # It is the sentence below, applied to the other way a run can be partial. That
 # one is about a *skip*; this is about never getting there at all, and a reader
