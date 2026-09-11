@@ -106,7 +106,7 @@ const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 // The injected HTTP client (DECISIONS D-26)
 // ---------------------------------------------------------------------------
 
-/// What a completed [`HttpClient::get_chunked`] call learned about the response.
+/// What a completed [`HttpClient::get`] call learned about the response.
 ///
 /// `content_length` is the **raw header text**, not a number, and that is
 /// deliberate: Python parses it with `int()` inside a `try`/`except` that turns

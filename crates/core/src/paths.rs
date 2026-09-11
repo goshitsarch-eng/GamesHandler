@@ -9,11 +9,16 @@
 //! must survive the port.
 //!
 //! The environment is behind the [`Env`] trait rather than read directly from
-//! [`std::env`]. Under Rust 2024 `std::env::set_var` is `unsafe`, and this
-//! crate denies `unsafe_code`, so a test cannot mutate the process environment
-//! to redirect a path. Injecting a [`FakeEnv`] does the same job without it.
+//! [`std::env`](mod@std::env). Under Rust 2024 `std::env::set_var` is `unsafe`, and
+//! this crate denies `unsafe_code`, so a test cannot mutate the process
+//! environment to redirect a path. Injecting a `FakeEnv` does the same job
+//! without it.
 //!
-//! [`FakeEnv`]: tests::FakeEnv
+//! `FakeEnv` is `tests::FakeEnv` and is written as plain code rather than a
+//! link on purpose: `tests` is private, so no public doc can address it. (The
+//! `mod@` above disambiguates the module from the `std::env!` macro of the same
+//! name — a bare `std::env` in either the label or the target is ambiguous, and
+//! rustdoc refuses to guess.)
 
 use std::path::{Path, PathBuf};
 

@@ -98,7 +98,7 @@
 //! Everywhere else, a difference between this file and `installers.py` is a
 //! difference of *representation* ([`Kind`] instead of `"exe"`/`"msi"`) or of
 //! *seam* (the three above). There is one behavioural divergence, and it is
-//! deliberately not hidden inside a helper: [`spawn_retrying`] waits out a
+//! deliberately not hidden inside a helper: `spawn_retrying` waits out a
 //! transient `ETXTBSY` rather than reporting it, because the reference's
 //! single-spawn `subprocess.run` turns into a flake in a threaded test suite
 //! whose fakes are shell scripts written a moment before they are executed. The
@@ -854,8 +854,13 @@ thread_local! {
 /// skips `os.sep`, `"/"` and `"."`, so an absolute expected path is resolved
 /// *under* `root` rather than against the filesystem root. And the first
 /// case-insensitive match wins, so a prefix holding both `Steam` and `steam`
-/// resolves to whichever the directory happens to list first — the same
-/// unspecified tie [`crate::runners::families::search_anticheat`] documents.
+/// resolves to whichever the directory happens to list first. That tie is
+/// unspecified in the reference and unspecified here — the same shape of rule
+/// as [`crate::runners::families::asset_matches`], which also lowercases both
+/// sides and keeps the first match rather than imposing an order. (This
+/// paragraph used to cite a `families::search_anticheat` that does not exist,
+/// which is how a false citation reads as a real one: the sentence was
+/// plausible, and nothing checked it until rustdoc's link linter did.)
 ///
 /// `root` is returned unchanged for an empty or all-skipped `relative`, which
 /// is what Python's `Path()` gives.

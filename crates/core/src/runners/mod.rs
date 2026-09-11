@@ -16,7 +16,7 @@
 //!   part where a defect is a vulnerability, and because it is the part a
 //!   summary would get wrong.
 //! * [`families`] — the runner catalogue and asset selection.
-//! * [`env`] — [`env::LaunchEnv`], the injected seam for everything the runner
+//! * [`env`](mod@env) — [`env::LaunchEnv`], the injected seam for everything the runner
 //!   code needs from outside the process (DECISIONS D-27).
 //! * [`shell`] — POSIX word splitting (`shlex.split`), shared with
 //!   `parse_env_block` in `launch_opts`.
@@ -931,7 +931,7 @@ pub fn readable_error(text: &str) -> String {
 /// outcome would pass while the race was live, which is precisely how the
 /// Python suite hid this for so long.
 ///
-/// The ordering itself is [`crate::runners::mod`]'s
+/// The ordering itself is this module's test
 /// `the_stderr_drain_is_joined_before_the_text_is_read`; this function is the
 /// pure half, so the message shape is also pinned by the vector corpus
 /// (`launch_failure_text`, answered by `run_runners_vectors.py` with the join
