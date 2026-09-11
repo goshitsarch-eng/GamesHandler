@@ -447,6 +447,41 @@ results["rust_divergences"] = {
             },
         },
         {
+            "id": "wrong_typed_scalars_coerced",
+            "decision": "D-18",
+            "python": {
+                "input": '{"id": "a"*32, "name": 123}',
+                "observed": (
+                    "Game.name becomes the int 123; Library.all() then calls "
+                    "g.name.lower() and raises AttributeError: 'int' object has no "
+                    "attribute 'lower' for EVERY sort mode, including the default"
+                ),
+                "consequence": (
+                    "the library view is empty/unrenderable for any hand-edited or "
+                    "tool-written games.json with a non-string name -- no setting "
+                    "change needed, unlike D-14"
+                ),
+                "also": (
+                    "name/list variants fail identically; steam_appid, category, "
+                    "exe_path and the boolean toggles are equally accepting but "
+                    "happen not to be touched by the sort key"
+                ),
+            },
+            "rust": {
+                "expected": (
+                    "parse every scalar field to its declared type, coercing or "
+                    "defaulting rather than holding an arbitrary JSON value: a "
+                    "non-string name becomes its string form, a non-bool toggle "
+                    "becomes its default"
+                ),
+                "rationale": (
+                    "a wrong type in one entry must never make the whole library "
+                    "unusable; this is the same class of bug as D-14 and is fixed "
+                    "the same way"
+                ),
+            },
+        },
+        {
             "id": "float_exponent_spelling",
             "decision": "D-15",
             "python": {"observed": "1e-07 and 10000000.0 (C printf %g rules)"},

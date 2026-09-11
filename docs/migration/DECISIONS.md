@@ -460,3 +460,202 @@ pass unchanged and keeps its full value as a porting reference. This is the
 strongest available signal that the Rust port has not silently changed
 behaviour, and it costs nothing to maintain while the Python app remains on the
 branch (D-02).
+
+---
+
+## D-18. Wrong-typed scalar fields are coerced, not stored as-is
+
+**Question.** `Game.from_dict` type-checks nothing but the two timestamps. A
+`games.json` containing `{"name": 123}` stores the **int** `123` in
+`Game.name`. Every sort mode then evaluates `g.name.lower()`, so `sort="name"`
+— the **default** — raises `AttributeError: 'int' object has no attribute
+'lower'`. Measured: all three sort modes fail. `{"name": ["x"]}` fails the same
+way, and `{"name": null}` is different again but no better — the game is
+dropped from the library entirely, because the constructor's `if game.name:`
+guard is falsy for `None`.
+
+The same permissiveness applies to `steam_appid`, `category`, `exe_path` and the
+boolean toggles, which are equally unvalidated but happen not to be touched by
+the sort key. So the bug is latent in five more fields.
+
+**Options considered.**
+1. Mirror the permissiveness: hold whatever JSON value arrived in the typed
+   field. (For Rust this means `name: Value`, or a hand-rolled enum per field.)
+2. Parse each scalar into its declared Rust type, coercing where a lossless
+   coercion exists and falling back to the field default otherwise.
+
+**Choice.** Option 2 — **coerce into declared types**.
+
+**Why.** This is the same class of defect as D-14, with a wider blast radius and
+a lower trigger. D-14 needs the user to have selected a non-default sort *and* a
+null timestamp present. D-18 needs neither: the library is unbootable, on
+startup, for any file with a non-string `name`, whatever wrote it. Option 1 would
+mean the Rust port reproducing an `AttributeError`-equivalent, which is not
+parity worth having.
+
+Note the asymmetry this preserves and the one it drops. Preserved: a wrong type
+is *never* an error — loading still succeeds, and the rest of the library still
+loads (matching Python's tolerance, F-D/F-G/F-J). Dropped: the specific value
+surviving untyped into a field that later crashes the view.
+
+**Consequence.** `rust_divergences` gains a third case so that a test author
+cannot mistake the Python result for the expected one. The coercions must be
+chosen deliberately and documented in `core::models`, because "coerce" is
+undefined for, e.g., `name: {}` — the rule is: use the string form where one
+exists, otherwise the default.
+
+---
+
+## D-19. `serde_json` is required with `float_roundtrip`
+
+**Question.** `serde_json`'s default `f64` reader computes `mantissa * 10^exp`
+in `f64`, which is not correctly rounded. Measured over 20 000 realistic
+`time.time()`-shaped values: **4070 (20.35%) are changed by a parse→serialize
+round-trip.** The `float_roundtrip` feature performs the conversion correctly
+(**0/20000**).
+
+**Options considered.**
+1. Accept the default reader; write the round-trip test against the existing
+   fixtures, which all pass.
+2. Declare `serde_json = { version = "1", features = ["float_roundtrip"] }`.
+
+**Choice.** Option 2.
+
+**Why.** Option 1 is not merely "slightly wrong" — it is *undetectably* wrong.
+The original fixtures used small round values (`100.0`, `300.0`,
+`1700000000.5`) that happen to survive; the error needs dense, arbitrary values
+to appear, i.e. precisely the timestamps the app writes for real. So option 1
+would have produced a suite that was green while every user's `games.json`
+drifted in the low bits on the first Rust save — and the byte-equality guarantee
+D-15 depends on would have held on the fixtures and failed on real data. That is
+the worst shape for a compatibility bug: the test that exists to catch it
+reports success.
+
+This was found by adversarial review, not by the port author, and after the
+fixtures had been written. It is recorded as a decision rather than a footnote
+because it is the single highest-value change to come out of the review.
+
+**Implementation note.** Pinned by oracle section `floats_roundtrip`: 300 seeded
+realistic timestamps with their IEEE-754 bit patterns, asserting the re-saved
+bytes are identical. The test compares **bits**, not decimal text, so it cannot
+be satisfied by a writer that merely formats prettily. **Any future change to
+the `serde_json` dependency must not drop this feature** — a bare `"1"` in
+`crates/core/Cargo.toml` reintroduces the bug silently, which is why the reason
+is written next to the dependency as well as here.
+
+---
+
+## D-20. `Settings` tolerates invalid UTF-8, like `Library`
+
+**Question.** `Library.load` catches `UnicodeDecodeError`; `Settings.load`
+catches only `(json.JSONDecodeError, OSError)`, and `UnicodeDecodeError` is a
+subclass of `ValueError`, so it propagates. Measured: a `settings.json` with one
+`0xff` byte raises `'utf-8' codec can't decode byte 0xff in position 23`.
+
+This is a **startup crash**. `Backend.__init__` calls `Settings.load` while
+constructing the backend, so the process dies before any window appears — the
+user's app does not open at all and the cause is a byte in a settings file they
+never see.
+
+**Options considered.**
+1. Mirror the asymmetry: make `Settings` loading strict, `Library` loading
+   tolerant.
+2. Make `Settings` as tolerant as `Library`: on any decode failure, fall back to
+   defaults.
+
+**Choice.** Option 2 — **tolerate and fall back to defaults**.
+
+**Why.** Same reasoning as D-14 and D-18: this is an unambiguous bug, and
+copying it imports a crash. The asymmetry has no defensible reading — there is
+no design in which a game library should survive a bad byte but the settings
+file beside it should take the app down. Under the resolution order the first
+two priorities (parity, then working correctly) conflict, and "working
+correctly" wins because a crash is not a behaviour worth preserving. Falling
+back to defaults loses at most the user's theme and sort preferences.
+
+**Consequence.** The divergence is deliberate and is recorded in
+`rust_divergences` alongside D-14 and D-18, so a porting test asserts the
+tolerant behaviour rather than the crash.
+
+---
+
+## D-21. Reject no file that Python reads; specifically, strip a BOM and do not recurse into discarded values
+
+**Question.** Two shapes where strictness on the Rust side would cost the user
+data that Python keeps:
+
+1. **BOM.** Python's `json.loads` rejects a leading `\xef\xbb\xbf`, so
+   `Library.load` returns an empty library — and the next `save()` writes `[]`
+   over the user's `games.json`. Measured: `count=0`, and the output equals the
+   empty-library fixture byte for byte.
+2. **Deep nesting.** A `junk` field of 1 000 nested arrays parses fine in Python
+   (`count=2`, both entries survive) but trips `serde_json`'s default recursion
+   limit of 128, which would reject the file. Notably the value is *discarded
+   anyway* — unknown keys do not survive (F-D) — so there is no reason to
+   materialise it.
+
+**Options considered.**
+- **BOM.** (a) Match Python exactly, including the data loss. (b) Reject the
+  file as Python does but do not save over it. (c) Strip the BOM and read the
+  file.
+- **Nesting.** (a) Raise the recursion limit to Python's tolerance. (b) Skip
+  unparsed unknown values without recursing.
+
+**Choice.** BOM: **(c) strip it**. Nesting: **(b) skip discarded values**, with
+**(a) as fallback** if the parser cannot easily skip.
+
+**Why.** Both are cases where the *only* thing Python's behaviour preserves is a
+way to lose data, so "match Python" and "do not lose the user's library" point
+in opposite directions, and the second wins. Neither choice weakens D-06: a
+BOM'd or deeply-nested file is one Python cannot usefully read either, so no
+file Python *wrote* is affected, and nothing about a file Python can read
+becomes unreadable.
+
+BOM stripping is strictly safer than option (a) at zero cost — the file is
+valid JSON after the BOM is removed, so the user's games load instead of being
+erased. For nesting, option (b) is both safer *and* cheaper than (a): the
+subtree is discarded by F-D regardless, so not recursing into it avoids the
+limit and the allocation at once. Raising the limit (a) is the fallback only
+because it leaves the port parsing — and bounding recursion on — data it is
+about to throw away.
+
+**Consequence.** Pinned by `encoding_and_shape.bom` and
+`encoding_and_shape.deep_nesting`. These are the two places in the port where
+being *more* tolerant than Python is deliberate rather than incidental; both are
+listed in REPORT.md's deviations section.
+
+---
+
+## D-22. `save()` still replaces a symlink — inherited limitation, not a divergence
+
+**Question.** `Library.save` writes `path.with_suffix(".json.tmp")` and
+`os.replace`s it onto the target. If `games.json` is a **symlink** — the natural
+way to keep a library under version control or in a synced folder — the replace
+destroys the link. Measured: `link_still_symlink_after_save=False`, the target
+still holds `[]`, and the real bytes now sit at the link's old path as a regular
+file. So the user's sync silently stops working after the first save.
+
+**Options considered.**
+1. Write through the symlink: resolve the path first, then temp-file-and-replace
+   *at the resolved target*.
+2. Keep the current behaviour and document it.
+3. Write in place, without the temp file, when the path is a symlink.
+
+**Choice.** Option 2 — **keep it, document it, and do not diverge**.
+
+**Why.** The atomic write is worth more than the symlink. Temp-file-then-replace
+is what makes an interrupted save leave the old file intact, and neither option 1
+nor option 3 is clearly correct: option 1 changes where the bytes land (a user
+relying on the link being replaced — unlikely, but not impossible — would see a
+different result), and option 3 gives up atomicity to preserve a link, trading a
+guaranteed property for a convenience. Option 2 also keeps the Rust and Python
+implementations observably identical, which is the whole point of D-06.
+
+So this is recorded as a **known limitation** rather than a divergence: the port
+inherits it rather than introducing it. It is listed in REPORT.md alongside the
+F-B/F-I/F-J/F-K bugs that are worth reporting to the Python project upstream,
+since it has the same character — an edge case that silently does the wrong
+thing to a user's data — even though the port does not fix it.
+
+**Revisit if** a user reports it. Option 1 is the change to make then; it is
+listed here so the analysis is not repeated.
