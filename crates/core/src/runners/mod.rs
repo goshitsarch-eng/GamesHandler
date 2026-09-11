@@ -30,6 +30,7 @@
 pub mod archive;
 pub mod env;
 pub mod families;
+pub mod launch;
 pub mod launch_opts;
 pub mod proton;
 pub mod shell;

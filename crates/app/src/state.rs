@@ -315,13 +315,23 @@ pub struct State {
     pub settings: Settings,
     /// was `self.runner_manager`.
     pub runners: RunnerManager,
-    // NOTE(T-03): `pub proton: ProtonManager` lands with the `runners::proton`
-    // module, which is the remaining part of T-03. It is omitted rather than
-    // stubbed: a placeholder type here would let `view()` and `update()` bind
-    // to a shape that the real manager may not have, which is the opposite of
-    // what a contract is for. Nothing in §2.2's variant set is unreachable
-    // without it — `FetchReleases`/`InstallRunner` will call into it when it
-    // exists.
+    // `runners::proton` has landed, and it has no `ProtonManager` — so there is
+    // deliberately no `pub proton` field here, and no such field is planned.
+    // This comment used to promise one; it was corrected rather than left,
+    // because a reader who follows a stale instruction builds the thing the
+    // design rejected.
+    //
+    // The module is **free functions** — `install`, `uninstall`,
+    // `fetch_available`, `is_installed`, `resolve_staged` — taking
+    // `runners_directory` as an argument. Python's `ProtonManager` has exactly
+    // one field and no invariant, so the struct existed to hold `self` for the
+    // callers' convenience rather than to protect anything; the Rust port passes
+    // the directory. A `ProtonManager` here would be a struct with no
+    // invariant, existing so this field could exist.
+    //
+    // `FetchReleases`/`InstallRunner` therefore call `runners::proton`'s
+    // functions directly, with `runners.runners_directory()`. Nothing in §2.2's
+    // variant set needs a field for them.
     /// The visible page.
     pub page: Page,
     /// The open add/edit form, or `None` when no form is shown.
