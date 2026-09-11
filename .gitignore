@@ -7,6 +7,11 @@ build/
 meson-logs/
 meson-private/
 
+# Cargo build output. Cargo.lock is deliberately NOT ignored: this is an
+# application, and the Flatpak build resolves its dependencies from that lock
+# file (DECISIONS D-04, D-09).
+/target
+
 # Flatpak builder and bundle output
 .flatpak-builder/
 build-flatpak/

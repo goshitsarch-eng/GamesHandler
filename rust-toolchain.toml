@@ -1,0 +1,13 @@
+# Toolchain pin.
+#
+# This file is only read by rustup. The development machine and the Flatpak
+# SDK's `rust-stable//25.08` extension (DECISIONS D-10) both provide a system
+# Rust and ignore it — nothing here triggers a download on those setups.
+#
+# It exists so a contributor using rustup gets the same compiler the project is
+# built and linted with, instead of whatever `stable` happens to resolve to.
+# 1.98.1 is above libcosmic's 1.93 floor; bump both together.
+
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]

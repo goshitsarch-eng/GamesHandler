@@ -1,0 +1,22 @@
+[package]
+name = "gamehandler-core"
+description = "GameHandler logic — models, settings, runners, installers, covers. No GUI dependencies."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# HARD RULE (DECISIONS D-03, PLAN.md §3): this crate must never depend on
+# libcosmic, iced, or any GUI crate — not even as a dev-dependency. That is
+# what lets `cargo test -p gamehandler-core` run on a box with no display
+# server and no GPU.
+#
+# For the same reason the port keeps the Python app's `progress_cb`
+# convention: blocking work is a plain synchronous function taking
+# `progress: &dyn Fn(f32)`, and the binary crate wraps it in `spawn_blocking`.
+# Pulling an async runtime in here would make every logic test need a reactor.
+[dependencies]

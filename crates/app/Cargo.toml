@@ -1,0 +1,31 @@
+[package]
+name = "gamehandler"
+description = "A COSMIC game manager for Linux, for running Windows games through Wine and Proton."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "gamehandler"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+gamehandler-core = { path = "../core" }
+clap = { version = "4", features = ["derive"] }
+
+# Pin libcosmic to an exact revision (DECISIONS D-04). libcosmic declares
+# `iced` as a git submodule pointing at pop-os/iced branch `master`, a moving
+# head with no SemVer promise: under a branch pin upstream could break this app
+# without the app changing. Cargo initialises that submodule itself, so nothing
+# is vendored or hand-rolled here (DECISIONS D-09).
+#
+# `wgpu` is deliberately absent from the feature list. DECISIONS D-11 ships the
+# software renderer (iced_tiny_skia, libcosmic's default), which needs no GPU
+# and no `/dev/dri` — that is what makes the Flatpak smoke test and a
+# broken-GPU machine both work.
+libcosmic = { git = "https://github.com/pop-os/libcosmic.git", rev = "a401af8b1c54a8abd393b8c5b7c8809402f83850", default-features = false, features = ["winit", "tokio", "wayland", "x11", "a11y", "xdg-portal"] }

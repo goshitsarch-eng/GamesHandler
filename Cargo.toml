@@ -1,0 +1,36 @@
+# GameHandler — Cargo workspace.
+#
+# Layout (DECISIONS D-03):
+#   crates/core  gamehandler-core — the ported logic. Pure, synchronous and
+#                GUI-free: it must never depend on libcosmic, iced or any other
+#                GUI crate, which is what keeps it testable on a headless box.
+#   crates/app   gamehandler — the binary: the libcosmic interface plus the
+#                headless CLI (--list / --launch / --version).
+#
+# The Python 3 + PySide6/QML tree is still present at the repository root; it
+# is the parity reference (DECISIONS D-01) and is not part of this workspace.
+
+[workspace]
+resolver = "3"
+members = ["crates/app", "crates/core"]
+
+[workspace.package]
+version = "0.7.2"
+edition = "2024"
+# libcosmic's own floor (its Cargo.toml declares rust-version = "1.93"), and
+# therefore ours. Rust 1.98.1 is what the Flatpak rust-stable extension ships
+# (DECISIONS D-10).
+rust-version = "1.93"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/goshitsarch-eng/GamesHandler"
+
+# Shared lints, inherited by every member with `[lints] workspace = true`.
+#
+# `cargo clippy --all-targets -- -D warnings` at this root is the gate
+# (DECISIONS D-08). libcosmic's own lints never surface here: cargo caps lints
+# for dependencies, and libcosmic is a dependency, not a workspace member.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
