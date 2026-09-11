@@ -392,6 +392,17 @@ on tested foundations and R-1's control-flow redesign is validated by tests
 before pixels depend on it. T-07 proves the headless CLI contract early, which
 is what desktop shortcuts rely on.
 
+**Four open tasks write `main.rs`, and D-51's one-file-one-writer rule serialises them.** `T-24`
+(theming) needs `Shell::theme`, `T-25` (shortcuts) needs `subscription`, and `T-29` and `T-38` each
+fill a block of empty arms there. Two of them running at once is how the last commit-message/claim
+gap in this project started, so the order is fixed rather than left to whoever starts first:
+**UX takes `T-24` then `T-25`** (both are keyboard/theme plumbing on the shell and are cheaper
+landed together than apart), **then Architecture takes `T-29` then `T-38`** (both are arm-filling
+and both need `netpaths`, which is why `T-05` is ahead of them). Nobody else edits `main.rs` while
+one of those is open — the guard's `only_the_written_handlers_change_anything` pins the *set* of
+effective handlers, so two authors filling arms in the same window is a merge that test cannot
+check for either of them.
+
 ---
 
 ## 6a. Compatibility oracle (complete — the contract for T-02)
