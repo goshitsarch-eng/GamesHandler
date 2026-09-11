@@ -53,11 +53,12 @@ and a general claim about a build flag is made from one measured mechanism
 | 28 | `view/widgets.rs`: no test calls the builders, so 9 mutations survive, 2 of them behavioural | Mutation testing | Open (UX) | — |
 | 29 | An early-exit summary omitted the stages that never ran — a report of what passed, presented as a report of what ran | Forcing an early exit | `verify.sh` names skipped stages and exits non-zero | Skipped stage is named; exit non-zero |
 | 31 | `--list` printed "the library is empty" and exited **0** without reading the library; `verify.sh` matched `--list\|--launch\|--version` **zero times** | Running the binary against a 2-game library | `e9ecf5e` (Architecture) | CLI stage fails before the fix and passes after; a sorting mutant fails only `cli-list-non-empty` |
-| 32 | An all-placeholder Flatpak passed `verify.sh` *and* `smoke-test.sh` completely: six page bodies were the app's entire user-visible surface, and nothing could tell scaffold from finished | Reading both scripts for any reference to the placeholder pages — zero | Two halves: `crates/app/tests/pending_pages.rs` (source pin) + `verify.sh:1146-1190` (artifact cross-check) | Open — before/after pair still owed (see §4) |
+| 32 | An all-placeholder Flatpak passed `verify.sh` *and* `smoke-test.sh` completely: six page bodies were the app's entire user-visible surface, and nothing could tell scaffold from finished | Reading both scripts for any reference to the placeholder pages — zero | **CLOSED (`50798f9` + UX's in-source test), in three complementary halves.** *Packaging:* `crates/app/tests/pending_pages.rs` — parses the dispatch arms out of `main.rs` and pins the set, independent of any table — plus `verify.sh`'s artifact cross-check (source count vs the shipped ELF). *UX:* `PENDING_PAGES`/`pending_task` (`main.rs:997`/`:1008`) and the rendering test, which asserts each page's body actually draws the placeholder. **The third half was a tautology until UX fixed it** — it compared `pending_task`'s output against `PENDING_PAGES`, which is the list `pending_task` reads (finding #43). | Lead reproduced both directions. Porting Library's arm while leaving it pinned FAILS UX's test with `Library is listed in PENDING_PAGES as T-09 but its body does not draw the placeholder; drawn: ["Library"]`. Packaging captured the artifact pair: **every byte-identity check passes while the stage fails**, which is the point — no installed file is `main.rs`, so nothing else in the stage could have shown it. |
 | 33 | `update()` had no coverage: all five real handlers, `NavigateTo` included, could be no-oped under a green suite | Deleting each arm and re-running | Open (UX) — #38/#39/#40 qualify the fix | — |
 | 36 | Five DLL-override constants pinned only against themselves in both scopes; the oracle corpus could not catch it | Mutation: flipping a literal survived the whole suite | `e16dd5f` — parses `runners.py` call sites at test time | Lead reproduced in the **narrow** scope: clean passes, dropping `dxgi` fails |
 | 37 | `canonicalise_object_keys`'s object-in-object path unpinned in both scopes | Mutation | `e16dd5f` — array path pinned; object path documented as *behaviourally equivalent* narrow, with the honest bound stated | Reproduced by Architecture; the honest bound is the right answer (D-33) |
 | 41 | `verify.sh`: a run that *finishes* with stages in `STAGES` never reached exits **0**, while printing that nothing was verified about them. `summary` computes the list at `:308` and discards it (a `local`); the exit tail checks only `FAILED` and `SKIPPED_UNREQUESTED` | Advocate, reviewing the gate at `ed59974` | Open (Packaging) | — |
+| 43 | The source-side pending-page test was **a tautology**: it asserted `pending == PENDING_PAGES.to_vec()`, where `pending` was computed by `filter_map` over `pending_task` — and `pending_task` *reads* `PENDING_PAGES`. The same list against itself | Packaging, building the complementary half and finding it green while the page was ported | UX refactored (`PENDING_PAGES` became a slice, the redundant `len()==6` went, and the test now renders `view_body` and asserts the drawn strings) | Lead reproduced: porting `Page::Library`'s arm while leaving it pinned FAILS with `Library is listed in PENDING_PAGES as T-09 but its body does not draw the placeholder; drawn: ["Library"]` |
 | 42 | `verify.sh:517` asserts the `cli` stage "is RED until #31 lands. That is intended". The line was **born false** — `e9ecf5e` (#31's fix) is an ancestor of `398a7c0`, the commit that wrote it | `git log -S` + `git merge-base --is-ancestor` | Open (Packaging) | — |
 
 ## 3. The hazard: stale test binaries
@@ -103,11 +104,16 @@ bin-only crate like `crates/app`. The answerable form names the mechanism:
   #41 is the residual of D-34 and the script's own comment at `:1362-1386`
   already argues for the fix.
 
-- **#32's before/after pair.** Both halves exist but neither is committed, and
-  neither has been observed going red. A check that has never failed is not known
-  to have teeth. The artifact half also has an open question: `build.sh:36` passes
-  `--force-clean`, so the stage's advertised "stale build tree" failure may be
-  unreachable on the path it runs.
+- **#32 is closed**, and the two questions it carried are answered. The
+  before/after pair was captured for both halves. The reachability question —
+  `build.sh:36` passes `--force-clean`, so is the artifact branch reachable? —
+  was answered correctly by Packaging: **not under a full run**, but reachable via
+  `--skip-flatpak`/`--skip-smoke`, which skip the build and still reach the stage
+  against whatever `build-flatpak/` an earlier run left. And porting a page is
+  exactly the change nothing else in the stage can see, because
+  `crates/app/src/main.rs` is in none of the five `FLATPAK_CONTENTS` entries — so
+  the byte-identity checks stay green over a stub. The failure text now
+  distinguishes the two cases.
 - **#28** — nine mutation survivors in `view/widgets.rs`.
 - **#33** — `update()` coverage, qualified by #38 (redundant length assertion),
   #39 (a new `Message` variant need not be added to `every_message`) and #40
