@@ -1906,3 +1906,63 @@ re-verify every item at T-19 before restating it.
 **The rule.** "Defect or contract?" is settled by running the case, not by taste.
 And a residual filed against a script should be filed with the command that shows
 it; an unrun claim about an unrun path is how this one survived review.
+
+## D-43. `leaves()` witnesses a box, not a decode — and T-22 splits into evidence and landing
+
+**The finding (#46, found by Packaging, independently reproduced by the lead).**
+The widget seam `ee18527` introduced reads a builder's output through `leaves()`
+— the laid-out leaf `Size`s under a real `Tree`/`Layout`. That is the right
+observable for *which box is where*, and it is not an observable of *whether an
+image decoded*. Measured, three inputs through `cover_box` on a HEAD tree:
+
+| input | `CoverSource::classify` | `renderer.measure_image` | `leaves()` |
+|---|---|---|---|
+| a real 118-byte VP8L `.webp` | `Photo` | `Some(24×16)` | `188.0×218.0` |
+| UX's `with_photo` fixture: 12 bytes, PNG magic + `\x00\x00\x00\rIHDR` | `Photo` | **`None`** | **`188.0×218.0`** |
+| a path that does not exist | `Plate` | `None` | `80.96001×89.6` |
+
+**Mechanism.** `framed()` puts the image inside a container with
+`width(Fixed(188)).height(Fixed(218))`. `Limits::width(Length::Fixed(x))` sets
+`min == max == x` (`iced/core/src/layout/limits.rs:60-66`), and `Image::layout`
+computes `intrinsic.min(max).max(min)` (`iced/widget/src/image.rs:257-268`) —
+which returns `188×218` for **any** intrinsic, including the `Size::ZERO` a
+failed decode produces. The fixed box erases the intrinsic entirely.
+
+**What this does and does not say.** `leaves()` *does* separate `Plate` from
+`Photo` (row 3 differs), so the seam is not useless. It cannot separate a
+`Photo` that decoded from a `Photo` that did not. The consequence is specific:
+**the photo branch of `an_icons_picture_is_inset_inside_the_plate_by_the_icon_inset`
+asserts `leaves() == [188×218]`, and that is satisfied by bytes that are not an
+image at all.** The claim it makes ("a photograph is cropped to the box rather
+than inset") is true; the evidence offered for it is satisfied by a broken
+photograph. Third instance of the project's defect class in a file that had just
+been rewritten to remove the first two — see D-40 and [[verification-defect-class]].
+
+**Decision — T-22 splits, and the halves have different owners.**
+
+* **The evidence half is Packaging's and is complete.** A before/after pair on
+  two real trees: with `animated-image` present `measure_image` gives
+  `Some(24×16)` and the check passes; with the feature removed it gives `None`,
+  the check fails with the disagreement named, exit 1, and the other 53 tests in
+  the binary stay green. That is what D-29 said T-22 owed. **It is evidence
+  without landing in the repository**, and that is a legitimate place for it to
+  live for now: the deliverable is the pair and the fixture, not a merged test.
+* **The landing half is UX's** — a `.webp` assertion inside `widgets.rs`'s
+  private `mod tests`, because `#28`'s seam is unreachable from
+  `crates/app/tests/` (`crates/app` has a `[[bin]]` and no lib, so a second copy
+  of the seam would be the only alternative, and a copy can drift from the
+  original — the same argument that made `ee18527` destructure the spec instead
+  of adding a seam). It lands **with #46's repair**, on `measure_image` rather
+  than `leaves`, with the reason in a comment: a `.webp` assertion written the
+  way the photo test is written would prove nothing.
+
+**Why not option A.** Packaging offered a narrow exception to edit `widgets.rs`
+themselves. Declined: Architecture is mid-write with untracked `runners.rs`,
+`installers.rs`, `badge.rs` and `view/mod.rs` in the same directory, and R-13
+exists precisely to keep one writer per file. A handover costs one message; two
+writers cost a rebase whose conflicts are in the code that has no tests yet.
+
+**The rule.** "The test passes" is a claim about the assertion, not about the
+picture. When a check's observable is a *laid-out box*, ask what the container
+was told to make that box: a `Fixed` dimension is an assertion the layout
+already satisfies, and no intrinsic can move it.
