@@ -413,3 +413,50 @@ the same saturating conversion. Either route is acceptable; whichever is chosen
 must be proven against `docs/migration/oracle/fixtures/out_of_range/`, which
 pins Python's behaviour for `1e400`, `-1e400`, a 30-digit integer, `i64::MAX`,
 and `u64::MAX+1`.
+
+---
+
+## D-17. Keep the Python test suite green; update `test_packaging.py` with the manifest
+
+**Question.** `tests/test_packaging.py` asserts the *old* manifest — KDE
+runtime, `llvm21`, the `pyside6` module, `PYTHONPATH`. Rewriting the manifest
+breaks it. Do we let the Python suite go red, retire it, or update it?
+
+**Observed.** Running the suite after the manifest rewrite: **240 pass, 1 fails**
+(`test_flatpak_has_reviewed_launcher_permissions_and_multilib`,
+`manifest["runtime"] == "org.kde.Platform"`). Exactly the one test that
+described the stack being replaced.
+
+**Options considered.**
+1. Let it fail; the Python app is being replaced anyway.
+2. Delete `test_packaging.py`.
+3. Update it in the same commit as the manifest change, keeping the suite green.
+
+**Choice.** Option 3 — **update it, and keep the suite green throughout**.
+
+**Why.** Two reasons. First, the invariant is worth more than the test: the 241
+Python tests are the *behavioural reference* the Rust port is being written
+against (D-05), and a permanently-red suite destroys that signal — a genuine
+regression would be lost in known noise. Second, only part of the file is
+obsolete. Its assertions split cleanly:
+
+- **Survives** — the app identity contract (`APP_ID` matching across desktop,
+  metainfo, icon), license, and the *reviewed permissions* set (`--allow=multiarch`,
+  `--filesystem=home`, `--filesystem=xdg-run/gvfs`, `--device=all`,
+  `inherit-extensions` multilib), plus the `osslsigncode` and `dxvk-runtime`
+  modules. These encode deliberate review decisions and must still hold.
+- **Obsolete** — `org.kde.Platform`, `llvm21`, the `pyside6` module,
+  `--env=PYTHONPATH=…`, and the Python-only `cleanup` entries. These describe
+  the stack being removed; they are replaced by the Rust equivalents.
+
+So the update is a retarget, not a deletion: the test keeps asserting *"the
+manifest's permissions have been reviewed and the identity is consistent"*,
+which is exactly the guarantee worth preserving, and stops asserting the
+implementation details that are intentionally changing.
+
+**Note.** `gamehandler/**` is untouched by this migration branch, so every
+behavioural test (models, runners, installers, covers, security, …) continues to
+pass unchanged and keeps its full value as a porting reference. This is the
+strongest available signal that the Rust port has not silently changed
+behaviour, and it costs nothing to maintain while the Python app remains on the
+branch (D-02).
