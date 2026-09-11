@@ -1,11 +1,11 @@
 {
   "app-id": "com.goshapps.GameHandler",
   "branch": "stable",
-  "runtime": "org.kde.Platform",
-  "runtime-version": "6.10",
-  "sdk": "org.kde.Sdk",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "25.08",
+  "sdk": "org.freedesktop.Sdk",
   "sdk-extensions": [
-    "org.freedesktop.Sdk.Extension.llvm21"
+    "org.freedesktop.Sdk.Extension.rust-stable"
   ],
   "base": "org.winehq.Wine",
   "base-version": "stable-25.08",
@@ -21,9 +21,7 @@
     "--filesystem=home",
     "--filesystem=xdg-run/gvfs",
     "--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro",
-    "--env=PATH=/usr/lib/extensions/vulkan/gamescope/bin:/app/bin:/usr/bin",
-    "--env=PYTHONPATH=/app/lib/python3.13/site-packages",
-    "--talk-name=org.freedesktop.Notifications"
+    "--env=PATH=/usr/lib/extensions/vulkan/gamescope/bin:/app/bin:/usr/bin"
   ],
   "inherit-extensions": [
     "org.freedesktop.Platform.GL32",
@@ -33,64 +31,9 @@
     "/include",
     "/lib/cmake",
     "/lib/pkgconfig",
-    "/share/doc",
-    "/lib/libLLVM*",
-    "/lib/libclang*",
-    "/lib/python*/site-packages/OpenGL",
-    "/lib/python*/site-packages/build",
-    "/lib/python*/site-packages/build-*",
-    "/lib/python*/site-packages/distro",
-    "/lib/python*/site-packages/distro-*",
-    "/lib/python*/site-packages/numpy",
-    "/lib/python*/site-packages/numpy-*",
-    "/lib/python*/site-packages/numpy.libs",
-    "/lib/python*/site-packages/packaging",
-    "/lib/python*/site-packages/packaging-*",
-    "/lib/python*/site-packages/patchelf-*",
-    "/lib/python*/site-packages/pyopengl-*",
-    "/lib/python*/site-packages/pyproject_hooks",
-    "/lib/python*/site-packages/pyproject_hooks-*",
-    "/lib/python*/site-packages/shiboken6_generator",
-    "/lib/python*/site-packages/shiboken6_generator-*"
+    "/share/doc"
   ],
   "modules": [
-    "python3-pyside-requirements.json",
-    {
-      "name": "pyside6",
-      "buildsystem": "simple",
-      "build-options": {
-        "append-path": "/usr/lib/sdk/llvm21/bin",
-        "append-ld-library-path": "/usr/lib/sdk/llvm21/lib",
-        "env": {
-          "LLVM_INSTALL_DIR": "/usr/lib/sdk/llvm21",
-          "SHIBOKEN_DEBUG_LEVEL": "full"
-        }
-      },
-      "build-commands": [
-        "python3 setup.py build --qtpaths=/usr/bin/qtpaths --ignore-git --parallel=1 --log-level=verbose --flatpak --module-subset=Core,Gui,Widgets,Network,OpenGL,Qml,Quick,QuickControls2,Svg",
-        "python3 create_wheels.py --build-dir ./build/qfp-*-release",
-        "rm -rf ./dist/pyside6*examples*.whl",
-        "pip3 install ./dist/*.whl --prefix=${FLATPAK_DEST}",
-        "install -Dm755 /usr/lib/sdk/llvm21/lib/libLLVM.so.21.1 ${FLATPAK_DEST}/lib/",
-        "install -Dm755 /usr/lib/sdk/llvm21/lib/libclang-cpp.so.21.1 ${FLATPAK_DEST}/lib/",
-        "install -Dm755 /usr/lib/sdk/llvm21/lib/libclang.so.21.1 ${FLATPAK_DEST}/lib/",
-        "ln -s libLLVM.so.21.1 ${FLATPAK_DEST}/lib/libLLVM.so.21",
-        "ln -s libLLVM.so.21.1 ${FLATPAK_DEST}/lib/libLLVM.so",
-        "ln -s libclang-cpp.so.21.1 ${FLATPAK_DEST}/lib/libclang-cpp.so.21",
-        "ln -s libclang-cpp.so.21.1 ${FLATPAK_DEST}/lib/libclang-cpp.so",
-        "ln -s libclang.so.21.1 ${FLATPAK_DEST}/lib/libclang.so.21",
-        "ln -s libclang.so.21.1 ${FLATPAK_DEST}/lib/libclang.so",
-        "rm -rf ${FLATPAK_DEST}/lib/python*/site-packages/PySide6/examples",
-        "rm -rf ${FLATPAK_DEST}/lib/python*/site-packages/pyside6_examples-*.dist-info"
-      ],
-      "sources": [
-        {
-          "type": "archive",
-          "url": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.10.3-src/pyside-setup-everywhere-src-6.10.3.tar.xz",
-          "sha256": "2c7462fe0cecb5b8ac0a3d92014b8d0b88bd4d9f8646709dab5286d9416f45bc"
-        }
-      ]
-    },
     {
       "name": "osslsigncode",
       "buildsystem": "cmake-ninja",
@@ -133,12 +76,36 @@
     },
     {
       "name": "gamehandler",
-      "buildsystem": "meson",
+      "buildsystem": "simple",
+      "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin",
+        "env": {
+          "CARGO_HOME": "/run/build/gamehandler/cargo",
+          "CARGO_NET_OFFLINE": "true"
+        }
+      },
+      "build-commands": [
+        "cargo --offline fetch --locked --manifest-path Cargo.toml --verbose",
+        "cargo --offline build --locked --release",
+        "install -Dm0755 target/release/gamehandler ${FLATPAK_DEST}/bin/gamehandler",
+        "install -Dm0644 data/com.goshapps.GameHandler.desktop ${FLATPAK_DEST}/share/applications/com.goshapps.GameHandler.desktop",
+        "install -Dm0644 data/com.goshapps.GameHandler.metainfo.xml ${FLATPAK_DEST}/share/metainfo/com.goshapps.GameHandler.metainfo.xml",
+        "install -Dm0644 data/icons/hicolor/scalable/apps/com.goshapps.GameHandler.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/com.goshapps.GameHandler.svg"
+      ],
       "sources": [
         {
           "type": "dir",
-          "path": "../.."
-        }
+          "path": "../..",
+          "skip": [
+            ".git",
+            ".flatpak-builder",
+            "build-flatpak",
+            "flatpak-repo",
+            "dist",
+            "target"
+          ]
+        },
+        "cargo-sources.json"
       ]
     }
   ]

@@ -28,49 +28,140 @@ class PackagingTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text())
         self.assertEqual(manifest["app-id"], APP_ID_EXPECTED)
         self.assertEqual(manifest["branch"], "stable")
-        self.assertEqual(manifest["runtime"], "org.kde.Platform")
-        self.assertEqual(manifest["runtime-version"], "6.10")
-        self.assertEqual(manifest["sdk"], "org.kde.Sdk")
-        self.assertEqual(manifest["sdk-extensions"], ["org.freedesktop.Sdk.Extension.llvm21"])
+
+        # Rust/libcosmic stack: Freedesktop 25.08 plus the rust-stable SDK
+        # extension, which ships Rust 1.98.1 (libcosmic's floor is 1.93).
+        # DECISIONS D-10. Equality, not membership: the Qt/LLVM extensions must
+        # not creep back.
+        self.assertEqual(manifest["runtime"], "org.freedesktop.Platform")
+        self.assertEqual(manifest["runtime-version"], "25.08")
+        self.assertEqual(manifest["sdk"], "org.freedesktop.Sdk")
+        self.assertEqual(
+            manifest["sdk-extensions"],
+            ["org.freedesktop.Sdk.Extension.rust-stable"],
+        )
+
+        # The Wine BaseApp is a parity requirement, not a packaging detail:
+        # launching Windows games is the application's whole purpose. Its
+        # stable-25.08 branch already sits on Freedesktop 25.08, so the two
+        # track each other with no runtime skew (DECISIONS D-10).
         self.assertEqual(manifest["base"], "org.winehq.Wine")
         self.assertEqual(manifest["base-version"], "stable-25.08")
-        self.assertIn("--allow=multiarch", manifest["finish-args"])
-        self.assertIn("--filesystem=home", manifest["finish-args"])
-        self.assertIn("--filesystem=xdg-run/gvfs", manifest["finish-args"])
-        self.assertIn("--device=all", manifest["finish-args"])
+
+        # Reviewed sandbox exceptions. Each of these is a deliberate decision
+        # recorded in docs/migration/packaging.md section 3, not a default:
+        # network for runner downloads, multiarch for 32-bit Windows games and
+        # downloaded Wine/Proton builds, home for libraries in arbitrary
+        # locations, gvfs for network-share games, and --device=all for
+        # controllers passed through to launched games (PLAN.md Q-2 keeps it
+        # until a real gamepad test justifies narrowing it to --device=dri).
+        finish_args = manifest["finish-args"]
+        for argument in (
+            "--share=network",
+            "--share=ipc",
+            "--socket=fallback-x11",
+            "--socket=wayland",
+            "--socket=pulseaudio",
+            "--allow=multiarch",
+            "--device=all",
+            "--filesystem=home",
+            "--filesystem=xdg-run/gvfs",
+            "--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro",
+        ):
+            with self.subTest(argument=argument):
+                self.assertIn(argument, finish_args)
+
+        # 32-bit GL and the i386 compat layer are Wine needs, not Qt needs.
         self.assertIn("org.freedesktop.Platform.Compat.i386", manifest["inherit-extensions"])
         self.assertIn("org.freedesktop.Platform.GL32", manifest["inherit-extensions"])
-        self.assertIn("--env=PYTHONPATH=/app/lib/python3.13/site-packages", manifest["finish-args"])
-        self.assertIn("python3-pyside-requirements.json", manifest["modules"])
+
         module_names = [module["name"] for module in manifest["modules"] if isinstance(module, dict)]
-        self.assertIn("pyside6", module_names)
-        pyside = next(
-            module for module in manifest["modules"] if isinstance(module, dict) and module["name"] == "pyside6"
+        # Toolchain-independent modules that survive the toolkit change:
+        # osslsigncode verifies Easy Installer signatures and dxvk-runtime ships
+        # the Direct3D translation DLLs installed into raw-Wine prefixes.
+        self.assertIn("osslsigncode", module_names)
+        self.assertIn("dxvk-runtime", module_names)
+        self.assertIn("gamehandler", module_names)
+
+        osslsigncode = next(
+            module
+            for module in manifest["modules"]
+            if isinstance(module, dict) and module["name"] == "osslsigncode"
         )
-        source = pyside["sources"][0]
-        self.assertIn("PySide6-6.10.3-src", source["url"])
-        build_command = pyside["build-commands"][0]
-        self.assertIn("setup.py build", build_command)
-        self.assertIn("--flatpak", build_command)
-        self.assertIn("--parallel=1", build_command)
-        self.assertIn("Network", build_command)
-        self.assertIn("OpenGL", build_command)
-        self.assertTrue(any("create_wheels.py" in command for command in pyside["build-commands"]))
-        cleanup = manifest["cleanup"]
-        for path in (
-            "/lib/libLLVM*",
-            "/lib/libclang*",
-            "/lib/python*/site-packages/shiboken6_generator",
-            "/lib/python*/site-packages/shiboken6_generator-*",
-            "/lib/python*/site-packages/numpy",
-            "/lib/python*/site-packages/numpy-*",
-            "/lib/python*/site-packages/OpenGL",
-            "/lib/python*/site-packages/pyopengl-*",
-        ):
-            self.assertIn(path, cleanup)
+        self.assertIn("/osslsigncode/archive/refs/tags/2.14.tar.gz", osslsigncode["sources"][0]["url"])
         self.assertEqual(
-            source["sha256"],
-            "2c7462fe0cecb5b8ac0a3d92014b8d0b88bd4d9f8646709dab5286d9416f45bc",
+            osslsigncode["sources"][0]["sha256"],
+            "0f033fd6069387d2e489fbd2187e62f624764eb8c2758ee94e3e793e5150b5c5",
+        )
+
+        dxvk = next(
+            module
+            for module in manifest["modules"]
+            if isinstance(module, dict) and module["name"] == "dxvk-runtime"
+        )
+        self.assertIn("dxvk-3.0.2", dxvk["sources"][0]["url"])
+        self.assertEqual(
+            dxvk["sources"][0]["sha256"],
+            "9c538924110a7cdef871ca36dee218c0774124374ffdeb38af4b76be55bdf7c2",
+        )
+
+        # The app module builds the Rust workspace offline against vendored
+        # sources: the rust-stable extension on PATH, CARGO_HOME inside the
+        # build dir, and cargo --offline over the generated sources.
+        gamehandler = next(
+            module
+            for module in manifest["modules"]
+            if isinstance(module, dict) and module["name"] == "gamehandler"
+        )
+        self.assertEqual(gamehandler["buildsystem"], "simple")
+        self.assertEqual(
+            gamehandler["build-options"]["append-path"],
+            "/usr/lib/sdk/rust-stable/bin",
+        )
+        self.assertEqual(gamehandler["build-options"]["env"]["CARGO_HOME"], "/run/build/gamehandler/cargo")
+        self.assertTrue(
+            any("cargo --offline build" in command for command in gamehandler["build-commands"])
+        )
+        self.assertIn("cargo-sources.json", gamehandler["sources"])
+
+    def test_cargo_sources_are_present_and_well_formed(self):
+        """The vendored offline tree the Flatpak builds against (PLAN.md T-16).
+
+        `cargo --offline fetch` inside the sandbox cannot reach the network, so
+        a missing or malformed cargo-sources.json is a build failure, not a
+        warning. It is generated from Cargo.lock by flatpak-cargo-generator.py
+        and committed; scripts/verify.sh additionally fails when it is stale.
+        """
+        lock = ROOT / "Cargo.lock"
+        sources_path = ROOT / "build-aux" / "flatpak" / "cargo-sources.json"
+        self.assertTrue(lock.is_file(), "the workspace Cargo.lock is committed")
+        self.assertTrue(sources_path.is_file(), "cargo-sources.json is committed")
+        sources = json.loads(sources_path.read_text())
+        self.assertTrue(sources, "cargo-sources.json is not empty")
+
+        types = {source["type"] for source in sources if isinstance(source, dict)}
+        self.assertIn("archive", types, "crates.io dependencies are vendored")
+        self.assertIn("git", types, "git dependencies are vendored")
+
+        # Every git dependency in the lockfile must have a matching git source.
+        # This is the regression test for the transitive-git-dependency trap
+        # (DECISIONS D-09): a libcosmic rev bump can silently add another one.
+        locked_git_urls = {
+            re.sub(r"\.git$", "", match.split("#")[0].split("?")[0])
+            for match in re.findall(
+                r'source = "git\+([^"#?]+)', lock.read_text()
+            )
+        }
+        vendored_git_urls = {
+            re.sub(r"\.git$", "", source["url"])
+            for source in sources
+            if isinstance(source, dict) and source["type"] == "git"
+        }
+        self.assertTrue(locked_git_urls, "the lockfile has git dependencies")
+        self.assertEqual(
+            locked_git_urls - vendored_git_urls,
+            set(),
+            "every git dependency in Cargo.lock has a type:git source",
         )
 
     def test_about_and_public_metadata_use_gosh_without_a_personal_name(self):
