@@ -25,22 +25,26 @@
 //! # What is *not* here yet, and why the shape is a parameter rather than a read
 //!
 //! [`view`] takes a [`RunnersView`] — a borrowed bundle of the page's inputs —
-//! rather than reaching into [`State`] itself. Two of those inputs have no home
-//! in `State` today:
+//! rather than reaching into [`State`] itself. Two of those inputs are the
+//! reason the shape is what it is:
 //!
 //! * **the installed rows**, because building them runs `wine --version`
 //!   ([`WineRunner::version`]), which spawns a process with a fifteen-second
 //!   bound. The reference evaluates `installedRunners` as a QML `Property`, so
 //!   it runs on every read; a libcosmic `view()` is called on every frame, and
-//!   spawning there would be a hang with a friendly face. The rows must be
-//!   computed off the render path and held, which is a `State` field.
+//!   spawning there would be a hang with a friendly face. The rows are
+//!   therefore computed off the render path and **held** — `State::installed`
+//!   and `State::release_rows`, written by [`refresh`] and by nothing else.
 //! * **the family selector's current value**, which the reference keeps in a
 //!   QML-local `property string selectedFamilyId: "proton-ge"` and which
-//!   Python's `_releases_family` mirrors.
+//!   Python's `_releases_family` mirrors. It is held in `State` for the same
+//!   reason a QML property cannot be used here: `view` is handed data and reads
+//!   no globals, so the value the dropdown shows has to outlive the frame.
 //!
-//! Taking them as parameters keeps this module compiling and testable while
-//! that contract is settled, and it is the honest shape regardless: it is what
-//! makes [`view`] callable from a test with no `State` at all.
+//! Borrowing them rather than reading `State` inside [`view`] is what makes
+//! [`view`] callable from a test with no `State` at all — which is how the
+//! render-level assertions in the module's tests run. Where the two are *held*
+//! is a `State` question and is documented there.
 //!
 //! # What is handled, and what is *not*
 //!
@@ -71,7 +75,7 @@ use gamehandler_core::runners::families::{
 };
 use gamehandler_core::runners::proton;
 use gamehandler_core::runners::proton::HttpClient;
-use gamehandler_core::runners::{ProtonRunner, Runner, RunnerError, SYSTEM_WINE};
+use gamehandler_core::runners::{ProtonRunner, Runner, RunnerError, SystemLaunchEnv, SYSTEM_WINE};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -277,6 +281,17 @@ pub fn family_index(family_id: &str) -> Option<usize> {
     families().iter().position(|family| family.id == family_id)
 }
 
+/// The family the page starts on before the user has chosen one.
+///
+/// The reference hardcodes the string in the page (`RunnersPage.qml:14`); this
+/// reads the catalogue's first entry, which is the same family and cannot drift
+/// from the selector's own ordering — [`family_index`] is a position in that
+/// same list, so a second literal here would be a value that has to agree with
+/// a table it is not derived from.
+pub fn default_family() -> &'static str {
+    families()[0].id
+}
+
 // ---------------------------------------------------------------------------
 // The view
 // ---------------------------------------------------------------------------
@@ -298,8 +313,86 @@ pub struct RunnersView<'a> {
     pub progress: Option<f32>,
 }
 
+/// Recompute the two bundles [`State`] holds for this page, as a task.
+///
+/// **Neither is computed in `view_body`**, which runs once per frame: both reach
+/// the filesystem, and a frame is the wrong rate for it. This is the only
+/// function that asks for them, so there is one place to call and one place to
+/// get wrong.
+///
+/// It is called from the page's entry point and from every message that changes
+/// its inputs; the arms below say which and why. Nothing calls it on a timer.
+///
+/// # Why the *work* is a task and not a call
+///
+/// The module's header already says the rows must be computed off the render
+/// path, because building them spawns a process. That reasoning is about the
+/// spawn, and the spawn is not in `view` — it is in [`installed_rows`], which
+/// asks the system row for [`Runner::version`], i.e. `wine --version`. So
+/// *calling* this function is the spawn, and a caller on the update thread
+/// would freeze the window for as long as Wine takes to answer — up to the
+/// fifteen-second bound `run_version` sets — every time the user opens the
+/// page or finishes a download.
+///
+/// [`Task::perform`] runs its future on a tokio worker (D-48 measured the
+/// backend), so the spawn happens off the update thread and the finished rows
+/// come back as [`Message::RunnersRefreshed`].
+///
+/// # What is read here, and what is read in the future
+///
+/// The three cheap inputs — the `PATH` scan, the runners directory listing, and
+/// the release list — are read *here*, on the calling thread, synchronously
+/// with the request. That is deliberate and it is the part worth not
+/// "tidying": the whole point of each call site is that the rows describe the
+/// disk **as of that message**, so the question `RunnerInstallFinished` asks is
+/// "what is on disk now that the download has stopped". Deferring these reads
+/// into the future would answer that question some unspecified time later and
+/// silently reorder it against the next request. Only the spawn is deferred.
+///
+/// # The token, and why there is one
+///
+/// Two refreshes may be in flight at once — a download finishing while an
+/// uninstall runs, say — and they complete in whatever order Wine answers in.
+/// The reference cannot have this problem because it has no in-flight state at
+/// all: `installedRunners` is a QML `Property`, evaluated on read, so it is
+/// always as fresh as the render that asked for it.
+///
+/// Held state reintroduces the ordering question, and the expensive call makes
+/// a late reply genuinely possible rather than theoretical — the *earlier*
+/// request's `wine --version` can finish *last*, and would then overwrite the
+/// newer rows with older ones, resurrecting a build the user just removed. The
+/// token is the same shape the family guard uses and the same shape
+/// `form_cover_token` uses for cover lookups: a reply whose token is not the
+/// current one is stale and is dropped.
+pub fn refresh(state: &mut State) -> Task<Message> {
+    // Read on the calling thread. See the note above on which half is which.
+    let system = state.runners.system_wine(&SystemLaunchEnv);
+    let protons = state.runners.installed_protons();
+    let releases = state.releases.clone();
+    let runners_directory = state.runners.runners_directory().to_path_buf();
+
+    state.runner_rows_token = state.runner_rows_token.wrapping_add(1);
+    let token = state.runner_rows_token;
+
+    Task::perform(
+        async move {
+            (
+                installed_rows(&system, &protons),
+                release_rows(&releases, &runners_directory),
+            )
+        },
+        move |(installed, release_rows)| {
+            cosmic::Action::App(Message::RunnersRefreshed {
+                token,
+                installed,
+                release_rows,
+            })
+        },
+    )
+}
+
 /// The page.
-pub fn view<'a>(page: &'a RunnersView<'_>) -> Element<'a, Message> {
+pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
     let mut body = Column::new().spacing(12).width(Length::Fill);
 
     if let Some(fraction) = page.progress {
@@ -762,9 +855,11 @@ fn install_runner_task(release: ReleaseInfo, runners_directory: PathBuf) -> Task
             &progress,
             INSTALL_TIMEOUT,
         )
-        .map(|_installed_to| tag)
+        .map(|_installed_to| ())
         .map_err(|error| rendered_message(&error));
-        let _ = sender.unbounded_send(Message::RunnerInstallFinished(result));
+        // The tag travels with both arms: `fail` names the release it could not
+        // install (`bridge.py:760`), so it cannot be recovered from a `Err`.
+        let _ = sender.unbounded_send(Message::RunnerInstallFinished { tag, result });
     });
 
     // Each report becomes `Action::App(message)` because a task built in a page
@@ -782,7 +877,10 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             state.releases_family = family.clone();
             state.releases_status = ReleasesStatus::Loading;
             state.releases.clear();
-            Some(fetch_releases_task(family.clone()))
+            // The cleared list is one of the two things `refresh` derives, so
+            // the rows are recomputed alongside the fetch rather than after it.
+            let rows = refresh(state);
+            Some(Task::batch([rows, fetch_releases_task(family.clone())]))
         }
         // `done`/`fail` in one arm, because the guard is the same for both:
         // a reply for a family the user has navigated away from is dropped
@@ -791,16 +889,24 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             if *family != state.releases_family {
                 return Some(Task::none());
             }
-            match result {
+            let rows = match result {
                 Ok(found) => {
                     state.releases = found.clone();
                     state.releases_status = ReleasesStatus::Ready;
+                    // The new list changes both the rows and, for each tag that
+                    // is already on disk, the Install/badge decision.
+                    refresh(state)
                 }
                 Err(message) => {
                     state.releases_status = ReleasesStatus::Error(message.clone());
+                    // Nothing on disk changed and the list is not drawn, so the
+                    // rows already held are still the ones this reply would
+                    // produce. Recomputing them here would spend a
+                    // `wine --version` on a message the rows do not depend on.
+                    Task::none()
                 }
-            }
-            Some(Task::none())
+            };
+            Some(rows)
         }
         // `installRelease` (`bridge.py:738-769`).
         //
@@ -824,6 +930,9 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             };
             state.runner_busy = true;
             state.progress = Some(0.0);
+            // No `refresh` here, deliberately: nothing has changed on disk yet,
+            // and the progress messages that follow arrive many times a second.
+            // The two arms that end a download do refresh.
 
             // The toast and the download are one task, so the page cannot end up
             // busy with no explanation of why.
@@ -840,16 +949,29 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
         // `done` and `fail` both clear the guard and the bar before they
         // differ, so they are written once and the message is the only
         // difference (`bridge.py:753-767`).
-        Message::RunnerInstallFinished(result) => {
+        Message::RunnerInstallFinished { tag, result } => {
             state.runner_busy = false;
             state.progress = None;
+            // A build may now be on disk, so both the Installed list and every
+            // release row's badge are stale until this runs — and it runs on the
+            // failure path too, where nothing changed. Python's `fail` path
+            // emits `notify` alone (`bridge.py:763-767`), and that is not a
+            // counter-argument: its rows are a QML `Property` read at render
+            // time, so they are recomputed after a failure there whether or not
+            // anything was emitted. Held rows have to be recomputed explicitly
+            // or they go stale exactly when the user is looking for the reason.
+            // The cost is one `PATH` scan, one readdir and one `wine --version`
+            // per *finished download*, not per frame.
+            let rows = refresh(state);
+            // Both arms name the release (`bridge.py:756-758`, `:767`), which is
+            // why the tag travels on the message rather than only on success.
             let line = match result {
-                Ok(tag) => format!(
+                Ok(()) => format!(
                     "Installed {tag}. You can now choose it when adding or editing a game."
                 ),
-                Err(message) => format!("Failed to install: {message}"),
+                Err(message) => format!("Failed to install {tag}: {message}"),
             };
-            Some(push_toast(state, line))
+            Some(Task::batch([rows, push_toast(state, line)]))
         }
         // Synchronous in the reference too (`bridge.py:772`), and its two
         // messages are the whole observable.
@@ -869,11 +991,34 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
         // family." directly above the list, because [`status_line`]'s `Idle` arm
         // is the same sentence as its empty-`Ready` one.
         Message::UninstallRunner(runner_id) => {
+            // A build is gone from disk, so the Installed list and the badges go
+            // with it — whether the removal succeeded or not, for the reason
+            // above.
+            let rows = refresh(state);
             let line = uninstall_line(
                 runner_id,
                 proton::uninstall(state.runners.runners_directory(), runner_id),
             );
-            Some(push_toast(state, line))
+            Some(Task::batch([rows, push_toast(state, line)]))
+        }
+        // The rows [`refresh`] computed, back from the worker thread that
+        // spawned Wine.
+        //
+        // The token check is the stale-reply guard `refresh`'s doc explains;
+        // there is no Python line for it because Python holds no rows between
+        // renders. A superseded reply is dropped and the state is left alone —
+        // returning the newer rows unchanged, not clearing them.
+        Message::RunnersRefreshed {
+            token,
+            installed,
+            release_rows,
+        } => {
+            if *token != state.runner_rows_token {
+                return Some(Task::none());
+            }
+            state.installed = installed.clone();
+            state.release_rows = release_rows.clone();
+            Some(Task::none())
         }
         _ => None,
     }
@@ -1489,6 +1634,59 @@ mod tests {
         assert_eq!(state.releases_status, ReleasesStatus::Ready);
     }
 
+    /// **A row reply for a superseded request is dropped, and the current one
+    /// is written.**
+    ///
+    /// Both arms are here on purpose (D-47's clause 1): the second assertion
+    /// alone would pass for a guard that dropped *every* reply, which is a page
+    /// whose rows never arrive — indistinguishable from a correct guard by any
+    /// single-arm test. The stale arm is the one that matters, because the rows
+    /// are computed on a worker thread and an *earlier* request's
+    /// `wine --version` can finish last; without the guard that reply overwrites
+    /// newer rows and resurrects a build the user has just removed.
+    #[test]
+    fn a_row_reply_for_a_superseded_request_is_dropped() {
+        let mut state = state();
+        state.runner_rows_token = 7;
+        let rows = |tag: &str| {
+            vec![ReleaseRow {
+                tag: tag.to_string(),
+                detail: "Proton-GE · v1.0.tar.gz · 1 MB".to_string(),
+                installed: false,
+            }]
+        };
+
+        // The control: the token the state is currently on. It must land.
+        update(
+            &mut state,
+            &Message::RunnersRefreshed {
+                token: 7,
+                installed: Vec::new(),
+                release_rows: rows("current"),
+            },
+        );
+        assert_eq!(
+            state.release_rows.first().map(|row| row.tag.as_str()),
+            Some("current"),
+            "the current reply was dropped, so the guard is not a guard but a wall"
+        );
+
+        // The stale one: an older token than the state is on.
+        update(
+            &mut state,
+            &Message::RunnersRefreshed {
+                token: 6,
+                installed: Vec::new(),
+                release_rows: rows("stale"),
+            },
+        );
+        assert_eq!(
+            state.release_rows.first().map(|row| row.tag.as_str()),
+            Some("current"),
+            "the superseded reply overwrote the live rows"
+        );
+    }
+
     /// A failure carries its message into the status, which is the only place
     /// the user can read it.
     #[test]
@@ -1519,15 +1717,18 @@ mod tests {
     /// leave the page permanently busy after one failure.
     #[test]
     fn an_install_finishing_clears_the_guard_on_success_and_on_failure() {
-        for result in [
-            Ok("GE-Proton9-5".to_string()),
-            Err("checksum mismatch".to_string()),
-        ] {
+        for result in [Ok(()), Err("checksum mismatch".to_string())] {
             let mut state = state();
             state.runner_busy = true;
             state.progress = Some(0.5);
 
-            let task = update(&mut state, &Message::RunnerInstallFinished(result));
+            let task = update(
+                &mut state,
+                &Message::RunnerInstallFinished {
+                    tag: "GE-Proton9-5".to_string(),
+                    result,
+                },
+            );
             assert!(!state.runner_busy, "the guard must clear either way");
             assert_eq!(state.progress, None, "the bar must clear either way");
             assert!(

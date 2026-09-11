@@ -548,11 +548,35 @@ pub enum Message {
     InstallRunner { tag: String },
     /// A download fraction, in `0.0..=1.0`. `_progress_cb`.
     RunnerProgress(f32),
-    /// The install finished. `Ok(tag)` on success, `Err(message)` otherwise.
-    RunnerInstallFinished(Result<String, String>),
+    /// The install finished.
+    ///
+    /// `tag` is on the message rather than only on the success arm because both
+    /// of Python's callbacks name the release: `done` says "Installed
+    /// {release.tag}." (`bridge.py:756-758`) and `fail` says "Failed to install
+    /// {release.tag}: {message}" (`:767`). A `Result<String, String>` could
+    /// carry it on one arm only, and the failure line would then read "Failed
+    /// to install: …" — a sentence the reference never renders.
+    RunnerInstallFinished {
+        tag: String,
+        result: Result<(), String>,
+    },
     /// Delete an installed build. `uninstallRunner()` — synchronous, so this
     /// returns no task.
     UninstallRunner(String),
+    /// The Runners page's two row bundles, computed off the update thread.
+    ///
+    /// Not a user action and not a Python concept: the reference builds these
+    /// in a QML `Property` getter, on the UI thread, at render time. Held rows
+    /// have to arrive from somewhere, and this is that somewhere — see
+    /// [`crate::view::runners::refresh`], which is the only sender.
+    ///
+    /// `token` is the stale-reply guard: a reply whose token is not the current
+    /// one is dropped.
+    RunnersRefreshed {
+        token: u64,
+        installed: Vec<crate::view::runners::InstalledRow>,
+        release_rows: Vec<crate::view::runners::ReleaseRow>,
+    },
 
     // ---- Easy installers --------------------------------------------------
     /// The installer search box.
@@ -709,6 +733,60 @@ pub struct Shell {
     nav_model: nav_bar::Model,
 }
 
+/// What arriving at `page` starts, if anything. D-48's page-entry emission.
+///
+/// The counterpart of the reference's `Component.onCompleted`, which fires once
+/// per page *instance*: `RunnersPage.qml:19` fetches the selected family's
+/// releases when the page is completed, and `:26` re-fetches when the user
+/// changes the family. Both routes reach the same handler, so the two cannot
+/// drift apart.
+///
+/// `Runners` is the only page with entry work. Every other page draws state the
+/// shell already holds, so arriving there is a repaint and nothing more — an
+/// empty arm rather than a missing one, which is why the wildcard is written
+/// out rather than left to fall through.
+///
+/// # Why this goes through the page's own `update`
+///
+/// Entering the page is the same event as a family change: it must set
+/// `releases_family`, mark the fetch in flight, clear the stale list, recompute
+/// the rows and start the download. Writing that out again here would be a
+/// second copy of `FetchReleases`'s transition — the copy that goes stale when
+/// the transition changes. Calling the handler instead is what makes "entering
+/// the page fetches the selected family" true by construction.
+///
+/// # Which family
+///
+/// The one the page is showing, which is `state.releases_family` and defaults
+/// to [`view::runners::default_family`] — `"proton-ge"` — before the user has
+/// ever changed it, which is the reference's own default
+/// (`RunnersPage.qml:14`).
+///
+/// **This is a deliberate divergence, and it is worth stating because the
+/// reference's literal behaviour is different.** In QML, `selectedFamilyId` is
+/// a page-local property, so a fresh page instance resets to `"proton-ge"` and
+/// re-entering the page always refetches Proton-GE even if the user had chosen
+/// another family a moment earlier. This port hoisted that property into
+/// `State` — the decision is recorded in `view::runners`'s header, because the
+/// dropdown has to be bound to *something* and a value that vanishes on
+/// navigation cannot be it — and once the family outlives the page, fetching
+/// anything but the family the dropdown is showing would draw a list under a
+/// selector that names a different family. The two must be the same value.
+fn page_entry_task(state: &mut State, page: Page) -> cosmic::app::Task<Message> {
+    match page {
+        Page::Runners => {
+            let family = if state.releases_family.is_empty() {
+                view::runners::default_family().to_string()
+            } else {
+                state.releases_family.clone()
+            };
+            view::runners::update(state, &Message::FetchReleases { family })
+                .unwrap_or_else(cosmic::app::Task::none)
+        }
+        _ => cosmic::app::Task::none(),
+    }
+}
+
 impl Shell {
     /// A shell over a real library, settings and runner manager, the way
     /// [`App::init`] builds one — but with no window, so a test can have one.
@@ -766,7 +844,16 @@ impl Shell {
     /// setting pages from page content, and the right shape depends on how many
     /// of them there turn out to be. Until then the field stays public and the
     /// two checks above are what make the invariant real.
-    fn show_page(&mut self, page: Page) {
+    fn show_page(&mut self, page: Page) -> cosmic::app::Task<Message> {
+        // Compared **before** the assignment, so the page-entry work runs when
+        // the user arrives at a page rather than every time something asks for
+        // it. D-48 names this as the trigger; a re-navigation to the page
+        // already showing must not redo it, which is what the comparison is
+        // for. The two records below are still written unconditionally: they
+        // must agree after *every* call, including the one that changes
+        // nothing, and `no_handler_leaves_the_sidebar_out_of_step` is what
+        // holds that.
+        let arriving = self.state.page != page;
         self.state.page = page;
         activate_page(&mut self.nav_model, page);
         debug_assert!(
@@ -777,6 +864,13 @@ impl Shell {
             self.nav_model.active_data::<Page>(),
             self.state.page,
         );
+        // After the check, so an inconsistent pair panics before the entry work
+        // has had a chance to write state of its own.
+        if arriving {
+            page_entry_task(&mut self.state, page)
+        } else {
+            cosmic::task::none()
+        }
     }
 
     /// The body under the sidebar, for whichever page is showing.
@@ -820,8 +914,20 @@ impl Shell {
             }
             // TODO(T-12): the release list and the install progress.
             Page::Installers => pending_page(Page::Installers, "T-12"),
-            // TODO(T-11): the runner manager's page.
-            Page::Runners => pending_page(Page::Runners, "T-11"),
+            // T-11/T-12. Both bundles are borrowed from `State` rather than
+            // built here: building the installed rows spawns `wine --version`,
+            // and this runs once per frame. [`view::runners::refresh`] is the
+            // only writer and says why.
+            Page::Runners => {
+                let page = view::runners::RunnersView {
+                    installed: &self.state.installed,
+                    selected_family: &self.state.releases_family,
+                    status: &self.state.releases_status,
+                    releases: &self.state.release_rows,
+                    progress: self.state.progress,
+                };
+                view::runners::view(page)
+            }
             Page::Plugins => {
                 let page = view::plugins::PluginsPage {
                     intro: &self.state.plugins_intro,
@@ -929,7 +1035,7 @@ impl Shell {
             // `go_to` so the sidebar's selection moves with it; see that
             // function for why the two must not be written separately.
             Message::NavigateTo(page) => {
-                self.show_page(page);
+                return self.show_page(page);
             }
             // TODO(T-09): build a `GameForm` from `newGameTemplate` — the
             // settings-derived toggle defaults are `GameForm::TOGGLE_NAMES`
@@ -1086,17 +1192,27 @@ impl Shell {
             Message::FormCoverFetchFinished { token: _token, result: _result } => {}
 
             // ---- Runners ---------------------------------------------------
-            // TODO(T-12): set `releases_family` and `releases_status` to
-            // `Loading`, then fetch.
-            Message::FetchReleases { family: _family } => {}
-            // TODO(T-12): drop the result when `family` has been superseded.
-            Message::ReleasesFetchFinished { family: _family, result: _result } => {}
-            // TODO(T-12): guard on `runner_busy`.
-            Message::InstallRunner { tag: _tag } => {}
-            Message::RunnerProgress(_fraction) => {}
-            Message::RunnerInstallFinished(_result) => {}
-            // TODO(T-12): synchronous, so this returns no task.
-            Message::UninstallRunner(_tag) => {}
+            // T-11's messages, delegated rather than written here: the page
+            // owns them, and `view::runners::update` is where their transitions
+            // and their tasks live. It answers `None` for a message that is not
+            // the page's, which no arm below can be — so the `unwrap_or_else` is
+            // unreachable by construction and says so rather than panicking.
+            //
+            // `RunnersRefreshed` is in the list even though no widget sends it:
+            // it is the page's reply to itself, and routing it here rather than
+            // handling it above is what keeps one page's state and one page's
+            // transitions in one file.
+            message
+                @ (Message::FetchReleases { .. }
+                | Message::ReleasesFetchFinished { .. }
+                | Message::InstallRunner { .. }
+                | Message::RunnerProgress(_)
+                | Message::RunnerInstallFinished { .. }
+                | Message::UninstallRunner(_)
+                | Message::RunnersRefreshed { .. }) => {
+                return view::runners::update(&mut self.state, &message)
+                    .unwrap_or_else(cosmic::app::Task::none);
+            }
 
             // ---- Easy installers -------------------------------------------
             // TODO(T-13) / T-10: the installer page's two filters.
@@ -1223,7 +1339,6 @@ impl Shell {
 #[cfg(test)]
 const PENDING_PAGES: &[(Page, &str)] = &[
     (Page::Installers, "T-12"),
-    (Page::Runners, "T-11"),
     (Page::Credits, "T-13"),
 ];
 
@@ -1385,7 +1500,7 @@ impl cosmic::Application for App {
     /// inserted in the wrong place would then select the wrong page silently.
     fn on_nav_select(&mut self, id: nav_bar::Id) -> cosmic::app::Task<Self::Message> {
         if let Some(page) = self.shell.nav_model.data::<Page>(id).copied() {
-            self.shell.show_page(page);
+            return self.shell.show_page(page);
         }
         cosmic::task::none()
     }
@@ -2226,8 +2341,26 @@ mod tests {
                             tag: "v1.0".to_string(),
                         }),
         Message::RunnerProgress(_) => ("RunnerProgress", Message::RunnerProgress(0.5)),
-        Message::RunnerInstallFinished(_) => ("RunnerInstallFinished", Message::RunnerInstallFinished(Ok("v1.0".to_string()))),
+        Message::RunnerInstallFinished { .. } => ("RunnerInstallFinished", Message::RunnerInstallFinished {
+                            tag: "v1.0".to_string(),
+                            result: Ok(()),
+                        }),
         Message::UninstallRunner(_) => ("UninstallRunner", Message::UninstallRunner("v1.0".to_string())),
+        // `token: 0`, which is the token a shell starts with, so the sample is
+        // *accepted* by the guard rather than dropped as stale — a sample the
+        // handler discards would leave two states equal and report a written arm
+        // as unwritten. The rows are non-empty for the same reason: they are what
+        // the arm writes, and `only_the_written_handlers_change_anything`
+        // observes exactly that.
+        Message::RunnersRefreshed { .. } => ("RunnersRefreshed", Message::RunnersRefreshed {
+                            token: 0,
+                            installed: Vec::new(),
+                            release_rows: vec![crate::view::runners::ReleaseRow {
+                                tag: "v1.0".to_string(),
+                                detail: "Proton-GE · v1.0.tar.gz · 1 MB".to_string(),
+                                installed: false,
+                            }],
+                        }),
         Message::SetInstallerSearch(_) => ("SetInstallerSearch", Message::SetInstallerSearch("steam".to_string())),
         Message::SetInstallerCategory(_) => ("SetInstallerCategory", Message::SetInstallerCategory("launchers".to_string())),
         Message::StartEasyInstall { .. } => ("StartEasyInstall", Message::StartEasyInstall {
@@ -2274,7 +2407,10 @@ mod tests {
         let mut shell = Shell::new();
         // Start somewhere other than the page every message navigates to, so
         // `NavigateTo` has an effect to observe.
-        shell.show_page(Page::Library);
+// The entry task is dropped: these tests are about the two records
+        // `show_page` writes, both of which are written before the task is
+        // built. Driving it would reach the network.
+        let _ = shell.show_page(Page::Library);
         shell.state.game_form = Some(GameForm::default());
         shell.state.confirm_delete = Some("g".to_string());
         // A search and a filter that are *not* the defaults — and, just as
@@ -2286,6 +2422,12 @@ mod tests {
         // from both the default and the sample for the change to be visible.
         shell.state.search_text = "portal".to_string();
         shell.state.category_filter = "Puzzle".to_string();
+        // The Runners page's two guards need something to accept, or a working
+        // arm is reported here as unwritten: `ReleasesFetchFinished` is dropped
+        // unless the reply's family is the current one, and `InstallRunner`
+        // unless the tag is in the list the page is showing.
+        shell.state.releases_family = "proton-ge".to_string();
+        shell.state.releases = vec![ReleaseInfo::new("v1.0", "GE-Proton", "https://x/y", 1)];
         // The plugin rows are emptied for the same reason and by the same rule:
         // `Shell::new` primes them, so a fixture that left them alone would make
         // `RefreshPlugins` a write of what is already there and hide a working
@@ -2364,6 +2506,29 @@ mod tests {
             "RefreshPlugins",
             "InstallPlugin",
             "PluginInstallFinished",
+            // T-11's six. Live because the Runners page draws the controls that
+            // produce them: the family selector, its two callbacks, the Install
+            // button, the progress reports, and the Remove button.
+            //
+            // `ReleasesFetchFinished` and `InstallRunner` are in the fixture's
+            // reach only because `shell_with_work_to_do` now holds a release
+            // list and a `releases_family` — without them the first is dropped
+            // by the staleness guard and the second by the tag lookup, both
+            // correctly, and both would be reported here as unwritten arms.
+            "FetchReleases",
+            "ReleasesFetchFinished",
+            "InstallRunner",
+            "RunnerProgress",
+            "RunnerInstallFinished",
+            "UninstallRunner",
+            // `RunnersRefreshed` is not a seventh page action: nothing draws it
+            // and no user sends it. It is the reply `view::runners::refresh`
+            // sends itself, so its arm writes the two row bundles and returns no
+            // task — which `observe` sees as a state change, and this list
+            // therefore has to name. A page whose rows could only arrive from a
+            // task *and* whose handler was empty would be a page that never
+            // learns what is installed.
+            "RunnersRefreshed",
         ];
         // `DismissToast` is written and cannot be observed; see the doc above.
         expected.sort_unstable();
@@ -2586,7 +2751,10 @@ mod tests {
     #[test]
     fn the_settings_page_draws_the_settings_and_not_the_placeholder() {
         let mut shell = Shell::new();
-        shell.show_page(Page::Settings);
+// The entry task is dropped: these tests are about the two records
+        // `show_page` writes, both of which are written before the task is
+        // built. Driving it would reach the network.
+        let _ = shell.show_page(Page::Settings);
         let drawn = drawn_strings(shell.view_body());
 
         for expected in [
@@ -2625,7 +2793,10 @@ mod tests {
     #[test]
     fn the_plugins_page_draws_the_catalogue_and_not_the_placeholder() {
         let mut shell = Shell::new();
-        shell.show_page(Page::Plugins);
+// The entry task is dropped: these tests are about the two records
+        // `show_page` writes, both of which are written before the task is
+        // built. Driving it would reach the network.
+        let _ = shell.show_page(Page::Plugins);
         let drawn = drawn_strings(shell.view_body());
 
         assert!(
@@ -2953,7 +3124,56 @@ mod tests {
         shell.nav_model = stub;
 
         // `Page::Settings` is the sixth page, and this model has one row.
-        shell.show_page(Page::Settings);
+// The entry task is dropped: these tests are about the two records
+        // `show_page` writes, both of which are written before the task is
+        // built. Driving it would reach the network.
+        let _ = shell.show_page(Page::Settings);
+    }
+
+    /// **Arriving at the Runners page starts its fetch; re-visiting it does
+    /// not.**
+    ///
+    /// The reference's `Component.onCompleted` (`RunnersPage.qml:19`) runs once
+    /// per page *instance*, which is the whole reason `show_page` compares
+    /// before it assigns (D-48). Both halves are asserted, because only the pair
+    /// distinguishes compare-first from a `show_page` that emits unconditionally:
+    /// the second call would pass the same assertion if the first were the only
+    /// one checked and the entry work simply never ran.
+    ///
+    /// The assertions are on state rather than on the returned task, because the
+    /// task's *effect* is a network request and its state writes are the part
+    /// that happens synchronously — `FetchReleases` sets the family, marks the
+    /// fetch in flight and clears the stale list before it builds the task
+    /// (`bridge.py:697-700`).
+    #[test]
+    fn arriving_at_the_runners_page_fetches_and_a_re_visit_does_not() {
+        let mut shell = Shell::new();
+        assert_eq!(shell.state.page, Page::Library, "the shell starts on Library");
+
+        // The entry task is dropped: driving it reaches GitHub.
+        let _ = shell.show_page(Page::Runners);
+        assert_eq!(
+            shell.state.releases_family,
+            crate::view::runners::default_family(),
+            "arriving did not choose the page's family"
+        );
+        assert_eq!(
+            shell.state.releases_status,
+            crate::state::ReleasesStatus::Loading,
+            "arriving did not mark the fetch in flight"
+        );
+
+        // A status only a *second* fetch would overwrite. `Component.onCompleted`
+        // does not fire again for the page already showing, so this must survive
+        // the call below — and a `show_page` that emitted unconditionally would
+        // set it back to `Loading`.
+        shell.state.releases_status = crate::state::ReleasesStatus::Ready;
+        let _ = shell.show_page(Page::Runners);
+        assert_eq!(
+            shell.state.releases_status,
+            crate::state::ReleasesStatus::Ready,
+            "re-navigating to the page already showing re-ran the page-entry work"
+        );
     }
 
     /// **The pages whose body is a placeholder are exactly the ones the table
@@ -2992,7 +3212,10 @@ mod tests {
     fn the_pending_pages_are_exactly_the_ones_whose_body_says_so() {
         let mut shell = Shell::new();
         for page in Page::ALL {
-            shell.show_page(page);
+// The entry task is dropped: these tests are about the two records
+            // `show_page` writes, both of which are written before the task is
+            // built. Driving it would reach the network.
+            let _ = shell.show_page(page);
             let drawn = drawn_strings(shell.view_body());
 
             let says_pending = drawn.iter().any(|text| text.contains("has not been ported yet"));

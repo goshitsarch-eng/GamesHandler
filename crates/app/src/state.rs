@@ -359,6 +359,28 @@ pub struct State {
     pub releases_family: String,
     /// was the `releasesStatus` string protocol.
     pub releases_status: ReleasesStatus,
+    /// The Runners page's "Installed" list, recomputed when its inputs change.
+    ///
+    /// Held rather than computed in `view_body`, which runs once per frame: the
+    /// list reaches the filesystem twice — `RunnerManager::system_wine` is a
+    /// `PATH` scan and `installed_protons` reads the runners directory — and a
+    /// frame is the wrong rate for either. It also spawns a process: the system
+    /// row's detail is `wine --version`. [`crate::view::runners::refresh`] is
+    /// the only writer, and it writes through
+    /// [`crate::Message::RunnersRefreshed`] because of that spawn.
+    pub installed: Vec<crate::view::runners::InstalledRow>,
+    /// The Runners page's "Available versions" list, same reasoning.
+    pub release_rows: Vec<crate::view::runners::ReleaseRow>,
+    /// Which [`Self::installed`]/[`Self::release_rows`] reply is current.
+    ///
+    /// The rows are computed on a worker thread — see
+    /// [`crate::view::runners::refresh`] for why the spawn cannot happen where
+    /// they are asked for — so two requests can be in flight and complete out
+    /// of order. Bumped per request, echoed on
+    /// [`crate::Message::RunnersRefreshed`], and a reply that does not match is
+    /// dropped. Same shape as [`Self::form_cover_token`], and for the same
+    /// reason: a reply describing an older world must not overwrite a newer.
+    pub runner_rows_token: u64,
     /// was `_runner_busy`. A guard, not a cancel handle: the download is not
     /// interrupted, it is merely not started twice.
     pub runner_busy: bool,
@@ -426,6 +448,9 @@ impl State {
             releases: Vec::new(),
             releases_family: String::new(),
             releases_status: ReleasesStatus::Idle,
+            installed: Vec::new(),
+            release_rows: Vec::new(),
+            runner_rows_token: 0,
             runner_busy: false,
             easy_busy: false,
             easy_pending: BTreeMap::new(),
