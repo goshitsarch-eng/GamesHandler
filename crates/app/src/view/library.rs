@@ -387,7 +387,16 @@ fn list_body<'a>(
             runner: &runner,
             last_played: &last_played,
         };
-        body = body.push(widgets::row(game, &labels));
+        // The launch is built here, where the game is in hand, and handed to the
+        // row as a value: `view/widgets.rs` names no `Message` of its own, which
+        // is the property that keeps its tests message-free. Constructing it
+        // inside the builder would also move the emission off this page, where
+        // `tests/dispatch_coverage.rs` can see it.
+        body = body.push(widgets::row(
+            game,
+            &labels,
+            Message::LaunchGame(game.id.clone()),
+        ));
     }
     body.into()
 }
@@ -433,7 +442,12 @@ fn grid_body<'a>(games: &[&'a Game], runners: &'a RunnerManager) -> Element<'a, 
     let mut row = Row::new().spacing(6);
     for game in games {
         let label = widgets::resolved_runner_label(runners, game);
-        row = row.push(widgets::card(game, &label));
+        // Built here rather than in the builder; see `list_body`.
+        row = row.push(widgets::card(
+            game,
+            &label,
+            Message::LaunchGame(game.id.clone()),
+        ));
     }
     row.wrap().into()
 }

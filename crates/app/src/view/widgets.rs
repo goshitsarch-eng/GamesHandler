@@ -33,18 +33,62 @@
 //! ""`). Putting the label on the tiles would be a plausible-looking mistake,
 //! which is why the two live in separate functions with separate tests.
 //!
-//! # What is not here yet
+//! # The play control, and how the launch reaches it
 //!
-//! Nothing here emits a message and nothing here reads state. The card is not
-//! clickable, the row has no play button, and there is no hover or selection
-//! styling — all of which need the `Message`/`State` contract (T-07). The
-//! shapes below are the ones those will wrap.
+//! The card and the row carry the reference's Play control and both are
+//! double-clickable. Those are the four emission sites `LibraryPage.qml` has on
+//! them: `:161` the card's double tap, `:205-207` the card's button, `:239` the
+//! row's double click, `:277-279` the row's button. All four emit
+//! `backend.playGame(gameId)` and all four here emit the **same message value**.
+//!
+//! It arrives as a parameter, not a variant this file names. That is the
+//! property the top of this doc claims — `M` is a parameter the caller fixes,
+//! never a value this layer constructs — and the launch control is where it
+//! would have been easiest to break it, because a button needs a `Message` and
+//! the game whose launch it is sits right here. It stays the caller's for three
+//! reasons:
+//!
+//! * **The id is the caller's to resolve.** `play_button_id` needs the game id,
+//!   which this file has, but *what to do with it* — launch this game, open its
+//!   form, select it — is the caller's decision. A builder that hard-coded
+//!   `Message::LaunchGame` would make every future card action a signature
+//!   change instead of a second argument.
+//! * **It keeps the guard's question answerable.** `tests/dispatch_coverage.rs`
+//!   reads a `Message::<Variant>` in this file as an *emission*, and it cannot
+//!   tell a construction from a match pattern (`emissions`). A file that
+//!   constructs its message has one place to be wrong in; a file that receives
+//!   one has none, and the emission is checked where it is written, in
+//!   `view/library.rs`.
+//! * **The tests stay messages-free.** Every test below builds a card with
+//!   `()` as the message, so what is asserted about the layout cannot depend on
+//!   the `Message` enum.
+//!
+//! # What is still not here
+//!
+//! Hover and selection styling (`LibraryPage.qml:154-158`, which reads
+//! `cardHover.hovered`) needs state and is not in this file. Nor is the
+//! right-click context menu, including its own Play item (`:302-304`): that
+//! menu belongs to `view/library.rs`. What is here is the launch itself.
+//!
+//! The Play button is activated by **Enter** when focused, which iced's button
+//! does itself (`iced/widget/src/button.rs:426-440`, the only keyboard arm it
+//! has) and by no other key — `QQC2.Button` also accepts Space. Recorded rather
+//! than fixed: the reference's keyboard behaviour is not reachable from this
+//! file, and a widget that swallowed Space locally would be the wrong place to
+//! answer it.
+//!
+//! The button's `Id` is the one part of this file that is **not** inert, and
+//! that is the other reason it is set: iced's button also activates on an
+//! accessibility `Action::Click` whose `event_id` equals its `Id`
+//! (`iced/widget/src/button.rs:414-424`), so the id is what a screen reader's
+//! activation is matched against. One id for every game would make that
+//! ambiguous; see [`play_button_id`].
 
 use cosmic::Element;
 use cosmic::iced::gradient::Linear;
 use cosmic::iced::widget::container;
 use cosmic::iced::{Alignment, Background, Border, Color, Length, Radians};
-use cosmic::widget::{image, text, Column, Row};
+use cosmic::widget::{button, icon, image, mouse_area, text, Column, Row};
 use gamehandler_core::models::Game;
 use gamehandler_core::runners::RunnerManager;
 
@@ -82,6 +126,21 @@ const PLATE_ID: &str = "gamehandler.cover.plate";
 const PICTURE_ID: &str = "gamehandler.cover.picture";
 const INITIALS_ID: &str = "gamehandler.cover.initials";
 const PREVIEW_LABEL_ID: &str = "gamehandler.cover.preview-label";
+
+/// The Play control's label, which is the reference's word for it: `text:
+/// "Play"` on both the card's button (`LibraryPage.qml:205`) and the row's
+/// (`:277`).
+const PLAY_LABEL: &str = "Play";
+
+/// The icon the reference puts on the Play control (`.name:
+/// "media-playback-start"`, `LibraryPage.qml:206` and `:278`), by the name
+/// freedesktop icon themes carry it under.
+///
+/// Resolved by name rather than embedded as bytes, the same way
+/// `view/installers.rs` asks for `run-install`: `icon::from_name` falls back to
+/// a symbolic name when the theme has nothing, so a missing icon is a different
+/// glyph rather than a missing button.
+const PLAY_ICON: &str = "media-playback-start";
 
 /// The box a caller wants a cover drawn in, and how to draw it.
 ///
@@ -266,7 +325,50 @@ pub fn cover_box<M: Clone + 'static>(game: &Game, spec: CoverSpec) -> Element<'_
     }
 }
 
-/// A library grid tile: the cover, the name and the subtitle.
+/// The id of the Play control on a game's card and on its row.
+///
+/// # Why this one is per game and the cover ids are constants
+///
+/// [`PLATE_ID`] and its siblings name a node that exists **once** in a tree —
+/// one cover, one plate, one picker label. A Play control exists once *per
+/// game*, and the library draws every game at once, so a constant here would be
+/// the same key on every card. iced's `Id` is a key, and both of the things it
+/// is used for are lookups that a duplicate makes ambiguous: the accessibility
+/// `Action::Click` iced matches on `self.id == *event_id`
+/// (`iced/widget/src/button.rs:414`), and any future `operation::focus`. The
+/// game's id is what makes it unique, so it is part of the key.
+///
+/// It is public, and takes the id as a `&str` rather than a `&Game`, so a test
+/// can name the id it expects without building a game — and so a caller that
+/// has only an id (a menu acting on a game that is no longer in the list, say)
+/// can still reach the control.
+pub fn play_button_id(game_id: &str) -> String {
+    format!("gamehandler.library.play.{game_id}")
+}
+
+/// The reference's Play control, as both the card and the row draw it.
+///
+/// One function rather than two call sites' worth of builder chain, because the
+/// card and the row must not drift: `LibraryPage.qml` spells this button out
+/// twice (`:204-208` on the card, `:276-280` on the row) with the same `text`,
+/// the same `icon.name` and the same `onClicked`, which is two chances to give
+/// one of them a different message. They differ in where they sit, not in what
+/// they are.
+///
+/// `on_play` is taken and cloned rather than built here: see this module's
+/// header for why the launch is the caller's message and not this file's
+/// variant. It is cloned because the same control is used for the button and
+/// for the double-click on the card or row around it.
+fn play_button<'a, M: Clone + 'static>(game_id: &str, on_play: M) -> Element<'a, M> {
+    button::standard(PLAY_LABEL)
+        .leading_icon(icon::from_name(PLAY_ICON))
+        .id(play_button_id(game_id).into())
+        .on_press(on_play)
+        .into()
+}
+
+/// A library grid tile: the cover, the name and the subtitle, with the Play
+/// control under them.
 ///
 /// The cover's box comes from [`card_cover_spec`], which is the same
 /// subtraction the metrics tests assert on — so a card whose chrome grows
@@ -275,6 +377,10 @@ pub fn cover_box<M: Clone + 'static>(game: &Game, spec: CoverSpec) -> Element<'_
 /// `label` is the game's resolved runner label for the subtitle; see
 /// [`subtitle_of`]. It is data rather than a manager, and the caller resolves
 /// it when it builds the row — never here.
+///
+/// `on_play` is emitted by the Play control and by a double click anywhere on
+/// the card, which is the reference's pair of emission sites on this delegate
+/// (`LibraryPage.qml:161` and `:205-207`) and one message in both.
 ///
 /// # The card has no last-played label, and that is the reference's asymmetry
 ///
@@ -285,24 +391,40 @@ pub fn cover_box<M: Clone + 'static>(game: &Game, spec: CoverSpec) -> Element<'_
 /// *list row* that gained it, and a card that showed it too would render a
 /// string the reference never renders. T-30 is scoped to the row for this
 /// reason; see [`row`].
-pub fn card<'a, M: Clone + 'static>(game: &'a Game, label: &str) -> Element<'a, M> {
+pub fn card<'a, M: Clone + 'static>(
+    game: &'a Game,
+    label: &str,
+    on_play: M,
+) -> Element<'a, M> {
     let (cell_w, cell_h) = metrics::GRID_CELL;
     let spec = card_cover_spec();
 
     let body = Column::new()
         .push(cover_box(game, spec))
         .push(name_and_subtitle(game, subtitle_of(game, label)))
+        .push(play_button(&game.id, on_play.clone()))
         .spacing(metrics::CARD_MARGIN)
         .width(Length::Fill);
 
-    container(body)
-        .width(Length::Fixed(cell_w))
-        .height(Length::Fixed(cell_h))
-        .padding(metrics::CARD_MARGIN)
-        .align_x(Alignment::Start)
-        .align_y(Alignment::Start)
-        .style(card_style)
-        .into()
+    // The double click wraps the whole tile rather than sitting on the body, so
+    // that the cover and the two strings are as clickable as the button — which
+    // is what the reference's `TapHandler` covers (`LibraryPage.qml:159-162`,
+    // `anchors.fill: parent`). A click on the Play control itself is consumed by
+    // the button before it reaches here (`mouse_area` returns early on
+    // `shell.is_event_captured()`, `iced/widget/src/mouse_area.rs:278-280`, and
+    // iced's button captures, `:386`), so a double click on the button launches
+    // once rather than twice.
+    mouse_area(
+        container(body)
+            .width(Length::Fixed(cell_w))
+            .height(Length::Fixed(cell_h))
+            .padding(metrics::CARD_MARGIN)
+            .align_x(Alignment::Start)
+            .align_y(Alignment::Start)
+            .style(card_style),
+    )
+    .on_double_click(on_play)
+    .into()
 }
 
 /// The two strings a **list row** resolves for a game, carried together.
@@ -340,18 +462,30 @@ pub struct RowLabels<'a> {
 /// `labels` carries both resolved strings; see [`RowLabels`] and
 /// [`subtitle_of`]. The composition itself is [`meta::row_subtitle`]'s, so the
 /// row and any future caller of it cannot disagree about the separator.
-pub fn row<'a, M: Clone + 'static>(game: &'a Game, labels: &RowLabels<'_>) -> Element<'a, M> {
-    container(
-        Row::new()
-            .push(cover_box(game, row_cover_spec()))
-            .push(name_and_subtitle(game, row_subtitle_of(game, labels)))
-            .spacing(metrics::CARD_MARGIN)
+///
+/// `on_play` is emitted by the Play control, which sits at the end of the line
+/// (`LibraryPage.qml:276-280`), and by a double click anywhere on the row
+/// (`:239`). Both are the same message, for the reason [`card`] gives.
+pub fn row<'a, M: Clone + 'static>(
+    game: &'a Game,
+    labels: &RowLabels<'_>,
+    on_play: M,
+) -> Element<'a, M> {
+    let line = Row::new()
+        .push(cover_box(game, row_cover_spec()))
+        .push(name_and_subtitle(game, row_subtitle_of(game, labels)))
+        .push(play_button(&game.id, on_play.clone()))
+        .spacing(metrics::CARD_MARGIN)
+        .align_y(Alignment::Center);
+
+    mouse_area(
+        container(line)
+            .width(Length::Fill)
+            .height(Length::Fixed(metrics::LIST_ROW_HEIGHT))
+            .padding(metrics::ICON_INSET / 2.0)
             .align_y(Alignment::Center),
     )
-    .width(Length::Fill)
-    .height(Length::Fixed(metrics::LIST_ROW_HEIGHT))
-    .padding(metrics::ICON_INSET / 2.0)
-    .align_y(Alignment::Center)
+    .on_double_click(on_play)
     .into()
 }
 
@@ -640,11 +774,14 @@ fn rgb(channels: [u8; 3]) -> Color {
 mod tests {
     use super::*;
     use cosmic::iced::advanced::layout::{Limits, Node};
+    use cosmic::iced::advanced::widget::operation::Focusable;
     use cosmic::iced::advanced::widget::{Operation, Tree};
     use cosmic::iced::advanced::Layout;
     // The trait, not a value: `measure_image` is `Renderer`'s method and is not
     // in scope without it.
     use cosmic::iced::advanced::image::Renderer as _;
+    use cosmic::iced::advanced::Shell;
+    use cosmic::iced::{Event, Point, mouse};
     use cosmic::iced::{Font, Pixels, Radius, Rectangle, Size};
     use cosmic::widget::Id;
     use gamehandler_core::models::{Game, format_last_played};
@@ -788,10 +925,10 @@ mod tests {
         let manager = RunnerManager::at("/nonexistent");
         let label = resolved_runner_label(&manager, &game);
 
-        let mut card: Element<'_, ()> = card(&game, &label);
+        let mut card: Element<'_, ()> = card(&game, &label, ());
         assert_eq!(
             texts(&traversal(&mut card)),
-            ["HL", "Half-Life 2", "System Wine"]
+            ["HL", "Half-Life 2", "System Wine", "Play"]
         );
 
         let played = format_last_played(0.0, FROZEN_NOW);
@@ -799,10 +936,10 @@ mod tests {
             runner: &label,
             last_played: &played,
         };
-        let mut row: Element<'_, ()> = row(&game, &labels);
+        let mut row: Element<'_, ()> = row(&game, &labels, ());
         assert_eq!(
             texts(&traversal(&mut row)),
-            ["HL", "Half-Life 2", "System Wine · Never played"]
+            ["HL", "Half-Life 2", "System Wine · Never played", "Play"]
         );
     }
 
@@ -833,18 +970,26 @@ mod tests {
             runner: &label,
             last_played: &played,
         };
-        let mut row: Element<'_, ()> = row(&game, &labels);
+        let mut row: Element<'_, ()> = row(&game, &labels, ());
         let row_seen = traversal(&mut row);
         let row_texts = texts(&row_seen);
         assert_eq!(
             row_texts,
-            ["CE", "Celeste", "Platformer · Linux native · Played 2 days ago"]
+            [
+                "CE",
+                "Celeste",
+                "Platformer · Linux native · Played 2 days ago",
+                "Play"
+            ]
         );
 
-        let mut card: Element<'_, ()> = card(&game, &label);
+        let mut card: Element<'_, ()> = card(&game, &label, ());
         let card_seen = traversal(&mut card);
         let card_texts = texts(&card_seen);
-        assert_eq!(card_texts, ["CE", "Celeste", "Platformer · Linux native"]);
+        assert_eq!(
+            card_texts,
+            ["CE", "Celeste", "Platformer · Linux native", "Play"]
+        );
 
         // The asymmetry itself, so a change that added the label to the card
         // fails here with a message saying why rather than with a diff.
@@ -877,11 +1022,158 @@ mod tests {
             runner: "System Wine",
             last_played: &played,
         };
-        let mut row: Element<'_, ()> = row(&game, &labels);
+        let mut row: Element<'_, ()> = row(&game, &labels, ());
 
         assert_eq!(
             texts(&traversal(&mut row)),
-            ["MY", "Mystery", "Shooter · System Wine · Never played"]
+            ["MY", "Mystery", "Shooter · System Wine · Never played", "Play"]
+        );
+    }
+
+    /// **The card and the row both carry the Play control, and it carries the
+    /// game's id.**
+    ///
+    /// This is the control's existence asserted on the real builders: the word
+    /// the user reads, and the id the control answers to. The two halves are
+    /// separate because they fail separately — a card that drew the button
+    /// without an id would satisfy the word and not the id, and an id on a
+    /// control that stopped being drawn is exactly the state `#74` records
+    /// (a declared thing nothing draws).
+    ///
+    /// The id is read through [`Operation::focusable`], not `container`, because
+    /// that is where `cosmic::widget::button` reports it. The harness records
+    /// both; see [`Collect::focusable`].
+    #[test]
+    fn both_delegates_draw_a_play_control_carrying_the_games_id() {
+        // The word is the reference's, spelled out rather than taken from
+        // `PLAY_LABEL`: an assertion that reads the constant it is checking
+        // agrees with any typo in it. `LibraryPage.qml` says `text: "Play"` on
+        // both the card's button (`:205`) and the row's (`:277`).
+        assert_eq!(PLAY_LABEL, "Play");
+
+        let game = Game::new_named("Half-Life 2");
+        let id = play_button_id(&game.id);
+        assert_eq!(id, format!("gamehandler.library.play.{}", game.id));
+
+        let label = resolved_runner_label(&RunnerManager::at("/nonexistent"), &game);
+        let played = format_last_played(0.0, FROZEN_NOW);
+        let labels = RowLabels {
+            runner: &label,
+            last_played: &played,
+        };
+
+        let mut card: Element<'_, ()> = card(&game, &label, ());
+        let card_seen = traversal(&mut card);
+        assert!(
+            texts(&card_seen).contains(&PLAY_LABEL),
+            "the card must draw the Play control's word; it drew {:?}",
+            texts(&card_seen)
+        );
+        assert!(
+            ids(&card_seen).contains(&Id::from(id.clone())),
+            "the card's Play control must answer to the game's id ({id:?}); the \
+             traversal reported {:?}",
+            ids(&card_seen)
+        );
+
+        let mut row: Element<'_, ()> = row(&game, &labels, ());
+        let row_seen = traversal(&mut row);
+        assert!(
+            texts(&row_seen).contains(&PLAY_LABEL),
+            "the row must draw the Play control's word; it drew {:?}",
+            texts(&row_seen)
+        );
+        assert!(
+            ids(&row_seen).contains(&Id::from(id.clone())),
+            "the row's Play control must answer to the game's id ({id:?}); the \
+             traversal reported {:?}",
+            ids(&row_seen)
+        );
+    }
+
+    /// **A double click on the card, or on the row, publishes the message the
+    /// caller handed in — once.**
+    ///
+    /// Driven through a real `Widget::update` on the real builder's element, so
+    /// this is the wiring and not the source text: the reference emits
+    /// `backend.playGame(...)` from the card's `onDoubleTapped`
+    /// (`LibraryPage.qml:161`) and from the row's `onDoubleClicked` (`:239`),
+    /// and neither had any test before this one.
+    ///
+    /// **"Once" is the half worth having.** A double click is two presses, and
+    /// the obvious wrong port is to hang `on_press` on the wrapper as well as
+    /// `on_double_click` — which launches the game on the first click of every
+    /// pair and again on the second. So the assertion is the whole vector, not
+    /// `contains`: a `[Launch, Launch]` satisfies "it published a launch" and is
+    /// the defect.
+    ///
+    /// The point is the card's centre. It has to be inside the tile for the
+    /// wrapper to see it at all — `mouse_area` ignores events outside its
+    /// bounds (`iced/widget/src/mouse_area.rs:446-464`) — which is also why a
+    /// click on the Play control is not this test's subject: the button captures
+    /// the event first, and what that means for the count is the next test.
+    #[test]
+    fn a_double_click_on_either_delegate_publishes_the_launch_once() {
+        let game = Game::new_named("Half-Life 2");
+        let label = resolved_runner_label(&RunnerManager::at("/nonexistent"), &game);
+        let played = format_last_played(0.0, FROZEN_NOW);
+        let labels = RowLabels {
+            runner: &label,
+            last_played: &played,
+        };
+
+        let mut card: Element<'_, &str> = card(&game, &label, "launch");
+        let (cell_w, cell_h) = metrics::GRID_CELL;
+        let card_hit = Point::new(cell_w / 2.0, cell_h / 2.0);
+        assert_eq!(
+            published_by_double_click(&mut card, card_hit),
+            ["launch"],
+            "a double click on the card must publish the caller's message \
+             exactly once"
+        );
+
+        let mut row: Element<'_, &str> = row(&game, &labels, "launch");
+        let row_hit = Point::new(20.0, metrics::LIST_ROW_HEIGHT / 2.0);
+        assert_eq!(
+            published_by_double_click(&mut row, row_hit),
+            ["launch"],
+            "a double click on the row must publish the caller's message \
+             exactly once"
+        );
+    }
+
+    /// **Two games' Play controls are two keys, not one key twice.**
+    ///
+    /// The reason [`play_button_id`] takes the game's id. iced's `Id` is a key
+    /// and both of its uses are lookups — the accessibility `Action::Click` that
+    /// iced's button matches on `self.id == *event_id`, and any future
+    /// `operation::focus` — so a constant here would put the same key on every
+    /// card in the grid. A test that only ever built one card could not tell the
+    /// difference, which is why this one builds two.
+    ///
+    /// It also pins what the id is *made of*: a scheme that hashed the id, or
+    /// dropped it, would still produce two distinct keys here, so the second
+    /// assertion is the one that says the game is in the key.
+    #[test]
+    fn two_games_play_controls_are_two_ids() {
+        let one = Game::new_named("Half-Life 2");
+        let two = Game::new_named("Celeste");
+
+        assert_ne!(play_button_id(&one.id), play_button_id(&two.id));
+        assert!(play_button_id(&one.id).contains(&one.id));
+        assert!(
+            !play_button_id(&one.id).contains(&two.id),
+            "a card must not answer to another game's key"
+        );
+
+        let mut card: Element<'_, ()> = card(&one, "", ());
+        let seen = traversal(&mut card);
+        assert!(
+            !ids(&seen).contains(&Id::from(play_button_id(&two.id))),
+            "the card for {:?} reported {:?}'s id: {:?}",
+            one.id,
+            two.id,
+            ids(&seen)
         );
     }
 
@@ -936,7 +1228,7 @@ mod tests {
 
         // "Halo" so that the initials "HA" cannot be confused with the name.
         let game = Game::new_named("Halo");
-        let mut card: Element<'_, ()> = card(&game, "");
+        let mut card: Element<'_, ()> = card(&game, "", ());
         let seen = traversal(&mut card);
         let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
 
@@ -977,7 +1269,7 @@ mod tests {
             runner: "",
             last_played: "",
         };
-        let mut row: Element<'_, ()> = row(&game, &labels);
+        let mut row: Element<'_, ()> = row(&game, &labels, ());
         let seen = traversal(&mut row);
         let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
 
@@ -1337,6 +1629,30 @@ mod tests {
                 text: Some(text.to_string()),
             });
         }
+
+        /// Where a `cosmic::widget::button` reports its [`Id`].
+        ///
+        /// Not in [`Self::container`]: the button's `operate` calls
+        /// `operation.container(None, layout.bounds())` — always `None` — and
+        /// then `operation.focusable(Some(&self.id), …)`
+        /// (`libcosmic src/widget/button/widget.rs:345` and `:359`). So a test
+        /// that read only `container` would find a button's id nowhere and
+        /// conclude the control had none, which is the "check that cannot see
+        /// the thing it checks" shape. Recorded here rather than asserted
+        /// against a button built in the test, so the id is read off the same
+        /// traversal that reads the rest of the tree.
+        fn focusable(
+            &mut self,
+            id: Option<&Id>,
+            bounds: Rectangle,
+            _state: &mut dyn Focusable,
+        ) {
+            self.0.push(Seen {
+                id: id.cloned(),
+                bounds,
+                text: None,
+            });
+        }
     }
 
     /// A real renderer, for measuring text.
@@ -1362,6 +1678,63 @@ mod tests {
         el.as_widget_mut()
             .operate(&mut tree, Layout::new(&node), &renderer, &mut collect);
         collect.0
+    }
+
+    /// The messages a real double click at `at` makes the element publish.
+    ///
+    /// A genuine `Widget::update` on a real element with a real `Shell`, so
+    /// what this reports is what the runtime would route — not a reading of the
+    /// builder's source.
+    ///
+    /// **The sequence is four events, not two, and that is the thing this
+    /// helper exists to get right.** A double click is press → release → press
+    /// → release, and which of the two the message lands on is not obvious: it
+    /// is the **second release**.
+    /// `MouseArea` checks `on_double_press` while handling a press and
+    /// `on_double_click` while handling a release
+    /// (`iced/widget/src/mouse_area.rs:476` against `:506`), so a helper that
+    /// sent only presses would publish nothing and a test built on it would
+    /// report a working card as broken. Measured: that is exactly what this
+    /// test did before the helper sent releases.
+    ///
+    /// Consecutive is within 6 logical pixels and 300 ms
+    /// (`iced/core/src/mouse/click.rs:79-89`); every event here shares a point
+    /// and the loop outruns no clock.
+    ///
+    /// `Shell::new` takes the `Vec` it appends to, so the published messages are
+    /// exactly the elements of the returned vector — each event gets a fresh
+    /// `Shell` over the same vector, which is what lets one event's capture not
+    /// hide the next event's publication.
+    fn published_by_double_click<M: Clone + 'static>(
+        el: &mut Element<'_, M>,
+        at: Point,
+    ) -> Vec<M> {
+        let renderer = renderer();
+        let mut tree = Tree::new(el.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let node = el.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let layout = Layout::new(&node);
+        let cursor = cosmic::iced::advanced::mouse::Cursor::Available(at);
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(f32::INFINITY, f32::INFINITY));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+
+        let mut published = Vec::new();
+        for event in [&press, &release, &press, &release] {
+            let mut clipboard = cosmic::iced::advanced::clipboard::Null;
+            let mut shell = Shell::new(&mut published);
+            el.as_widget_mut().update(
+                &mut tree,
+                event,
+                layout,
+                cursor,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        }
+        published
     }
 
     /// The ids the traversal reported, in the order it reported them.
