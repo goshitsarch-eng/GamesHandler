@@ -43,7 +43,10 @@
 #                            out to be missing from the Flatpak with every
 #                            earlier stage green; widened to the metadata
 #                            installs and to the manifest's whole install set by
-#                            tasks #23/#24.
+#                            tasks #23/#24. It also compares the shipped binary
+#                            against the source about pending pages (task #32),
+#                            which is the one thing here that looks inside an
+#                            executable rather than at a file it installs.
 #
 # The last four are one critical section under a `flock`: flatpak-build,
 # smoke-test, desktop-metainfo and flatpak-contents all read or write
@@ -123,6 +126,11 @@ SMOKE_HOLD=""
 PASSED=()
 FAILED=()
 SKIPPED=()
+# Stages the run never reached. `summary` fills this from STAGES minus ATTEMPTED;
+# it is a global and not a local of `summary` because the exit tail has to act on
+# it — see the note there. See also the assignment in `summary` for why an empty
+# STOPPED is itself an error rather than a quiet pass.
+UNRUN=()
 # Split by cause, because only one of them is a legitimate exit 0: see the
 # "Exit codes" note in the header. `finish_skip` fills these.
 SKIPPED_REQUESTED=()
@@ -155,7 +163,7 @@ STAGES=(
     "flatpak-build|flatpak-builder builds the manifest"
     "smoke-test|scripts/smoke-test.sh — CLI + headless GUI"
     "desktop-metainfo|desktop-file-validate + appstreamcli validate"
-    "flatpak-contents|the built Flatpak carries the files no validator looks at"
+    "flatpak-contents|the installed Flatpak files, and the tree its binary came from"
 )
 
 # The banner comment above each stage function names the stage, and this asserts
@@ -170,6 +178,15 @@ STAGES=(
 # error rather than a plausible-looking one. Exit 2, like `begin()`'s
 # out-of-order refusal: it is a bug in this script, not a property of the tree,
 # so it is not a stage result and must not be reported as one.
+#
+# What it does NOT check, so nobody over-trusts it: this compares the *sequence*
+# of banners with the *sequence* of stages, not which function each banner sits
+# above. Move a banner to another function without changing its position in the
+# file and this stays green. Attachment is not expressible in a comment stream,
+# and a comment is not a thing a language can be made to check — which is the
+# same limit that let a stale claim sit three lines above the `cli` stage while
+# every structural check here passed. Treat a green banner_check as "the names
+# and their order agree", which is what it says, and nothing more.
 banner_check() {
     local -a declared=() banners=()
     local entry
@@ -302,16 +319,15 @@ summary() {
     # is broken" while six stages had not run (task #29). They cannot appear in
     # PASSED/FAILED/SKIPPED, because none of those is ever set for a stage that
     # did not begin.
-    local -a unrun=()
     local i
     for ((i = ${#ATTEMPTED[@]}; i < ${#STAGES[@]}; i++)); do
-        unrun+=("${STAGES[i]%%|*}")
+        UNRUN+=("${STAGES[i]%%|*}")
     done
-    if [ "${#unrun[@]}" -gt 0 ]; then
+    if [ "${#UNRUN[@]}" -gt 0 ]; then
         # No STOPPED means the run *finished* without reaching them, which can
         # only be STAGES and the run disagreeing — not an abort.
         printf 'did not run (%s): %s\n' \
-            "${STOPPED:-the run finished without reaching them}" "${unrun[*]}"
+            "${STOPPED:-the run finished without reaching them}" "${UNRUN[*]}"
         printf '  these are neither passes nor skips: nothing was verified about them\n'
     fi
     if [ "${#SKIPPED_REQUESTED[@]}" -gt 0 ]; then
@@ -511,8 +527,15 @@ stage_test() {
 # dir, so nothing the binary writes can reach the developer's library or the
 # checkout, and nothing it reads can come from the ambient environment.
 #
-# This stage is RED until #31 lands (T-07 owns the port). That is intended: a
-# stage that fails for a real reason is the point of having it.
+# It was written while #31 was still open, and the note that stood here — "this
+# stage is RED until #31 lands, that is intended" — was never true: `e9ecf5e`
+# fixed #31 before the commit that added this text, and the stage was green from
+# its first run. It is replaced rather than deleted, because a note like that
+# does not only misdescribe the past, it instructs the future: it tells whoever
+# next sees this stage go red that the red is expected, three lines above the
+# code that exists to catch exactly that regression. **A red cli stage is a
+# defect.** The one exception is a missing binary, which the first branch below
+# reports as such and which the build stage would have failed on already.
 # ---------------------------------------------------------------------------
 stage_cli() {
     local bin="$ROOT/target/debug/gamehandler"
@@ -931,7 +954,7 @@ stage_desktop_metainfo() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage: flatpak-contents — what the build installs that no validator looks at
+# Stage: flatpak-contents — the installed files, and the tree the binary came from
 #
 # The desktop-metainfo stage loads the desktop entry and the metainfo and asks
 # whether they are *well-formed*. Nothing before this stage asks whether the
@@ -1140,6 +1163,97 @@ stage_flatpak_contents() {
     fi
     echo "build tree: ${tree#"$ROOT"/} (completed build of the gamehandler module)"
 
+    # --- the binary is the tree that was tested (task #32) ------------------
+    #
+    # Nothing above looks inside the binary, and nothing in this script did:
+    # every stage compares files, and a Flatpak whose six page bodies are all
+    # `pending_page` — the entire user-visible application — was
+    # indistinguishable from a finished one to all of them. That is task #32,
+    # and the reason the repository could not tell scaffold from shipped.
+    #
+    # `crates/app/tests/pending_pages.rs` is the primary guard: it pins the SET
+    # of pages still rendering the placeholder, so landing a page without
+    # editing the pin fails and names the page. This is the half that guard
+    # cannot make on its own, because it reads the *source*. A Flatpak built
+    # from a different tree than the one this run tested is outside its reach,
+    # and that is the scope the tag ships.
+    #
+    # `pending_page` is the single generator of every placeholder body, so its
+    # text is a reliable fingerprint of "this binary still has placeholder
+    # pages". The assertion is that the fingerprint AGREES with the source:
+    # either both have placeholders or neither does.
+    #
+    # WHERE THIS CAN ACTUALLY FIRE, since the honest answer is narrower than it
+    # first looks. Under a FULL run it cannot: `flatpak-build` ran a few stages
+    # earlier in this same process, under this same lock, with `--force-clean`,
+    # which erases build-flatpak/ before building — so the tree here was built
+    # from the source as it stands, and the two sides always agree. On that path
+    # this branch is unreachable, and it is not a defence against a stale build
+    # tree.
+    #
+    # The reachable path is a run that did NOT build: `--skip-flatpak` or
+    # `--skip-smoke` skips `flatpak-build` and still reaches here, against
+    # whatever build-flatpak/ was left by an earlier run. And porting a page is
+    # precisely the change the rest of this stage cannot see — it edits
+    # `crates/app/src/main.rs`, which is in none of the five FLATPAK_CONTENTS
+    # entries, so the byte-identity checks stay green while the tree still ships
+    # six placeholders. Without this check, `verify.sh --skip-flatpak` after a
+    # page lands reports a clean Flatpak that is a stub. That is the branch's
+    # real content, and the flagged case below was produced that way: the build
+    # tree left by an earlier full run, and a source in which all six pages had
+    # landed — the all-placeholder Flatpak of #32, one difference of sign away.
+    #
+    # Note the bound on the claim: it does not check that the *same* pages are
+    # placeholders on both sides, only that the two agree about whether any are.
+    # Pinning the set is `crates/app/tests/pending_pages.rs`'s job; this is the
+    # artifact-side cross-check, and the two are reported separately so neither
+    # can be read as the other.
+    #
+    # `-a` because the binary is not text. The counts are reported rather than
+    # asserted against a fixed number, because how many times an ELF keeps a
+    # shared literal is not something this script can claim to know.
+    #
+    # Both sides are counted the SAME way — `grep -o` piped to `wc -l`, i.e.
+    # occurrences — and that is deliberate. `grep -c` counts *matching lines*,
+    # which is a different number the moment two arms share a line, and the two
+    # halves would then be comparing a line count against an occurrence count
+    # and disagreeing for no reason. The source side is anchored to a match arm
+    # (`Page::X => pending_page(Page::` at the start of a line), because an
+    # unanchored search counts a comment that quotes the call shape: measured,
+    # one such comment takes the source count from 5 to 6 and makes the two
+    # halves agree for the wrong reason. Anchoring does not make this a parse of
+    # the Rust — a comment inside the match that begins with an arm-like prefix
+    # still counts — which is why the pass line says what it checked rather than
+    # claiming it counted call sites. The parse is the test's job.
+    local in_source in_binary
+    in_source="$(grep -oE '^[[:space:]]*Page::[A-Za-z]+ => pending_page\(Page::' \
+        "$ROOT/crates/app/src/main.rs" | wc -l | tr -d '[:space:]')"
+    in_binary="$(grep -ao -- 'This page has not been ported yet (' \
+        "$tree/bin/gamehandler" | wc -l | tr -d '[:space:]')"
+    if [ "$in_source" -gt 0 ] && [ "$in_binary" -gt 0 ]; then
+        echo "ok   the shipped binary carries the placeholder text, as the source does"
+        echo "     ($in_source arm(s) dispatch to pending_page; $in_binary occurrence(s) in the ELF)"
+        echo "     both sides are non-zero, so this checked that the two AGREE that"
+        echo "     placeholder pages exist — NOT which pages they are. The check that"
+        echo "     names pages is crates/app/tests/pending_pages.rs, which is reported"
+        echo "     by the test stage; this half is only the artifact cross-check."
+    elif [ "$in_source" -eq 0 ] && [ "$in_binary" -eq 0 ]; then
+        echo "ok   every page is ported in the source, and the shipped binary has no placeholder"
+        echo "     neither side mentions the placeholder, which is T-19's end state; this"
+        echo "     says nothing about whether the six pages render anything correct"
+    else
+        echo "FAIL the shipped binary and the source disagree about the placeholder pages"
+        echo "     crates/app/src/main.rs: $in_source arm(s) dispatching to pending_page"
+        echo "     ${tree#"$ROOT"/}/bin/gamehandler: $in_binary occurrence(s) of the placeholder text"
+        echo "     so this Flatpak was not built from the source this run was given."
+        echo "     If this run built it (no --skip-flatpak), that is a contradiction and"
+        echo "     worth chasing — --force-clean should have made it impossible."
+        echo "     If it did not (--skip-flatpak, or a tree left by a build.sh run), then"
+        echo "     build-flatpak/ predates the edit and the five installed files above"
+        echo "     cannot show it: none of them is crates/app/src/main.rs. Rebuild."
+        rc=1
+    fi
+
     local installed
     for entry in "${FLATPAK_CONTENTS[@]}"; do
         src="${entry%%|*}"
@@ -1291,7 +1405,23 @@ fi
 # only un-serialised, and it says so in the output. Turning that into a 2 would
 # report a missing util-linux as an incomplete verification, which is a false
 # statement about stages that genuinely ran.
-if [ "${#SKIPPED_UNREQUESTED[@]}" -gt 0 ]; then
+# Unrun stages are the same defect as an unrequested skip, and reaching them is
+# easier: adding a stage means editing STAGES, adding a banner and writing the
+# function — and forgetting the `run_stage` line. That is a stage that never
+# announces itself, so it is in neither PASSED nor FAILED nor SKIPPED, and
+# without this branch the run reports every stage green and exits 0 while a
+# stage it advertises never ran. The same applies to a `begin X; finish_ok`
+# that never calls the stage, and to a run_stage naming the wrong function:
+# both claim a result without producing one, and both land here.
+#
+# It is the sentence below, applied to the other way a run can be partial. That
+# one is about a *skip*; this is about never getting there at all, and a reader
+# of "passed: build ... flatpak-contents" cannot tell the two apart.
+if [ "${#SKIPPED_UNREQUESTED[@]}" -gt 0 ] || [ "${#UNRUN[@]}" -gt 0 ]; then
+    if [ "${#UNRUN[@]}" -gt 0 ] && [ -z "$STOPPED" ]; then
+        printf '\nNOTE: %s never ran, and nothing stopped the run reaching them.\n' "${UNRUN[*]}"
+        printf 'The stage list and the runner disagree — an unrun stage is not a pass.\n'
+    fi
     exit 3
 fi
 exit 0
