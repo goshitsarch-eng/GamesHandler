@@ -1316,16 +1316,16 @@ impl Shell {
                     form.is_linux = is_linux;
                 }
             }
-            // TODO(T-10): `mark_played`, spawn the grace watch, and honour
+            // TODO(T-29): `mark_played`, spawn the grace watch, and honour
             // `close_on_launch`.
             Message::LaunchGame(_game_id) => {}
-            // TODO(T-10): toast the reason on `Some`, and bring the window back.
+            // TODO(T-29): toast the reason on `Some`, and bring the window back.
             Message::LaunchWatchFinished { game_id: _game_id, reason: _reason } => {}
-            // TODO(T-10): `runners::run_tool` in a blocking task.
+            // TODO(T-29): `runners::run_tool` in a blocking task.
             Message::RunPrefixTool { game_id: _game_id, tool: _tool } => {}
-            // TODO(T-10): `xdg-open` via `std::process`, off the UI thread.
+            // TODO(T-29): `xdg-open` via `std::process`, off the UI thread.
             Message::OpenPrefixFolder(_game_id) => {}
-            // TODO(T-10): `runners::desktop::create_desktop_shortcut`.
+            // TODO(T-29): `runners::desktop::create_desktop_shortcut`.
             Message::CreateDesktopShortcut(_game_id) => {}
 
             // ---- Covers ----------------------------------------------------
@@ -1454,7 +1454,7 @@ impl Shell {
                     .push(cosmic::widget::toaster::Toast::new(text))
                     .map(cosmic::Action::App);
             }
-            // TODO(T-10): one tick of the grace watch, if the polling shape is
+            // TODO(T-29): one tick of the grace watch, if the polling shape is
             // chosen over a single grace timeout (`architecture.md` §3.3).
             Message::LaunchWatchTick => {}
         }
