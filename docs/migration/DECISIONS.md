@@ -2400,18 +2400,57 @@ commit whose content was not what was intended. It catches the incident we had,
 not its sibling — which is the project's defect class one more time, a check
 that passes without inspecting what it claims.
 
+**Hole 3 — auditing `HEAD` examines whatever is tip at that instant, and passes
+when it is somebody else's commit.** Step 5 below reads `git show --name-only
+<sha>`; written as `HEAD` it is racy, and the race is *silent* — the opposite of
+the loud one. Measured in a scratch repo, two "agents", one index: A commits
+(`9c4ac7f`), B commits (`21c2728`), and A's check then runs `git show --stat HEAD`
+and prints **B's commit**. Exit 0. The audit reports on a commit A did not
+create, and nothing in its output says so. Compare the three resources a check
+can name, which is why the fix is not "be careful":
+
+| the check names | who can move it | failure mode |
+|---|---|---|
+| the **index** | anyone who stages | **loud** — exit 128, `pathspec did not match` |
+| the **working tree** | anyone who edits | **racy** — already covered by Hole 2 |
+| **`HEAD`** | anyone who commits | **racy and silent** — audits the wrong commit, exits 0 |
+| the **sha on the commit's own stdout** | nobody — it is immutable | — |
+
+So: **drop `-q`.** It discards the only trustworthy handle on the object just
+created. Non-quiet `git commit` prints `[<branch> <sha>] <subject>`, that sha
+resolves forever, and no other agent's commit can move it — measured: after B
+advanced HEAD to `4e53630`, the parsed sha `3ab5b9a` still resolved to A's
+commit. `-q` prints nothing at all, which leaves `HEAD` as the only thing to
+audit, which is the hole. The procedure's *final* step was itself an instance of
+the class this entry is about: a check narrower than the claim it supports, in
+the section titled with the fix.
+
 So the corrected procedure:
 
 1. **New path?** `git add -- <that path>`, and nothing else.
-2. **Commit with paths named:** `git commit -m "..." -- <path> <path>`. Never bare.
+2. **Commit with paths named, and never `-q`:** `git commit -m "..." -- <path> <path>`.
+   Keep the printed `[<branch> <sha>]`; that sha is what steps 3 and 5 address.
 3. **Know what lands:** the pathspec form commits the *working-tree* contents of
    the named paths. Do not stage a version and then keep editing expecting the
    staged version to be committed. If the two differ on purpose, confirm the
    result with `git show <sha>:<path>` rather than trusting the command.
 4. **Before:** `git status --short` and `git diff --cached --name-only`. A path
    you do not own that is staged stays staged — do not commit it on their behalf.
-5. **After:** `git show --name-only <sha>` against the intent. A file you did not
-   touch is the failure, visible, one command.
+5. **After:** `git show --name-only <sha>` against the intent — **the sha the
+   commit printed, never `HEAD`** (Hole 3). A file you did not touch is the
+   failure, visible, one command.
+
+**And the harness that measured Hole 3 was itself vacuous on its first run, which
+is worth one sentence because it is the same class.** The lead wrote a
+two-agent scratch repo, committed B's file with a pathspec, and reported "B
+created the same sha as A" — but `b.txt` had never been `git add`ed, so the
+pathspec failed with `did not match any file(s) known to git` (**Hole 1**) and
+*no commit happened at all*. The "race" had no second commit in it. The tell was
+in the output and read past: both agents printing one identical sha is not a race
+loser, it is a command that did nothing. Re-run with the files added first, the
+numbers separate cleanly (`9c4ac7f` / `21c2728`). **Hole 1 caught the
+instrument, not just the rule** — which is the argument for the finding being
+reproduced by the party that filed it rather than taken from the report.
 
 The advocate added step 5 to their own review routine on the strength of this:
 their provenance checks pin the *content* of each file they measure to its sha
