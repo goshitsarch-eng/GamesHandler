@@ -441,9 +441,38 @@ Reported rather than fixed, because the files are not this task's to edit:
 | GUI panics instead of diagnosing, with no display | app | Surfaced once `flatpak-build` started passing and the smoke test could run against a real binary. `no-display-diagnostic` (D-12a/N-01) fails: with neither `WAYLAND_DISPLAY` nor `DISPLAY` set the binary panics — `thread 'main' panicked at …/iced_winit/src/lib.rs:92:39: Create event loop: NotSupported(… "neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set.")` — where the contract is a diagnostic message and a clean exit. `cli-version` (`GameHandler 0.8.0`) and `cli-list` pass, and `gui-stays-up` passes over an ambient Wayland session, so this is specific to the headless GUI path. Not a metadata item; recorded here because T-18's work is what made the build green enough to see it. |
 | `LaunchedGame.failure()` races the stderr drain — and `python-tests` is flaky because of it | runners / T-03 | Found because `python-tests` failed once in a full `verify.sh` run and then passed on re-runs. It is not noise and not specific to that stage: `failure()` (`gamehandler/runners.py:1360-1374`) calls `process.wait(timeout)` and *then* reads `self.errors.text()`, but the stderr is collected by a daemon drain thread started in `_ErrorTail.__init__` (`:1327-1331`). `wait()` returns on process exit, which can beat the drain thread's final `read()`, so the text is empty and the method falls back to `"the runner exited with status {code}"` — the exact value the test rejected (`tests/test_runners.py:761`). Reproduced against the real `_ErrorTail` in isolation from the test framework: **12 of 300** fast-exiting runs lost the race. Load-sensitive, which is why it surfaced while a `flatpak-builder` was compiling on the same machine. It matters beyond the flake: this is the parity reference, and T-03 is porting `failure()` now — a Rust port that mirrors the same *order* (await the child, then read the collected output) inherits the race and will flake the same way. The fix on the Python side is to join the drain before reading; the finding is for the port, not for me to apply. |
 
+| Plate shade is one colour | core (`gamehandler-core`) | `crates/app/src/view/cover.rs`'s `accent_of` returns a single shade, so every placeholder tile is the same blue instead of one of eight. It cannot do better where it stands: `accent_index` (`covers.py:107-110`) is a SHA-256 bucket, and core keeps its hashing private — `crates/core/src/hash.rs:20` is `pub(crate) fn sha256_hex` and `mod hash;` is not `pub` (`crates/core/src/lib.rs:43`). Needs either a `pub fn accent_index(seed: &str, buckets: usize) -> usize` in core's `covers` module (where `covers.py`'s other functions are going anyway) or `sha256_hex` exposed. The view side is one line; a test in `cover.rs` pins the placeholder and fails the day it is replaced, deliberately. |
+| `mod view;` is not declared | Architecture (`crates/app/src/main.rs`) | `crates/app/src/view/` compiles and its 44 tests pass, but nothing declares the module, so `cargo test -p gamehandler` does not build or run it and the workspace test count excludes it. Adding the declaration also turns on 21 `dead_code` warnings until T-09..T-13 call the components — expected, and not to be silenced with a blanket `#[allow]`, which would hide the next real one. Tracked as task #21; Architecture fits it into T-08. |
+| Runner label is empty | Architecture / T-07 | `widgets::subtitle_of` passes `""` for the runner label because the runner manager is not in the view's contract yet, so a Windows game's subtitle shows its category only. `meta::subtitle` handles the empty label (it was a trailing-separator bug until it did). Wiring is one argument once the manager is reachable from the view. |
+
 Two rows that stood here — *GPL text missing from the Flatpak* and *Authenticode trust
 root* — were closed by T-23 (§12.9) rather than handed on. Both were things the manifest
 should have been doing and was not, and both were invisible to every validator.
+
+### 12.11 Running the Python app's QML offscreen — a reusable check
+
+12.10 needed the reference *run* rather than read, and the QML could not be run here: the
+Flatpak's runtime has no PySide6, no virtualenv exists beside the script, and the system
+python is 3.14. What worked, and is worth reusing for any future UI parity question that
+cannot be settled by reading:
+
+```
+python3 -m venv /tmp/pyside-venv
+/tmp/pyside-venv/bin/pip install "pyside6-essentials==6.10.*"   # 6.10.3, matching the KDE 6.10 target
+```
+
+then load a `.qml` string with `QQuickView` under `QT_QPA_PLATFORM=offscreen` and
+`QT_QUICK_BACKEND=software`, `processEvents()` to let the loader finish, and read the
+result with `view.grabWindow().save(...)`. Three things cost time and are worth knowing:
+
+- `QGuiApplication` must be constructed **before** any `QPixmap` or the process aborts.
+- `QQuickView` has no `setData` in PySide6; write the QML to a real file and `setSource` it.
+- `pic.property("status")` raises `RuntimeError: Can't find converter for
+  QQuickImageBase::Status` — report what you need from inside QML via a `property string`
+  instead of reading the enum across the binding.
+
+Ink colours survive the offscreen software backend unchanged, so a picture can be compared
+by sampling pixels rather than by eye — which is how 12.10's table was produced.
 
 ### 12.9 T-23: the two installs, and the check that would have caught them
 
@@ -521,6 +550,55 @@ and fails on the app-side `no-display-diagnostic` item in §12.8; the stage is u
 these installs, but it means a fully green `verify.sh` has not been observed.
 
 ---
+
+### 12.10 EXIF orientation: a one-line deviation from the reference, and why it is kept
+
+Found while verifying 12.5, and settled here because it is the cover UI's. It is recorded
+so a later parity pass does not file it as a bug.
+
+iced's image path applies the file's EXIF orientation, and the Python app's does not, so
+**the same cover JPEG can render as two different pictures**. The relevant lines in the
+pinned iced are immediately below the decode 12.5 relies on — the decode is
+`iced/graphics/src/image.rs:126-131`, and this is `:133-139`:
+
+```rust
+let operation = std::fs::File::open(path).ok()
+    .map(std::io::BufReader::new)
+    .and_then(|mut reader| Operation::from_exif(&mut reader).ok())
+    .unwrap_or_else(Operation::empty);
+let rgba = operation.perform(image).into_rgba8();
+```
+
+Both halves were **run**, not reasoned about. One 64×32 JPEG was written twice — identical
+pixels (left half red, right half blue), one copy carrying EXIF `Orientation=6` ("rotate
+90° clockwise on display") — and each was put through the real path.
+
+| Path | How it was exercised | Result |
+|---|---|---|
+| Rust / iced | `iced_graphics::image::load` — the exact function the renderer calls, called directly (its own unit, no window) | plain → `64x32`, red left; **rotated → `32x64`, red top** |
+| Python / Qt Quick | `QQuickView` at `QT_QPA_PLATFORM=offscreen` running `Image { fillMode: Image.PreserveAspectFit }` — the element and mode `CoverArt.qml` uses | plain → `64x32`; **rotated → `64x32`, unchanged** |
+
+So the Qt half is no longer an inference from the element's API. The rotated file renders
+in its stored orientation in Qt Quick and upright in iced: same bytes, two pictures, and
+the deviation is real rather than theoretical.
+
+**The deviation is kept.** iced's answer is the one a user would call correct — a phone
+photo carrying an orientation tag should not display sideways — and the tie-break in
+§11 is that parity governs behaviour worth keeping. Nothing in the Rust view can be asked
+to undo it without pre-decoding the image itself, which is exactly what 12.5 forbids.
+
+Two notes for the implementer:
+
+- It is reachable through one path only: `copy_custom_cover` (`covers.py:295-304`) is the
+  single import that takes a user's own file, so a camera or phone JPEG is what carries a
+  tag into the covers directory. Store art and extracted icons do not.
+- It is a *rendering* difference, not a data one. The file on disk is untouched, so
+  switching branches does not rewrite anything and the two apps can share the covers
+  directory without corrupting it for each other.
+
+This supersedes the weaker claim in FINDINGS F-N as it stood at `e4ee94f`, which had the
+iced half verified from source and the Qt half stated from the element's API. The iced
+half was re-verified by running it; the Qt half now matches it.
 
 ## Appendix A — Backend contract the UI binds to (unchanged by this doc, listed for the implementer)
 
