@@ -729,3 +729,49 @@ thing to a user's data — even though the port does not fix it.
 
 **Revisit if** a user reports it. Option 1 is the change to make then; it is
 listed here so the analysis is not repeated.
+
+---
+
+## D-23. File dialogs: libcosmic's own portal-backed chooser, not `rfd`
+
+**Question** (PLAN.md Q-3). Does the app need libcosmic's `rfd` feature for the
+three file dialogs (P-21 exe picker, P-24 cover picker, P-57 installer source
+directory)?
+
+**Options considered.**
+1. Enable libcosmic's `rfd` feature.
+2. Add `ashpd` to the app crate and drive the XDG portal directly.
+3. Use libcosmic's built-in `cosmic::dialog::file_chooser`, gated on the
+   `xdg-portal` feature we already enable.
+
+**Choice.** Option 3. **No dependency change is needed at all.**
+
+**Why.** Verified at the pinned rev, not assumed: `libcosmic/src/dialog/
+file_chooser/` is a first-class module with `open::Dialog` / `save::Dialog`,
+`open_file()` / `open_files()` / `open_folder()` / `open_folders()`, and
+`FileFilter` (description + extensions) support for the exe and image filters.
+Critically, it re-exports its types from `ashpd::desktop::file_chooser` and is
+gated on libcosmic's **`xdg-portal`** feature — which our `crates/app/Cargo.toml`
+feature list already contains. So the portal path is available today.
+
+`rfd` is the *alternate* backend, for platforms without a portal. On Linux it is
+strictly redundant: it would be a second dialog stack in the dependency graph
+and in `cargo-sources.json` for no behaviour we want. `ashpd` directly (option 2)
+would mean reimplementing the dialog plumbing libcosmic already ships.
+
+**Verified detail worth keeping.** `rfd` *is* present in `Cargo.lock` — as an
+**optional** dependency of libcosmic, recorded by the lockfile but never
+compiled: `cargo tree -e features` shows no `rfd` in the actual build graph, and
+`cargo metadata` names libcosmic as its only dependent, marked `optional: true`.
+So its presence in the lock is not evidence that we depend on it. A reader
+tracing dialogs should not conclude from `Cargo.lock` that `rfd` is in play.
+(Whether it also appears as an unused entry in `cargo-sources.json` has **not**
+been checked; that is a vendoring-size question for T-16/T-17, not a
+correctness one.)
+
+**Consequence for T-15.** The dialog API returns a **`url()`**, not a path. That
+is the right primitive for P-72 (network-share games via GVFS, R-9), since a
+portal selection may be a URI that has no direct filesystem path — T-15 must
+keep the `url` → path conversion explicit and handle the failure case rather
+than assuming a local path. Also note `Err(file_chooser::Error::Cancelled)` is
+a normal outcome, not an error to report to the user.

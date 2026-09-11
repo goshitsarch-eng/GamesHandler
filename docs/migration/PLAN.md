@@ -324,7 +324,7 @@ same file (D-05).
 | T-12 | `app`: Installers page | UX | P-51…P-59. Depends on the file chooser (P-57). |
 | T-13 | `app`: Settings + Plugins + Credits pages | UX | P-64…P-68. |
 | T-14 | `app`: cover tiles, pills, async images, theming | UX | P-60…P-63, P-67. **Enable libcosmic's `image`/`webp` support first — see R-11.** |
-| T-15 | File chooser via portal; wire P-21/P-24/P-57 | UX + Pkg | ashpd `xdg-portal`. |
+| T-15 | File chooser via portal; wire P-21/P-24/P-57 | UX + Pkg | **No new dependency** (D-23) — `cosmic::dialog::file_chooser`, already available. Returns a **`url()`**, so handle the URI→path case explicitly for GVFS (R-9). |
 | T-16 | Flatpak: new manifest, `cargo-sources.json`, `build.sh` | Pkg | Removes PySide6/llvm21/PYTHONPATH. Keeps Wine base, osslsigncode, DXVK. |
 | T-17 | `scripts/verify.sh` + headless smoke test | Pkg | 7 stages per `packaging.md` §6. |
 | T-18 | Metadata: desktop file, metainfo, README, version bump to 0.8.0 | Pkg + UX | Version-lockstep test. |
@@ -418,7 +418,7 @@ for each; F-M is the one inherited defect, listed in REPORT.md instead.
 |---|---|---|
 | Q-1 | Renderer: software vs wgpu | **Resolved (D-11): software default.** |
 | Q-2 | `--device=dri` vs `--device=all` | Real gamepad-through-launched-game test (R-4). Keep `all` until proven. |
-| Q-3 | Does our crate need libcosmic's `rfd` feature for file dialogs? | First file-dialog port (T-15). |
+| Q-3 | Does our crate need libcosmic's `rfd` feature for file dialogs? | **Resolved (D-23): no.** libcosmic ships a portal-backed chooser behind the `xdg-portal` feature we already enable; `rfd` is the non-Linux alternate. No dependency change for T-15. |
 | Q-4 | Headless compositor recipe for CI | T-17. Software rendering (F-3) removes the GPU dependency, so this is now about a compositor socket only. |
 | Q-5 | Game form: modal dialog vs page | T-10, per `ux.md` R6. |
 
