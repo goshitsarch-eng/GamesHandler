@@ -1102,3 +1102,71 @@ What remains genuinely unverified is the **end-to-end render**: that a real
 not exist, so this cannot be checked yet, and neither the crate-level probe nor
 the `cargo tree` output above is evidence for it — they show the decoder is
 reachable, not that a render succeeds. Tracked as T-22, owed once T-14 lands.
+
+---
+
+## D-30. Cover icons are classified by content, not by suffix
+
+**Question.** `bridge.py:313` decides whether a cover is an icon from the file
+name (`cover.lower().endswith(".ico")`), and `CoverArt.qml` uses that flag for
+three visual decisions (plate or not, inset margin, `PreserveAspectFit` vs
+`PreserveAspectCrop`). Does the port copy the suffix test for parity, or decide
+from the bytes?
+
+**Options considered.** (1) Copy the suffix test, for exact parity. (2) Decide
+by content magic (`00 00 01 00`). (3) Decide by content, but only when the
+suffix is `.ico`, as a hybrid.
+
+**Choice.** Option 2 — content only. Found by the UX owner in `view/cover.rs`;
+verified independently here.
+
+**Why.** The suffix is a *naming convention* on these files, not a property of
+them, and the app's own writers are what make that true: `copy_custom_cover`
+(`covers.py:300-301`) keeps a source suffix only from
+`{".png", ".jpg", ".jpeg", ".webp"}` and writes **`.jpg` for anything else**.
+`covers.py:305` writes real ICO bytes to `<id>.ico`. So the content is the
+reliable signal in every direction that matters, and the name is reliable in
+only some of them. This is the same rule already recorded for *decoding* in
+D-29 and F-N; applying it to *classification* is consistency, not a new
+principle.
+
+**Reachability, stated exactly rather than rounded up.** The cover chooser
+(`GameFormPage.qml:352`) offers `["Images (*.png *.jpg *.jpeg *.webp)"]` with
+**no "All files (*)"** fallback — unlike the executable chooser at `:337` — so
+the shipped UI cannot produce an `.ico` under another name. The defect is
+therefore **latent in the UI** and reachable only via a script, a test, or a
+restored profile. It is fixed anyway: the fix is four bytes of magic number, and
+a latent misclassification that changes `fillMode` is a poor thing to carry
+forward for parity's sake.
+
+**Consequence for verification, and this is the part that matters.** B-08 is a
+B-item with **no hand-walkable reproduction**, which makes it unlike B-01…B-07.
+It cannot be verified the way the others are (hand-edit the named file, confirm
+the app survives), because no UI path produces the input. Its evidence is meant
+to be the `view/cover.rs` unit test — `png-in-jpg`, `ico-honest` vs
+`ico-mislabelled`, `fake-ico`, `jpeg-in-png` — with T-19 asked to confirm the
+test **fails when `classify` is made suffix-aware**, so it is known to be doing
+work rather than passing vacuously.
+
+**Correction, made the same session this was written.** That evidence does not
+currently exist. `crates/app/src/view/` is **dead code**: `main.rs` never
+declares `mod view;`, so `cargo test -p gamehandler` runs 0 tests from the app's
+binary target and the 25 tests in `view/` have never executed. Attempting the
+mutation check above is how this was found — the mutation appeared to prove
+nothing, and the reason was that nothing ran. The module compiles and all 25
+tests pass once the declaration exists (verified in an isolated copy of the
+tree), so the tests are real; they are simply not built. Filed as task #21,
+owned by Architecture (the declaration) and UX (a `clippy::assertions_on_constants`
+lint in `metrics.rs` that the gate catches only once the module is wired).
+
+So B-08's stated evidence is **currently absent**, and the row in `PLAN.md` says
+"verified by the unit test" in the same tense as B-01…B-07, which is not true
+yet. Left standing as written rather than softened, because the discrepancy is
+the point: a checklist item citing a test that does not run is precisely the
+defect this conversation keeps rediscovering — a claim whose supporting evidence
+is not what it appears. B-08 is not verified until task #21 lands and the test
+is observed to fail under mutation.
+
+**Deviation from the reference.** Recorded here and in `FINDINGS.md` F-P. The
+port renders an icon stored under a non-`.ico` name on a plate, uncropped; the
+Python app renders it cropped, filling the tile, with no plate.

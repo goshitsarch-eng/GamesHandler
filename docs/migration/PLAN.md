@@ -249,6 +249,7 @@ Legend: **☐** not started · **~** in progress · **☑** done+verified
 | **B-05** | Timestamps survive a save unchanged at the bit level (D-19) | F-H | save a library the Rust app loaded; bytes match Python's |
 | **B-06** | A pathologically deep `games.json` cannot abort the process (D-21) | F-L | deep nesting must be a parse *error at worst*, never SIGABRT |
 | **B-07** | A failed launch reports the runner's actual error text, never the generic status line (F-O) | F-O | launch a game whose runner exits non-zero within the grace period; the message names the cause, on every attempt |
+| **B-08** | Whether a cover is an *icon* is decided by its bytes, never by its filename suffix (F-P) | F-P | not walkable in the UI: the chooser (`GameFormPage.qml:352`) has no "All files (*)", so no UI path stores an `.ico` under another name. Evidence is meant to be the `view/cover.rs` unit test (`png-in-jpg`, `ico-honest` vs `ico-mislabelled`) — **but that module is currently dead code (task #21), so this item is NOT verified yet**. See D-30's correction |
 
 A separate category from the parity checklist above, and not to be confused with
 section H below. Every P-item says *"behave like the Qt app"*; every B-item says
@@ -351,7 +352,7 @@ same file (D-05).
 | T-16 | Flatpak: new manifest, `cargo-sources.json`, `build.sh` | Pkg | Removes PySide6/llvm21/PYTHONPATH. Keeps Wine base, osslsigncode, DXVK. |
 | T-17 | `scripts/verify.sh` + headless smoke test | Pkg | 7 stages per `packaging.md` §6. |
 | T-18 | Metadata: desktop file, metainfo, README, version bump to 0.8.0 | Pkg + UX | Version-lockstep test. |
-| T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. Walk **B-01…B-07** — hand-edit the file named for each and confirm the real app survives it. "The port does not copy the bug" is a claim that needs demonstrating, not asserting. |
+| T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. Walk **B-01…B-08** — hand-edit the file named for each and confirm the real app survives it. "The port does not copy the bug" is a claim that needs demonstrating, not asserting. **B-08 is the exception to the hand-edit method**: its input is unreachable through the UI (see the B-08 row), so it is evidenced by the unit test, and T-19 should confirm the test exists and fails when `classify` is made suffix-aware rather than attempting a manual reproduction. |
 | T-20 | `docs/migration/REPORT.md` | Lead | Final deliverable. |
 
 Ordering rationale: logic (`T-02`–`T-06`) lands before UI, so the UI is built

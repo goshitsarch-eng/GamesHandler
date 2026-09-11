@@ -583,6 +583,48 @@ element's documented API and **has not been run**, so it is the weaker of the
 two claims. Owner: the UX implementer at T-14, who can settle it by loading one
 rotated JPEG through the Python app beside the Rust one.
 
+### F-P. An icon's layout is decided by the file's *name*, not its bytes
+
+Found by the UX owner while implementing the cover component (`view/cover.rs`),
+and verified here independently. This is a **defect in the reference
+implementation**, so it belongs in the B-series: the port must not copy it.
+
+`bridge.py:313` decides whether a cover is an icon from the suffix alone:
+
+```python
+"coverIsIcon": cover.lower().endswith(".ico"),
+```
+
+That flag is load-bearing — `CoverArt.qml` uses it for three separate visual
+decisions (`:25`, `:55`, `:60`): whether to draw the gradient plate at all,
+what inset margin the artwork gets, and whether `fillMode` is
+`PreserveAspectFit` (icon, uncropped, on a plate) or `PreserveAspectCrop`
+(photo, filling the tile edge to edge). So a wrong flag is not a cosmetic
+mislabel; it changes the picture.
+
+**The suffix is the wrong signal, and the app's own writers prove it.**
+`copy_custom_cover` (`covers.py:300-301`) keeps a source suffix only from
+`{".png", ".jpg", ".jpeg", ".webp"}` and writes **`.jpg` for anything else**.
+The cover file chooser (`GameFormPage.qml:352`) offers exactly
+`["Images (*.png *.jpg *.jpeg *.webp)"]` — and, unlike the neighbouring
+executable chooser at `:337`, it has **no "All files (*)"** fallback. So an
+`.ico` is not reachable through the chooser.
+
+Reachability is therefore narrower than it first appears, and is recorded here
+exactly rather than rounded up: an ICO can only land under a non-`.ico` name via
+a `copy_custom_cover` call that bypasses the chooser — a script, a test, or a
+restored profile. Within the shipped UI the misclassification is latent. The
+port still does not copy it, because the fix is four bytes of magic number and
+the content is the more reliable signal on every path, including the ones the UI
+does not currently expose.
+
+**Consequence for the port.** Decide icon-vs-photo by **content**, never by
+suffix. `covers.py:305` (`save_exe_icon` → `<id>.ico`) writes real ICO bytes, so
+the magic `00 00 01 00` is decisive in the direction that matters most, and
+`view/cover.rs` already does this. On the reference side this is a hidden
+divergence the Phase 3 pass cannot walk by hand-editing a file, since the chooser
+cannot produce the input; it is verified by the Rust unit test instead.
+
 ### F-O. `failure()` can silently lose the runner's error text (a race)
 
 Found by the UX teammate during T-18 while chasing an intermittent
