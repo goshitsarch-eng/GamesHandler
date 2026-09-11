@@ -32,7 +32,7 @@
 //! could most plausibly go wrong — fails here even though every accessor above
 //! is a one-line delegation.
 //!
-//! # The links, and the one thing missing to make them work
+//! # The links
 //!
 //! `CreditsPage.qml:85-89` draws a `Kirigami.UrlButton` labelled "Visit" per
 //! entry, and a "GameHandler on GitHub" button at the foot of the page. Both
@@ -44,20 +44,52 @@
 //! `CreditsPage.qml:138`, so the QML, the manifest and the page cannot drift
 //! apart without a failure.
 //!
-//! **What they cannot do is open anything.** `button::link` with no `on_press`
-//! renders disabled, and there is no `Message::OpenUrl` in this application to
-//! give it — the same wall [`super::runners`] recorded for its two link
-//! buttons, hit here twenty-six times over. Opening a URL needs a `Message`
-//! variant and a handler, both of which live in `main.rs`, and this page is
-//! landing in a window where `main.rs` is held by another task. So it is a
-//! recorded interim rather than a silent one: see [`LINKS_OPEN`], which is the
-//! value `the_links_are_still_unwired` reads, and which fails the day the
-//! message lands so that this note cannot outlive the gap it describes.
+//! **They open, and that had to be built.** The reference's affordance is a QML
+//! widget that opens the URL itself — `UrlButton` *"will open the URL when
+//! left-clicked, tapped, or activated with the keyboard"* (its own type
+//! documentation, `api-staging.kde.org/qml-org-kde-kirigami-urlbutton.html`) —
+//! so the QML has no `bridge.py` line for this and the port had nothing to
+//! copy. `button::link` is the port's equivalent widget and it carries a label
+//! and **no href**: an href is what the caller supplies, through `on_press`.
+//! With no message to give it, all twenty-seven rendered disabled, which is the
+//! state this page recorded as `LINKS_OPEN` from T-25 until P-65.
 //!
-//! (`the_links_are_still_unwired` is a code span and not a link on purpose: it
-//! is a `#[cfg(test)]` item, so rustdoc can never resolve it and writing it as
-//! `[`…`]` produced a broken-intra-doc-link warning rather than a pointer. Same
-//! for the test named in [`crate::view::form`], which lives in `main.rs`.)
+//! That constant and its test are now deleted rather than left reading `true`;
+//! the test was written to fail the day the message landed, and it did. What
+//! replaced them are the two tests below, and it is worth being exact about what
+//! they establish, because the obvious stronger test does not work here.
+//!
+//! **What is checked:** the page draws one `Visit` button per credited project
+//! and one footer button, and the message each button is given is built by
+//! [`credit_press`] / [`repository_press`], which the tests call directly and
+//! compare against the catalogue.
+//!
+//! **What is not:** a real click. Driving one needs `Widget::update` over a
+//! laid-out element, and that was built and measured before being abandoned —
+//! `label_points` read each label's bounds out of a traversal and
+//! `published_by_click` delivered a press/release pair at that point. A
+//! `button::link` that is the *only* child of its row publishes correctly, and
+//! so does one that sits left of a `Length::Fill` sibling. A button pushed to
+//! the **right edge** of a `Length::Fill` row — which is where every `Visit`
+//! button on this page is — published nothing at any point of a sweep over the
+//! whole laid-out page, including at the centre of its own reported bounds. That
+//! is either a limitation of driving events synthetically or a real defect in
+//! how a link is placed, and this task did not settle which. **So it is recorded
+//! here rather than papered over with a test that would pass either way**, and
+//! it is the one thing about this page a click-level test would still add. The
+//! wiring is not unverified without it: the message is produced by a named
+//! function the view merely calls, and `main.rs`'s
+//! `only_the_written_handlers_change_anything` holds the handler's end.
+//!
+//! **One visual item is still short of the reference, and it is recorded rather
+//! than skipped.** Since Kirigami 6.11 `UrlButton` has `externalLink : bool`,
+//! defaulting to `true`, which draws a small external-link icon to the right of
+//! the text. The port's `Visit` buttons have no such icon: `button::link` draws
+//! its label and nothing else, and adding one means an icon asset whose
+//! availability under the Flatpak runtime is its own question — the same class
+//! of question `LINKS_OPEN` was closed by answering, so it is named here
+//! instead of being discovered as a pixel diff. It is decoration on a control
+//! that works, so the behavioural parity P-65 asks for is met without it.
 
 use cosmic::iced::Length;
 use cosmic::widget::{Column, Row, button, container, scrollable, text};
@@ -110,24 +142,6 @@ pub const LICENSE_PREFIX: &str = "\nLicense: ";
 pub const FOOTER_TAIL: &str = " — GPL-3.0-or-later. Proton and Wine builds are \
      downloaded from their maintainers at your request and remain under their own \
      licenses.";
-
-/// Whether clicking a link on this page opens it.
-///
-/// # `false`, and it is a value rather than a comment on purpose
-///
-/// Every URL below is real and is the data layer's own; what is missing is the
-/// application's ability to *act* on one. `button::link(...)` with no
-/// `on_press` renders disabled — the widget is honest about it, and the
-/// reference's affordance is in the reference's position — but the click needs
-/// a `Message::OpenUrl`, which does not exist in this application yet.
-///
-/// This constant exists so that "the links do not open" is a fact a test reads
-/// rather than a sentence a reader has to trust. `the_links_are_still_unwired`
-/// asserts both that it is `false` **and** that `main.rs` still has no
-/// `OpenUrl`, so the day the message lands the test fails and points at this
-/// constant. Deleting the record is part of wiring the links, exactly as
-/// deleting a `PINNED_PENDING` line is part of landing a page.
-pub const LINKS_OPEN: bool = false;
 
 // ---------------------------------------------------------------------------
 // The data layer, reached through named functions
@@ -202,20 +216,46 @@ pub fn footer_line() -> String {
 ///
 /// # What the view does with the value
 ///
-/// It uses it as the **gate** and does not render it. The reference's
-/// `Kirigami.UrlButton` shows the word "Visit" and the URL is not visible text
-/// anywhere on the page (`CreditsPage.qml:85-89`), so printing it would be a
-/// visible departure from the reference. `libcosmic`'s `button::link` carries a
-/// label and no href — an href is something the caller supplies through
-/// `on_press` — so with no `Message::OpenUrl` there is nowhere for the URL to
-/// go. It stays here, one call from the widget, and that is what makes the
-/// wiring a one-line change rather than a rediscovery.
+/// Two things, and neither is to render it. It is the **gate** — the `Visit`
+/// button is drawn only when this is [`Some`], which is `visible: url !== ""` —
+/// and it is the **payload**: the button's `on_press` is
+/// `Message::OpenUrl(url)` (`P-65`). The reference's `Kirigami.UrlButton` shows
+/// the word "Visit" and the URL is not visible text anywhere on the page
+/// (`CreditsPage.qml:85-89`), so printing it would be a visible departure from
+/// the reference — and it is why the tests below read the *message* rather than
+/// looking for the URL among the drawn strings.
 pub fn credit_link(credit: &Credit) -> Option<&'static str> {
     if credit.url.is_empty() {
         None
     } else {
         Some(credit.url)
     }
+}
+
+/// The message a credit's `Visit` button sends, or `None` when it has no URL.
+///
+/// The `view` calls exactly this to build the button's `on_press`, and that is
+/// deliberate rather than tidy: a message handed to a `button::link` cannot be
+/// read back out of the built widget (`iced` exposes no downcast), and the click
+/// that would publish it needs `Widget::update` over a laid-out element — see
+/// the module note for the measurement that ruled that route out. Producing the
+/// message in a named function is what leaves the view with nothing to get wrong
+/// except calling it.
+///
+/// `None` and not a fallback for the same reason [`credit_link`] returns one:
+/// the reference draws no button at all for a credit whose URL is empty, so
+/// there is no message to send and inventing one would be a control the QML does
+/// not have.
+pub fn credit_press(credit: &Credit) -> Option<Message> {
+    credit_link(credit).map(|url| Message::OpenUrl(url.to_string()))
+}
+
+/// The message the footer's button sends. [`repository_url`], wrapped.
+///
+/// A function rather than an inline `Message::OpenUrl(repository_url().to_string())`
+/// for the same reason as [`credit_press`]: it is the value the test reads.
+pub fn repository_press() -> Message {
+    Message::OpenUrl(repository_url().to_string())
 }
 
 /// The line under a credit's name: its role, and its licence when it has one.
@@ -268,12 +308,11 @@ fn credit_card(credit: &'static Credit) -> Element<'static, Message> {
         .align_y(cosmic::iced::Alignment::Center)
         .width(Length::Fill);
 
-    if credit_link(credit).is_some() {
+    if let Some(press) = credit_press(credit) {
         // The gate is `visible: url !== ""` (`CreditsPage.qml:86`) and the label
-        // is the QML's "Visit"; see [`credit_link`] for where the URL itself
-        // goes. A `link` with no `on_press` renders disabled — that is
-        // [`LINKS_OPEN`]'s subject, not an accident of this call.
-        row = row.push(button::link(VISIT_LABEL.to_string()));
+        // is the QML's "Visit". The `on_press` is the half the QML widget did for
+        // free; see [`credit_press`] for why it comes from a named function.
+        row = row.push(button::link(VISIT_LABEL.to_string()).on_press(press));
     }
 
     container(row)
@@ -333,12 +372,11 @@ pub fn view(_page: CreditsPage) -> Element<'static, Message> {
 
     // ---- Footer ------------------------------------------------------------
     // The footer's link is the manifest's own URL, reached through
-    // [`repository_url`] — which, like a `Visit` button's href, has nowhere to
-    // go on a `button::link` with no `on_press`. See [`LINKS_OPEN`].
+    // [`repository_url`] and carried by the same message a `Visit` button uses.
     body = body
         .push(cosmic::widget::divider::horizontal::default())
         .push(text::caption(footer_line()))
-        .push(button::link(GITHUB_LABEL.to_string()));
+        .push(button::link(GITHUB_LABEL.to_string()).on_press(repository_press()));
 
     container(scrollable(body)).padding(18).into()
 }
@@ -653,28 +691,99 @@ mod tests {
         assert!(credits::markdown().contains("independent"));
     }
 
-    /// **The links do not open, and this fails the day they can.**
+    /// **Every credited project has a `Visit` button, and each one carries that
+    /// credit's own URL.**
     ///
-    /// [`LINKS_OPEN`] is `false` because the application has no
-    /// `Message::OpenUrl` to give a `button::link`. This asserts both halves:
-    /// the record, and the reason for it — read out of `main.rs`, which is
-    /// where such a variant would be declared. Wiring the links means deleting
-    /// the constant and this test together, which is what a self-invalidating
-    /// record is for.
+    /// Two claims, because one without the other is the defect: the page must
+    /// draw a button per credit (a `view` that drew only the first ten would
+    /// otherwise pass), and each button must carry the URL of the credit it sits
+    /// beside (a page whose buttons all opened the same link would pass the
+    /// count).
+    ///
+    /// The second is read from [`credit_press`], which is the *same function
+    /// the `view` calls* to build the button's `on_press` — not a copy of its
+    /// logic. That indirection is the point: the message a `button::link` holds
+    /// cannot be read back out of a built widget (no downcast, and the click
+    /// that would publish it is driven by `Widget::update` — see the module note
+    /// for why that route was measured and abandoned), so the message is
+    /// produced by a named function and the view is left with nothing to do but
+    /// call it.
+    ///
+    /// The count is the catalogue's, not a literal, so adding a credit and
+    /// forgetting its button fails here.
     #[test]
-    fn the_links_are_still_unwired() {
-        // `assert!(!LINKS_OPEN)` is a constant assertion and clippy rejects it
-        // (`clippy::assertions_on_constants`), which is the right call — the
-        // constant is the record and the compiler is already checking it. What
-        // needs a test is the *reason*, below.
-        let links_open: bool = LINKS_OPEN;
-        assert!(!links_open, "the record says a link opens; it does not");
-        let main_rs = repo_file("crates/app/src/main.rs");
+    fn every_credited_project_has_a_visit_button_carrying_its_url() {
+        let credits: Vec<&'static Credit> = credit_sections()
+            .iter()
+            .flat_map(|section| section.entries.iter())
+            .collect();
         assert!(
-            !main_rs.contains("OpenUrl"),
-            "`main.rs` now has an `OpenUrl`, so the links on this page can be \
-             wired: give the two `button::link` calls an `on_press`, delete \
-             `LINKS_OPEN`, and delete this test."
+            credits.len() >= 20,
+            "the catalogue holds {} credits, too few for this test to be \
+             measuring the page",
+            credits.len()
+        );
+
+        // Each credit's press message is that credit's URL, in order. Every
+        // credit in the reference carries a URL, so the `None` arm is the
+        // synthetic case `a_credit_with_no_url_draws_no_link` owns.
+        let presses: Vec<String> = credits
+            .iter()
+            .map(|credit| {
+                let expected = credit_link(credit)
+                    .unwrap_or_else(|| panic!("{:?} carries no URL", credit.label()));
+                match credit_press(credit) {
+                    Some(Message::OpenUrl(url)) => {
+                        assert_eq!(url, expected, "the press carries the wrong URL");
+                        url
+                    }
+                    other => panic!("a credit's press must be `OpenUrl`, got {other:?}"),
+                }
+            })
+            .collect();
+        assert_eq!(
+            presses.len(),
+            credits.len(),
+            "every credit has its own URL, and no two may collapse to one button"
+        );
+
+        // And the page draws exactly that many buttons.
+        let drawn = drawn_strings(view(CreditsPage));
+        let drawn_visits = drawn.iter().filter(|text| *text == VISIT_LABEL).count();
+        let expected_visits = credits
+            .iter()
+            .filter(|credit| credit_link(credit).is_some())
+            .count();
+        assert_eq!(
+            drawn_visits, expected_visits,
+            "the page draws {drawn_visits} `{VISIT_LABEL}` buttons for \
+             {expected_visits} credits that carry a URL"
+        );
+    }
+
+    /// The footer's button carries the manifest's repository URL.
+    ///
+    /// `the_footer_link_is_the_qmls_and_the_manifests` pins the *value*;
+    /// this pins that the button the page draws is given it. Same named-function
+    /// route as above, and the same reason.
+    #[test]
+    fn the_footer_button_carries_the_repository_url() {
+        // Read as a URL, not as a `Message`: `Message` has no `PartialEq` (see
+        // `main.rs`'s `every_message` on why), so the comparison is on the
+        // payload the message carries.
+        match repository_press() {
+            Message::OpenUrl(url) => assert_eq!(
+                url,
+                repository_url(),
+                "the footer's link must open the manifest's own URL"
+            ),
+            other => panic!("the footer's press must be `OpenUrl`, got {other:?}"),
+        }
+        let drawn = drawn_strings(view(CreditsPage));
+        assert_eq!(
+            drawn.iter().filter(|text| *text == GITHUB_LABEL).count(),
+            1,
+            "the footer draws one `{GITHUB_LABEL}` button"
         );
     }
 

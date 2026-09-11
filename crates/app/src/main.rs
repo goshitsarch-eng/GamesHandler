@@ -692,6 +692,36 @@ pub enum Message {
     /// message, so — as with [`Message::PrefixFolderOpened`] — there is no id
     /// to carry.
     ShortcutCreated { result: Result<PathBuf, String> },
+
+    // ---- Links ------------------------------------------------------------
+    /// Open a URL in the user's browser. P-65.
+    ///
+    /// The reference reaches this through `Kirigami.UrlButton`
+    /// (`CreditsPage.qml:85-89`, `:137-139`), a QML widget that calls
+    /// `Qt.openUrlExternally` internally — so there is no `bridge.py` line for
+    /// this one and no Python-side error to mirror. The port's equivalent of
+    /// that widget is `button::link`, which carries a label and **no href**: an
+    /// href is what the caller supplies through `on_press`, which is why the
+    /// credits page's twenty-seven links rendered disabled and recorded the gap
+    /// as `LINKS_OPEN` until this variant landed.
+    ///
+    /// The URL is a `String` rather than a parsed `Url` because nothing between
+    /// the data layer and `xdg-open` reads it: `Credit::url` is a
+    /// `&'static str` (`core::credits`) and the reference passes its string
+    /// through untouched, so a parser here would be a second opinion about a
+    /// value no branch consults.
+    OpenUrl(String),
+    /// A link was opened, or could not be.
+    ///
+    /// The failure is *reported*, and that is a deliberate departure from the
+    /// reference — recorded here rather than left for a reader to discover.
+    /// `UrlButton` has no error surface at all, so a desktop with no browser
+    /// registered gives a click that does nothing and says nothing, which on
+    /// this page is indistinguishable from the disabled-link defect this
+    /// variant exists to close. It is the same reasoning and the same shape as
+    /// [`Message::PrefixFolderOpened`], one arm away.
+    UrlOpened { result: Result<(), String> },
+
     /// Hide the window, or bring it back. The `requestHide`/`requestShow`
     /// signal pair (`bridge.py:159-160`), which `Main.qml:170-177` answers with
     /// `visible = false` and `visible = true` + `raise()` + `requestActivate()`.
@@ -1350,6 +1380,12 @@ impl Shell {
     ///   says "Select a game first"), and `LaunchWatchFinished { reason: None }`
     ///   — the title that is still running — is silent in the reference
     ///   (`report`, `:478-483`), so it is silent here.
+    /// - the links, from P-65: [`Message::OpenUrl`] and [`Message::UrlOpened`] —
+    ///   the credits page's twenty-seven `button::link`s and the outcome. There
+    ///   is no `bridge.py` line to mirror: the reference's `Kirigami.UrlButton`
+    ///   opens the URL itself (its own type documentation: *"will open the URL
+    ///   when left-clicked, tapped, or activated with the keyboard"*), so the
+    ///   port has to supply what the QML widget did for free.
     ///
     /// `ClearFilters` is one of them rather than two writes at the call site so
     /// that the search box and the category can never be observed cleared one
@@ -1761,6 +1797,27 @@ impl Shell {
             // reference's: `QDesktopServices.openUrl` reports nothing when it
             // works (`bridge.py:517`).
             Message::PrefixFolderOpened { result } => {
+                return match result {
+                    Ok(()) => cosmic::task::none(),
+                    Err(message) => self.state.toast_task(message),
+                };
+            }
+            // P-65. On a worker, like every other fork in this file (D-48): the
+            // spawn is a `fork`+`exec`, and doing it in `update` would run it in
+            // the test process — `every_message` drives this arm, so a
+            // synchronous version would launch a browser from `cargo test`.
+            Message::OpenUrl(url) => {
+                return cosmic::app::Task::perform(
+                    async move { Message::UrlOpened { result: open_url(&url) } },
+                    cosmic::Action::App,
+                );
+            }
+            // Unlike the prefix folder, whose open has no failure to report in
+            // the reference *and* whose directory creation is the reported half,
+            // this one has nothing else to say: either the desktop took the URL
+            // or the click did nothing, and only the user can tell those apart.
+            // See [`Message::UrlOpened`].
+            Message::UrlOpened { result } => {
                 return match result {
                     Ok(()) => cosmic::task::none(),
                     Err(message) => self.state.toast_task(message),
@@ -2245,6 +2302,43 @@ fn open_prefix_folder(game: &Game) -> Result<(), String> {
         .stderr(std::process::Stdio::null())
         .spawn();
     Ok(())
+}
+
+/// The command that opens `url` in the user's browser.
+///
+/// Split out from [`open_url`] so the argument list can be *read* rather than
+/// trusted: `Command` exposes its program and its argv, and what the tests need
+/// to see is that the URL is one argv element and not a fragment of a shell
+/// line. A URL is attacker-adjacent data in a way a prefix path is not — the
+/// credit catalogue is compiled in, but a `String` payload is a `String`
+/// payload — and `Command::arg` is what makes `;`, `&` or a backtick a
+/// character in a URL instead of a second command.
+fn open_url_command(url: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(url);
+    command
+}
+
+/// Open `url` in the desktop's browser. P-65.
+///
+/// `xdg-open` for the same reason [`open_prefix_folder`] uses it, and with the
+/// same three `Stdio::null()`s: this process must not hold the child's pipes
+/// open, because a browser that inherits them outlives the app that started it.
+/// The child is left unreaped for the same reason the prefix folder's is — a
+/// browser window is not something to wait four minutes for.
+///
+/// The `Result` is real rather than decorative: `spawn` fails when `xdg-open`
+/// is not on the path, which is the flatpak's failure mode as much as a
+/// container's, and `the_open_url_error_arm_is_not_a_fabricated_string` drives
+/// that arm with a program that does not exist instead of asserting the string.
+fn open_url(url: &str) -> Result<(), String> {
+    open_url_command(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_child| ())
+        .map_err(|error| format!("Could not open {url}: {error}"))
 }
 
 /// A game's Wine prefix: its own `prefix_path`, or `<prefixes_dir>/<id>`.
@@ -4144,6 +4238,19 @@ mod tests {
         Message::ShortcutCreated { .. } => ("ShortcutCreated", Message::ShortcutCreated {
                             result: Ok(PathBuf::from("/tmp/gamehandler-fixture.desktop")),
                         }),
+        // A URL that cannot resolve, so nothing this sample ever reaches can
+        // touch the network — and the task is never driven anyway (`observe`
+        // reads `units()` and drops it), which is what keeps a browser out of
+        // `cargo test`. `.invalid` is reserved for exactly this.
+        Message::OpenUrl(_) => ("OpenUrl", Message::OpenUrl("https://example.invalid/credit".to_string())),
+        // `Err`, not `Ok`: the `Ok` arm is `cosmic::task::none()` with no state
+        // write, which `observe` cannot tell from an unwritten arm — the D-34
+        // shape, in the sample. The `Err` arm toasts, and the toast is the
+        // change. `the_url_opened_success_arm_is_silent` is the control arm for
+        // the other half.
+        Message::UrlOpened { .. } => ("UrlOpened", Message::UrlOpened {
+                            result: Err("Could not open https://example.invalid/credit: No such file or directory".to_string()),
+                        }),
         Message::FetchCover(_) => ("FetchCover", Message::FetchCover("g".to_string())),
         Message::CoverFetchFinished { .. } => ("CoverFetchFinished", Message::CoverFetchFinished {
                             game_id: "g".to_string(),
@@ -4598,6 +4705,15 @@ mod tests {
             "PrefixFolderOpened",
             "CreateDesktopShortcut",
             "ShortcutCreated",
+            // P-65's two, and this is the pair that retired `LINKS_OPEN`. The
+            // producer is the credits page's twenty-seven `button::link`s —
+            // twenty-five `Visit` buttons and the footer's two — which are the
+            // only controls in the app that emit `OpenUrl`, and `UrlOpened` is
+            // the reply. Both entered this list in the same commit that wired
+            // them, because a handler listed here with no producer is the state
+            // finding #65 is about.
+            "OpenUrl",
+            "UrlOpened",
             // T-38's nine. Live because the Installers page draws the search
             // box, the category selector and the Install button that produce the
             // first three, and the other six are the install's own replies.

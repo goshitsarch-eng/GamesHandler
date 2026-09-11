@@ -45,8 +45,8 @@
 //! reads rather than writes: the cover row shows [`NO_COVER`] or the stored path,
 //! and the runner's *value* is visible in the Library row's subtitle even when the
 //! selector is not drawn here. Both gaps are values a test reads rather than
-//! comments — the same device as [`crate::view::credits::LINKS_OPEN`] one module
-//! over.
+//! comments — the same device the credits page used for its dead links, whose
+//! `LINKS_OPEN` constant was deleted when P-65 wired them.
 //!
 //! [`crate::Message::PickExeFile`]: crate::Message::PickExeFile
 //! [`crate::Message::PickCoverFile`]: crate::Message::PickCoverFile
