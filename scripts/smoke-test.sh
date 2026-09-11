@@ -245,7 +245,7 @@ else
     dump "stdout+stderr" "$WORK/version.log"
 fi
 
-# ---------------------------------------------------------- check: cli-list
+# --------------------------------------------------- check: cli-list-exits-0
 
 rc=0
 run_once "$WORK/list.log" none "" --list || rc=$?
