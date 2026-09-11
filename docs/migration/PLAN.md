@@ -247,6 +247,7 @@ Legend: **☐** not started · **~** in progress · **☑** done+verified
 | **B-03** | `settings.json` with an invalid byte does not prevent startup (D-20) | F-J | inject `0xff`; app opens with defaults |
 | **B-04** | A BOM'd or deeply-nested `games.json` loads instead of being emptied (D-21) | F-K/F-L | BOM'd file whose games survive the next save |
 | **B-05** | Timestamps survive a save unchanged at the bit level (D-19) | F-H | save a library the Rust app loaded; bytes match Python's |
+| **B-06** | A pathologically deep `games.json` cannot abort the process (D-21) | F-L | deep nesting must be a parse *error at worst*, never SIGABRT |
 
 A separate category from the parity checklist above, and not to be confused with
 section H below. Every P-item says *"behave like the Qt app"*; every B-item says
@@ -264,6 +265,14 @@ unusual**: no setting needs changing and no exotic input is required, just a
 `games.json` or `settings.json` that something other than this app wrote.
 B-05 is the one that is silent — it produces no crash at all, only bytes that
 slowly drift. See R-12.
+
+**B-06 is listed separately because it is not a Python bug the port declined to
+copy — it was introduced by this migration's own first attempt at D-21.** The
+port briefly used `serde_json`'s recursion-limit escape hatch, which overflows
+the stack and aborts on input Python reads fine, and the abort was invisible to
+`cargo test -p gamehandler-core` while killing a workspace-wide `cargo test`.
+It is a checklist item so that Phase 3 verifies the fix against a real file, not
+only against the test that was written alongside it.
 
 ### H. New items (not in the Qt app — added by this migration)
 | ID | Item | Why |
@@ -302,7 +311,7 @@ same file (D-05).
 |---|---|---|---|
 | T-01 | Workspace scaffold: `Cargo.toml`, `crates/core`, `crates/app`, minimal libcosmic app that compiles and runs | Arch + UX | **DONE** (`f76cedd`). Proves F-1/F-3 in-tree. Core has **no** GUI deps — verified with `cargo tree -p gamehandler-core`. |
 | T-01a | Compatibility oracle: run the Python impl, freeze its JSON behaviour | Lead | **DONE** (`docs/migration/oracle/`). Blocking input for T-02. |
-| T-02 | `core::paths` + `core::models` + `core::settings` | Arch | Must satisfy the oracle fixtures — see §6a. **Struct field order must match the Python dataclasses** (31 `Game` fields, 18 `Settings` fields) or byte equality fails. **Gate: D-19** (`float_roundtrip` — without it the round-trip test passes on fixtures and fails on real data), **D-18** (typed scalars), **D-20** (`Settings` UTF-8), **D-21** (BOM, nesting). |
+| T-02 | `core::paths` + `core::models` + `core::settings` | Arch | **DONE** (`7628f23`) — 91 core tests, 242 Python tests, clippy clean at the workspace root. Fixture-verified including D-14…D-22. Was: must satisfy the oracle fixtures — see §6a. **Struct field order must match the Python dataclasses** (31 `Game` fields, 18 `Settings` fields) or byte equality fails. **Gate: D-19** (`float_roundtrip` — without it the round-trip test passes on fixtures and fails on real data), **D-18** (typed scalars), **D-20** (`Settings` UTF-8), **D-21** (BOM, nesting). |
 | T-03 | `core::runners` — families, archive extraction, env/launch, desktop shortcuts | Arch | Largest port. Security tests are the gate. |
 | T-04 | `core::installers` | Arch | Wizard/poll state machine with injectable clock. |
 | T-05 | `core::covers` + `exe_icons` + `netpaths` | Arch | PE parser + GVFS mapping. Cover paths are user-controlled strings — apply the D-18 typed-scalar rule to `cover_path` too. |
@@ -319,7 +328,7 @@ same file (D-05).
 | T-16 | Flatpak: new manifest, `cargo-sources.json`, `build.sh` | Pkg | Removes PySide6/llvm21/PYTHONPATH. Keeps Wine base, osslsigncode, DXVK. |
 | T-17 | `scripts/verify.sh` + headless smoke test | Pkg | 7 stages per `packaging.md` §6. |
 | T-18 | Metadata: desktop file, metainfo, README, version bump to 0.8.0 | Pkg + UX | Version-lockstep test. |
-| T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. Walk **B-01…B-05** — hand-edit the file named for each and confirm the real app survives it. "The port does not copy the bug" is a claim that needs demonstrating, not asserting. |
+| T-19 | Phase 3 verification pass | Advocate | Walk every P-item against the running Flatpak. Walk **B-01…B-06** — hand-edit the file named for each and confirm the real app survives it. "The port does not copy the bug" is a claim that needs demonstrating, not asserting. |
 | T-20 | `docs/migration/REPORT.md` | Lead | Final deliverable. |
 
 Ordering rationale: logic (`T-02`–`T-06`) lands before UI, so the UI is built
