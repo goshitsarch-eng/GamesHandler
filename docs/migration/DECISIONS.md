@@ -1054,11 +1054,33 @@ neither of which this app uses. The feature name is a misnomer for our purpose
 cover UI. Enabling it requires regenerating `build-aux/flatpak/cargo-sources.json`,
 since `async-fs` is absent from it today; `scripts/verify.sh` stage 6 enforces that.
 
-**Cost, measured.** `image-webp 0.2.4` and `gif 0.13.3` are already locked *and*
-already vendored — reachable today only via `resvg`, which `iced_tiny_skia` pulls
-in for SVG. `async-fs` is the only genuinely new crate; its likely transitive
-dependencies (`blocking`, `futures-lite`, `async-lock`, `polling`, `fastrand`,
-`event-listener`, `piper`, `memchr`) are all already in `Cargo.lock`.
+**Cost, measured — and corrected.** This paragraph originally said `gif` was
+already vendored and that "`async-fs` is the only genuinely new crate". **That
+was wrong**, and the way it was wrong is worth recording: `image`'s optional
+`gif` dependency is **unversioned**, while `resvg` pins `gif = "0.13.3"`. Cargo
+therefore does not reuse the existing crate — it appends a **second, duplicate**
+`gif 0.14.2`. Verified: `Cargo.lock` now holds both `gif 0.13.3` and `gif 0.14.2`,
+and the regenerated `cargo-sources.json` vendors both.
+
+So enabling this feature adds **two** crates, not one: `async-fs 2.2.0` and
+`gif 0.14.2`, and it means `gif` compiles twice in the sandbox. The lesson is the
+mirror image of the one this entry was meant to teach: "it is already in
+`Cargo.lock`" is not evidence that a feature costs nothing, because a
+*differently versioned* copy is a genuinely new crate. Only `image-webp 0.2.4`
+was already locked and vendored (via `resvg`, which `iced_tiny_skia` pulls in for
+SVG) and remains so.
+
+The original prediction about `async-fs`'s transitive dependencies was sound —
+`blocking`, `futures-lite`, `async-lock`, `polling`, `fastrand`, `event-listener`,
+`piper` and `memchr` were all already locked and none had to be added.
+
+**Verified after landing:** `cargo tree -f "{p} {f}" -p image` →
+`image v0.25.10 bmp,gif,ico,jpeg,png,webp`, and `cargo tree -e features -i image`
+shows the edge `image feature "webp" ← libcosmic feature "animated-image"`. There
+is exactly one `image` package in `Cargo.lock`, which `iced`/`iced_graphics`/
+`iced_tiny_skia` also depend on, so feature unification is **mechanically forced**
+rather than inferred — a stronger result than the reasoning this entry originally
+rested on. `flatpak-build` then compiled the whole set offline with zero errors.
 
 **Two adjacent facts established by the same probe, so they are not re-litigated.**
 - The `.ico` path needs **no** fix: `image`'s `"ico"` feature implies `bmp` + `png`,
@@ -1068,12 +1090,15 @@ dependencies (`blocking`, `futures-lite`, `async-lock`, `polling`, `fastrand`,
   normal outcome (F-N), not an edge case, and it is why extension-based branching
   is forbidden in the cover UI (D-13's constraint, restated in `ux.md` §12.5).
 
-**Verification still owed, and it is narrower than the probe.** The probe showed
-that `image` decodes webp *when its webp feature is on*. It did **not** show that
-enabling libcosmic's `animated-image` is sufficient for iced's decode path — that
-rests on feature unification: both libcosmic and iced depend on the same
-`image 0.25.10`, so `image/webp` enabled through libcosmic unifies onto the
-instance iced decodes with. The reasoning is sound but it is reasoning, so the
-landing task requires an end-to-end check that a real `<id>.webp` renders through
-`iced`'s widget path after the feature is enabled — not merely that the crate can
-decode it in isolation.
+**Verification owed, and it is now narrower than when this was written.** The
+unification question is **settled**: `cargo tree -e features -i image` shows the
+edge `image feature "webp" ← libcosmic feature "animated-image"`, and there is
+exactly one `image` package in `Cargo.lock` that `iced` also depends on, so
+`image/webp` cannot fail to reach iced's decode path. That was the reasoning this
+entry had to flag as unproven; it is now a mechanical fact.
+
+What remains genuinely unverified is the **end-to-end render**: that a real
+`<id>.webp` displays through iced's widget path. The cover UI is T-14 and does
+not exist, so this cannot be checked yet, and neither the crate-level probe nor
+the `cargo tree` output above is evidence for it — they show the decoder is
+reachable, not that a render succeeds. Tracked as T-22, owed once T-14 lands.
