@@ -940,9 +940,24 @@ stage_oracle() {
 
 # ---------------------------------------------------------------------------
 # Stage: python-tests — the Python suite stays green (DECISIONS D-17)
+#
+# PYTHONDONTWRITEBYTECODE: without it the stage can grade a *stale* revision.
+# CPython validates a cached .pyc by the source's mtime, truncated to whole
+# seconds, plus its size — so an edit that keeps the file's size and lands in
+# the same second as the previous compile is not detected, and the cached
+# bytecode for the previous revision is executed. Measured while writing the
+# #93 check: renaming a dict key `"T-12"` to `"T-99"` (same byte count) and
+# restoring it left `python3 -m unittest` loading the mutated module while the
+# file on disk held the original — the suite reported the previous revision's
+# verdict, both ways round. That is #92's shape (a measurement that cannot
+# fail) sitting in the runner rather than in a check, and it bites hardest on
+# exactly the same-size edits this project makes constantly. `-B` alone only
+# stops writes; with no bytecode written there is nothing stale to read, but
+# any `__pycache__` left behind by earlier runs must be removed once by hand.
 # ---------------------------------------------------------------------------
 stage_python() {
     env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
+        PYTHONDONTWRITEBYTECODE=1 \
         python3 -m unittest discover -s tests -t . -v
 }
 
