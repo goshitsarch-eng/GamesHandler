@@ -372,3 +372,44 @@ small, and paid once.
 
 **Verification.** T-02 asserts the exact fixture bytes from
 `docs/migration/oracle/fixtures/*.out.json`.
+
+**Bounded (added after F-F).** Byte-equality is a goal for realistic data, not
+an invariant. Python renders floats with C `%g` exponent rules and `serde_json`
+uses Ryu, so they disagree on a minority of values — Python writes `1e-07` and
+`10000000.0` where Rust writes `1e-7` and `1e7`. Real timestamps (~1.7e9)
+round-trip identically, and the escaping part of this decision (the actual
+motivation) is unaffected. The round-trip test therefore asserts byte equality
+**and**, for values differing only in exponent spelling, numeric equality after
+reparse. We do not contort the writer to emulate `printf`. See FINDINGS §F-F.
+
+---
+
+## D-16. Parse JSON numbers leniently; out-of-range literals must not drop the library
+
+**Question.** Python accepts a numeric literal that exceeds `f64` range
+(`1e400` → `inf`) and then normalizes it. `serde_json` **rejects** it, which
+would discard the whole `games.json`. And Python accepts integers of arbitrary
+size, converting to the nearest `f64`; `serde_json`'s default path does not.
+
+**Options considered.**
+1. Use `serde_json`'s default number handling; accept that such files are
+   rejected.
+2. Parse leniently — accept any numeric literal, saturating to `±inf` outside
+   `f64` range, then apply the existing normalization table.
+
+**Choice.** Option 2 — **lenient parsing**.
+
+**Why.** This is exactly the failure mode D-06 exists to prevent, reached by a
+different input than `NaN`. D-06 chose compatibility so a user's library
+survives; a file the Python app loads fine must not be silently emptied by the
+Rust app. The blast radius is the deciding factor: Python's tolerance loses one
+field (`added` is regenerated from the clock; `last_played` → `0.0`, neither of
+which carries information a user entered), whereas a parse error loses every
+game in the file. Under the resolution order, working correctly wins.
+
+**Implementation note.** `serde_json` alone is insufficient — its
+`arbitrary_precision` feature keeps the literal as a string, which then needs
+the same saturating conversion. Either route is acceptable; whichever is chosen
+must be proven against `docs/migration/oracle/fixtures/out_of_range/`, which
+pins Python's behaviour for `1e400`, `-1e400`, a 30-digit integer, `i64::MAX`,
+and `u64::MAX+1`.

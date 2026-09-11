@@ -113,6 +113,70 @@ load→save cycle. Parity item **P-75** depends on this: Rust must use a
 `#[serde(deny_unknown_fields)]`-free derive that *discards* extras, not one
 that errors.
 
+### F-F. Float→text rendering differs between Python and `serde_json`
+
+Verified by running both. `serde_json` uses Ryu; Python uses David Gay/Grisu
+shortest-repr with **C-style `printf("%g")` exponent rules**. They agree on
+most values but not all — 2 of the 14 probe cases differ:
+
+| f64 | Python `json.dumps` | `serde_json` |
+|---|---|---|
+| `1e-7` | `1e-07` | `1e-7` |
+| `1e7` | `10000000.0` | `1e7` |
+| `1e-10` | `1e-10` | `1e-10` |
+| `1e23` | `1e+23` | `1e+23` |
+| `1e16` | `1e+16` | `1e+16` |
+| `0.1+0.2` | `0.30000000000000004` | `0.30000000000000004` |
+| `1700000000.5` | `1700000000.5` | `1700000000.5` |
+| `5e-324` | `5e-324` | `5e-324` |
+
+Python pads the exponent to at least two digits (`1e-07`) and switches to
+exponential notation only at ≥1e16, so whole values like `1e7` print as
+`10000000.0` where Ryu says `1e7`.
+
+**Impact.** Timestamps are the only floats in the format, and `time.time()`
+values (~1.7e9) round-trip identically — so in practice this bites only on
+hand-edited or synthetic values. It does, however, **break the strict
+byte-equality test** that D-15 relies on, so the port cannot simply call
+`serde_json::to_string` and compare.
+
+**Decision (folds into D-15):** byte-equality is a **goal for realistic data,
+not an invariant**, and the test is written to say so — the fixture
+`floats.out.json` is compared against Python's output, and where a value
+legitimately differs only in exponent spelling, the test asserts
+**numeric equality after reparse** rather than byte equality. Do not contort
+the writer to emulate `%g`. Recorded in DECISIONS D-16.
+
+### F-G. `1e400` is fatal to a naive `serde_json` port
+
+Python parses an out-of-`f64`-range literal to `inf`, which `from_dict` then
+normalizes. `serde_json` **rejects the literal outright**
+(`number out of range at line 1 column 5`).
+
+The difference is not cosmetic. Under `Library.load`, Python's tolerance means
+one game's `added` is regenerated and **the rest of the library survives**;
+`serde_json` erroring means **the entire file is discarded** — the same
+failure class D-06 was written to prevent, reached by a different input.
+
+Verified Python behaviour:
+
+| literal | result |
+|---|---|
+| `1e400` | parses to `inf` → `added` regenerated, `last_played` → `0.0`, sort OK |
+| `-1e400` | parses to `-inf` → same normalization, sort OK |
+| `123456789012345678901234567890` | arbitrary-precision `int` → `1.2345678901234568e+29` |
+| `9223372036854775807` (i64::MAX) | → `9.223372036854776e+18` |
+| `18446744073709551616` (u64::MAX+1) | → `1.8446744073709552e+19` |
+
+**Decision:** the port must parse JSON numbers **leniently** — accept any
+numeric literal, saturating to `±inf` when it exceeds `f64` range, then apply
+the same normalization. `serde_json`'s own number handling is insufficient;
+use a lenient parse path (e.g. `serde_json`'s arbitrary-precision or a
+pre-pass that rewrites out-of-range literals) and prove it against
+`fixtures/out_of_range/*`. This is a **hard requirement**, not a nicety: the
+whole point of D-06 is that a file Python tolerates must not take the library
+down. Recorded as DECISIONS D-16.
+
 ### F-E. Validation-failure fallbacks are fixed constants, not "keep previous"
 
 `Settings.from_dict` resets to literals: an unknown `color_scheme` becomes
@@ -132,6 +196,8 @@ side cannot silently diverge.
 | Valid JSON that is not a list (`{"name":…}`) | rejected → empty library |
 | Trailing garbage after valid JSON | `JSONDecodeError` → whole file rejected |
 | `NaN` / `Infinity` in the file | **accepted** by Python; `added` regenerated, `last_played` → `0.0` |
+| `1e400` / `-1e400` in the file | **accepted** (→ `±inf`) → normalized; see F-G |
+| Integers beyond `i64`/`u64`, or beyond `f64` precision | accepted, converted to nearest `f64` |
 | Non-dict list entries (`"str"`, `42`, `null`) | skipped individually, rest of file kept |
 | Entry with empty `name` | skipped |
 | Duplicate `id`s | last one wins (`{"id": t…, "name":"First"}`, then `"Second"` → `Second`) |

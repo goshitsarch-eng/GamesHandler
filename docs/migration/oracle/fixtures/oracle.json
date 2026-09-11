@@ -85,7 +85,7 @@
         "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "last_played": 5.0
       },
-      "added_value": 1789092695.8395746,
+      "added_value": 1789092836.4126127,
       "added_is_recent": true,
       "is_linux": false,
       "display_category": "Uncategorized"
@@ -220,7 +220,7 @@
         "id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         "last_played": 0.0
       },
-      "added_value": 1789092695.8396237,
+      "added_value": 1789092836.4126592,
       "added_is_recent": true,
       "is_linux": false,
       "display_category": "Uncategorized"
@@ -265,7 +265,7 @@
         "id": "ffffffffffffffffffffffffffffffff",
         "last_played": 0.0
       },
-      "added_value": 1789092695.8396356,
+      "added_value": 1789092836.4126716,
       "added_is_recent": true,
       "is_linux": false,
       "display_category": "Uncategorized"
@@ -310,7 +310,7 @@
         "id": "gggggggggggggggggggggggggggggggg",
         "last_played": 0.0
       },
-      "added_value": 1789092695.839647,
+      "added_value": 1789092836.4126828,
       "added_is_recent": true,
       "is_linux": false,
       "display_category": "Uncategorized"
@@ -400,7 +400,7 @@
         "id": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
         "last_played": 0.0
       },
-      "added_value": 1789092695.8396688,
+      "added_value": 1789092836.412704,
       "added_is_recent": true,
       "is_linux": false,
       "display_category": "Uncategorized"
@@ -493,7 +493,7 @@
         "id": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
         "last_played": 0.0
       },
-      "added_value": 1789092695.8396902,
+      "added_value": 1789092836.4127307,
       "added_is_recent": true,
       "is_linux": false,
       "display_category": "Uncategorized"
@@ -537,7 +537,7 @@
         "id": "llllllllllllllllllllllllllllllll",
         "last_played": 0.0
       },
-      "added_value": 1789092695.839701,
+      "added_value": 1789092836.4127424,
       "added_is_recent": true,
       "is_linux": false,
       "display_category": "\u65e5\u672c\u8a9e"
@@ -581,7 +581,7 @@
         "id": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
         "last_played": 0.0
       },
-      "added_value": 1789092695.8397129,
+      "added_value": 1789092836.4127529,
       "added_is_recent": true,
       "is_linux": false,
       "display_category": "Uncategorized"
@@ -625,7 +625,7 @@
         "id": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
         "last_played": 0.0
       },
-      "added_value": 1789092695.839723,
+      "added_value": 1789092836.412763,
       "added_is_recent": true,
       "is_linux": true,
       "display_category": "Uncategorized"
@@ -656,7 +656,7 @@
       "names": [
         "NaN game"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"NaN game\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"pppppppppppppppppppppppppppppppp\",\n    \"added\": 1789092695.840261,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"NaN game\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"pppppppppppppppppppppppppppppppp\",\n    \"added\": 1789092836.4132838,\n    \"last_played\": 0.0\n  }\n]"
     },
     "non_dict_entries": {
       "input": "[\"a string\", 42, null, {\"id\": \"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\", \"name\": \"Real\"}]",
@@ -664,7 +664,7 @@
       "names": [
         "Real"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Real\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\",\n    \"added\": 1789092695.8403847,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"Real\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\",\n    \"added\": 1789092836.4134054,\n    \"last_played\": 0.0\n  }\n]"
     },
     "empty_name": {
       "input": "[{\"id\": \"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\", \"name\": \"\"}, {\"id\": \"ssssssssssssssssssssssssssssssss\", \"name\": \"Kept\"}]",
@@ -672,7 +672,7 @@
       "names": [
         "Kept"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Kept\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"ssssssssssssssssssssssssssssssss\",\n    \"added\": 1789092695.8404956,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"Kept\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"ssssssssssssssssssssssssssssssss\",\n    \"added\": 1789092836.4135256,\n    \"last_played\": 0.0\n  }\n]"
     },
     "duplicate_ids": {
       "input": "[{\"id\": \"tttttttttttttttttttttttttttttttt\", \"name\": \"First\"}, {\"id\": \"tttttttttttttttttttttttttttttttt\", \"name\": \"Second\"}]",
@@ -680,7 +680,7 @@
       "names": [
         "Second"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Second\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"tttttttttttttttttttttttttttttttt\",\n    \"added\": 1789092695.8406005,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"Second\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"tttttttttttttttttttttttttttttttt\",\n    \"added\": 1789092836.4136665,\n    \"last_played\": 0.0\n  }\n]"
     },
     "unicode_out": {
       "input": "[{\"id\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\", \"name\": \"Pok\u00e9mon \u2014 \u2713\", \"category\": \"\u65e5\u672c\u8a9e\"}]",
@@ -688,7 +688,7 @@
       "names": [
         "Pok\u00e9mon \u2014 \u2713"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"Pok\\u00e9mon \\u2014 \\u2713\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"\\u65e5\\u672c\\u8a9e\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n    \"added\": 1789092695.840702,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"Pok\\u00e9mon \\u2014 \\u2713\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"\\u65e5\\u672c\\u8a9e\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n    \"added\": 1789092836.4137897,\n    \"last_played\": 0.0\n  }\n]"
     },
     "blank_category": {
       "input": "[{\"id\": \"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\", \"name\": \"A\", \"category\": \"  \"}, {\"id\": \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\", \"name\": \"B\", \"category\": \"RPG\"}]",
@@ -697,7 +697,7 @@
         "A",
         "B"
       ],
-      "output_bytes": "[\n  {\n    \"name\": \"A\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"  \",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\",\n    \"added\": 1789092695.840807,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"B\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"RPG\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\",\n    \"added\": 1789092695.840811,\n    \"last_played\": 0.0\n  }\n]"
+      "output_bytes": "[\n  {\n    \"name\": \"A\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"  \",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\",\n    \"added\": 1789092836.4139047,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"B\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"RPG\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\",\n    \"added\": 1789092836.413909,\n    \"last_played\": 0.0\n  }\n]"
     },
     "trailing_garbage": {
       "input": "[{\"id\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\", \"name\": \"X\"}] trailing",
@@ -992,6 +992,105 @@
         "default_virtual_desktop": false,
         "close_on_launch": false
       }
+    }
+  },
+  "float_format": {
+    "note": "Python's rendering of each f64 in save() output, plus the raw dumps() form",
+    "cases": {
+      "exp_single_digit": {
+        "value": "1e-07",
+        "json_dumps": "1e-07"
+      },
+      "exp_single_digit_pos": {
+        "value": "10000000.0",
+        "json_dumps": "10000000.0"
+      },
+      "exp_two_digit": {
+        "value": "1e-10",
+        "json_dumps": "1e-10"
+      },
+      "exp_two_digit_pos": {
+        "value": "1e+23",
+        "json_dumps": "1e+23"
+      },
+      "whole_large": {
+        "value": "1e+16",
+        "json_dumps": "1e+16"
+      },
+      "whole_large2": {
+        "value": "1e+17",
+        "json_dumps": "1e+17"
+      },
+      "frac": {
+        "value": "0.30000000000000004",
+        "json_dumps": "0.30000000000000004"
+      },
+      "third": {
+        "value": "0.3333333333333333",
+        "json_dumps": "0.3333333333333333"
+      },
+      "max_f64": {
+        "value": "1e+308",
+        "json_dumps": "1e+308"
+      },
+      "min_subnormal": {
+        "value": "5e-324",
+        "json_dumps": "5e-324"
+      },
+      "int_precision_limit": {
+        "value": "9007199254740992.0",
+        "json_dumps": "9007199254740992.0"
+      },
+      "typical_ts": {
+        "value": "1700000000.5",
+        "json_dumps": "1700000000.5"
+      },
+      "zero": {
+        "value": "0.0",
+        "json_dumps": "0.0"
+      },
+      "small_whole": {
+        "value": "100.0",
+        "json_dumps": "100.0"
+      }
+    },
+    "saved_bytes": "[\n  {\n    \"name\": \"exp_single_digit\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000000\",\n    \"added\": 1e-07,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"exp_single_digit_pos\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000001\",\n    \"added\": 10000000.0,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"exp_two_digit\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000002\",\n    \"added\": 1e-10,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"exp_two_digit_pos\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000003\",\n    \"added\": 1e+23,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"frac\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000006\",\n    \"added\": 0.30000000000000004,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"int_precision_limit\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"0000000000000000000000000000000a\",\n    \"added\": 9007199254740992.0,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"max_f64\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000008\",\n    \"added\": 1e+308,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"min_subnormal\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000009\",\n    \"added\": 5e-324,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"small_whole\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"0000000000000000000000000000000d\",\n    \"added\": 100.0,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"third\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000007\",\n    \"added\": 0.3333333333333333,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"typical_ts\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"0000000000000000000000000000000b\",\n    \"added\": 1700000000.5,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"whole_large\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000004\",\n    \"added\": 1e+16,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"whole_large2\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"00000000000000000000000000000005\",\n    \"added\": 1e+17,\n    \"last_played\": 0.0\n  },\n  {\n    \"name\": \"zero\",\n    \"exe_path\": \"\",\n    \"runner\": \"wine-system\",\n    \"prefix_path\": \"\",\n    \"arguments\": \"\",\n    \"cover_path\": \"\",\n    \"category\": \"Uncategorized\",\n    \"steam_appid\": 0,\n    \"kind\": \"windows\",\n    \"working_directory\": \"\",\n    \"additional_app\": \"\",\n    \"mangohud\": false,\n    \"gamemode\": false,\n    \"prefer_sdl\": false,\n    \"wayland\": false,\n    \"hdr\": false,\n    \"esync\": true,\n    \"fsync\": true,\n    \"dxvk\": true,\n    \"vkd3d\": true,\n    \"nvapi\": false,\n    \"fsr\": false,\n    \"battleye\": true,\n    \"eac\": true,\n    \"gamescope\": false,\n    \"virtual_desktop\": false,\n    \"virtual_desktop_size\": \"1920x1080\",\n    \"environment\": \"\",\n    \"id\": \"0000000000000000000000000000000c\",\n    \"added\": 0.0,\n    \"last_played\": 0.0\n  }\n]"
+  },
+  "out_of_range": {
+    "overflow_to_inf": {
+      "parsed": true,
+      "count": 1,
+      "added": "1789092836.4155483",
+      "last_played": "0.0",
+      "sort_ok": true
+    },
+    "neg_overflow": {
+      "parsed": true,
+      "count": 1,
+      "added": "1789092836.4156249",
+      "last_played": "0.0",
+      "sort_ok": true
+    },
+    "big_int": {
+      "parsed": true,
+      "count": 1,
+      "added": "1.2345678901234568e+29",
+      "last_played": "0.0",
+      "sort_ok": true
+    },
+    "i64_max": {
+      "parsed": true,
+      "count": 1,
+      "added": "9.223372036854776e+18",
+      "last_played": "0.0",
+      "sort_ok": true
+    },
+    "u64_max_plus": {
+      "parsed": true,
+      "count": 1,
+      "added": "1.8446744073709552e+19",
+      "last_played": "0.0",
+      "sort_ok": true
     }
   },
   "constants": {

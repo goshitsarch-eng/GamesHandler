@@ -173,7 +173,62 @@ p = OUT / "settings_notdict.in.json"
 p.write_text("[1,2,3]", encoding="utf-8")
 results["settings"]["not_a_dict"] = {"to_dict": Settings.load(path=p).to_dict()}
 
-# ---------------------------------------------------------------- 7. constants
+# ------------------------------------------------- 7. float byte-format fidelity
+# Rust's serde_json and Python's json differ in how they render f64 to text.
+# These cases pin the Python side so the port can be tested against it.
+# (See FINDINGS.md F-F: exponents, and F-G: out-of-range literals.)
+float_cases = [
+    ("exp_single_digit", 1e-7), ("exp_single_digit_pos", 1e7),
+    ("exp_two_digit", 1e-10), ("exp_two_digit_pos", 1e23),
+    ("whole_large", 1e16), ("whole_large2", 1e17),
+    ("frac", 0.1 + 0.2), ("third", 1.0 / 3.0),
+    ("max_f64", 1e308), ("min_subnormal", 5e-324),
+    ("int_precision_limit", 9007199254740992.0),
+    ("typical_ts", 1700000000.5), ("zero", 0.0), ("small_whole", 100.0),
+]
+p = OUT / "floats.in.json"
+p.write_text(json.dumps([{"id": "%032x" % i, "name": label,
+                          "added": v, "last_played": 0.0}
+                         for i, (label, v) in enumerate(float_cases)]), encoding="utf-8")
+lib = Library(path=p)
+out = OUT / "floats.out.json"
+lib.path = out
+lib.save()
+results["float_format"] = {
+    "note": "Python's rendering of each f64 in save() output, plus the raw dumps() form",
+    "cases": {label: {"value": repr(v), "json_dumps": json.dumps(v)} for label, v in float_cases},
+    "saved_bytes": out.read_text(encoding="utf-8"),
+}
+
+# Out-of-f64-range and huge-integer literals in the source file. Python accepts
+# these; serde_json rejects `1e400` outright. Reachability matters: a rejection
+# discards the whole library, an acceptance normalizes one field.
+oob_cases = {
+    "overflow_to_inf": '[{"id": "%s", "name": "Ov", "added": 1e400, "last_played": 1e400}]' % ("1"*32),
+    "neg_overflow": '[{"id": "%s", "name": "NegOv", "added": -1e400, "last_played": -1e400}]' % ("2"*32),
+    "big_int": '[{"id": "%s", "name": "BigInt", "added": 123456789012345678901234567890}]' % ("3"*32),
+    "i64_max": '[{"id": "%s", "name": "I64Max", "added": 9223372036854775807}]' % ("4"*32),
+    "u64_max_plus": '[{"id": "%s", "name": "U64P", "added": 18446744073709551616}]' % ("5"*32),
+}
+results["out_of_range"] = {}
+for label, text in oob_cases.items():
+    p = OUT / f"{label}.in.json"
+    p.write_text(text, encoding="utf-8")
+    lib = Library(path=p)
+    notes = {"parsed": len(lib) > 0, "count": len(lib)}
+    if len(lib):
+        g = lib.get({"overflow_to_inf":"1"*32, "neg_overflow":"2"*32, "big_int":"3"*32,
+                     "i64_max":"4"*32, "u64_max_plus":"5"*32}[label])
+        notes["added"] = repr(g.added)
+        notes["last_played"] = repr(g.last_played)
+        try:
+            lib.all(sort="added")
+            notes["sort_ok"] = True
+        except Exception as exc:
+            notes["sort_ok"] = f"{type(exc).__name__}: {exc}"
+    results["out_of_range"][label] = notes
+
+# ---------------------------------------------------------------- 8. constants
 results["constants"] = {
     "COLOR_SCHEMES": list(COLOR_SCHEMES), "VIEW_MODES": list(VIEW_MODES),
     "SORT_MODES": list(SORT_MODES), "UNCATEGORIZED": UNCATEGORIZED,
