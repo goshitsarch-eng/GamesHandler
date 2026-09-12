@@ -29,7 +29,7 @@ use gamehandler_core::installers::{
     installer_by_id, prepare_prefix, wait_for_installer, wait_for_prefix_idle,
 };
 use gamehandler_core::models::{Game, Library, SORT_MODES};
-use gamehandler_core::netpaths::NetpathsShares;
+use gamehandler_core::netpaths::{NetpathsShares, as_local_path};
 use gamehandler_core::paths::{self, SystemEnv};
 use gamehandler_core::plugins::{PluginEnv, SystemPluginEnv};
 use gamehandler_core::runners::families::ReleaseInfo;
@@ -56,7 +56,7 @@ mod theme;
 mod view;
 
 pub use state::{
-    CoverHit, ExeField, FormField, FormToken, GameForm, GameId, Page, PendingInstall, PrefixTool,
+    CoverHit, FormField, FormToken, GameForm, GameId, Page, PendingInstall, PrefixTool,
     ReleasesStatus, State,
 };
 
@@ -586,10 +586,15 @@ pub enum Message {
     ConfirmDeleteGame(GameId),
     /// The user confirmed; do it. `removeGame()` past the dialog.
     DeleteGameConfirmed(GameId),
-    /// Open a file chooser for one of the form's path fields.
-    PickExeFile { field: ExeField },
-    /// The chooser closed. `None` means it was cancelled.
-    ExeFileChosen { field: ExeField, path: Option<String> },
+    /// Open the reference's `exeDialog` (`GameFormPage.qml:334-347`).
+    ///
+    /// This used to carry an `ExeField` naming one of four path fields. The
+    /// reference has no parameterised chooser — one exe dialog with an inline
+    /// handler (`GameFormPage.qml:337-345`) — so U6 deleted the enum with the
+    /// false premise and the message is what the dialog is.
+    PickExeFile,
+    /// The exe chooser closed. `None` means it was cancelled.
+    ExeFileChosen(Option<String>),
     /// Open a chooser for a cover image, as opposed to fetching one.
     PickCoverFile,
     /// The cover chooser closed. `None` means it was cancelled.
@@ -1683,15 +1688,121 @@ impl Shell {
                     }
                 }
             }
-            // TODO(T-09): open the portal file chooser for `field`.
-            Message::PickExeFile { field: _field } => {}
-            // TODO(T-11): write the chosen path into the form field, or a no-op
-            // when cancelled.
-            Message::ExeFileChosen { field: _field, path: _path } => {}
-            // TODO(T-11): the cover file chooser.
-            Message::PickCoverFile => {}
-            // TODO(T-11): import the chosen image and set `cover_path`.
-            Message::CoverFileChosen(_path) => {}
+            // `exeDialog` (`GameFormPage.qml:334-347`): "Select an executable"
+            // with the exe-then-all filters, answered by `ExeFileChosen`.
+            Message::PickExeFile => {
+                return cosmic::app::Task::perform(
+                    async move {
+                        use cosmic::dialog::file_chooser::open;
+                        let filters = exe_file_filters();
+                        let mut dialog = open::Dialog::new()
+                            .title("Select an executable")
+                            .current_filter(filters[0].clone());
+                        for filter in filters {
+                            dialog = dialog.filter(filter);
+                        }
+                        let answer = dialog
+                            .open_file()
+                            .await
+                            .map(|response| response.url().clone());
+                        exe_choice_message(answer)
+                    },
+                    cosmic::Action::App,
+                );
+            }
+            // `exeDialog.onAccepted` (`GameFormPage.qml:337-345`): the path
+            // into the field, and the basename-minus-extension into the name
+            // when the name is blank (P-20's second clause). A cancel — or a
+            // closed form — writes nothing: the QML has no `onRejected`.
+            Message::ExeFileChosen(path) => {
+                let Some(path) = path.filter(|path| !path.is_empty()) else {
+                    return cosmic::task::none();
+                };
+                let Some(form) = self.state.game_form.as_mut() else {
+                    return cosmic::task::none();
+                };
+                form.set_field(FormField::ExePath, path.clone());
+                if form.name.trim().is_empty() {
+                    // `base.substring(0, dot)` for `dot > 0`, else `base`:
+                    // `file_stem` agrees on every shape, including a leading
+                    // dot (`.profile` is kept whole) and no extension. A path
+                    // with no file name at all leaves the blank name blank,
+                    // which is setting it to `""` with fewer steps.
+                    if let Some(stem) = Path::new(&path).file_stem() {
+                        form.set_field(
+                            FormField::Name,
+                            stem.to_string_lossy().into_owned(),
+                        );
+                    }
+                }
+            }
+            // `coverDialog` (`GameFormPage.qml:349-358`): "Select a cover
+            // image" with the images filter, answered by `CoverFileChosen`.
+            Message::PickCoverFile => {
+                return cosmic::app::Task::perform(
+                    async move {
+                        use cosmic::dialog::file_chooser::open;
+                        let filters = image_file_filters();
+                        let mut dialog = open::Dialog::new()
+                            .title("Select a cover image")
+                            .current_filter(filters[0].clone());
+                        for filter in filters {
+                            dialog = dialog.filter(filter);
+                        }
+                        let answer = dialog
+                            .open_file()
+                            .await
+                            .map(|response| response.url().clone());
+                        cover_choice_message(answer)
+                    },
+                    cosmic::Action::App,
+                );
+            }
+            // `coverDialog.onAccepted` plus `importCustomCover`
+            // (`bridge.py:589-600`): the copy into the covers dir, the path
+            // into the form, and the reference's notice on either outcome. A
+            // cancel writes nothing; without an open form there is nowhere to
+            // put the path, so the copy is not even attempted — and a form
+            // without an id names no file, so that is silence too (both
+            // constructors set the id, which is why this is a guard rather
+            // than a behaviour).
+            //
+            // The success assignment is read, not tested: it writes the real
+            // covers directory, which the suite must not touch. The failure
+            // half is pinned below (a missing source fails before any write,
+            // so that test is hermetic); the copy itself is core's
+            // `copy_custom_cover`, tested there.
+            Message::CoverFileChosen(path) => {
+                let Some(path) = path.filter(|path| !path.is_empty()) else {
+                    return cosmic::task::none();
+                };
+                let Some(game_id) = self
+                    .state
+                    .game_form
+                    .as_ref()
+                    .and_then(|form| form.game_id.clone())
+                else {
+                    return cosmic::task::none();
+                };
+                match gamehandler_core::covers::copy_custom_cover(
+                    Path::new(&path),
+                    &game_id,
+                    &gamehandler_core::paths::covers_dir(),
+                ) {
+                    Ok(destination) => {
+                        if let Some(form) = self.state.game_form.as_mut() {
+                            form.cover_path =
+                                destination.to_string_lossy().into_owned();
+                        }
+                        return self.state.toast_task("Custom cover added".to_string());
+                    }
+                    Err(error) => {
+                        return self
+                            .state
+                            .toast_task(format!("Could not copy cover: {error}"));
+                    }
+                }
+            }
             // The one toast handler that exists, because `Toasts` needs it to
             // expire a toast at all.
             Message::DismissToast(id) => {
@@ -3167,6 +3278,52 @@ fn easy_install_cover(executable: &Path, game_id: &str) -> String {
     )
     .map(|path| path.to_string_lossy().into_owned())
     .unwrap_or_default()
+}
+
+/// The reference's cover `nameFilters` (`GameFormPage.qml:352`): images only.
+/// No "All files" row — the QML lists exactly one filter, and a cover that is
+/// not an image is not a cover.
+fn image_file_filters() -> Vec<cosmic::dialog::file_chooser::FileFilter> {
+    use cosmic::dialog::file_chooser::FileFilter;
+    vec![
+        FileFilter::new("Images")
+            .glob("*.png")
+            .glob("*.jpg")
+            .glob("*.jpeg")
+            .glob("*.webp"),
+    ]
+}
+
+/// The pure half of the exe reply: the chooser's answer as the local path
+/// `urlToLocalFile` hands the form (`bridge.py:601-603`, P-21's browse half).
+/// Cancel and portal failure alike become `None` — the reference's exe dialog
+/// has no `onRejected` at all, so rejecting leaves the field as it was.
+///
+/// This runs the URL string through [`as_local_path`] rather than
+/// `Url::to_file_path` (which is what the locate reply uses): the reference
+/// runs the raw `selectedFile` through `as_local_path`, so a share URL keeps
+/// its verbatim fallback instead of collapsing to a cancel.
+fn exe_choice_message(
+    answer: Result<url::Url, cosmic::dialog::file_chooser::Error>,
+) -> Message {
+    Message::ExeFileChosen(
+        answer
+            .ok()
+            .map(|url| as_local_path(url.as_str())),
+    )
+}
+
+/// The pure half of the cover reply: same URL handling as the exe choice —
+/// the reference runs both through `as_local_path` (`importCustomCover` does
+/// it on the way in, `bridge.py:593`) — and the same silent cancel.
+fn cover_choice_message(
+    answer: Result<url::Url, cosmic::dialog::file_chooser::Error>,
+) -> Message {
+    Message::CoverFileChosen(
+        answer
+            .ok()
+            .map(|url| as_local_path(url.as_str())),
+    )
 }
 
 fn easy_install_wizard_finished(
@@ -4712,11 +4869,8 @@ mod tests {
         // unwritten arm (D-34) — which is exactly what `"g"` did.
         Message::ConfirmDeleteGame(_) => ("ConfirmDeleteGame", Message::ConfirmDeleteGame("sample-game".to_string())),
         Message::DeleteGameConfirmed(_) => ("DeleteGameConfirmed", Message::DeleteGameConfirmed("g".to_string())),
-        Message::PickExeFile { .. } => ("PickExeFile", Message::PickExeFile { field: ExeField::Exe }),
-        Message::ExeFileChosen { .. } => ("ExeFileChosen", Message::ExeFileChosen {
-                            field: ExeField::Prefix,
-                            path: Some("/tmp/g.exe".to_string()),
-                        }),
+        Message::PickExeFile => ("PickExeFile", Message::PickExeFile),
+        Message::ExeFileChosen(_) => ("ExeFileChosen", Message::ExeFileChosen(Some("/tmp/g.exe".to_string()))),
         Message::PickCoverFile => ("PickCoverFile", Message::PickCoverFile),
         Message::CoverFileChosen(_) => ("CoverFileChosen", Message::CoverFileChosen(Some("/tmp/c.png".to_string()))),
         Message::DismissToast(_) => ("DismissToast", Message::DismissToast(cosmic::widget::toaster::ToastId::default())),
@@ -5182,6 +5336,15 @@ mod tests {
             "CoverFetchFinished",
             "FetchCoverForForm",
             "FormCoverFetchFinished",
+            // U6's four. Live because the form draws both browse buttons (F4,
+            // F8): the exe row's opens the exe dialog and the cover row's the
+            // image dialog, and each has its reply. The cancelled half of
+            // both replies is what the samples' `Some` keeps out of reach
+            // here (see the picker tests for the `None` half).
+            "PickExeFile",
+            "ExeFileChosen",
+            "PickCoverFile",
+            "CoverFileChosen",
             "Notify",
             // T-09's five. They are live because the Library page needs them:
             // the search box, the category filter, the button that clears both
@@ -7300,6 +7463,271 @@ mod tests {
         assert!(
             !missing.exists(),
             "the probe must not create the file it failed to read"
+        );
+    }
+
+    /// Picking an exe opens the chooser: the request's whole effect is the
+    /// task, which the portal answers.
+    #[test]
+    fn picking_an_exe_opens_the_chooser() {
+        let mut shell = shell_with_work_to_do();
+
+        let effect = observe(&mut shell, Message::PickExeFile);
+
+        assert!(
+            effect.task_units > 0,
+            "the exe row's browse button must open the dialog: {effect:?}"
+        );
+    }
+
+    /// A chosen exe fills the field and, when the name is blank, auto-fills it
+    /// from the basename-minus-extension (`GameFormPage.qml:339-344`, P-20).
+    #[test]
+    fn a_chosen_exe_fills_the_field_and_autofills_a_blank_name() {
+        let mut shell = shell_with_work_to_do();
+        shell
+            .state
+            .game_form
+            .as_mut()
+            .expect("the fixture opens a form")
+            .name = String::new();
+
+        let _ = observe(
+            &mut shell,
+            Message::ExeFileChosen(Some("/tmp/Setup/setup.exe".to_string())),
+        );
+
+        let form = shell.state.game_form.as_ref().expect("the form stays open");
+        assert_eq!(form.exe_path, "/tmp/Setup/setup.exe");
+        assert_eq!(form.name, "setup");
+    }
+
+    /// A chosen exe does not touch a name the user typed: the autofill fires
+    /// only for a blank name (`nameField.text.trim() === ""`).
+    #[test]
+    fn a_chosen_exe_keeps_a_typed_name() {
+        let mut shell = shell_with_work_to_do();
+
+        let _ = observe(
+            &mut shell,
+            Message::ExeFileChosen(Some("/tmp/Setup/setup.exe".to_string())),
+        );
+
+        let form = shell.state.game_form.as_ref().expect("the form stays open");
+        assert_eq!(form.exe_path, "/tmp/Setup/setup.exe");
+        assert_eq!(form.name, "Fixture", "the typed name must win over the basename");
+    }
+
+    /// The autofill agrees with the QML on the edge shapes: `dot > 0` keeps a
+    /// leading-dot basename whole, and a basename with no dot is kept whole
+    /// too (`base.substring(0, dot)` else `base`).
+    #[test]
+    fn autofill_agrees_with_the_qml_on_edge_shapes() {
+        for (chosen, named) in [("/tmp/x/.profile", ".profile"), ("/tmp/x/README", "README")] {
+            let mut shell = shell_with_work_to_do();
+            shell
+                .state
+                .game_form
+                .as_mut()
+                .expect("the fixture opens a form")
+                .name = String::new();
+
+            let _ = observe(&mut shell, Message::ExeFileChosen(Some(chosen.to_string())));
+
+            assert_eq!(
+                shell.state.game_form.as_ref().expect("the form stays open").name,
+                named,
+                "choosing {chosen} must name the game {named}"
+            );
+        }
+    }
+
+    /// A cancelled exe choice writes nothing: the QML's exe dialog has no
+    /// `onRejected`, so rejecting leaves the field — and the name — as they
+    /// were. The empty string is the same silence, for a mapping that hands
+    /// one over.
+    #[test]
+    fn a_cancelled_exe_choice_writes_nothing() {
+        for path in [None, Some(String::new())] {
+            let mut shell = shell_with_work_to_do();
+
+            let effect = observe(&mut shell, Message::ExeFileChosen(path));
+
+            assert!(
+                !effect.state_changed && effect.task_units == 0,
+                "a cancel must change nothing and say nothing: {effect:?}"
+            );
+        }
+    }
+
+    /// A chosen exe with no open form is silence: there is no field to write
+    /// it into.
+    #[test]
+    fn a_chosen_exe_with_no_open_form_is_silence() {
+        let mut shell = shell_with_work_to_do();
+        shell.state.game_form = None;
+
+        let effect = observe(
+            &mut shell,
+            Message::ExeFileChosen(Some("/tmp/Setup/setup.exe".to_string())),
+        );
+
+        assert!(
+            !effect.state_changed && effect.task_units == 0,
+            "with no form open the choice has nowhere to go: {effect:?}"
+        );
+    }
+
+    /// Picking a cover opens the chooser, like picking an exe.
+    #[test]
+    fn picking_a_cover_opens_the_chooser() {
+        let mut shell = shell_with_work_to_do();
+
+        let effect = observe(&mut shell, Message::PickCoverFile);
+
+        assert!(
+            effect.task_units > 0,
+            "the cover row's browse button must open the dialog: {effect:?}"
+        );
+    }
+
+    /// A cancelled cover choice writes nothing, for the same absent
+    /// `onRejected` as the exe dialog.
+    #[test]
+    fn a_cancelled_cover_choice_writes_nothing() {
+        let mut shell = shell_with_work_to_do();
+
+        let effect = observe(&mut shell, Message::CoverFileChosen(None));
+
+        assert!(
+            !effect.state_changed && effect.task_units == 0,
+            "a cancel must change nothing and say nothing: {effect:?}"
+        );
+    }
+
+    /// A cover choice for a source that is not there is reported with the
+    /// reference's sentence (`bridge.py:595-597`). Hermetic: the copy refuses
+    /// a missing source before any write, so this test touches no covers
+    /// directory. (The success assignment is read, not tested — see
+    /// `CoverFileChosen`.)
+    #[test]
+    fn a_cover_choice_for_a_missing_source_is_reported() {
+        let mut shell = shell_with_work_to_do();
+
+        let _ = observe(
+            &mut shell,
+            Message::CoverFileChosen(Some("/tmp/gh-no-such-cover.png".to_string())),
+        );
+
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("Could not copy cover"),
+            "the failed import must surface; toasts: {:?}",
+            shell.state.toasts
+        );
+        assert!(
+            shell.state.game_form.as_ref().expect("the form stays open").cover_path.is_empty(),
+            "a failed import must not write the field"
+        );
+    }
+
+    /// A cover choice with no open form attempts no copy: without a form
+    /// there is nowhere to put the path, so the arm returns before the
+    /// filesystem is even consulted — no toast either.
+    #[test]
+    fn a_cover_choice_with_no_open_form_attempts_no_copy() {
+        let mut shell = shell_with_work_to_do();
+        shell.state.game_form = None;
+
+        let effect = observe(
+            &mut shell,
+            Message::CoverFileChosen(Some("/tmp/gh-no-such-cover.png".to_string())),
+        );
+
+        assert!(
+            !effect.state_changed && effect.task_units == 0,
+            "with no form open the choice must not even be attempted: {effect:?}"
+        );
+    }
+
+    /// The exe choice resolves the URL the share-aware way: `file://` is
+    /// unwrapped and decoded, and an unmounted share keeps its verbatim
+    /// fallback (`as_local_path`, P-21's browse half). Cancel and portal
+    /// failure alike become `None`.
+    #[test]
+    fn the_exe_choice_resolves_the_url_the_share_aware_way() {
+        let file = url::Url::parse("file:///tmp/My%20Game/setup.exe").unwrap();
+        assert!(
+            matches!(&exe_choice_message(Ok(file)), Message::ExeFileChosen(path)
+                if path.as_deref() == Some("/tmp/My Game/setup.exe")),
+            "a `file://` choice must arrive decoded"
+        );
+
+        let share = url::Url::parse("smb://example.invalid/share/setup.exe").unwrap();
+        assert!(
+            matches!(&exe_choice_message(Ok(share)), Message::ExeFileChosen(path)
+                if path.as_deref() == Some("smb://example.invalid/share/setup.exe")),
+            "an unmounted share must keep its verbatim fallback, not collapse to a cancel"
+        );
+
+        assert!(
+            matches!(
+                &exe_choice_message(Err(cosmic::dialog::file_chooser::Error::Cancelled)),
+                Message::ExeFileChosen(path) if path.is_none()
+            ),
+            "a rejection must reach the silent half"
+        );
+    }
+
+    /// The cover choice resolves like the exe choice: the reference runs both
+    /// through `as_local_path`.
+    #[test]
+    fn the_cover_choice_resolves_like_the_exe_choice() {
+        let file = url::Url::parse("file:///tmp/My%20Cover.png").unwrap();
+        assert!(
+            matches!(&cover_choice_message(Ok(file)), Message::CoverFileChosen(path)
+                if path.as_deref() == Some("/tmp/My Cover.png")),
+            "a `file://` choice must arrive decoded"
+        );
+
+        assert!(
+            matches!(
+                &cover_choice_message(Err(cosmic::dialog::file_chooser::Error::Cancelled)),
+                Message::CoverFileChosen(path) if path.is_none()
+            ),
+            "a rejection must reach the silent half"
+        );
+    }
+
+    /// The image filter is the reference's one `nameFilters` row
+    /// (`GameFormPage.qml:352`): images only, no "All files".
+    #[test]
+    fn the_image_filter_lists_images_and_no_all_files_row() {
+        let filters = image_file_filters();
+
+        assert_eq!(filters.len(), 1, "the reference lists exactly one filter");
+        assert_eq!(filters[0].label(), "Images");
+        assert_eq!(
+            filters[0].pattern_filters(),
+            ["*.png", "*.jpg", "*.jpeg", "*.webp"]
+        );
+    }
+
+    /// Only the executable row carries a browse press, and it is the exe
+    /// dialog's (F4). The button-to-message edge itself is read, not tested
+    /// (see `text_control`); this pins the table half — which row holds which
+    /// press — so a press that moved rows fails here.
+    #[test]
+    fn only_the_exe_row_carries_a_browse_press() {
+        let pressed: Vec<(&str, &crate::Message)> = crate::view::form::TEXT_ROWS
+            .iter()
+            .filter_map(|row| row.browse_press.as_ref().map(|press| (row.id, press)))
+            .collect();
+
+        // `Message` is not `PartialEq`, so the pair is matched rather than
+        // compared: one row, the exe row, carrying the exe dialog's press.
+        assert!(
+            matches!(pressed.as_slice(), [(id, crate::Message::PickExeFile)] if *id == "exeField"),
+            "exactly the exe row must carry exactly the exe dialog's press: {pressed:?}"
         );
     }
 

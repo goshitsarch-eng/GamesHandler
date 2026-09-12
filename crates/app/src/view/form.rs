@@ -29,15 +29,15 @@
 //! [`crate::state::GameForm::apply`], tested without a display, and
 //! [`crate::Message::SaveGameForm`] is what carries the values there.
 //!
-//! Three of the reference's controls are **not drawn**, each because drawing it
-//! would put a control on screen that cannot do what it appears to do:
+//! One of the reference's controls is **not drawn**, because drawing it would
+//! put a control on screen that cannot do what it appears to do: the runner
+//! selector, for a Linux game only (`:172-183`) — not a missing message but a
+//! missing *capability*, recorded by [`RUNNER_ROW_HIDDEN_FOR_LINUX`].
 //!
-//! - the executable and cover file choosers (`:101-106`, `:159-164`, and the two
-//!   `FileDialog`s at `:334-361`) — [`crate::Message::PickExeFile`] and
-//!   [`crate::Message::PickCoverFile`], both still empty arms (U6);
-//! - the runner selector, for a Linux game only (`:172-183`) — not a missing
-//!   message but a missing *capability*, recorded by
-//!   [`RUNNER_ROW_HIDDEN_FOR_LINUX`].
+//! The executable and cover browse buttons (`:101-106`, `:159-164`, and the two
+//! `FileDialog`s at `:334-361`) used to be on this list with Find cover. U5
+//! drew Find cover; U6 drew both browse buttons behind
+//! [`crate::Message::PickExeFile`] and [`crate::Message::PickCoverFile`].
 //!
 //! **Find cover** (`:151-158`) used to be the fourth: its arm was empty, so the
 //! button was gated behind a `COVER_FETCH_MISSING` constant the suite read.
@@ -55,7 +55,8 @@
 
 use cosmic::iced::Length;
 use cosmic::widget::{
-    Column, Row, button, container, divider, dropdown, scrollable, text, text_input, toggler,
+    Column, Row, button, container, divider, dropdown, icon, scrollable, text, text_input,
+    toggler,
 };
 use cosmic::Element;
 use gamehandler_core::covers::DEFAULT_CATEGORIES;
@@ -174,6 +175,11 @@ pub struct TextRow {
     pub placeholder: &'static str,
     /// The QML's `enabled: !form.isLinux` on that row.
     pub windows_only: bool,
+    /// The message the row's browse button sends, when the row has one. Only
+    /// the executable row does (F4): the reference's only other `FileDialog`
+    /// is the cover picker's, and the cover row is hand-built rather than a
+    /// [`TextRow`].
+    pub browse_press: Option<crate::Message>,
 }
 
 /// The reference's text rows that are *not* gated on a second condition, in the
@@ -193,6 +199,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Name:",
         placeholder: "",
         windows_only: false,
+        browse_press: None,
     },
     TextRow {
         field: FormField::ExePath,
@@ -200,6 +207,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Executable:",
         placeholder: "",
         windows_only: false,
+        browse_press: Some(crate::Message::PickExeFile),
     },
     TextRow {
         field: FormField::Arguments,
@@ -207,6 +215,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Launch arguments:",
         placeholder: "",
         windows_only: false,
+        browse_press: None,
     },
     TextRow {
         field: FormField::WorkingDirectory,
@@ -214,6 +223,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Working directory:",
         placeholder: "",
         windows_only: false,
+        browse_press: None,
     },
     TextRow {
         field: FormField::PrefixPath,
@@ -221,6 +231,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Wine prefix (optional):",
         placeholder: PREFIX_PLACEHOLDER,
         windows_only: true,
+        browse_press: None,
     },
     TextRow {
         field: FormField::AdditionalApp,
@@ -228,6 +239,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Additional application:",
         placeholder: ADDITIONAL_APP_PLACEHOLDER,
         windows_only: false,
+        browse_press: None,
     },
 ];
 
@@ -238,6 +250,7 @@ pub const ENVIRONMENT_ROW: TextRow = TextRow {
     label: "Environment variables:",
     placeholder: ENVIRONMENT_PLACEHOLDER,
     windows_only: false,
+    browse_press: None,
 };
 
 /// The desktop-size row (`:306-312`). See [`TEXT_ROWS`] for why it is separate.
@@ -247,6 +260,7 @@ pub const DESKTOP_SIZE_ROW: TextRow = TextRow {
     label: "Desktop size:",
     placeholder: DESKTOP_SIZE_PLACEHOLDER,
     windows_only: true,
+    browse_press: None,
 };
 
 /// One switch of the reference's `FormLayout`.
@@ -616,12 +630,26 @@ fn section<'a>(heading: &'a str) -> Element<'a, Message> {
 fn text_control<'a>(row: &TextRow, form: &'a GameForm, live: bool) -> Element<'a, Message> {
     let field = row.field;
     let input = text_input(row.placeholder, form.field(field)).width(Length::Fill);
-    if live {
-        input
-            .on_input(move |value| field_message(field, value))
-            .into()
+    let input = if live {
+        input.on_input(move |value| field_message(field, value)).into()
     } else {
         input.into()
+    };
+    // The reference's browse `ToolButton` (`document-open`, F4): an icon
+    // button with no text, which is why its edge — that this button sends
+    // this row's press — is read, not tested. An icon publishes no string
+    // for `drawn_strings`, and driving a click needs `Widget::update` over a
+    // laid-out element, which the credits page measured and abandoned; the
+    // press value itself is a constant, so a press-fn would pin nothing a
+    // copy of the constant does not.
+    match row.browse_press.clone() {
+        Some(press) => Row::new()
+            .push(input)
+            .push(button::icon(icon::from_name("document-open")).on_press(press))
+            .spacing(6)
+            .width(Length::Fill)
+            .into(),
+        None => input,
     }
 }
 
@@ -728,6 +756,9 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
                     },
                 }),
             )
+            // The custom-cover browse `ToolButton` (`:159-164`, F8): same
+            // read-not-tested edge as the exe row's — see `text_control`.
+            .push(button::icon(icon::from_name("document-open")).on_press(Message::PickCoverFile))
             .width(Length::Fill)
             .into()
         }));

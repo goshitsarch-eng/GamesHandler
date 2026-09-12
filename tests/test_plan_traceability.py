@@ -246,12 +246,18 @@ TAG_SOURCE = r"TODO\(T-[0-9]{2}[a-z]?\)"
 #
 # They sit far below the real count on purpose, because the count is falling
 # fast and legitimately — 32 tags when this was written, 19 when the direction
-# first landed, 13 while a neighbouring agent consolidated `main.rs` — so a
-# floor near the measurement turns a landed task into a red suite. What the low
-# number cannot distinguish, a real defect cannot exploit either: an id with no
-# row is reported whatever the population, and a scan that returns nothing is
-# the only way to make the check vacuous.
-MIN_TAGS = 4
+# first landed, 13 while a neighbouring agent consolidated `main.rs`, 3 after
+# U5/U6 resolved the cover and picker arms' TODOs — so a floor near the
+# measurement turns a landed task into a red suite. What the low number cannot
+# distinguish, a real defect cannot exploit either: an id with no row is
+# reported whatever the population, and a scan that returns nothing is the only
+# way to make the check vacuous.
+#
+# `MIN_TAGS` is 1 for that reason: the tripwire fires only on the empty scan.
+# The day the last genuine tag resolves, zero is the legitimate count and this
+# floor needs the redesign its docstring already contemplates (exit 1 as a real
+# answer) rather than another lowering.
+MIN_TAGS = 1
 MIN_TAG_IDS = 2
 MIN_TAG_FILES = 2
 

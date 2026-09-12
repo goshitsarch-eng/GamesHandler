@@ -29,6 +29,7 @@ use std::path::PathBuf;
 
 use cosmic::widget::toaster::Toasts;
 use gamehandler_core::models::{Game, Library, SYSTEM_WINE, UNCATEGORIZED};
+use gamehandler_core::netpaths::as_local_path;
 use gamehandler_core::plugins::{self, PluginEnv, PluginRow};
 use gamehandler_core::runners::families::ReleaseInfo;
 use gamehandler_core::runners::RunnerManager;
@@ -93,36 +94,6 @@ impl Page {
             // and are the same string here.
             Page::Credits => "About & Credits",
             Page::Settings => "Settings",
-        }
-    }
-}
-
-/// Which path a file chooser is being opened for.
-///
-/// QML passed a field name string to one chooser slot; the enum is what makes
-/// an unhandled field a compile error rather than a silent no-op. The four
-/// values correspond to the four path-like text fields in the game form.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ExeField {
-    /// `exePath` — the executable to run.
-    Exe,
-    /// `workingDirectory` — the directory to start it in.
-    WorkingDir,
-    /// `additionalApp` — a launcher to run *around* the game (MangoHud's own
-    /// wrapper, a mod loader) as opposed to instead of it.
-    AdditionalApp,
-    /// `prefixPath` — an existing Wine prefix to use.
-    Prefix,
-}
-
-impl ExeField {
-    /// The form field this chooser fills, as `bridge.py` names it.
-    pub fn form_key(self) -> &'static str {
-        match self {
-            ExeField::Exe => "exePath",
-            ExeField::WorkingDir => "workingDirectory",
-            ExeField::AdditionalApp => "additionalApp",
-            ExeField::Prefix => "prefixPath",
         }
     }
 }
@@ -449,16 +420,12 @@ impl GameForm {
     /// message is [`NAME_REQUIRED`] verbatim, because it is user-visible and the
     /// reference's wording is the specification.
     ///
-    /// # The one place this is not yet faithful
-    ///
-    /// `exePath` and `workingDirectory` are trimmed here where the reference
-    /// calls `as_local_path` (`netpaths.py:144-160`) on them. That function —
-    /// `file://` unwrapping, then mapping a network-share URL onto its GVFS
-    /// mount — is not ported, and the two differ only for inputs nothing in this
-    /// form can produce today: the Browse buttons behind both fields are
-    /// `Message::PickExeFile`'s still-empty arm, so the text is hand-typed. A URL
-    /// pasted into either field is therefore stored verbatim instead of being
-    /// unwrapped, and losing that is this line, not a design choice.
+    /// `exePath` and `workingDirectory` go through [`as_local_path`], as the
+    /// reference does (`bridge.py:413-417`) — P-21's save half. This used to
+    /// say the function "is not ported", which was stale when written:
+    /// [`netpaths::as_local_path`](gamehandler_core::netpaths::as_local_path)
+    /// exists and the launch path already resolves through it; `apply` just
+    /// never called it, so a URL pasted into either field was stored verbatim.
     pub fn apply(&self, existing: Option<&Game>) -> Result<Game, String> {
         let name = self.name.trim();
         if name.is_empty() {
@@ -478,9 +445,9 @@ impl GameForm {
         }
 
         game.name = name.to_string();
-        game.exe_path = self.exe_path.trim().to_string();
+        game.exe_path = as_local_path(self.exe_path.trim());
         game.arguments = self.arguments.trim().to_string();
-        game.working_directory = self.working_directory.trim().to_string();
+        game.working_directory = as_local_path(self.working_directory.trim());
         game.kind = if self.is_linux { "linux" } else { "windows" }.to_string();
         // Both branches collapse onto System Wine: a Linux game never uses a
         // runner, and a Windows game with no runner chosen falls back to it.
@@ -650,8 +617,8 @@ fn default_toggle(settings: &Settings, name: &str) -> bool {
 /// The reference's form is a `QVariantMap` the QML mutates by key and hands to
 /// `saveGame` whole (`GameFormPage.qml:40-51`). A key that stops matching what
 /// `saveGame` reads is a field that silently stops saving, and nothing on either
-/// side is a compile error — so here the key set is an enum, for the reason
-/// [`ExeField`]'s doc gives.
+/// side is a compile error — so here the key set is an enum, which is what
+/// makes an unhandled field a compile error rather than a silent no-op.
 ///
 /// [`Self::form_key`] is the `bridge.py` spelling, and it is pinned against that
 /// file rather than trusted, because it is also the wire format `getGame` and
@@ -1023,17 +990,6 @@ mod tests {
     }
 
     #[test]
-    fn the_exe_fields_name_the_form_keys_bridge_py_reads() {
-        // These strings are the wire format between the form and `saveGame`:
-        // a rename here without a rename there silently stops the field being
-        // saved, which is not a compile error on either side.
-        assert_eq!(ExeField::Exe.form_key(), "exePath");
-        assert_eq!(ExeField::WorkingDir.form_key(), "workingDirectory");
-        assert_eq!(ExeField::AdditionalApp.form_key(), "additionalApp");
-        assert_eq!(ExeField::Prefix.form_key(), "prefixPath");
-    }
-
-    #[test]
     fn the_toggle_list_is_the_fifteen_from_bridge_py_in_order() {
         // The order is load-bearing: `_TOGGLE_FIELDS` is iterated to apply
         // defaults and to build the form, and a field that moved would be
@@ -1047,6 +1003,40 @@ mod tests {
         let before = sorted.len();
         sorted.dedup();
         assert_eq!(sorted.len(), before, "a toggle is listed twice");
+    }
+
+    /// Saving unwraps a `file://` URL on the way in: P-21's save half
+    /// (`bridge.py:413-417`). A plain path passes through unchanged, so every
+    /// existing save is unaffected — only the URL spelling moves.
+    #[test]
+    fn apply_unwraps_a_file_url_on_the_way_in() {
+        let mut form = GameForm::new_template(&Settings::default(), "u6-save".to_string());
+        form.set_field(FormField::Name, "Saved".to_string());
+        form.set_field(FormField::ExePath, "file:///tmp/My%20Game/setup.exe".to_string());
+        form.set_field(FormField::WorkingDirectory, "/tmp/plain".to_string());
+
+        let game = form.apply(None).expect("a named form applies");
+
+        assert_eq!(game.exe_path, "/tmp/My Game/setup.exe");
+        assert_eq!(game.working_directory, "/tmp/plain");
+    }
+
+    /// Saving keeps an unmounted share verbatim: `as_local_path` returns the
+    /// original value when no GVFS mount answers, so the caller — here the
+    /// library entry — can say something accurate about it later rather than
+    /// storing a path that does not exist.
+    #[test]
+    fn apply_keeps_an_unmounted_share_verbatim() {
+        let mut form = GameForm::new_template(&Settings::default(), "u6-share".to_string());
+        form.set_field(FormField::Name, "Shared".to_string());
+        form.set_field(
+            FormField::ExePath,
+            "smb://example.invalid/share/setup.exe".to_string(),
+        );
+
+        let game = form.apply(None).expect("a named form applies");
+
+        assert_eq!(game.exe_path, "smb://example.invalid/share/setup.exe");
     }
 
     #[test]

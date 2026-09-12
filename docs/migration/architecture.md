@@ -178,8 +178,10 @@ pub enum Message {
     ConfirmDeleteGame(GameId),           // was: removeDialog + removeGame() (the QML asks
                                          //   first; §2.5's item 1 was struck when that surfaced)
     DeleteGameConfirmed(GameId),
-    PickExeFile { field: ExeField },     // file-chooser open; ExeField::{Exe,WorkingDir,AdditionalApp,Prefix}
-    ExeFileChosen { field: ExeField, path: Option<String> }, // None = cancelled
+    PickExeFile,                           // was: `PickExeFile { field: ExeField }` — U6 deleted
+                                         //   the enum with its false premise (no parameterised
+                                         //   chooser in the QML; one exe dialog, one message)
+    ExeFileChosen(Option<String>),       // None = cancelled
     PickCoverFile,
     CoverFileChosen(Option<String>),     // None = cancelled
     DismissToast(cosmic::widget::toaster::ToastId), // [UNVERIFIED: exact ToastId name/API]
@@ -249,7 +251,7 @@ pub enum Message {
 
 Count: 12 nav/dialog + 6 settings + 2 filters + 7 library + 4 covers + 6 runners
 + 8 installers + 3 plugins + 2 internal ≈ **50–55 variants** (exact count
-settles when `Page`/`ExeField` granularity is fixed). Unit tests must cover
+settles when `Page` granularity is fixed (`ExeField` was deleted in U6). Unit tests must cover
 every variant's `update()` transition: state change, persistence side effect,
 and returned `Task` (usually `Task::none()` except async spawns).
 
