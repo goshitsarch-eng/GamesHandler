@@ -434,6 +434,32 @@ exactly the Verify column's "CachyOS list has no `v3`/`znver4` assets";
 
 ### P-37 — Runner removal with confirm; games fall back to System Wine — **(C)**
 
+Code at HEAD (`afec332`) implements the dialog: `ConfirmRemoveRunner`
+carries id+name into `confirm_remove_runner` (`view/runners.rs:1049-1055`),
+`remove_runner_dialog` titles `"Remove {name}?"` with the fixed subtitle
+(`main.rs:1096-1111`), Remove sends `RemoveRunnerConfirmed` which clears the
+pending state before removing (`:1061-1064`).
+
+**Live-walk status 2026-09-12: NOT verified — the running build predates the
+dialog.** Instrument evidence: rail clicks navigate (ndiff 82037–434892) but
+16 content clicks over the delete-button area (x1100–1240 × y306–420,
+park-then-shoot discipline) all return ndiff 0; dropdown/release/guide clicks
+also ndiff 0. The deployed binary
+(`.../stable/active/files/bin/gamehandler`, the only deployed generation,
+running pid 1592061 since 05:02:54) contains the dialog subtitle string —
+but `git log -S "deleted from disk"` shows the string predates `afec332`
+(the commit only *moved* it into `remove_runner_subtitle()`), while the
+button's message changed `UninstallRunner` → `ConfirmRemoveRunner` in that
+same commit (`974d875:runners.rs:731` still sends `UninstallRunner`). A click
+that lands the old message removes the runner directly with no dialog — and
+`GE-Proton-testwalk` is still on disk, consistent with clicks landing
+nowhere at all. Either way the live build cannot verify the dialog. **#89
+(rebuild + reinstall from HEAD) is the gate; re-walk P-37 after it.**
+Clause-1 oracle `shots/172-dialog.png` (md5 `b7ecc142`) kept for the re-walk.
+
+The stale pre-dialog analysis below is superseded by the above; kept for
+history.
+
 Two clauses, both unmet. **No confirm dialog:** `grep -n "confirm\|Confirm"
 crates/app/src/view/runners.rs` returns nothing. **The Installed list is a
 pre-deletion snapshot:** the `UninstallRunner` arm (`view/runners.rs:997-1007`)
