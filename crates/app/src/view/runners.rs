@@ -1097,12 +1097,19 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
 /// to spell out: `uninstallRunner` assigns no field of the bridge at all, it
 /// only notifies, and the held rows have to be recomputed explicitly or they
 /// go stale exactly when the user is looking for the reason.
+///
+/// The order is the whole function: [`refresh`] snapshots
+/// `installed_protons()` synchronously and ships the snapshot into the reply
+/// task, so refreshing *before* the uninstall resurrects the removed row when
+/// the reply lands — the Installed list then names a build that is gone from
+/// disk, with a working delete button for it. T-19 watched that happen live;
+/// `the_removal_refreshes_after_the_uninstall_not_before` pins the order.
 fn remove_runner(state: &mut State, runner_id: &str) -> Task<Message> {
-    let rows = refresh(state);
     let line = uninstall_line(
         runner_id,
         proton::uninstall(state.runners.runners_directory(), runner_id),
     );
+    let rows = refresh(state);
     Task::batch([rows, push_toast(state, line)])
 }
 
@@ -2430,6 +2437,63 @@ mod tests {
             "the dialog must close on confirmation"
         );
         assert!(!state.runner_busy, "a removal is not a busy job");
+    }
+
+    /// Whether `remove_runner`'s body uninstalls before it refreshes — `None`
+    /// when the body no longer has the shape this reads, so a refactor that
+    /// moves the calls fails the guard instead of silently passing it.
+    fn removal_refreshes_after_uninstall(body: &str) -> Option<bool> {
+        let uninstall = body.find("proton::uninstall")?;
+        let refresh = body.find("refresh(state)")?;
+        Some(uninstall < refresh)
+    }
+
+    /// The instrument, driven on the defect it was written for and on the fix.
+    ///
+    /// `remove_runner` at `f37ca49`, verbatim: the refresh snapshots
+    /// `installed_protons()` before the uninstall deletes the build, so the
+    /// reply resurrects the row. T-19 watched the removed runner stay listed.
+    #[test]
+    fn the_removal_order_guard_reports_the_defect_it_was_written_for() {
+        let defect = "fn remove_runner(state: &mut State, runner_id: &str) -> Task<Message> {\n    let rows = refresh(state);\n    let line = uninstall_line(\n        runner_id,\n        proton::uninstall(state.runners.runners_directory(), runner_id),\n    );\n    Task::batch([rows, push_toast(state, line)])\n}";
+        assert_eq!(
+            removal_refreshes_after_uninstall(defect),
+            Some(false),
+            "the instrument must report the refresh-before-uninstall order"
+        );
+
+        let fixed = "fn remove_runner(state: &mut State, runner_id: &str) -> Task<Message> {\n    let line = uninstall_line(\n        runner_id,\n        proton::uninstall(state.runners.runners_directory(), runner_id),\n    );\n    let rows = refresh(state);\n    Task::batch([rows, push_toast(state, line)])\n}";
+        assert_eq!(
+            removal_refreshes_after_uninstall(fixed),
+            Some(true),
+            "the instrument must stay silent on the uninstall-before-refresh order"
+        );
+    }
+
+    /// And the instrument on this tree: `remove_runner` uninstalls first.
+    ///
+    /// A test cannot drive the refresh reply — the rows arrive inside an opaque
+    /// `Task` — so this is a source scan in the shape of
+    /// `no_dropdown_callback_turns_its_index_into_the_payload`, with the live
+    /// walk as its behavioral half: remove a runner and the row goes with it.
+    #[test]
+    fn the_removal_refreshes_after_the_uninstall_not_before() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/view/runners.rs");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{} is unreadable: {error}", path.display()));
+        let start = text
+            .find("fn remove_runner(")
+            .expect("`remove_runner` is where a removal refreshes");
+        let body = &text[start..];
+        let end = body
+            .find("\n}\n")
+            .expect("`remove_runner` ends where its closing brace is");
+        assert_eq!(
+            removal_refreshes_after_uninstall(&body[..end]),
+            Some(true),
+            "`remove_runner` must uninstall before it refreshes, or the reply \
+             resurrects the removed row"
+        );
     }
 
     /// `CloseDialog` clears a pending runner removal, like the form and the
