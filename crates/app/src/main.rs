@@ -2480,7 +2480,7 @@ impl Shell {
                             // here.
                             .duration(toaster::Duration::Long)
                             .action("Play".to_string(), move |_| {
-                                Message::LaunchGame(game_id.clone())
+                                installed_play_message(&game_id)
                             }),
                     )
                     .map(cosmic::Action::App);
@@ -3330,6 +3330,18 @@ fn cover_choice_message(
             .ok()
             .map(|url| as_local_path(url.as_str())),
     )
+}
+
+/// The installed toast's Play action, as a value: `showPassiveNotification`'s
+/// `function() { backend.playGame(gameId) }` (`Main.qml:159-161`).
+///
+/// A named function rather than an inline closure so the mapping is readable
+/// back — `Toast` keeps its action private with no accessor, so a test cannot
+/// drive the button; this pins the value the button *would* carry. What this
+/// does not close: the arm could stop calling this and build the message
+/// itself — the same call-site gap `remove_press`'s doc names.
+fn installed_play_message(game_id: &str) -> Message {
+    Message::LaunchGame(game_id.to_string())
 }
 
 fn easy_install_wizard_finished(
@@ -8916,6 +8928,238 @@ mod tests {
                      divergence (P-65), not cosmetics."
                 ),
             }
+        }
+    }
+
+    /// The installed toast's Play action launches the installed game: the value
+    /// [`installed_play_message`] carries into the toast's closure. The button
+    /// itself is undrivable — `Toast` keeps its action private — so this pins
+    /// the mapping and the arm's call site is read (see the function's doc).
+    #[test]
+    fn the_installed_toasts_play_action_launches_the_installed_game() {
+        assert!(
+            matches!(
+                installed_play_message("install-6"),
+                Message::LaunchGame(id) if id == "install-6"
+            ),
+            "Play must launch the entry the install just made"
+        );
+    }
+
+    /// Every `notify.emit` in `bridge.py`, and the port fragment that voices
+    /// it: P-69's audit, kept as data rather than prose.
+    ///
+    /// The bridge fragment is a distinctive core of the call (not the whole
+    /// sentence: `{game.name}` reads `{name}` here, and pinning whole
+    /// sentences would turn every rewording into a row edit). The port
+    /// fragment is the sentence's spelling under `crates/`. Two rows voice a
+    /// mechanism rather than a sentence: the `_async` default fail (161),
+    /// which every `Err` reply arm embodies by toasting the raw message, and
+    /// the prefix tool's bare `str(exc)` (499), which its reply arm passes
+    /// through untouched.
+    const NOTIFY_VOICES: [(&str, &str); 39] = [
+        ("notify.emit(message)", "toast_task(result.unwrap_err())"),
+        ("A game needs a name", "A game needs a name"),
+        ("Added “{game.name}”", "Added “{name}”"),
+        ("Updated “{game.name}”", "Updated “{name}”"),
+        ("Removed “{game.name}”", "Removed “{name}”"),
+        ("Select a game first", "Select a game first"),
+        ("Could not launch “{game.name}”", "Could not launch “{}”"),
+        ("Launching “{game.name}”…", "Launching “{name}”…"),
+        ("stopped right away: {reason}", "stopped right away: {reason}"),
+        (
+            "Prefix tools are only available for Windows games",
+            "Prefix tools are only available for Windows games",
+        ),
+        ("notify.emit(str(exc))", "Err(message) => message"),
+        ("Opening {tool} for", "Opening {} for"),
+        (
+            "Linux games do not use a Wine prefix",
+            "Linux games do not use a Wine prefix",
+        ),
+        (
+            "Could not open the prefix folder",
+            "Could not open the prefix folder",
+        ),
+        (
+            "Could not create the shortcut",
+            "Could not create the shortcut",
+        ),
+        ("Shortcut created at {path}", "Shortcut created at {}"),
+        (
+            "Cover set from {hit.origin_label}",
+            "Cover set from {}",
+        ),
+        ("Enter a game name first", "Enter a game name first"),
+        ("Looking for artwork for", "Looking for artwork for"),
+        (
+            "Cover found via {hit.origin_label}",
+            "Cover found via {}",
+        ),
+        ("Could not copy cover", "Could not copy cover"),
+        ("Custom cover added", "Custom cover added"),
+        ("Downloading {release.tag}", "Downloading {tag}…"),
+        (
+            "Installed {release.tag}. You can now choose",
+            "Installed {tag}. You can now choose",
+        ),
+        (
+            "Failed to install {release.tag}",
+            "Failed to install {tag}",
+        ),
+        ("Could not remove {runner_id}", "Could not remove {runner_id}"),
+        ("Removed {runner_id}", "Removed {runner_id}"),
+        (
+            "Another install is already running",
+            "Another install is already running",
+        ),
+        (
+            "is not available. Download a runner first",
+            "is not available. Download a runner first",
+        ),
+        (
+            "Could not create a prefix for",
+            "Could not create a prefix for",
+        ),
+        ("Downloading {installer.name}", "Downloading {}…"),
+        (
+            "Launching the {installer.name} installer",
+            "Launching the {} installer",
+        ),
+        (
+            "Could not find the {installer.name} executable",
+            "Could not find the {} executable",
+        ),
+        (
+            "Could not install {installer.name}",
+            "Could not install {}: {message}",
+        ),
+        (
+            "Kept the {pending['installer'].name} prefix",
+            "Kept the {} prefix",
+        ),
+        ("Installing {plugin.name}", "Installing {name}…"),
+        ("{plugin.name} is installed", "{name} is installed"),
+        (
+            "did not install. The command is shown",
+            "did not install. The command is shown",
+        ),
+        (
+            "Could not install {plugin.name}",
+            "Could not install {name}: {error}",
+        ),
+    ];
+
+    /// The `notify.emit(` call sites of `bridge.py`, each call as one string.
+    /// Paren-balanced across lines, because five of the calls span several;
+    /// none of them nests a paren inside a string, which the length bound
+    /// below would catch by swallowing the file.
+    fn notify_calls(bridge: &str) -> Vec<String> {
+        let mut calls = Vec::new();
+        let mut rest = bridge;
+        while let Some(at) = rest.find("notify.emit(") {
+            let mut depth = 0;
+            let mut end = None;
+            for (i, ch) in rest[at..].char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(at + i + 1);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let end = end.expect("an unterminated notify.emit call");
+            calls.push(rest[at..end].to_string());
+            rest = &rest[end..];
+        }
+        calls
+    }
+
+    /// Every Rust source file under `crates/`, concatenated: the haystack the
+    /// port fragments are read out of.
+    fn read_crates(root: &std::path::Path) -> String {
+        fn visit(dir: &std::path::Path, out: &mut String) {
+            let entries = std::fs::read_dir(dir)
+                .unwrap_or_else(|err| panic!("{} should be readable: {err}", dir.display()));
+            for entry in entries {
+                let path = entry
+                    .unwrap_or_else(|err| panic!("a dir entry should be readable: {err}"))
+                    .path();
+                if path.is_dir() {
+                    visit(&path, out);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    out.push_str(&std::fs::read_to_string(&path).unwrap_or_else(|err| {
+                        panic!("{} should be readable: {err}", path.display())
+                    }));
+                    out.push('\n');
+                }
+            }
+        }
+        let mut out = String::new();
+        visit(&root.join("crates/app/src"), &mut out);
+        visit(&root.join("crates/core/src"), &mut out);
+        out
+    }
+
+    /// **Every `notify.emit` in `bridge.py` has a voice in this tree.**
+    ///
+    /// Three directions, so the mapping fails loudly in each: a call no row
+    /// voices is a reference notice the port never says (port it and add the
+    /// row); a row matching no call is dead (the reference moved on, delete
+    /// it); a port fragment found nowhere is a regression (the sentence left
+    /// the tree). The call count itself is pinned: an upstream addition or
+    /// removal changes it, and the failure names the call that no longer
+    /// maps.
+    ///
+    /// What a row claims is "this notice is voiced *here*"; the arm tests
+    /// claim it is voiced *right*. A row's port fragment surviving only in a
+    /// comment while the arm is deleted would pass here — and fail the arm
+    /// test that asserts the toast — which is why the two halves stay
+    /// separate.
+    #[test]
+    fn every_reference_notify_has_a_port_voice() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../");
+        let bridge = std::fs::read_to_string(root.join("gamehandler/bridge.py")).unwrap_or_else(
+            |err| {
+                panic!(
+                    "bridge.py should be readable: it is the reference this shell was ported \
+                     from: {err}"
+                )
+            },
+        );
+        let calls = notify_calls(&bridge);
+        assert!(
+            calls.iter().all(|call| call.len() < 500),
+            "a call swallowed the file: the paren walk met a paren inside a string"
+        );
+        assert_eq!(
+            calls.len(),
+            NOTIFY_VOICES.len(),
+            "bridge.py gained or lost a notify.emit; the table maps {} — add or delete the \
+             row. Calls: {calls:?}",
+            NOTIFY_VOICES.len()
+        );
+        let port = read_crates(&root);
+        for (site, voice) in NOTIFY_VOICES {
+            assert!(
+                calls.iter().any(|call| call.contains(site)),
+                "no notify.emit contains {site:?}: the row is dead, delete it"
+            );
+            assert!(
+                port.contains(voice),
+                "nothing under crates/ says {voice:?}: the voice for {site:?} left the tree"
+            );
+        }
+        for call in &calls {
+            assert!(
+                NOTIFY_VOICES.iter().any(|(site, _)| call.contains(site)),
+                "no row voices this notify.emit — port it and add the row: {call:?}"
+            );
         }
     }
 
