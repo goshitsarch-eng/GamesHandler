@@ -2865,7 +2865,13 @@ fn prefix_folder(game: &Game) -> PathBuf {
 
 /// `f"{_launcher_command()} --launch {game.id}"` (`bridge.py:525`).
 fn shortcut_command(game: &Game) -> String {
-    format!("{} --launch {}", launcher_command(), game.id)
+    shortcut_command_with(game, &SystemPluginEnv)
+}
+
+/// [`shortcut_command`] with the environment injected, so a test can be inside
+/// a sandbox this process is not in.
+fn shortcut_command_with(game: &Game, env: &dyn PluginEnv) -> String {
+    format!("{} --launch {}", launcher_command_with(env), game.id)
 }
 
 /// The command a desktop shortcut runs to reach this install
@@ -2887,8 +2893,21 @@ fn shortcut_command(game: &Game) -> String {
 /// `PATH` scan. It is the tree's `shutil.which` port, down to CPython's
 /// empty-`PATH`-entry and default-path rules, which is exactly the lookup the
 /// reference performs.
-fn launcher_command() -> String {
-    let found = SystemPluginEnv.which("gamehandler");
+///
+/// The environment is injected so a test can be inside a sandbox this process
+/// is not in — which is where the first branch below matters. Inside the
+/// sandbox the `PATH` lookup is a trap: it resolves to
+/// `/app/bin/gamehandler`, a path that exists only in the mount namespace,
+/// while the `.desktop` file is written to the host's
+/// `~/.local/share/applications` — so the menu entry dangles. T-19 watched
+/// exactly that file get written. `flatpak run` plus the app id is the command
+/// a host menu can actually run, and it is this branch rather than a
+/// post-write repair because the `PATH` form is never right in here.
+fn launcher_command_with(env: &dyn PluginEnv) -> String {
+    if gamehandler_core::plugins::in_flatpak(env) {
+        return format!("flatpak run {APP_ID}");
+    }
+    let found = env.which("gamehandler");
     let Some(found) = found else {
         return "gamehandler".to_string();
     };
@@ -4075,7 +4094,7 @@ mod tests {
         let command = shortcut_command(&game);
 
         assert!(
-            command.starts_with(&launcher_command()),
+            command.starts_with(&launcher_command_with(&SystemPluginEnv)),
             "the shortcut must name the launcher first: {command:?}"
         );
 
@@ -4119,6 +4138,119 @@ mod tests {
             shortcut_command(&second),
             "both shortcuts are identical, so the command names something the \
              two games share — the name, which no lookup accepts"
+        );
+    }
+
+    /// A [`PluginEnv`] for shortcut tests: a `PATH` lookup, a file set, and
+    /// variables, each empty unless the test puts something in.
+    struct ShortcutEnv {
+        which: std::collections::BTreeMap<String, String>,
+        files: Vec<String>,
+        vars: std::collections::BTreeMap<String, String>,
+    }
+
+    impl ShortcutEnv {
+        fn new() -> Self {
+            Self {
+                which: std::collections::BTreeMap::new(),
+                files: Vec::new(),
+                vars: std::collections::BTreeMap::new(),
+            }
+        }
+
+        fn with_which(mut self, name: &str, path: &str) -> Self {
+            self.which.insert(name.to_string(), path.to_string());
+            self
+        }
+
+        fn with_file(mut self, path: &str) -> Self {
+            self.files.push(path.to_string());
+            self
+        }
+
+        fn with_var(mut self, key: &str, value: &str) -> Self {
+            self.vars.insert(key.to_string(), value.to_string());
+            self
+        }
+    }
+
+    impl paths::Env for ShortcutEnv {
+        fn var(&self, key: &str) -> Option<String> {
+            self.vars.get(key).cloned()
+        }
+    }
+
+    impl PluginEnv for ShortcutEnv {
+        fn which(&self, name: &str) -> Option<std::path::PathBuf> {
+            self.which.get(name).map(std::path::PathBuf::from)
+        }
+
+        fn exists(&self, path: &str) -> bool {
+            self.files.iter().any(|known| known == path)
+        }
+
+        fn euid(&self) -> Option<u32> {
+            None
+        }
+    }
+
+    /// Inside the sandbox the shortcut names `flatpak run`, not the binary's
+    /// own path — the `PATH` lookup resolves to `/app/bin/gamehandler`, which
+    /// exists only in the mount namespace, while the `.desktop` file is
+    /// written to the host. T-19 watched that dangling `Exec=` get written;
+    /// the matrix row this closes is T-07's caveat (c).
+    #[test]
+    fn a_shortcut_written_in_the_sandbox_names_flatpak_run() {
+        let mut game = Game::new_named("Alpha");
+        game.id = "11111111111111111111111111111111".to_string();
+        // Both Flatpak markers at once, and a `PATH` that would resolve to
+        // the sandbox binary if the lookup ran: the branch must win over the
+        // lookup rather than consult it.
+        let env = ShortcutEnv::new()
+            .with_var("FLATPAK_ID", "com.goshapps.GameHandler")
+            .with_file("/.flatpak-info")
+            .with_which("gamehandler", "/app/bin/gamehandler");
+
+        assert_eq!(
+            shortcut_command_with(&game, &env),
+            format!("flatpak run {APP_ID} --launch {}", game.id),
+        );
+    }
+
+    /// Outside the sandbox the `PATH` lookup still rules: a host install
+    /// keeps the binary's own path.
+    #[test]
+    fn a_shortcut_written_on_the_host_keeps_the_path_lookup() {
+        let mut game = Game::new_named("Alpha");
+        game.id = "11111111111111111111111111111111".to_string();
+        let env = ShortcutEnv::new().with_which("gamehandler", "/usr/bin/gamehandler");
+
+        assert_eq!(
+            shortcut_command_with(&game, &env),
+            format!("/usr/bin/gamehandler --launch {}", game.id),
+        );
+    }
+
+    /// The Flatpak form parses back into the launch verb and the game's id —
+    /// the #90b check for the three-token launcher, which `skip(1)` cannot
+    /// reach.
+    #[test]
+    fn a_flatpak_shortcut_parses_back_into_the_launch_verb_and_the_games_id() {
+        let mut game = Game::new_named("Alpha");
+        game.id = "11111111111111111111111111111111".to_string();
+        let env = ShortcutEnv::new().with_var("FLATPAK_ID", "com.goshapps.GameHandler");
+        let command = shortcut_command_with(&game, &env);
+
+        let args: Vec<&str> = command.split_whitespace().skip(3).collect();
+        let cli = Cli::try_parse_from(std::iter::once("gamehandler").chain(args.iter().copied()))
+            .unwrap_or_else(|error| {
+                panic!("{command:?} is not a command this binary accepts: {error}")
+            });
+        assert_eq!(
+            cli.launch.as_deref(),
+            Some(game.id.as_str()),
+            "the Flatpak shortcut's arguments parsed as launch={:?}",
+            cli.launch
         );
     }
 
