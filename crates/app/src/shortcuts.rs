@@ -83,15 +83,23 @@
 //! `Ctrl+C/X/V/A`, the arrows, Home/End, Delete, Enter, Escape
 //! (`iced/widget/src/text_input.rs:925-1290`) — and nothing else.
 //!
-//! `Ctrl+N`, `Ctrl+,` and `Ctrl+Q` are not in that set, so they reach this
-//! function **even while a text field has focus**. That is not a bug that
-//! survived: it is what the reference does. `Main.qml:122` sets
+//! `Ctrl+N`, `Ctrl+,` and `Ctrl+Q` are not in that set — and the sentence this
+//! paragraph used to end with, that the three therefore reach this function
+//! **even while a text field has focus**, was disproven live and is kept here
+//! crossed out rather than silently deleted. T-19 typed into the Add-game
+//! form's Name field and pressed `Ctrl+N`: the form did not reset, and the
+//! same holds with the library search focused. A focused `text_input` swallows
+//! these keys despite not binding them — the status that reaches
+//! `keyboard::listen()` is evidently not `Ignored` for them, whatever the
+//! `text_input.rs:925-1290` reading above suggests. That is a real divergence
+//! from the reference: `Main.qml:122` sets
 //! `context: Qt.ApplicationShortcut`, whose documented meaning is that the
 //! shortcut is active whenever a window of the application is active —
-//! independent of which widget holds focus — and Qt's default
-//! `Qt.WindowShortcut` is focus-independent too. Both toolkits' consumed-key
-//! sets coincide for these three, so the port reproduces the reference here by
-//! construction rather than by a hand-rolled focus check.
+//! independent of which widget holds focus. Unfocused, all four accelerators
+//! fire (walked live); focused, the user must first leave the field. Whether a
+//! raw-event subscription can recover the reference behaviour is unverified —
+//! a change to the shell's event plumbing either way, and not to this mapping —
+//! so this stands as a recorded divergence, not an attempted fix, under T-19.
 //!
 //! # The bound, stated rather than implied
 //!
@@ -152,8 +160,11 @@ mod tests {
     use cosmic::iced::keyboard::{Location, Modifiers, key};
 
     /// A `KeyPressed` for `character`, carrying `modifiers` and no text — which
-    /// is what winit reports for a Ctrl-modified key, and the reason a focused
-    /// `text_input` does not swallow these (see the module doc).
+    /// is what winit reports for a Ctrl-modified key. (An earlier revision of
+    /// this comment claimed that was the reason a focused `text_input` does
+    /// not swallow these; T-19 disproved it live — see the module doc. The
+    /// fixture is unchanged because the mapping is unchanged; only the claim
+    /// about delivery was wrong.)
     ///
     /// `key` and `modified_key` are given the same value because that is the
     /// case under test: `key` is the modifier-stripped one and it is the only
