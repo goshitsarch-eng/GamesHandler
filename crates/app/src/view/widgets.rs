@@ -88,7 +88,7 @@ use cosmic::Element;
 use cosmic::iced::gradient::Linear;
 use cosmic::iced::widget::container;
 use cosmic::iced::{Alignment, Background, Border, Color, Length, Radians};
-use cosmic::widget::{button, icon, image, mouse_area, text, Column, Row};
+use cosmic::widget::{button, image, mouse_area, text, Column, Row};
 use gamehandler_core::models::Game;
 use gamehandler_core::runners::RunnerManager;
 
@@ -132,15 +132,6 @@ const PREVIEW_LABEL_ID: &str = "gamehandler.cover.preview-label";
 /// (`:277`).
 const PLAY_LABEL: &str = "Play";
 
-/// The icon the reference puts on the Play control (`.name:
-/// "media-playback-start"`, `LibraryPage.qml:206` and `:278`), by the name
-/// freedesktop icon themes carry it under.
-///
-/// Resolved by name rather than embedded as bytes, the same way
-/// `view/installers.rs` asks for `run-install`: `icon::from_name` falls back to
-/// a symbolic name when the theme has nothing, so a missing icon is a different
-/// glyph rather than a missing button.
-const PLAY_ICON: &str = "media-playback-start";
 
 /// The box a caller wants a cover drawn in, and how to draw it.
 ///
@@ -361,7 +352,12 @@ pub fn play_button_id(game_id: &str) -> String {
 /// for the double-click on the card or row around it.
 fn play_button<'a, M: Clone + 'static>(game_id: &str, on_play: M) -> Element<'a, M> {
     button::standard(PLAY_LABEL)
-        .leading_icon(icon::from_name(PLAY_ICON))
+        // The reference's `.name: "media-playback-start"` (`LibraryPage.qml:206`
+        // and `:278`): the shared play triangle. This used to resolve the name
+        // by `icon::from_name`, with a comment claiming the lookup "falls back
+        // to a symbolic name when the theme has nothing" — measured in U7, it
+        // does not, and the name resolved nowhere. Hence the embedded glyph.
+        .leading_icon(crate::icons::handle(crate::icons::Icon::Play))
         .id(play_button_id(game_id).into())
         .on_press(on_play)
         .into()

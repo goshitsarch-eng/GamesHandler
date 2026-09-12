@@ -136,12 +136,14 @@ pub fn theme_for(scheme: &str, system: cosmic::Theme) -> cosmic::Theme {
 ///
 /// `theme_for` is covered (see the tests: four mutations of its match, all
 /// caught, including a `_ => Theme::dark()` fallback that a naive
-/// `is_dark()` assertion would have accepted). **The two call sites in
-/// `main.rs` are not**, and they cannot be from here:
+/// `is_dark()` assertion would have accepted). **The `init` call site in
+/// `main.rs` is not**, and it cannot be from here:
 ///
 /// ```text
-/// F  SetColorScheme's arm stores the value and returns no task  SURVIVES
-///    — i.e. exactly the state P-67 exists to end (#55)
+/// F  SetColorScheme's arm stores the value and returns no task  DEAD — U7's
+///    `setting_the_color_scheme_returns_the_apply_task` pins the task's
+///    existence (though not its content: which scheme the apply carries is as
+///    unreadable as G, and the list does not pretend otherwise)
 /// G  init applies a hardcoded "dark" instead of the stored scheme  SURVIVES
 /// H  init returns no task at all, so the theme is never applied  SURVIVES
 /// ```

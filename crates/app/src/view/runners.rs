@@ -487,13 +487,13 @@ pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
 /// on everything removable.
 fn installed_card(row: &InstalledRow) -> Element<'_, Message> {
     let status_icon = if row.available {
-        "emblem-checked"
+        crate::icons::Icon::Checked
     } else {
-        "data-warning"
+        crate::icons::Icon::Warning
     };
 
     let mut line = Row::new()
-        .push(icon::from_name(status_icon).size(24))
+        .push(icon::icon(crate::icons::handle(status_icon)).size(24))
         .push(
             Column::new()
                 .push(text::heading(row.name.clone()))
@@ -534,7 +534,7 @@ fn installed_card(row: &InstalledRow) -> Element<'_, Message> {
         // page, where the guard is at least a value). This line is checked by
         // reading it.
         line = line.push(
-            button::icon(icon::from_name("delete")).on_press(remove_press(row)),
+            button::icon(crate::icons::handle(crate::icons::Icon::Delete)).on_press(remove_press(row)),
         );
     }
 
@@ -560,7 +560,7 @@ fn release_card(row: &ReleaseRow) -> Element<'_, Message> {
     } else {
         line = line.push(
             button::standard("Install")
-                .leading_icon(icon::from_name("download"))
+                .leading_icon(crate::icons::handle(crate::icons::Icon::Download))
                 .on_press(Message::InstallRunner {
                     tag: row.tag.clone(),
                 }),

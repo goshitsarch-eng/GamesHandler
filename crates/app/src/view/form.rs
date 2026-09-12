@@ -55,8 +55,7 @@
 
 use cosmic::iced::Length;
 use cosmic::widget::{
-    Column, Row, button, container, divider, dropdown, icon, scrollable, text, text_input,
-    toggler,
+    Column, Row, button, container, divider, dropdown, scrollable, text, text_input, toggler,
 };
 use cosmic::Element;
 use gamehandler_core::covers::DEFAULT_CATEGORIES;
@@ -645,7 +644,7 @@ fn text_control<'a>(row: &TextRow, form: &'a GameForm, live: bool) -> Element<'a
     match row.browse_press.clone() {
         Some(press) => Row::new()
             .push(input)
-            .push(button::icon(icon::from_name("document-open")).on_press(press))
+            .push(button::icon(crate::icons::handle(crate::icons::Icon::Open)).on_press(press))
             .spacing(6)
             .width(Length::Fill)
             .into(),
@@ -758,7 +757,7 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
             )
             // The custom-cover browse `ToolButton` (`:159-164`, F8): same
             // read-not-tested edge as the exe row's — see `text_control`.
-            .push(button::icon(icon::from_name("document-open")).on_press(Message::PickCoverFile))
+            .push(button::icon(crate::icons::handle(crate::icons::Icon::Open)).on_press(Message::PickCoverFile))
             .width(Length::Fill)
             .into()
         }));

@@ -42,6 +42,7 @@ use gamehandler_core::settings::{COLOR_SCHEMES, Settings, VIEW_MODES};
 use gamehandler_core::{APP_ID, APP_NAME, VERSION};
 
 mod http;
+mod icons;
 mod shortcuts;
 mod state;
 mod theme;
@@ -917,14 +918,19 @@ pub enum Message {
 /// cannot resolve. Keeping the reference's names is still the right default:
 /// inventing "more likely to resolve" ones would be a silent visual change to
 /// parity, and the resolution is a property of the *theme*, not of this port.
-fn page_icon(page: Page) -> &'static str {
+/// The nav row's glyph, as an embedded [`icons::Icon`] rather than a theme
+/// name: the six `icon.name:` values of `Main.qml:67-108`, which
+/// `the_shells_icons_are_the_reference_drawers_icons_in_order` still reads
+/// out of the QML and compares through `Icon::legacy_name` (a test-only
+/// helper: production renders bytes, never names).
+fn page_icon(page: Page) -> icons::Icon {
     match page {
-        Page::Library => "applications-games",
-        Page::Installers => "run-install",
-        Page::Runners => "folder-download",
-        Page::Plugins => "plugins",
-        Page::Credits => "help-about",
-        Page::Settings => "configure",
+        Page::Library => icons::Icon::Games,
+        Page::Installers => icons::Icon::Install,
+        Page::Runners => icons::Icon::FolderDownload,
+        Page::Plugins => icons::Icon::Plugins,
+        Page::Credits => icons::Icon::Help,
+        Page::Settings => icons::Icon::Configure,
     }
 }
 
@@ -952,7 +958,7 @@ fn build_nav_model() -> nav_bar::Model {
         model
             .insert()
             .text(page.label())
-            .icon(icon::from_name(page_icon(page)))
+            .icon(icon::icon(crate::icons::handle(page_icon(page))))
             .data(page);
     }
     model.activate_position(0);
@@ -4702,16 +4708,15 @@ mod tests {
     /// code review of the table, obvious on screen.
     #[test]
     fn every_page_has_its_own_icon() {
-        let mut seen: Vec<&str> = Vec::new();
+        let mut seen: Vec<icons::Icon> = Vec::new();
         for page in Page::ALL {
-            let name = page_icon(page);
-            assert!(!name.is_empty(), "{page:?} should have an icon name");
+            let icon = page_icon(page);
             assert!(
-                !seen.contains(&name),
-                "{name} is used by {page:?} and by an earlier page; the \
+                !seen.contains(&icon),
+                "{icon:?} is used by {page:?} and by an earlier page; the \
                  reference gives each page its own"
             );
-            seen.push(name);
+            seen.push(icon);
         }
         assert_eq!(seen.len(), Page::ALL.len());
     }
@@ -7837,6 +7842,33 @@ mod tests {
     /// The emptiness check is the reference's own and is not a stand-in for "the
     /// runner exists": the reference does not check that, and the selector's
     /// fallback is what keeps a runner the user uninstalled selectable.
+    /// Setting the color scheme returns the task that applies it — on a
+    /// change and on a repeat alike, because the apply is unconditional (see
+    /// the arm: a stored-but-unapplied scheme is the bug that "works" until a
+    /// restart). Mutation F in `theme`'s honesty list was "the arm stores the
+    /// value and returns no task"; this is the test that kills it as stated.
+    /// What it does not pin is the task's *content* — which scheme the apply
+    /// carries is as unreadable as G, and the list says so.
+    #[test]
+    fn setting_the_color_scheme_returns_the_apply_task() {
+        let mut shell = shell_with_work_to_do();
+        let current = shell.state.settings.color_scheme.clone();
+        let other = if current == "light" { "dark" } else { "light" }.to_string();
+
+        let changed = observe(&mut shell, Message::SetColorScheme(other.clone()));
+        assert_eq!(shell.state.settings.color_scheme, other);
+        assert!(
+            changed.task_units > 0,
+            "storing without applying is the bug: {changed:?}"
+        );
+
+        let repeated = observe(&mut shell, Message::SetColorScheme(other));
+        assert!(
+            repeated.task_units > 0,
+            "the apply is unconditional — a repeat must still apply: {repeated:?}"
+        );
+    }
+
     #[test]
     fn an_empty_default_runner_is_ignored() {
         let mut shell = shell_with_work_to_do();
@@ -8916,7 +8948,10 @@ mod tests {
             .filter_map(|rest| rest.split_once('"').map(|(name, _)| name))
             .collect();
 
-        let ours: Vec<&str> = Page::ALL.iter().map(|page| page_icon(*page)).collect();
+        let ours: Vec<&str> = Page::ALL
+            .iter()
+            .map(|page| page_icon(*page).legacy_name())
+            .collect();
         assert_eq!(
             names.len(),
             Page::ALL.len(),

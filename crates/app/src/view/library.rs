@@ -43,7 +43,7 @@
 //! library whose filter matches nothing.
 
 use cosmic::iced::Length;
-use cosmic::widget::{Column, Row, button, container, context_menu, icon, menu, scrollable, text, text_input};
+use cosmic::widget::{Column, Row, button, container, context_menu, menu, scrollable, text, text_input};
 use cosmic::Element;
 use gamehandler_core::models::{Game, Library, format_last_played};
 use gamehandler_core::runners::RunnerManager;
@@ -469,7 +469,7 @@ fn grid_body<'a>(games: &[&'a Game], runners: &'a RunnerManager) -> Element<'a, 
 pub enum MenuEntry {
     Item {
         label: &'static str,
-        icon: Option<&'static str>,
+        icon: Option<crate::icons::Icon>,
         enabled: bool,
         action: GameMenuKind,
     },
@@ -542,7 +542,7 @@ impl<'a> menu::Action for GameMenuAction<'a> {
 pub fn game_menu_spec(game: &Game) -> Vec<MenuEntry> {
     let prefix = !game.is_linux();
     let item = |label: &'static str,
-                icon: Option<&'static str>,
+                icon: Option<crate::icons::Icon>,
                 enabled: bool,
                 action: GameMenuKind| {
         MenuEntry::Item {
@@ -553,11 +553,11 @@ pub fn game_menu_spec(game: &Game) -> Vec<MenuEntry> {
         }
     };
     vec![
-        item("Play", Some("media-playback-start"), true, GameMenuKind::Play),
-        item("Edit", Some("edit-entry"), true, GameMenuKind::Edit),
+        item("Play", Some(crate::icons::Icon::Play), true, GameMenuKind::Play),
+        item("Edit", Some(crate::icons::Icon::Edit), true, GameMenuKind::Edit),
         item(
             "Find cover art",
-            Some("viewimage"),
+            Some(crate::icons::Icon::Image),
             true,
             GameMenuKind::FindCover,
         ),
@@ -566,7 +566,7 @@ pub fn game_menu_spec(game: &Game) -> Vec<MenuEntry> {
         item("Winetricks", None, prefix, GameMenuKind::Winetricks),
         item(
             "Open prefix folder",
-            Some("folder-open"),
+            Some(crate::icons::Icon::FolderOpen),
             prefix,
             GameMenuKind::OpenPrefix,
         ),
@@ -579,7 +579,7 @@ pub fn game_menu_spec(game: &Game) -> Vec<MenuEntry> {
         ),
         item(
             "Remove from library",
-            Some("delete"),
+            Some(crate::icons::Icon::Delete),
             true,
             GameMenuKind::Remove,
         ),
@@ -606,7 +606,7 @@ pub fn game_menu_trees<'a>(game: &'a Game) -> Vec<menu::Tree<Message>> {
                     kind: action,
                     game_id: game.id.as_str(),
                 };
-                let handle = icon.map(|name| icon::from_name(name).into());
+                let handle = icon.map(crate::icons::handle);
                 if enabled {
                     menu::Item::Button(label, handle, item)
                 } else {
@@ -675,7 +675,7 @@ mod tests {
             .iter()
             .filter_map(|entry| match entry {
                 MenuEntry::Divider => None,
-                MenuEntry::Item { icon, .. } => Some(*icon),
+                MenuEntry::Item { icon, .. } => Some(icon.map(crate::icons::Icon::legacy_name)),
             })
             .collect();
         assert_eq!(
@@ -742,7 +742,7 @@ mod tests {
                 _ => None,
             })
             .expect("the prefix item");
-        assert_eq!(prefix, (Some("folder-open"), false));
+        assert_eq!(prefix, (Some(crate::icons::Icon::FolderOpen), false));
     }
 
     /// Every menu action sends its message with the menu's game id.

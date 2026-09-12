@@ -81,7 +81,7 @@
 //! buttons too. That coupling is preserved: see [`installing`].
 
 use cosmic::app::Task;
-use cosmic::widget::{Column, Row, Space, button, container, icon, progress_bar, text};
+use cosmic::widget::{Column, Row, Space, button, container, progress_bar, text};
 use cosmic::iced::{Alignment, Background, Border, Length};
 use cosmic::Element;
 use gamehandler_core::installers::{Installer, INSTALLER_CATEGORIES, search_installers};
@@ -535,7 +535,7 @@ fn installer_card<'a>(row: &'a InstallerRow, busy: bool, runner_id: &str) -> Ele
         .align_y(Alignment::Center);
 
     let install = {
-        let button = button::standard("Install").leading_icon(icon::from_name("run-install"));
+        let button = button::standard("Install").leading_icon(crate::icons::handle(crate::icons::Icon::Install));
         // `enabled: !backend.busy` — a disabled button rather than a refused
         // press, which is what P-59's "second refused" looks like in the
         // reference. `on_press_maybe(None)` is how libcosmic spells it, and
