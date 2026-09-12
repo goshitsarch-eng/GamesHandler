@@ -2908,6 +2908,96 @@ fn run_installer(command: &gamehandler_core::runners::Command, cwd: &Path) -> st
 /// two ways it ends. A port that cleared the guard here would let a second
 /// install start on top of a pending one — P-59's guard, defeated by the only
 /// path that has something to lose.
+/// The reference's `locateDialog` (`Main.qml:182-189`), as a portal chooser
+/// task: `easyInstallNeedsExe`'s `FileDialog` with its two `nameFilters`,
+/// accepted into [`Message::CompleteEasyInstall`] and rejected into
+/// [`Message::CancelEasyInstall`].
+///
+/// Opened by [`easy_install_wizard_finished`]'s not-found branch, which is
+/// what makes the busy state it leaves behind escapable: before this task
+/// existed nothing produced either message, so a wizard that closed without
+/// installing wedged the page forever (P-57).
+///
+/// # The start folder is not ported
+///
+/// `onEasyInstallNeedsExe` points the dialog at the prefix's `drive_c`
+/// (`Main.qml:166`), and libcosmic's `open::Dialog` carries a `directory`
+/// field for exactly that — but marks it `dead_code` because ashpd does not
+/// expose it yet, and the portal request builder never sends it. So the
+/// chooser opens wherever the portal opens, and this function does not take a
+/// start folder it would silently drop.
+///
+/// # What is tested, and what is read
+///
+/// The filters ([`exe_file_filters`]) and the answer mapping
+/// ([`locate_message`]) are pure and pinned below. The assembly — the title,
+/// the `open_file` call itself — is read, not tested: `Dialog` keeps its
+/// fields private and driving the portal needs a session bus. That is the
+/// same wall `theme::apply`'s call sites stand behind, and it is named for
+/// the same reason.
+fn locate_exe_task(token: String, installer_name: String) -> cosmic::app::Task<Message> {
+    use cosmic::dialog::file_chooser::open;
+    cosmic::app::Task::perform(
+        async move {
+            let filters = exe_file_filters();
+            let mut dialog = open::Dialog::new()
+                .title(format!("Locate {installer_name}"))
+                .current_filter(filters[0].clone());
+            for filter in filters {
+                dialog = dialog.filter(filter);
+            }
+            let answer = dialog.open_file().await.map(|response| response.url().clone());
+            locate_message(token, answer)
+        },
+        cosmic::Action::App,
+    )
+}
+
+/// The reference's `nameFilters` (`Main.qml:185`): executables first, then
+/// everything.
+///
+/// A named function rather than two literals at the call site so the patterns
+/// are readable back — `Dialog` keeps its filters private, so this is the
+/// half of the chooser a test can pin. The `*.EXE` second glob is the
+/// reference's own case belt-and-braces, kept rather than assumed redundant.
+fn exe_file_filters() -> Vec<cosmic::dialog::file_chooser::FileFilter> {
+    use cosmic::dialog::file_chooser::FileFilter;
+    vec![
+        FileFilter::new("Windows executables").glob("*.exe").glob("*.EXE"),
+        FileFilter::new("All files").glob("*"),
+    ]
+}
+
+/// The pure half of the locate reply: the chooser's answer as the message the
+/// shell already handles.
+///
+/// A chosen file becomes the path [`complete_easy_install`] finishes from —
+/// `Url::to_file_path` is the `as_local_path` the reference applies on the
+/// way (`bridge.py:926`), decoding the percent-escapes the portal leaves in.
+/// A URL with no local path becomes the `None` that takes the cancel path,
+/// exactly as `as_local_path` of nothing does there.
+///
+/// Any error — the user's cancel and the portal's own failure alike — becomes
+/// [`Message::CancelEasyInstall`]. The two are indistinguishable for state
+/// purposes: both must release the busy guard the not-found branch holds, and
+/// the kept-prefix notice the cancel path toasts is honest in both cases,
+/// because nothing deleted the prefix.
+fn locate_message(
+    token: String,
+    answer: Result<url::Url, cosmic::dialog::file_chooser::Error>,
+) -> Message {
+    match answer {
+        Ok(url) => {
+            let path = url
+                .to_file_path()
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned());
+            Message::CompleteEasyInstall { token, path }
+        }
+        Err(_) => Message::CancelEasyInstall(token),
+    }
+}
+
 fn easy_install_wizard_finished(
     state: &mut State,
     found: Option<&Path>,
@@ -2934,10 +3024,15 @@ fn easy_install_wizard_finished(
             record.installer_name
         );
         state.running_install = None;
+        let token = record.game_id.clone();
+        // The chooser is half the not-found branch, not an accessory: without
+        // it the busy guard has no producer for either message that clears
+        // it, and the page stays disabled (P-57).
+        let locate = locate_exe_task(token.clone(), record.installer_name.clone());
         // Keyed by the game id, which is what the reference uses as the token
         // (`bridge.py:888-889`).
-        state.easy_pending.insert(record.game_id.clone(), record);
-        return state.toast_task(text);
+        state.easy_pending.insert(token, record);
+        return cosmic::app::Task::batch([state.toast_task(text), locate]);
     };
     finish_easy_install(state, &record, executable)
 }
@@ -5456,6 +5551,110 @@ mod tests {
                  the user says what to run"
             );
         }
+    }
+
+    /// The not-found branch opens the locate dialog alongside the notice:
+    /// two units of work, the toast and the chooser. Before U4 this arm
+    /// returned the toast alone, and the busy guard it holds had no producer
+    /// for either message that clears it — the page wedged (P-57). The count
+    /// is what pins the chooser's existence: the dialog assembly itself is
+    /// read, not tested (see [`locate_exe_task`]), but a branch that stopped
+    /// opening it would return one unit and fail here.
+    #[test]
+    fn the_not_found_branch_opens_the_locate_dialog() {
+        let prefix = install_prefix("not-found-opens");
+        let mut shell = shell_for_installs();
+        shell.state.easy_busy = true;
+        shell.state.running_install = Some(install_record(&prefix, "install-1"));
+
+        let effect = observe(
+            &mut shell,
+            Message::EasyInstallWizardFinished {
+                found: None,
+                returncode: 0,
+            },
+        );
+
+        assert!(
+            effect.task_units >= 2,
+            "the notice without the chooser is the wedge: {effect:?}"
+        );
+    }
+
+    /// The locate dialog's filters are the reference's `nameFilters`
+    /// (`Main.qml:185`): executables first, then everything.
+    #[test]
+    fn the_locate_dialog_filters_executables_first_then_everything() {
+        let filters = exe_file_filters();
+
+        assert_eq!(filters.len(), 2, "the reference lists exactly two filters");
+        assert_eq!(filters[0].label(), "Windows executables");
+        assert_eq!(filters[0].pattern_filters(), ["*.exe", "*.EXE"]);
+        assert_eq!(filters[1].label(), "All files");
+        assert_eq!(filters[1].pattern_filters(), ["*"]);
+    }
+
+    /// A located file completes the install with its path: the portal's
+    /// `file://` URL decoded the way `as_local_path` decodes the reference's
+    /// `selectedFile` (`bridge.py:926`).
+    #[test]
+    fn a_located_file_completes_the_install_with_its_decoded_path() {
+        let url = url::Url::parse("file:///tmp/My%20Game/setup.exe").unwrap();
+
+        let message = locate_message("install-1".to_string(), Ok(url));
+
+        assert!(
+            matches!(&message, Message::CompleteEasyInstall { token, path }
+                if token == "install-1" && path.as_deref() == Some("/tmp/My Game/setup.exe")),
+            "a chosen file must finish the install from its decoded path: {message:?}"
+        );
+    }
+
+    /// A locate answer with no local path cancels: the `None` takes the same
+    /// path `as_local_path` of nothing takes in the reference
+    /// (`bridge.py:926-928`).
+    #[test]
+    fn a_locate_answer_with_no_local_path_cancels() {
+        let url = url::Url::parse("https://example.invalid/setup.exe").unwrap();
+
+        let message = locate_message("install-1".to_string(), Ok(url));
+
+        assert!(
+            matches!(&message, Message::CompleteEasyInstall { token, path }
+                if token == "install-1" && path.is_none()),
+            "a URL with no local path must reach the cancel path, not a //host path: {message:?}"
+        );
+    }
+
+    /// Rejecting the locate dialog cancels the install: the wedge's way out.
+    #[test]
+    fn rejecting_the_locate_dialog_cancels_the_install() {
+        let message = locate_message(
+            "install-1".to_string(),
+            Err(cosmic::dialog::file_chooser::Error::Cancelled),
+        );
+
+        assert!(
+            matches!(&message, Message::CancelEasyInstall(token) if token == "install-1"),
+            "a rejection must release the busy guard: {message:?}"
+        );
+    }
+
+    /// A locate dialog that errors — the portal failing, not the user
+    /// refusing — still cancels the install. Both must release the busy
+    /// guard, and the kept-prefix notice is honest either way, because
+    /// nothing deleted the prefix (see [`locate_message`]).
+    #[test]
+    fn a_locate_dialog_that_errors_cancels_the_install() {
+        let message = locate_message(
+            "install-1".to_string(),
+            Err(cosmic::dialog::file_chooser::Error::UrlAbsolute),
+        );
+
+        assert!(
+            matches!(&message, Message::CancelEasyInstall(token) if token == "install-1"),
+            "a portal failure must release the busy guard like a rejection: {message:?}"
+        );
     }
 
     /// **A cancel clears both guards and keeps the prefix — P-57.**

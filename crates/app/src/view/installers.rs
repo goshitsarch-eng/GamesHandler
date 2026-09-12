@@ -58,13 +58,15 @@
 //!   two bundles. The **selection** is [`State::installer_runner`], and it is
 //!   the install's rather than the app's (P-53's first clause, D-55): see
 //!   [`seeded_install_runner`] and [`install_runner_selection`].
-//! * **The file chooser** behind P-57's "Locate exe" dialog, which is T-15 and
-//!   stays with UX (this task's brief says so explicitly). The reference's
-//!   `easyInstallNeedsExe` path is `Message::EasyInstallWizardFinished`, and
-//!   this page does not open the chooser. As of T-38 the shell *stores* the
-//!   pending install and toasts the reference's sentence, so what is missing is
-//!   the picker and the `CompleteEasyInstall` token it would feed — not the
-//!   state the token names.
+//! * **The file chooser** behind P-57's "Locate exe" dialog, which was T-15's
+//!   and landed in U4 — in the shell rather than this page, because the
+//!   easy-install lifecycle is declined here (see [`update`]) and the chooser
+//!   is half of the not-found branch (`easy_install_wizard_finished`), not of
+//!   a control this page draws. The reference's `easyInstallNeedsExe` path is
+//!   `Message::EasyInstallWizardFinished`; the shell stores the pending
+//!   install, toasts the reference's sentence, and opens the portal chooser
+//!   whose answer becomes `CompleteEasyInstall` or `CancelEasyInstall`.
+//!   This page still draws no control that emits either.
 //!
 //! Nothing here is stubbed with a placeholder that looks implemented: the
 //! catalog arrives through [`InstallersView::catalog`], which is

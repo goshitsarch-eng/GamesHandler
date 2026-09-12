@@ -39,3 +39,7 @@ clap = { version = "4", features = ["derive"] }
 # of which the app uses; the feature name is a misnomer here.
 libcosmic = { git = "https://github.com/pop-os/libcosmic.git", rev = "a401af8b1c54a8abd393b8c5b7c8809402f83850", default-features = false, features = ["winit", "tokio", "wayland", "x11", "a11y", "xdg-portal", "animated-image"] }
 ureq = { version = "3", features = ["platform-verifier"] }
+# The portal file chooser (D-23) answers with `url::Url`; this is the crate
+# that turns the answer into a path (`Url::to_file_path`). Already in the
+# lockfile as ashpd's dependency, so this adds no new source to vendor.
+url = "2"
