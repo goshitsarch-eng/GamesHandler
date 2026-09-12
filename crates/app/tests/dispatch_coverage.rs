@@ -194,8 +194,9 @@ const HANDLED_ELSEWHERE: [(&str, &str); 1] = [(
 /// the sha can confirm it. `32f5601`, `ce1cd7a` and `e27c4ea` are red for the
 /// same reason; `2ce15e9` is green because it is the repair. Nothing was
 /// reverted — the current tree is green and the entry is correctly gone.
-const KNOWN_DEAD: [(&str, &str, &str); 1] = [(
+const KNOWN_DEAD: [(&str, &str, &str); 3] = [
     // variant, module, why — the task that owns it
+    (
     "FetchCoverForForm",
     "form",
     "#80 / T-11. **Not debt: a false positive the guard cannot model, and one the tree \
@@ -219,7 +220,26 @@ const KNOWN_DEAD: [(&str, &str, &str); 1] = [(
      Cite those two by name if you touch them: the previous text here gave `main.rs:1339` and \
      `main.rs:3355`, and a line number in a comment is the hand-copied fact this file's header \
      warns about — `1339` was `1043` when the entry was first written.",
-)];
+    ),
+    (
+        "FetchCover",
+        "library",
+        "U5. **Genuine debt with an imminent owner, not a false positive.** The library's \
+         context menu sends it from the Find-cover-art item (U2's entry point) and the arm is \
+         `{}` until U5 wires the fetch. The menu item is reachable and inert in the meantime, \
+         which is exactly what this list exists to name. Delete when U5 handles the arm — the \
+         staleness assertion enforces it.",
+    ),
+    (
+        "RemoveGame",
+        "library",
+        "U3. **Genuine debt with an imminent owner, not a false positive.** The library's \
+         context menu sends it from the Remove item (U2's entry point) and the arm is `{}` \
+         until U3 lands the confirm dialog and the removal. The menu item is reachable and \
+         inert in the meantime, which is exactly what this list exists to name. Delete when \
+         U3 handles the arm — the staleness assertion enforces it.",
+    ),
+];
 
 /// The repository root, derived rather than hardcoded.
 fn repo_root() -> PathBuf {

@@ -2881,3 +2881,40 @@ its scope is part of the fix, not a follow-up.
 Recorded as finding #97; owner Architecture. Related: P-53, T-38, #97, #99
 (a row crediting half of a P-item), D-52.
 
+## D-56. The game menu is a right-click `context_menu` with no "More" button and no surface wiring
+
+**Context.** The reference opens one shared `gameMenu` from two triggers per
+card and row: right-click, and a "More" (`view-more-symbolic`) button
+(`LibraryPage.qml:203-214, :275-290`). libcosmic's `context_menu` opens on
+right-button release only (`context_menu.rs`, `right_button_released`) — there
+is no programmatic open — and becomes a compositor popup on Wayland only when
+the app wires `on_surface_action` and a window id; without them it renders as
+an in-window overlay anchored at the click on every platform (verified against
+the pinned rev's `overlay()` fallback).
+
+**Options considered.**
+
+1. Right-click `context_menu` **plus** a "More" button that opens the same
+   menu. Impossible without reimplementing the menu: the widget's open state
+   is internal and answers only to right-click (and two-finger touch).
+2. A state-driven menu (dialog/popup layer opened by a message) reachable
+   from both triggers. Achievable, but it is a second menu implementation to
+   maintain — manual anchoring, manual outside-click close — for a trigger
+   whose function right-click already covers for pointer users.
+3. Right-click `context_menu`, no "More" button, no surface wiring. The menu
+   itself is entry-for-entry with the reference; the omitted half is one
+   trigger out of two.
+
+**Decision.** Option 3. The eight items, both dividers, the icons and the
+Linux disablement are the parity surface, and they are all in the menu; the
+"More" button is omitted because libcosmic gives it nothing to open, and the
+menu renders as an in-window overlay rather than a compositor popup so it
+behaves identically on X11, Wayland and the headless smoke test.
+
+**Consequences.** Keyboard and touch users lose the reference's focusable
+per-row trigger: the menu is pointer-right-click only until libcosmic offers a
+programmatic open. Recorded as a known limitation for REPORT.md, not as a
+parity item left open — P-11/P-12 credit the menu, and the menu is there.
+
+Related: P-11, P-12, U2.
+

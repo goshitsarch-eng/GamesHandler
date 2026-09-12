@@ -692,6 +692,13 @@ pub enum Message {
     /// message, so — as with [`Message::PrefixFolderOpened`] — there is no id
     /// to carry.
     ShortcutCreated { result: Result<PathBuf, String> },
+    /// Remove a game from the library, after asking. `removeGame()`.
+    ///
+    /// The reference asks first (`removeDialog`, `LibraryPage.qml:346-360`):
+    /// the entry goes, the prefix and game files stay on disk. This variant
+    /// is the menu item's half of that flow — the dialog and the removal land
+    /// in U3, which owns this arm until then.
+    RemoveGame(GameId),
 
     // ---- Links ------------------------------------------------------------
     /// Open a URL in the user's browser. P-65.
@@ -2002,6 +2009,12 @@ impl Shell {
                     Err(message) => self.state.toast_task(message),
                 };
             }
+            // TODO(U3): the confirm dialog and the removal. The menu item
+            // already sends this (U2's entry point); the arm asks first with
+            // the reference's dialog (`removeDialog`, `LibraryPage.qml:346-360`
+            // — the entry goes, the prefix and game files stay) and only then
+            // calls `Library::remove`.
+            Message::RemoveGame(_game_id) => {}
             // `requestHide`/`requestShow` are answered by [`App::update`], which
             // holds the window id — the same split as [`Message::Quit`], and for
             // the same reason. `Shell` has no `Core` and must not grow one: it is
@@ -4467,6 +4480,7 @@ mod tests {
         Message::ShortcutCreated { .. } => ("ShortcutCreated", Message::ShortcutCreated {
                             result: Ok(PathBuf::from("/tmp/gamehandler-fixture.desktop")),
                         }),
+        Message::RemoveGame(_) => ("RemoveGame", Message::RemoveGame("g".to_string())),
         // A URL that cannot resolve, so nothing this sample ever reaches can
         // touch the network — and the task is never driven anyway (`observe`
         // reads `units()` and drops it), which is what keeps a browser out of

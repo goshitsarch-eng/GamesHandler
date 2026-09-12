@@ -43,12 +43,13 @@
 //! library whose filter matches nothing.
 
 use cosmic::iced::Length;
-use cosmic::widget::{Column, Row, button, container, scrollable, text, text_input};
+use cosmic::widget::{Column, Row, button, container, context_menu, icon, menu, scrollable, text, text_input};
 use cosmic::Element;
 use gamehandler_core::models::{Game, Library, format_last_played};
 use gamehandler_core::runners::RunnerManager;
 
 use crate::Message;
+use crate::state::PrefixTool;
 
 use super::widgets;
 
@@ -392,10 +393,13 @@ fn list_body<'a>(
         // is the property that keeps its tests message-free. Constructing it
         // inside the builder would also move the emission off this page, where
         // `tests/dispatch_coverage.rs` can see it.
-        body = body.push(widgets::row(
-            game,
-            &labels,
-            Message::LaunchGame(game.id.clone()),
+        body = body.push(context_menu(
+            widgets::row(
+                game,
+                &labels,
+                Message::LaunchGame(game.id.clone()),
+            ),
+            Some(game_menu_trees(game)),
         ));
     }
     body.into()
@@ -443,19 +447,356 @@ fn grid_body<'a>(games: &[&'a Game], runners: &'a RunnerManager) -> Element<'a, 
     for game in games {
         let label = widgets::resolved_runner_label(runners, game);
         // Built here rather than in the builder; see `list_body`.
-        row = row.push(widgets::card(
-            game,
-            &label,
-            Message::LaunchGame(game.id.clone()),
+        row = row.push(context_menu(
+            widgets::card(
+                game,
+                &label,
+                Message::LaunchGame(game.id.clone()),
+            ),
+            Some(game_menu_trees(game)),
         ));
     }
     row.wrap().into()
 }
 
+/// One entry of a game's context menu: an action, or a divider.
+///
+/// Pure data, so the menu's shape — the eight labels, their order, the two
+/// dividers, which items carry icons, which a Linux game disables — is
+/// asserted without a renderer. [`game_menu_trees`] turns this into widgets;
+/// the mapping between the two is pinned by `tests::every_spec_entry_reaches_a_tree`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MenuEntry {
+    Item {
+        label: &'static str,
+        icon: Option<&'static str>,
+        enabled: bool,
+        action: GameMenuKind,
+    },
+    Divider,
+}
+
+/// The eight actions a game's context menu offers, without the game.
+///
+/// Split from [`GameMenuAction`] so the menu's *shape* is plain data: the
+/// spec says what the menu holds, the action says what a pressed item sends.
+/// `Copy` because the action wraps it and
+/// [`MenuAction`](cosmic::widget::menu::Action) requires `Copy`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameMenuKind {
+    Play,
+    Edit,
+    FindCover,
+    Winecfg,
+    Winetricks,
+    OpenPrefix,
+    Shortcut,
+    Remove,
+}
+
+/// A menu action bound to its game: what a pressed item sends.
+///
+/// Borrowed, because [`MenuAction`](cosmic::widget::menu::Action) requires
+/// `Copy` and a `GameId` is a `String`: the `&str` borrows the game the menu
+/// was built for, and
+/// [`message`](cosmic::widget::menu::Action::message) clones it into the
+/// outgoing message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GameMenuAction<'a> {
+    kind: GameMenuKind,
+    game_id: &'a str,
+}
+
+impl<'a> menu::Action for GameMenuAction<'a> {
+    type Message = Message;
+
+    fn message(&self) -> Message {
+        let id = self.game_id.to_string();
+        match self.kind {
+            GameMenuKind::Play => Message::LaunchGame(id),
+            GameMenuKind::Edit => Message::OpenEditGameForm(id),
+            GameMenuKind::FindCover => Message::FetchCover(id),
+            GameMenuKind::Winecfg => Message::RunPrefixTool {
+                game_id: id,
+                tool: PrefixTool::WineCfg,
+            },
+            GameMenuKind::Winetricks => Message::RunPrefixTool {
+                game_id: id,
+                tool: PrefixTool::Winetricks,
+            },
+            GameMenuKind::OpenPrefix => Message::OpenPrefixFolder(id),
+            GameMenuKind::Shortcut => Message::CreateDesktopShortcut(id),
+            GameMenuKind::Remove => Message::RemoveGame(id),
+        }
+    }
+}
+
+/// The game menu's eight items and two dividers, in order.
+///
+/// `gameMenu`, `LibraryPage.qml:298-343`, entry for entry: labels and icon
+/// names verbatim, the prefix tools and the prefix folder disabled for Linux
+/// games (`:320, :326, :331`). The three prefix items read `!is_linux` rather
+/// than the QML's `menuGame !== null &&` guard — there is no null menu game
+/// here, because each card builds its own menu with its own id baked into the
+/// actions instead of sharing one menu over mutable state.
+pub fn game_menu_spec(game: &Game) -> Vec<MenuEntry> {
+    let prefix = !game.is_linux();
+    let item = |label: &'static str,
+                icon: Option<&'static str>,
+                enabled: bool,
+                action: GameMenuKind| {
+        MenuEntry::Item {
+            label,
+            icon,
+            enabled,
+            action,
+        }
+    };
+    vec![
+        item("Play", Some("media-playback-start"), true, GameMenuKind::Play),
+        item("Edit", Some("edit-entry"), true, GameMenuKind::Edit),
+        item(
+            "Find cover art",
+            Some("viewimage"),
+            true,
+            GameMenuKind::FindCover,
+        ),
+        MenuEntry::Divider,
+        item("Winecfg", None, prefix, GameMenuKind::Winecfg),
+        item("Winetricks", None, prefix, GameMenuKind::Winetricks),
+        item(
+            "Open prefix folder",
+            Some("folder-open"),
+            prefix,
+            GameMenuKind::OpenPrefix,
+        ),
+        MenuEntry::Divider,
+        item(
+            "Create desktop shortcut",
+            None,
+            true,
+            GameMenuKind::Shortcut,
+        ),
+        item(
+            "Remove from library",
+            Some("delete"),
+            true,
+            GameMenuKind::Remove,
+        ),
+    ]
+}
+
+/// The spec as widgets, one tree per entry, for [`context_menu()`].
+///
+/// No surface wiring and no `window_id`: without them the menu renders as an
+/// in-window overlay anchored at the click on every platform, which is what a
+/// menu that must also work outside a Wayland compositor wants. See D-56.
+pub fn game_menu_trees<'a>(game: &'a Game) -> Vec<menu::Tree<Message>> {
+    let items: Vec<menu::Item<GameMenuAction<'a>, &'static str>> = game_menu_spec(game)
+        .into_iter()
+        .map(|entry| match entry {
+            MenuEntry::Divider => menu::Item::Divider,
+            MenuEntry::Item {
+                label,
+                icon,
+                enabled,
+                action,
+            } => {
+                let item = GameMenuAction {
+                    kind: action,
+                    game_id: game.id.as_str(),
+                };
+                let handle = icon.map(|name| icon::from_name(name).into());
+                if enabled {
+                    menu::Item::Button(label, handle, item)
+                } else {
+                    menu::Item::ButtonDisabled(label, handle, item)
+                }
+            }
+        })
+        .collect();
+    menu::items(&std::collections::HashMap::new(), items)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cosmic::widget::menu::Action as _;
     use gamehandler_core::models::SORT_MODES;
+
+    fn windows_game() -> Game {
+        let mut game = Game::new_named("Hades");
+        game.kind = "windows".to_string();
+        game.id = "had-es".to_string();
+        game
+    }
+
+    fn linux_game() -> Game {
+        let mut game = Game::new_named("Celeste");
+        game.kind = "linux".to_string();
+        game.id = "ce-les-te".to_string();
+        game
+    }
+
+    fn labels(spec: &[MenuEntry]) -> Vec<&str> {
+        spec.iter()
+            .map(|entry| match entry {
+                MenuEntry::Divider => "---",
+                MenuEntry::Item { label, .. } => label,
+            })
+            .collect()
+    }
+
+    /// The menu is the reference's `gameMenu`, entry for entry.
+    ///
+    /// `LibraryPage.qml:298-343`: eight labels in order with the two
+    /// separators where the QML puts them, and the five icon names verbatim.
+    /// A label reworded, an icon renamed, or an entry reordered fails here —
+    /// the menu's text is user-visible and the reference's is the authority.
+    #[test]
+    fn menu_spec_matches_the_reference_entry_for_entry() {
+        let spec = game_menu_spec(&windows_game());
+        assert_eq!(
+            labels(&spec),
+            [
+                "Play",
+                "Edit",
+                "Find cover art",
+                "---",
+                "Winecfg",
+                "Winetricks",
+                "Open prefix folder",
+                "---",
+                "Create desktop shortcut",
+                "Remove from library",
+            ]
+        );
+        let icons: Vec<Option<&str>> = spec
+            .iter()
+            .filter_map(|entry| match entry {
+                MenuEntry::Divider => None,
+                MenuEntry::Item { icon, .. } => Some(*icon),
+            })
+            .collect();
+        assert_eq!(
+            icons,
+            [
+                Some("media-playback-start"),
+                Some("edit-entry"),
+                Some("viewimage"),
+                None,
+                None,
+                Some("folder-open"),
+                None,
+                Some("delete"),
+            ]
+        );
+        assert!(
+            spec.iter().all(|entry| match entry {
+                MenuEntry::Divider => true,
+                MenuEntry::Item { enabled, .. } => *enabled,
+            }),
+            "a Windows game disables nothing"
+        );
+    }
+
+    /// Linux games disable the three prefix items and nothing else.
+    ///
+    /// `LibraryPage.qml:320, :326, :331` — and the disabled items keep their
+    /// icons, because `ButtonDisabled` carries one: "Open prefix folder" is
+    /// dimmed with its folder, not dimmed and stripped.
+    #[test]
+    fn linux_games_disable_the_prefix_items() {
+        let spec = game_menu_spec(&linux_game());
+        let states: Vec<(&str, bool)> = spec
+            .iter()
+            .filter_map(|entry| match entry {
+                MenuEntry::Divider => None,
+                MenuEntry::Item {
+                    label, enabled, ..
+                } => Some((*label, *enabled)),
+            })
+            .collect();
+        assert_eq!(
+            states,
+            [
+                ("Play", true),
+                ("Edit", true),
+                ("Find cover art", true),
+                ("Winecfg", false),
+                ("Winetricks", false),
+                ("Open prefix folder", false),
+                ("Create desktop shortcut", true),
+                ("Remove from library", true),
+            ]
+        );
+        let prefix = spec
+            .iter()
+            .find_map(|entry| match entry {
+                MenuEntry::Item {
+                    label: "Open prefix folder",
+                    icon,
+                    enabled,
+                    ..
+                } => Some((*icon, *enabled)),
+                _ => None,
+            })
+            .expect("the prefix item");
+        assert_eq!(prefix, (Some("folder-open"), false));
+    }
+
+    /// Every menu action sends its message with the menu's game id.
+    ///
+    /// The spec says what the menu holds; this says what a press does. The
+    /// id is the assertion's point: each card bakes in its own, which is what
+    /// replaces the QML's shared `menuGame` without sharing anything.
+    #[test]
+    fn every_menu_action_sends_its_message_with_the_games_id() {
+        use GameMenuKind::*;
+        // `matches!`, because `Message` is not `PartialEq` — the guards carry
+        // the payload assertions an `assert_eq!` would.
+        let message = |kind| {
+            GameMenuAction {
+                kind,
+                game_id: "had-es",
+            }
+            .message()
+        };
+        assert!(matches!(message(Play), Message::LaunchGame(id) if id == "had-es"));
+        assert!(matches!(message(Edit), Message::OpenEditGameForm(id) if id == "had-es"));
+        assert!(matches!(message(FindCover), Message::FetchCover(id) if id == "had-es"));
+        assert!(
+            matches!(message(Winecfg), Message::RunPrefixTool { game_id, tool }
+                if game_id == "had-es" && matches!(tool, PrefixTool::WineCfg))
+        );
+        assert!(
+            matches!(message(Winetricks), Message::RunPrefixTool { game_id, tool }
+                if game_id == "had-es" && matches!(tool, PrefixTool::Winetricks))
+        );
+        assert!(matches!(message(OpenPrefix), Message::OpenPrefixFolder(id) if id == "had-es"));
+        assert!(
+            matches!(message(Shortcut), Message::CreateDesktopShortcut(id) if id == "had-es")
+        );
+        assert!(matches!(message(Remove), Message::RemoveGame(id) if id == "had-es"));
+    }
+
+    /// Every spec entry reaches a tree: no silent drops in the mapping.
+    ///
+    /// `menu::items` drops a *trailing* divider; ours are interior, so the
+    /// tree count equals the spec length for both game kinds — and a future
+    /// entry added to the spec without reaching the widgets fails here.
+    #[test]
+    fn every_spec_entry_reaches_a_tree() {
+        for game in [windows_game(), linux_game()] {
+            let spec = game_menu_spec(&game);
+            let trees = game_menu_trees(&game);
+            assert_eq!(
+                trees.len(),
+                spec.len(),
+                "a spec entry never became a widget"
+            );
+        }
+    }
 
     /// The keys the selector offers are the ones the settings loader accepts.
     ///
