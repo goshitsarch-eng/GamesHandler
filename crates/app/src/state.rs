@@ -1520,13 +1520,13 @@ mod tests {
     /// from.
     #[test]
     fn a_new_form_is_the_reference_template() {
-        let settings = Settings {
-            default_runner: "proton-ge".to_string(),
-            default_mangohud: true,
-            default_fsync: false,
-            close_on_launch: true,
-            ..Settings::default()
-        };
+        // Assigned, not constructed: `Settings` carries its store path as a
+        // private field, which struct-literal syntax cannot see from here.
+        let mut settings = Settings::default();
+        settings.default_runner = "proton-ge".to_string();
+        settings.default_mangohud = true;
+        settings.default_fsync = false;
+        settings.close_on_launch = true;
         let form = GameForm::new_template(&settings, "id".to_string());
 
         assert_eq!(form.game_id.as_deref(), Some("id"));

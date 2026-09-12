@@ -54,7 +54,7 @@ pub const VIEW_MODES: [&str; 2] = ["grid", "list"];
 /// User preferences stored under the XDG config directory.
 ///
 /// The field order is the wire format. Do not reorder.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Settings {
     pub color_scheme: String,
     pub view_mode: String,
@@ -74,6 +74,16 @@ pub struct Settings {
     pub default_gamescope: bool,
     pub default_virtual_desktop: bool,
     pub close_on_launch: bool,
+    /// Where this value lives on disk. Not on the wire.
+    ///
+    /// [`Library`](crate::models::Library) carries its path for the same
+    /// reason: the value and its store must not be separable, or a test
+    /// writes the user's file while asserting about a fixture. [`Settings::load`]
+    /// stores the path it read (or was given), [`Settings::save`] writes it
+    /// back, and `#[serde(skip)]` keeps `settings.json` byte-identical to
+    /// what the reference writes.
+    #[serde(skip)]
+    path: PathBuf,
 }
 
 impl Settings {
@@ -155,6 +165,11 @@ impl Settings {
         settings
     }
 
+    /// Where this value will be written by [`Settings::save`].
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Port of `Settings.load` (`settings.py:56-67`).
     ///
     /// `None` means the configured path. A missing file, an unreadable one, one
@@ -163,20 +178,29 @@ impl Settings {
     /// deliberate divergence — Python raises there — and `read_to_string` gives
     /// it to us for free, since it rejects invalid UTF-8 rather than replacing
     /// it.
+    ///
+    /// Whatever is returned remembers `path`: a settings value that forgot
+    /// where it was loaded from could only ever save to the configured file,
+    /// and a test driving a mutation would write the user's `settings.json`.
     pub fn load(path: Option<PathBuf>) -> Self {
         let target = path.unwrap_or_else(paths::settings_file);
-        let Ok(source) = std::fs::read_to_string(&target) else {
-            return Self::default();
-        };
-        let Ok(Value::Object(fields)) = json::parse_lenient(&source) else {
-            return Self::default();
-        };
-        Self::from_dict(&fields)
+        let stored = std::fs::read_to_string(&target)
+            .ok()
+            .and_then(|source| json::parse_lenient(&source).ok())
+            .and_then(|value| match value {
+                Value::Object(fields) => Some(Self::from_dict(&fields)),
+                _ => None,
+            })
+            .unwrap_or_default();
+        Self {
+            path: target,
+            ..stored
+        }
     }
 
-    /// Port of `Settings.save` (`settings.py:69-74`) to the configured path.
+    /// Port of `Settings.save` (`settings.py:69-74`) to the loaded path.
     pub fn save(&self) -> std::io::Result<()> {
-        self.save_to(paths::settings_file())
+        self.save_to(&self.path)
     }
 
     /// [`Self::save`] to an explicit path, as `Settings.save(path)` allows.
@@ -185,8 +209,44 @@ impl Settings {
     }
 }
 
+/// Same preferences, same value — wherever each was loaded from.
+///
+ /// A manual impl rather than a derive, because the derive would compare
+/// [`Settings::path`] and two values holding the same preferences from
+/// different files would be unequal. The store is not the value (compare
+/// [`Library`](crate::models::Library), which excludes its path from identity
+/// by not implementing this trait at all). Every value field is listed, and
+/// `every_field_participates_in_equality` fails if one is added without
+/// joining this list.
+impl PartialEq for Settings {
+    fn eq(&self, other: &Self) -> bool {
+        self.color_scheme == other.color_scheme
+            && self.view_mode == other.view_mode
+            && self.sort_mode == other.sort_mode
+            && self.default_runner == other.default_runner
+            && self.default_mangohud == other.default_mangohud
+            && self.default_gamemode == other.default_gamemode
+            && self.default_prefer_sdl == other.default_prefer_sdl
+            && self.default_esync == other.default_esync
+            && self.default_fsync == other.default_fsync
+            && self.default_dxvk == other.default_dxvk
+            && self.default_vkd3d == other.default_vkd3d
+            && self.default_nvapi == other.default_nvapi
+            && self.default_fsr == other.default_fsr
+            && self.default_battleye == other.default_battleye
+            && self.default_eac == other.default_eac
+            && self.default_gamescope == other.default_gamescope
+            && self.default_virtual_desktop == other.default_virtual_desktop
+            && self.close_on_launch == other.close_on_launch
+    }
+}
+
 impl Default for Settings {
     /// The dataclass defaults, including the `"dark"`/`"grid"` fallbacks.
+    ///
+    /// The path is the configured one: a default-built value that is saved
+    /// goes where the reference saves, and a test that must not touch it
+    /// loads from an explicit path instead.
     fn default() -> Self {
         Self {
             color_scheme: "dark".to_string(),
@@ -207,6 +267,7 @@ impl Default for Settings {
             default_gamescope: false,
             default_virtual_desktop: false,
             close_on_launch: false,
+            path: paths::settings_file(),
         }
     }
 }
@@ -502,17 +563,122 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
         let path = directory.join("settings.json");
 
-        let settings = Settings {
-            color_scheme: "light".to_string(),
-            default_runner: "proton-ge".to_string(),
-            ..Settings::default()
-        };
-        settings.save_to(&path).unwrap();
+        // Loaded from the path, so `save` writes it back there: this is the
+        // call the `update` arms make, and it had no test pinning the target.
+        let mut settings = Settings::load(Some(path.clone()));
+        settings.color_scheme = "light".to_string();
+        settings.default_runner = "proton-ge".to_string();
+        settings.save().unwrap();
 
         assert_eq!(Settings::load(Some(path.clone())), settings);
         assert!(
             std::fs::read_to_string(&path).unwrap().ends_with('}'),
             "Python writes no trailing newline"
+        );
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn every_field_participates_in_equality() {
+        // The manual `PartialEq` lists every value field and skips the path.
+        // Flipping each field one at a time must break equality; flipping the
+        // path must not. And the `Debug` shape carries the field count, so a
+        // nineteenth value field fails here until it joins the impl.
+        let base = Settings::default();
+        let mut flipped = base.clone();
+        flipped.color_scheme = "light".to_string();
+        assert_ne!(flipped, base);
+        let mut flipped = base.clone();
+        flipped.view_mode = "list".to_string();
+        assert_ne!(flipped, base);
+        let mut flipped = base.clone();
+        flipped.sort_mode = "recent".to_string();
+        assert_ne!(flipped, base);
+        let mut flipped = base.clone();
+        flipped.default_runner = "proton-ge".to_string();
+        assert_ne!(flipped, base);
+        for name in [
+            "default_mangohud",
+            "default_gamemode",
+            "default_prefer_sdl",
+            "default_esync",
+            "default_fsync",
+            "default_dxvk",
+            "default_vkd3d",
+            "default_nvapi",
+            "default_fsr",
+            "default_battleye",
+            "default_eac",
+            "default_gamescope",
+            "default_virtual_desktop",
+            "close_on_launch",
+        ] {
+            let mut flipped = base.clone();
+            let slot = match name {
+                "default_mangohud" => &mut flipped.default_mangohud,
+                "default_gamemode" => &mut flipped.default_gamemode,
+                "default_prefer_sdl" => &mut flipped.default_prefer_sdl,
+                "default_esync" => &mut flipped.default_esync,
+                "default_fsync" => &mut flipped.default_fsync,
+                "default_dxvk" => &mut flipped.default_dxvk,
+                "default_vkd3d" => &mut flipped.default_vkd3d,
+                "default_nvapi" => &mut flipped.default_nvapi,
+                "default_fsr" => &mut flipped.default_fsr,
+                "default_battleye" => &mut flipped.default_battleye,
+                "default_eac" => &mut flipped.default_eac,
+                "default_gamescope" => &mut flipped.default_gamescope,
+                "default_virtual_desktop" => &mut flipped.default_virtual_desktop,
+                "close_on_launch" => &mut flipped.close_on_launch,
+                _ => unreachable!("the table above lists every flag"),
+            };
+            *slot = !*slot;
+            assert_ne!(flipped, base, "{name} is not compared");
+        }
+        let moved = Settings {
+            path: std::path::PathBuf::from("elsewhere.json"),
+            ..base.clone()
+        };
+        assert_eq!(moved, base, "the store is not the value");
+
+        // Eighteen value fields plus the path, no more: a new field must
+        // join the `PartialEq` above, and this count says so.
+        let comma_free = Settings {
+            path: std::path::PathBuf::from("x"),
+            ..Settings::default()
+        };
+        let debug = format!("{comma_free:?}");
+        assert_eq!(
+            debug.split(", ").count(),
+            19,
+            "a field was added without joining PartialEq: {debug}"
+        );
+    }
+
+    #[test]
+    fn the_loaded_path_is_remembered_and_saved_back() {
+        let directory =
+            std::env::temp_dir().join(format!("gh-settings-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        let path = directory.join("settings.json");
+
+        // Even a missing file yields a value that knows where it came from:
+        // the defaults with this path, not the configured one.
+        let settings = Settings::load(Some(path.clone()));
+        assert_eq!(settings.path(), path.as_path());
+        assert_eq!(settings.color_scheme, "dark");
+
+        settings.save().unwrap();
+        assert!(path.is_file(), "save writes the loaded path");
+        assert_eq!(Settings::load(Some(path.clone())), settings);
+
+        // And the wire format carries no trace of it.
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("path"), "the store is not on the wire: {text}");
+
+        assert_eq!(
+            Settings::default().path(),
+            crate::paths::settings_file().as_path()
         );
 
         let _ = std::fs::remove_dir_all(&directory);

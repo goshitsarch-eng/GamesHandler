@@ -1128,11 +1128,28 @@ fn page_entry_task(state: &mut State, page: Page) -> cosmic::app::Task<Message> 
 impl Shell {
     /// A shell over a real library, settings and runner manager, the way
     /// [`App::init`] builds one — but with no window, so a test can have one.
+    ///
+    /// The settings are **not** the user's: they load from a fresh temp path,
+    /// unique per call, so a mutation arm's save lands in a fixture no other
+    /// test shares. The library keeps the real path here (callers that write
+    /// it redirect, as `shell_with_work_to_do` does), but every settings arm
+    /// saves, so sharing the real file would make each of those tests write
+    /// the user's `settings.json` — and read each other's values. The counter
+    /// is what keeps parallel calls apart, for the reason that fixture's own
+    /// comment measures.
     #[cfg(test)]
     fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let settings_root = std::env::temp_dir().join(format!(
+            "gh-shell-settings-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&settings_root);
         let mut state = State::new(
             Library::new(None),
-            Settings::load(None),
+            Settings::load(Some(settings_root.join("settings.json"))),
             RunnerManager::new(&SystemLaunchEnv),
         );
         // The Plugins page reads rows that only `refreshPlugins` fills, so the
@@ -1621,11 +1638,27 @@ impl Shell {
             // this handler could compare.
             Message::SetColorScheme(value) => {
                 if COLOR_SCHEMES.contains(&value.as_str()) {
+                    // The save goes only on a change — the reference's own
+                    // early return (`bridge.py:198`) — while the apply stays
+                    // unconditional: the theme is a libcosmic global, not a
+                    // field, so idempotent re-application is the arm's
+                    // standing behaviour and a failed save must not skip it.
+                    let changed = self.state.settings.color_scheme != value;
                     self.state.settings.color_scheme = value;
+                    let mut tasks = Vec::new();
+                    if changed && let Some(task) = self.state.save_settings_or_toast() {
+                        tasks.push(task);
+                    }
                     // Applies the value **stored**, not the one received: they
                     // are equal here (the guard just checked), and reading it
                     // back is what keeps the two from being able to diverge.
-                    return theme::apply(&self.state.settings.color_scheme);
+                    tasks.push(theme::apply(&self.state.settings.color_scheme));
+                    // One task, not a batch of one: the success path returns
+                    // exactly what it returned before the save existed.
+                    return match tasks.len() {
+                        1 => tasks.pop().expect("the apply task was just pushed"),
+                        _ => cosmic::app::Task::batch(tasks),
+                    };
                 }
             }
             // `_set_view_mode` (`bridge.py:210-214`) and `_set_sort_mode`
@@ -1636,13 +1669,23 @@ impl Shell {
             // would silently fold it back — the same defect D-34 names, on the
             // other side of the file.
             Message::SetViewMode(value) => {
-                if VIEW_MODES.contains(&value.as_str()) {
+                if VIEW_MODES.contains(&value.as_str())
+                    && self.state.settings.view_mode != value
+                {
                     self.state.settings.view_mode = value;
+                    if let Some(task) = self.state.save_settings_or_toast() {
+                        return task;
+                    }
                 }
             }
             Message::SetSortMode(value) => {
-                if SORT_MODES.contains(&value.as_str()) {
+                if SORT_MODES.contains(&value.as_str())
+                    && self.state.settings.sort_mode != value
+                {
                     self.state.settings.sort_mode = value;
+                    if let Some(task) = self.state.save_settings_or_toast() {
+                        return task;
+                    }
                 }
             }
             // `_set_default_runner` (`bridge.py:235-238`): an **empty** value is
@@ -1654,6 +1697,9 @@ impl Shell {
             Message::SetDefaultRunner(value) => {
                 if !value.is_empty() && value != self.state.settings.default_runner {
                     self.state.settings.default_runner = value;
+                    if let Some(task) = self.state.save_settings_or_toast() {
+                        return task;
+                    }
                 }
             }
             // `_set_close_on_launch` (`bridge.py:247-250`): `bool(value)` then a
@@ -1662,6 +1708,9 @@ impl Shell {
             Message::SetCloseOnLaunch(value) => {
                 if value != self.state.settings.close_on_launch {
                     self.state.settings.close_on_launch = value;
+                    if let Some(task) = self.state.save_settings_or_toast() {
+                        return task;
+                    }
                 }
             }
             // `setDefaultToggle` (`bridge.py:264-269`): the name must be one of
@@ -1671,7 +1720,11 @@ impl Shell {
             // An unknown name is ignored, which is the reference's behaviour and
             // the reason `set_toggle` returns a `bool` instead of asserting.
             Message::SetDefaultToggle { name, value } => {
-                view::settings::set_toggle(&mut self.state.settings, &name, value);
+                if view::settings::set_toggle(&mut self.state.settings, &name, value)
+                    && let Some(task) = self.state.save_settings_or_toast()
+                {
+                    return task;
+                }
             }
 
             // ---- Library view state ----------------------------------------
@@ -2223,6 +2276,22 @@ impl State {
         self.toasts
             .push(cosmic::widget::toaster::Toast::new(text))
             .map(cosmic::Action::App)
+    }
+
+    /// Persist the settings an `update` arm just mutated: `_save_settings`
+    /// (`bridge.py:190-192`), minus the signal Qt needs and Elm does not.
+    ///
+    /// `None` on success — the running app already renders from memory, so a
+    /// good save has nothing to say. A failure is reported rather than
+    /// raised, the way every other store in this shell reports one
+    /// (`SaveGameForm`, `LaunchStarted`): the reference lets the slot raise,
+    /// which in Qt means a traceback and no notice, and a traceback the user
+    /// never sees is the worse half of that choice.
+    fn save_settings_or_toast(&mut self) -> Option<cosmic::app::Task<Message>> {
+        match self.settings.save() {
+            Ok(()) => None,
+            Err(error) => Some(self.toast_task(format!("Could not save settings: {error}"))),
+        }
     }
 
     /// The name to put in a sentence about `game_id`, or `""` when the library
@@ -6415,6 +6484,138 @@ mod tests {
         });
         assert!(effect.state_changed, "esync defaults to true, so turning it off is a change");
         assert!(!shell.state.settings.default_esync);
+    }
+
+    /// **Every settings mutation persists to `settings.json`** — P-03, P-66 and
+    /// the settings-write half of P-73. Each of the six mutation arms is
+    /// driven through the real dispatcher and the file is reloaded after
+    /// each, so deleting any arm's save call reddens exactly its assertion.
+    ///
+    /// The shell's settings path is a per-call temp file (`Shell::new`), so
+    /// reloading it observes the arm and only the arm — no other test shares
+    /// the file, and the user's settings are never touched.
+    #[test]
+    fn every_settings_mutation_persists_to_the_settings_file() {
+        let mut shell = shell_with_work_to_do();
+        let path = shell.state.settings.path().to_path_buf();
+        let reloaded = || Settings::load(Some(path.clone()));
+
+        observe(&mut shell, Message::SetColorScheme("light".to_string()));
+        assert_eq!(reloaded().color_scheme, "light");
+
+        observe(&mut shell, Message::SetViewMode("list".to_string()));
+        assert_eq!(reloaded().view_mode, "list");
+
+        observe(&mut shell, Message::SetSortMode("recent".to_string()));
+        assert_eq!(reloaded().sort_mode, "recent");
+
+        observe(&mut shell, Message::SetDefaultRunner("GE-Proton9-1".to_string()));
+        assert_eq!(reloaded().default_runner, "GE-Proton9-1");
+
+        observe(&mut shell, Message::SetCloseOnLaunch(true));
+        assert!(reloaded().close_on_launch);
+
+        observe(&mut shell, Message::SetDefaultToggle {
+            name: "mangohud".to_string(),
+            value: true,
+        });
+        assert!(reloaded().default_mangohud);
+
+        // The other direction of a toggle, off a default-true field.
+        observe(&mut shell, Message::SetDefaultToggle {
+            name: "esync".to_string(),
+            value: false,
+        });
+        assert!(!reloaded().default_esync);
+    }
+
+    /// **Unchanged and invalid settings writes touch no file** — the
+    /// reference's early returns (`bridge.py:198, 211, 222, 236, 248, 267`).
+    ///
+    /// This is the half `observe` cannot see: writing the stored value leaves
+    /// the state's `Debug` byte-identical whether or not the arm compares
+    /// first, which is the honest gap the toggle and close-on-launch tests
+    /// above document. The filesystem can see it — a save would create the
+    /// file — so a shell that only ever repeats the defaults must have no
+    /// settings file at all.
+    #[test]
+    fn unchanged_and_invalid_settings_writes_touch_no_file() {
+        let mut shell = shell_with_work_to_do();
+        let path = shell.state.settings.path().to_path_buf();
+        assert!(!path.exists(), "the fixture starts with no file");
+
+        // Every default, repeated: scheme, view, sort, runner, close flag,
+        // one default-false toggle and one default-true toggle.
+        observe(&mut shell, Message::SetColorScheme("dark".to_string()));
+        observe(&mut shell, Message::SetViewMode("grid".to_string()));
+        observe(&mut shell, Message::SetSortMode("name".to_string()));
+        let runner = shell.state.settings.default_runner.clone();
+        observe(&mut shell, Message::SetDefaultRunner(runner));
+        observe(&mut shell, Message::SetCloseOnLaunch(false));
+        observe(&mut shell, Message::SetDefaultToggle {
+            name: "mangohud".to_string(),
+            value: false,
+        });
+        observe(&mut shell, Message::SetDefaultToggle {
+            name: "esync".to_string(),
+            value: true,
+        });
+        // Invalid values are ignored, not stored and not saved.
+        observe(&mut shell, Message::SetColorScheme("neon".to_string()));
+        observe(&mut shell, Message::SetViewMode("masonry".to_string()));
+        observe(&mut shell, Message::SetSortMode("chaos".to_string()));
+        observe(&mut shell, Message::SetDefaultRunner(String::new()));
+        observe(&mut shell, Message::SetDefaultToggle {
+            name: "wayland".to_string(),
+            value: true,
+        });
+        assert!(
+            !path.exists(),
+            "nothing changed, so nothing was saved — yet {path:?} exists"
+        );
+    }
+
+    /// **A failed settings save is reported, not raised** — the
+    /// `SaveGameForm`/`LaunchStarted` shape applied to the sixth store.
+    ///
+    /// The settings path sits under a regular file, so creating the
+    /// directory fails and the save with it. Memory still updates — the
+    /// store is not the value — and the arm answers with the toast. The
+    /// text is read out of the `Debug` of the toaster, which derives it
+    /// today; if libcosmic ever stops, this fails to compile rather than
+    /// silently asserting nothing.
+    #[test]
+    fn a_failed_settings_save_is_reported_not_raised() {
+        let mut shell = shell_with_work_to_do();
+        // Inside the shell's own fixture directory, which `Shell::new` made
+        // unique per call: no counter, no clock, no sharing.
+        let dir = shell.state.settings.path().to_path_buf();
+        let dir = dir.parent().expect("the fixture path has a parent").to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"a file, not a directory").unwrap();
+        shell.state.settings = Settings::load(Some(blocker.join("settings.json")));
+
+        let effect = observe(&mut shell, Message::SetViewMode("list".to_string()));
+        assert_eq!(
+            shell.state.settings.view_mode, "list",
+            "memory updates even when the disk refuses"
+        );
+        assert!(
+            effect.task_units > 0,
+            "the failure must schedule its report: {effect:?}"
+        );
+        let toasts = format!("{:?}", shell.state.toasts);
+        assert!(
+            toasts.contains("Could not save settings"),
+            "the report names the store: {toasts}"
+        );
+        assert!(
+            !blocker.join("settings.json").exists(),
+            "no file was written through the blocker"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// **Close-on-launch round-trips through the state** — `bridge.py:247-250`.
