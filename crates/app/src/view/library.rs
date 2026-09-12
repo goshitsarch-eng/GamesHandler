@@ -526,7 +526,7 @@ impl<'a> menu::Action for GameMenuAction<'a> {
             },
             GameMenuKind::OpenPrefix => Message::OpenPrefixFolder(id),
             GameMenuKind::Shortcut => Message::CreateDesktopShortcut(id),
-            GameMenuKind::Remove => Message::RemoveGame(id),
+            GameMenuKind::Remove => Message::ConfirmDeleteGame(id),
         }
     }
 }
@@ -777,7 +777,7 @@ mod tests {
         assert!(
             matches!(message(Shortcut), Message::CreateDesktopShortcut(id) if id == "had-es")
         );
-        assert!(matches!(message(Remove), Message::RemoveGame(id) if id == "had-es"));
+        assert!(matches!(message(Remove), Message::ConfirmDeleteGame(id) if id == "had-es"));
     }
 
     /// Every spec entry reaches a tree: no silent drops in the mapping.

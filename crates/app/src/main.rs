@@ -574,10 +574,17 @@ pub enum Message {
     OpenEditGameForm(GameId),
     /// Close whatever overlay is open. `layers.pop()`.
     CloseDialog,
-    /// Ask before deleting. **A behaviour change** — QML deleted immediately
-    /// (`removeGame`, `bridge.py:447-454`); see `architecture.md` §2.5.
+    /// Ask before deleting. `removeDialog` (`LibraryPage.qml:346-360`): the
+    /// title names the game, Cancel closes, Remove removes the entry and
+    /// leaves the prefix and game files on disk.
+    ///
+    /// This used to say the QML deleted immediately and cite `architecture.md`
+    /// §2.5's behaviour-change list. That was read off `bridge.removeGame`
+    /// alone; the confirm lives in the QML, which opens the dialog before the
+    /// slot ever runs — so asking is parity, not a change, and §2.5's first
+    /// item went with the correction.
     ConfirmDeleteGame(GameId),
-    /// The user confirmed; do it.
+    /// The user confirmed; do it. `removeGame()` past the dialog.
     DeleteGameConfirmed(GameId),
     /// Open a file chooser for one of the form's path fields.
     PickExeFile { field: ExeField },
@@ -692,13 +699,6 @@ pub enum Message {
     /// message, so — as with [`Message::PrefixFolderOpened`] — there is no id
     /// to carry.
     ShortcutCreated { result: Result<PathBuf, String> },
-    /// Remove a game from the library, after asking. `removeGame()`.
-    ///
-    /// The reference asks first (`removeDialog`, `LibraryPage.qml:346-360`):
-    /// the entry goes, the prefix and game files stay on disk. This variant
-    /// is the menu item's half of that flow — the dialog and the removal land
-    /// in U3, which owns this arm until then.
-    RemoveGame(GameId),
 
     // ---- Links ------------------------------------------------------------
     /// Open a URL in the user's browser. P-65.
@@ -1100,6 +1100,39 @@ pub struct Shell {
 /// `remove_press` does for the delete
 /// button — except the helper would live in this file, beside the button,
 /// rather than across the page boundary.
+/// The game-removal dialog over the library it names: `removeDialog`
+/// (`LibraryPage.qml:346-360`).
+///
+/// Same composition as [`remove_runner_dialog`] — a `Column`, not a `popover`,
+/// for the reason recorded there — and the same contract: the title names the
+/// pending game, Cancel closes without removing, and Remove removes the
+/// pending id and then closes. The subtitle is the reference's verbatim: the
+/// entry goes, the prefix and game files stay.
+///
+/// `name` is looked up by the caller, which owns the library; the id fallback
+/// never fires through the arms (an unknown id opens nothing), but the dialog
+/// must draw *something* for an id with no game, and the id itself is what
+/// there is.
+fn remove_game_dialog<'a>(
+    body: cosmic::Element<'a, Message>,
+    name: &str,
+    game_id: &str,
+) -> cosmic::Element<'a, Message> {
+    use cosmic::widget::{button, dialog, Column};
+    let popup: cosmic::Element<'a, Message> = dialog()
+        .title(format!("Remove “{name}”?"))
+        .body(
+            "This removes the game from your GameHandler library. Its Wine prefix and game files are left on disk.",
+        )
+        .secondary_action(button::standard("Cancel").on_press(Message::CloseDialog))
+        .primary_action(
+            button::destructive("Remove")
+                .on_press(Message::DeleteGameConfirmed(game_id.to_string())),
+        )
+        .into();
+    Column::new().push(popup).push(body).into()
+}
+
 fn remove_runner_dialog<'a>(
     body: cosmic::Element<'a, Message>,
     pending: &crate::state::PendingRunnerRemoval,
@@ -1434,6 +1467,23 @@ impl Shell {
             });
         }
         let body = self.view_body();
+        // The game dialog wraps first, so the runner dialog — when both are
+        // somehow pending — draws outermost. Both pending at once takes
+        // opening one dialog from inside another's page, which the mutual
+        // clear in the two confirm arms already prevents; the order here is
+        // the backstop, not the mechanism.
+        let body = match &self.state.confirm_delete {
+            Some(id) => {
+                let name = self
+                    .state
+                    .library
+                    .get(id)
+                    .map(|game| game.name.clone())
+                    .unwrap_or_else(|| id.clone());
+                remove_game_dialog(body, &name, id)
+            }
+            None => body,
+        };
         match &self.state.confirm_remove_runner {
             Some(pending) => remove_runner_dialog(body, pending),
             None => body,
@@ -1596,10 +1646,43 @@ impl Shell {
                 self.state.confirm_delete = None;
                 self.state.confirm_remove_runner = None;
             }
-            // TODO(T-09) / T-10: the confirmation overlay.
-            Message::ConfirmDeleteGame(_game_id) => {}
-            // TODO(T-10): `Library::remove`, then persist and re-derive.
-            Message::DeleteGameConfirmed(_game_id) => {}
+            // `removeDialog.open()` (`LibraryPage.qml:346-360`): the pending id
+            // the dialog draws. An id the library does not hold opens nothing
+            // — the reference's `removeGame` returns early on it
+            // (`bridge.py:449-451`), and there is no dialog for a game that is
+            // not there. Opening one dialog closes the other: the port draws a
+            // single modal layer, and two pending removals would nest.
+            Message::ConfirmDeleteGame(game_id) => {
+                if self.state.library.get(&game_id).is_some() {
+                    self.state.confirm_delete = Some(game_id);
+                    self.state.confirm_remove_runner = None;
+                }
+            }
+            // `removeGame()` past the dialog: the entry goes, the prefix and
+            // game files stay on disk, and the toast names what left. The
+            // pending id clears first, so the dialog closes even when the
+            // removal fails — the P-37 shape, where the confirmed arm clears
+            // before removing. An unknown id is silence past the clear.
+            Message::DeleteGameConfirmed(game_id) => {
+                self.state.confirm_delete = None;
+                if let Some(name) = self
+                    .state
+                    .library
+                    .get(&game_id)
+                    .map(|game| game.name.clone())
+                {
+                    match self.state.library.remove(&game_id) {
+                        Ok(()) => {
+                            return self.state.toast_task(format!("Removed “{name}”"));
+                        }
+                        Err(error) => {
+                            return self
+                                .state
+                                .toast_task(format!("Could not remove “{name}”: {error}"));
+                        }
+                    }
+                }
+            }
             // TODO(T-09): open the portal file chooser for `field`.
             Message::PickExeFile { field: _field } => {}
             // TODO(T-11): write the chosen path into the form field, or a no-op
@@ -2009,12 +2092,6 @@ impl Shell {
                     Err(message) => self.state.toast_task(message),
                 };
             }
-            // TODO(U3): the confirm dialog and the removal. The menu item
-            // already sends this (U2's entry point); the arm asks first with
-            // the reference's dialog (`removeDialog`, `LibraryPage.qml:346-360`
-            // — the entry goes, the prefix and game files stay) and only then
-            // calls `Library::remove`.
-            Message::RemoveGame(_game_id) => {}
             // `requestHide`/`requestShow` are answered by [`App::update`], which
             // holds the window id — the same split as [`Message::Quit`], and for
             // the same reason. `Shell` has no `Core` and must not grow one: it is
@@ -4367,7 +4444,11 @@ mod tests {
         Message::OpenNewGameForm => ("OpenNewGameForm", Message::OpenNewGameForm),
         Message::OpenEditGameForm(_) => ("OpenEditGameForm", Message::OpenEditGameForm("g".to_string())),
         Message::CloseDialog => ("CloseDialog", Message::CloseDialog),
-        Message::ConfirmDeleteGame(_) => ("ConfirmDeleteGame", Message::ConfirmDeleteGame("g".to_string())),
+        // `"sample-game"`, not `"g"`: the fixture presets the pending delete to
+        // `Some("g")` (so `CloseDialog`'s sample has a delete to clear), and a
+        // sample writing what is already there would be reported as an
+        // unwritten arm (D-34) — which is exactly what `"g"` did.
+        Message::ConfirmDeleteGame(_) => ("ConfirmDeleteGame", Message::ConfirmDeleteGame("sample-game".to_string())),
         Message::DeleteGameConfirmed(_) => ("DeleteGameConfirmed", Message::DeleteGameConfirmed("g".to_string())),
         Message::PickExeFile { .. } => ("PickExeFile", Message::PickExeFile { field: ExeField::Exe }),
         Message::ExeFileChosen { .. } => ("ExeFileChosen", Message::ExeFileChosen {
@@ -4480,7 +4561,6 @@ mod tests {
         Message::ShortcutCreated { .. } => ("ShortcutCreated", Message::ShortcutCreated {
                             result: Ok(PathBuf::from("/tmp/gamehandler-fixture.desktop")),
                         }),
-        Message::RemoveGame(_) => ("RemoveGame", Message::RemoveGame("g".to_string())),
         // A URL that cannot resolve, so nothing this sample ever reaches can
         // touch the network — and the task is never driven anyway (`observe`
         // reads `units()` and drops it), which is what keeps a browser out of
@@ -4818,6 +4898,12 @@ mod tests {
         let mut expected: Vec<&str> = vec![
             "NavigateTo",
             "CloseDialog",
+            // U3's pair. Live because the library's context menu sends the
+            // first and the dialog it opens sends the second; the unknown-id
+            // silence in both arms is what the samples' held id keeps out of
+            // reach here (see the removal tests for the unheld half).
+            "ConfirmDeleteGame",
+            "DeleteGameConfirmed",
             "Notify",
             // T-09's five. They are live because the Library page needs them:
             // the search box, the category filter, the button that clears both
@@ -4893,57 +4979,20 @@ mod tests {
             // stay out of the test process while the arm that asks for them is
             // still measured.
             //
-            // # Three of the four have no producer, and this comment used to
-            // # say otherwise (#89)
+            // # All four have producers now; this comment used to say three do
+            // # not (#89, retired by U2)
             //
-            // It read "the game form's three buttons produce the rest", and
-            // that is false in both of the ways it could be: the wrong
-            // *control* and the wrong *file*. Measured against the tree, in the
-            // production code only — `view/form.rs` (before its `#[cfg(test)]`
-            // module at `:822`, comments stripped) constructs **six** messages
-            // (`CloseDialog`, `FetchCoverForForm`, `FormFieldChanged`,
-            // `FormToggleChanged`, `SaveGameForm`, `SetFormLinux`) and none of
-            // these three; its three buttons are Find cover, Cancel and Save.
-            // `view/library.rs` (before its test module at `:455`) constructs
-            // **eight** (`ClearFilters`, `LaunchGame`, `NavigateTo`,
-            // `OpenNewGameForm`, `SetCategoryFilter`, `SetSearchText`,
-            // `SetSortMode`, `SetViewMode`) and none of these three either. A
-            // reader sent to `view/form.rs` to find the button would find
-            // nothing, so the sentence is corrected rather than kept.
-            //
-            // Both counts are *constructions*, not mentions, and the difference
-            // is measured rather than asserted: a plain `grep Message::` over
-            // `form.rs`'s production region returns **eight**, because
-            // `PickExeFile` and `PickCoverFile` occur in the module doc's
-            // "controls that are not drawn" list (`form.rs:36-37`). Counting a
-            // doc link as a producer is the same defect this paragraph is
-            // about, one layer down — and it is the trap `dispatch_coverage.rs`
-            // names in its own header ("comments and string literals are
-            // stripped before any scan"), which is why the count here is taken
-            // the way that guard takes it.
-            //
-            // Where the producer goes is `LibraryPage.qml:320-336`, the
-            // reference's **only** call sites for these three: a context menu on
-            // a Library row, whose `onTriggered` handlers are `runPrefixTool`,
-            // `openPrefix` and `createShortcut`. `view/library.rs` has no menu,
-            // so the correct file currently draws no control that emits any of
-            // them. **That file is UX's under D-51**, and the menu is T-09's.
-            //
-            // The three arms are listed anyway, and that is deliberate: a menu
-            // item is a button like any other, so each is reachable in exactly
-            // the sense this guard asks about, and landing the arm first means
-            // the producer arrives to a handler that already works rather than
-            // to an `{}` — finding #65's shape. **Nothing else in the suite can
-            // see this gap:** `dispatch_coverage.rs` polices the opposite
-            // direction (a control that *emits* into an empty arm) and says so
-            // in its own header, so a handled-but-unemitted variant is invisible
-            // to it. This paragraph is the record; if the menu lands and these
-            // lines are still needed, they are stale.
-            //
-            // `LaunchGame` is the one of the four with a live producer today:
-            // `view/widgets.rs`'s card and row take the `on_press` that emits
-            // it, and the guard prints that closure — `covered: view/widgets.rs
-            // — called from view/library.rs`.
+            // It read "the game form's three buttons produce the rest" — wrong
+            // control, wrong file, measured against the tree — and then, for
+            // the corrected paragraph, that `view/library.rs` has no menu, so
+            // the three prefix/shortcut arms were handled-but-unemitted, with
+            // the stale condition spelled out: "if the menu lands and these
+            // lines are still needed, they are stale." The context menu landed
+            // in U2 and sends all three, plus `LaunchGame`, `OpenEditGameForm`,
+            // `FetchCover` and `ConfirmDeleteGame`, so the condition fired and
+            // the paragraph went with it. The history stays in git: the defect
+            // it recorded — counting a doc link as a producer — is still the
+            // trap `dispatch_coverage.rs` names in its own header.
             //
             // `LaunchWatchTick` is deliberately absent: it has an empty arm and
             // does nothing, so it has nothing to be listed for. The doc above
@@ -6869,6 +6918,256 @@ mod tests {
             !drawn.iter().any(|text| text == &pending.title()),
             "the runner dialog must wait under the form, not over it; drawn: {drawn:?}"
         );
+    }
+
+    /// Deleting a held game parks the id in `confirm_delete`; the dialog the
+    /// user answers is drawn from that pending value, looked up at draw time.
+    #[test]
+    fn confirming_delete_for_a_held_game_sets_the_pending_delete() {
+        let mut shell = shell_with_work_to_do();
+        // The fixture presets the pending delete; clear it so this asserts the
+        // write, not the preset.
+        shell.state.confirm_delete = None;
+
+        let _ = shell.update(Message::ConfirmDeleteGame("g".to_string()));
+
+        assert_eq!(
+            shell.state.confirm_delete.as_deref(),
+            Some("g"),
+            "`ConfirmDeleteGame` must park the id so the dialog has something to ask about"
+        );
+        assert!(
+            shell.state.library.get("g").is_some(),
+            "asking must not remove: the game stays until the user confirms"
+        );
+    }
+
+    /// Deleting an id the library does not hold opens nothing: there is no
+    /// entry to name in the dialog, so the arm stays silent rather than ask
+    /// about a game that is already gone.
+    #[test]
+    fn confirming_delete_for_an_unheld_game_opens_nothing() {
+        let mut shell = shell_with_work_to_do();
+        shell.state.confirm_delete = None;
+
+        let _ = shell.update(Message::ConfirmDeleteGame("absent".to_string()));
+
+        assert!(
+            shell.state.confirm_delete.is_none(),
+            "an unheld id must not open the dialog; nothing is pending"
+        );
+    }
+
+    /// The delete dialog is a modal over the page the user was on: it names
+    /// the entry, says what survives (covers, saves stay on disk), keeps the
+    /// keyboard escape (Cancel), and leaves the page — here the other game —
+    /// drawn beneath it.
+    #[test]
+    fn the_delete_dialog_is_a_modal_over_the_page_it_names() {
+        let (_root, library) = library_with("u3-photo", &[("g1", "Hades"), ("g2", "Celeste")]);
+        let mut shell = Shell::new();
+        shell.state.library = library;
+
+        let _ = shell.update(Message::ConfirmDeleteGame("g1".to_string()));
+        let drawn = drawn_strings(shell.view_with_overlays());
+
+        assert!(
+            drawn.iter().any(|text| text == "Remove \u{201c}Hades\u{201d}?"),
+            "the dialog must name the entry it is about to remove; drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text.contains("left on disk")),
+            "the dialog must say what is kept (covers, saves); drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == "Cancel"),
+            "Cancel is the keyboard escape; drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == "Remove"),
+            "Remove is the destructive confirm; drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == "Celeste"),
+            "the page stays drawn beneath the modal; drawn: {drawn:?}"
+        );
+
+        // Nothing pending: the same call is the page, with no dialog in it.
+        shell.state.confirm_delete = None;
+        let fallthrough = drawn_strings(shell.view_with_overlays());
+        assert!(
+            !fallthrough.iter().any(|text| text == "Remove \u{201c}Hades\u{201d}?"),
+            "no pending delete, so no dialog title; drawn: {fallthrough:?}"
+        );
+        assert!(
+            fallthrough.iter().any(|text| text == "Hades"),
+            "the fall-through is the page, both games drawn; drawn: {fallthrough:?}"
+        );
+    }
+
+    /// A delete dialog for a game that vanished between asking and drawing
+    /// names the id: the fallback of the name lookup in `view_with_overlays`,
+    /// which unreachable-through-the-arms states still have to draw.
+    #[test]
+    fn a_delete_dialog_for_a_missing_game_names_the_id() {
+        let (_root, library) = library_with("u3-missing", &[("g1", "Hades")]);
+        let mut shell = Shell::new();
+        shell.state.library = library;
+        shell.state.confirm_delete = Some("missing".to_string());
+
+        let drawn = drawn_strings(shell.view_with_overlays());
+
+        assert!(
+            drawn.iter().any(|text| text == "Remove \u{201c}missing\u{201d}?"),
+            "the fallback title must carry the raw id; drawn: {drawn:?}"
+        );
+    }
+
+    /// Confirming removes the entry from memory and from disk, closes the
+    /// dialog, and names the removed game in the toast.
+    #[test]
+    fn confirming_the_delete_removes_the_entry_and_names_it() {
+        let (root, library) = library_with("u3-confirm", &[("g1", "Hades"), ("g2", "Celeste")]);
+        let mut shell = Shell::new();
+        shell.state.library = library;
+        let _ = shell.update(Message::ConfirmDeleteGame("g1".to_string()));
+        assert_eq!(shell.state.confirm_delete.as_deref(), Some("g1"));
+
+        let _ = shell.update(Message::DeleteGameConfirmed("g1".to_string()));
+
+        assert!(
+            shell.state.library.get("g1").is_none(),
+            "the confirmed entry must leave the library"
+        );
+        assert!(
+            shell.state.library.get("g2").is_some(),
+            "the entry the user did not name must stay"
+        );
+        assert!(
+            shell.state.confirm_delete.is_none(),
+            "the dialog must close once it has acted"
+        );
+        assert!(
+            Library::new_at(Some(root.join("games.json")), 0.0)
+                .get("g1")
+                .is_none(),
+            "removal must persist: a reload must not resurrect the entry"
+        );
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("Removed \u{201c}Hades\u{201d}"),
+            "the toast must name the removed game"
+        );
+    }
+
+    /// Closing the dialog without confirming keeps the game: Cancel and Escape
+    /// are pure dismissal. (The clearing half — `CloseDialog` dropping the
+    /// pending delete — is `closing_the_dialog_clears_the_form_and_the_delete_confirmation`'s;
+    /// this is the keeps-half.)
+    #[test]
+    fn cancel_keeps_the_game() {
+        let mut shell = shell_with_work_to_do();
+        let _ = shell.update(Message::ConfirmDeleteGame("g".to_string()));
+
+        let _ = shell.update(Message::CloseDialog);
+
+        assert!(
+            shell.state.library.get("g").is_some(),
+            "dismissal must not remove: the game stays"
+        );
+    }
+
+    /// Confirming a delete for an id the library does not hold is silence past
+    /// clearing the pending delete: the arm removes by the message's id (the
+    /// P-37 shape — the confirmed message carries the authority, looked up at
+    /// confirm time), so an unknown id finds nothing and reports nothing. A
+    /// stale second press, after the first already removed the game, lands here
+    /// too.
+    #[test]
+    fn confirming_a_delete_for_an_unknown_id_is_silence() {
+        let mut shell = shell_with_work_to_do();
+
+        let _ = shell.update(Message::DeleteGameConfirmed("absent".to_string()));
+
+        assert!(
+            shell.state.library.get("g").is_some(),
+            "an unknown id must not remove the game"
+        );
+        assert!(
+            shell.state.confirm_delete.is_none(),
+            "the dialog must close even when there was nothing to remove"
+        );
+    }
+
+    /// The two confirmations are one seat: opening either closes the other, so
+    /// the user is never asked two destructive questions at once and the two
+    /// dialogs can never stack.
+    #[test]
+    fn opening_one_dialog_closes_the_other() {
+        let mut shell = shell_with_work_to_do();
+        let _ = shell.update(Message::ConfirmDeleteGame("g".to_string()));
+
+        let _ = shell.update(Message::ConfirmRemoveRunner {
+            runner_id: "GE-Proton9-5".to_string(),
+            name: "GE-Proton9-5".to_string(),
+        });
+
+        assert!(
+            shell.state.confirm_delete.is_none(),
+            "opening the runner dialog must close the delete dialog"
+        );
+        assert!(
+            shell.state.confirm_remove_runner.is_some(),
+            "the runner dialog must be pending after it opens"
+        );
+
+        let _ = shell.update(Message::ConfirmDeleteGame("g".to_string()));
+
+        assert_eq!(
+            shell.state.confirm_delete.as_deref(),
+            Some("g"),
+            "the delete dialog must be pending after it reopens"
+        );
+        assert!(
+            shell.state.confirm_remove_runner.is_none(),
+            "opening the delete dialog must close the runner dialog"
+        );
+    }
+
+    /// A removal the disk refuses is reported, not dropped. The entry still
+    /// leaves memory — the reference deletes before it saves
+    /// (`models.py:173-176`) with no rollback, and this port keeps that order —
+    /// but unlike the reference, whose save exception escapes the slot
+    /// unreported, the port toasts what happened. The library path is blocked
+    /// by a file where its directory was, so the save fails deterministically.
+    #[test]
+    fn a_failed_removal_is_reported() {
+        // A stale blocker from an interrupted run would break `library_with`
+        // (`create_dir_all` on a file), so clear it before building.
+        let stale = std::env::temp_dir().join(format!("gh-cli-u3-fail-{}", std::process::id()));
+        let _ = std::fs::remove_file(&stale);
+        let (root, library) = library_with("u3-fail", &[("g1", "Hades")]);
+        let mut shell = Shell::new();
+        shell.state.library = library;
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::write(&root, b"a file, not a directory").unwrap();
+
+        let _ = shell.update(Message::ConfirmDeleteGame("g1".to_string()));
+        let _ = shell.update(Message::DeleteGameConfirmed("g1".to_string()));
+
+        assert!(
+            shell.state.library.get("g1").is_none(),
+            "the entry leaves memory even when the save fails: delete-before-save \
+             with no rollback is the reference's order (`models.py:173-176`)"
+        );
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("Could not remove \u{201c}Hades\u{201d}"),
+            "the toast must name the game the disk refused to forget"
+        );
+        assert!(
+            shell.state.confirm_delete.is_none(),
+            "the dialog must close once it has answered, even on failure"
+        );
+        std::fs::remove_file(&root).unwrap();
     }
 
     /// `Notify` pushes a toast. Every failure path in `bridge.py` ends here, so

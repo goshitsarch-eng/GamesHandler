@@ -1051,6 +1051,9 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
                 runner_id: runner_id.clone(),
                 name: name.clone(),
             });
+            // One modal layer: opening this dialog closes a pending game
+            // removal, as `ConfirmDeleteGame` closes this one.
+            state.confirm_delete = None;
             Some(Task::none())
         }
         // The dialog's Remove (`RunnersPage.qml:267-271`): the pending removal

@@ -175,8 +175,8 @@ pub enum Message {
     OpenNewGameForm,                     // was: newGameTemplate() + push GameFormPage
     OpenEditGameForm(GameId),            // was: getGame(id) + push GameFormPage
     CloseDialog,                         // was: layers.pop()
-    ConfirmDeleteGame(GameId),           // was: removeGame() (add confirm step; QML deletes
-                                         //   without confirming — behavior change, see §2.5)
+    ConfirmDeleteGame(GameId),           // was: removeDialog + removeGame() (the QML asks
+                                         //   first; §2.5's item 1 was struck when that surfaced)
     DeleteGameConfirmed(GameId),
     PickExeFile { field: ExeField },     // file-chooser open; ExeField::{Exe,WorkingDir,AdditionalApp,Prefix}
     ExeFileChosen { field: ExeField, path: Option<String> }, // None = cancelled
@@ -327,8 +327,13 @@ toaster` — exact push/expire API **[UNVERIFIED]**).
 
 ### 2.5 Proposed behavior changes (only these; everything else faithful)
 
-1. Confirm-before-delete (`ConfirmDeleteGame`): QML deletes instantly
-   (`removeGame`, 447-454). Standard COSMIC UX; destructive and irreversible.
+1. ~~Confirm-before-delete (`ConfirmDeleteGame`): QML deletes instantly
+   (`removeGame`, 447-454). Standard COSMIC UX; destructive and irreversible.~~
+   **Struck in U3: the premise was wrong.** It was read off `bridge.removeGame`
+   alone, but the confirm lives in the QML — `removeDialog`
+   (`LibraryPage.qml:346-360`) opens before the slot ever runs — so asking
+   first is parity, not a change. The strike stays visible so the next reader
+   who diffs this list against the enum knows where item 1 went.
 2. `formCategories` derived, not constant (above).
 3. `progress: Option<f32>` / `ReleasesStatus` instead of sentinels/strings.
 4. `quit()`: closes the main window via the normal COSMIC path rather than
