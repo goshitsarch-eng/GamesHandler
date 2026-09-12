@@ -641,7 +641,12 @@ stage_test() {
     # shape, echoed by `echo_subchecks`).
     require_compiled() {
         local crate="$1" out="$2"
-        if printf '%s\n' "$out" | grep -qE "^ +Compiling ${crate} v"; then
+        # A herestring, not `printf | grep -q`: with `set -o pipefail`, grep's
+        # early exit on a match SIGPIPEs a printf that is still writing, and
+        # the pipeline reports printf's 141 instead of grep's 0 — a FAIL on
+        # output that contains the line. Measured: 59 failures in 60 runs of
+        # the piped form against a 1.4 MB test log, 0 in 60 of this form.
+        if grep -qE "^ +Compiling ${crate} v" <<<"$out"; then
             echo "ok   cargo compiled ${crate} from source before running its tests"
         else
             echo "FAIL cargo never compiled ${crate} — the binary it ran is not this source (#50)"
