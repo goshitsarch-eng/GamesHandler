@@ -23,6 +23,9 @@
 //! Exposing the decision keeps the rule in one place, and keeps the hash an
 //! implementation detail of it.
 
+use std::fmt;
+use std::path::{Path, PathBuf};
+
 /// How many placeholder shades there are. `covers.py:95`.
 pub const COVER_ACCENTS: usize = 8;
 
@@ -91,6 +94,86 @@ pub fn accent_index(seed: &str) -> usize {
 /// config file. Negative counts cannot reach the clamp from Python's `int`, but
 /// they can from a `usize`-underflowing caller, so the clamp is written on the
 /// way in rather than assumed.
+/// Writing an executable's icon into the covers directory failed.
+///
+/// Port of the two failures `save_exe_icon` (`covers.py:307-317`) surfaces:
+/// the executable carries no icon (a `RuntimeError` there, [`SaveIconError::NoIcon`]
+/// here, with the reference's message byte for byte), or the filesystem
+/// refused the write.
+#[derive(Debug)]
+pub enum SaveIconError {
+    /// `RuntimeError(f"{name} carries no icon to use as a cover")`.
+    ///
+    /// `exe` is the executable's file name, as `Path(exe_path).name` is —
+    /// including when there is no icon because the path is not a PE at all,
+    /// since [`crate::exe_icons::extract_icon`] folds every unreadable input
+    /// into `None` before this error is built.
+    NoIcon { exe: String },
+    /// Creating the covers directory, writing the temporary file, or the
+    /// rename into place failed.
+    Io(std::io::Error),
+}
+
+impl From<std::io::Error> for SaveIconError {
+    fn from(error: std::io::Error) -> Self {
+        SaveIconError::Io(error)
+    }
+}
+
+impl fmt::Display for SaveIconError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SaveIconError::NoIcon { exe } => {
+                write!(formatter, "{exe} carries no icon to use as a cover")
+            }
+            SaveIconError::Io(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for SaveIconError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            SaveIconError::Io(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+/// Write the icon embedded in a Windows executable into the covers directory.
+///
+/// Port of `save_exe_icon` (`covers.py:307-317`): the icon bytes come from
+/// [`crate::exe_icons::extract_icon`], the destination is
+/// `{covers_dir()}/{game_id}.ico`, and the write is atomic — a temporary
+/// `{game_id}.ico.tmp` beside the target, renamed into place — so an
+/// interrupted save leaves the previous cover (or nothing), never half a file.
+pub fn save_exe_icon(exe_path: &Path, game_id: &str) -> Result<PathBuf, SaveIconError> {
+    save_exe_icon_to(exe_path, game_id, &crate::paths::covers_dir())
+}
+
+/// [`save_exe_icon`] into an explicit directory, as the reference's tests do
+/// by patching `config.covers_dir` (`tests/test_covers.py:142-146`).
+pub fn save_exe_icon_to(
+    exe_path: &Path,
+    game_id: &str,
+    covers_dir: &Path,
+) -> Result<PathBuf, SaveIconError> {
+    let icon = crate::exe_icons::extract_icon(exe_path).ok_or_else(|| SaveIconError::NoIcon {
+        exe: exe_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    })?;
+    let destination = covers_dir.join(format!("{game_id}.ico"));
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temporary = destination.with_extension("ico.tmp");
+    std::fs::write(&temporary, icon)?;
+    std::fs::rename(&temporary, &destination)?;
+    Ok(destination)
+}
+
 pub fn accent_index_in(seed: &str, buckets: usize) -> usize {
     let buckets = buckets.max(1);
     let digest = crate::hash::sha256_hex(seed.as_bytes());
@@ -150,10 +233,7 @@ mod tests {
         // is pinned rather than assumed: CPython's `"😀".encode("utf-8")` is
         // `f0 9f 98 80` and this crate hashes the same four bytes.
         assert_eq!(accent_index("\u{1f600}"), 0);
-        assert_eq!(
-            crate::hash::sha256_hex("\u{1f600}".as_bytes())[0..2],
-            *"f0"
-        );
+        assert_eq!(crate::hash::sha256_hex("\u{1f600}".as_bytes())[0..2], *"f0");
     }
 
     #[test]
@@ -162,7 +242,10 @@ mod tests {
         // indexes `COVER_GRADIENTS` without wrapping. `shade` wraps defensively,
         // but it should never have to.
         for seed in ["", "a", "\u{1f600}", &"x".repeat(500)] {
-            assert!(accent_index(seed) < COVER_ACCENTS, "{seed:?} escaped the range");
+            assert!(
+                accent_index(seed) < COVER_ACCENTS,
+                "{seed:?} escaped the range"
+            );
         }
     }
 
@@ -206,5 +289,85 @@ mod tests {
             distinct.len() > 1,
             "every seed got the same bucket ({buckets:?}) — this is not hashing"
         );
+    }
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gh-covers-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        dir
+    }
+
+    /// A real PE carrying one icon (`tests/test_covers.py:24-29`).
+    fn windows_executable(path: &Path) -> PathBuf {
+        use crate::exe_icons::builders::{build_pe, dib_icon, group_icon, resource_section};
+        let payload = dib_icon(32, 0x5A);
+        let section = resource_section(
+            &[(1, payload.clone())],
+            &group_icon(&[(32, payload.len(), 1)]),
+        );
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("the exe directory");
+        }
+        std::fs::write(path, build_pe(&section, false, None)).expect("write the fixture");
+        path.to_path_buf()
+    }
+
+    #[test]
+    fn saves_the_executables_icon_into_the_covers_directory() {
+        let root = scratch_dir("save");
+        let covers = root.join("covers");
+        let exe = windows_executable(&root.join("Steam").join("steam.exe"));
+        let path = save_exe_icon_to(&exe, "abc123", &covers).expect("a saved icon");
+        assert_eq!(path, covers.join("abc123.ico"));
+        let saved = std::fs::read(&path).expect("read the saved icon");
+        assert!(
+            saved.starts_with(b"\x00\x00\x01\x00"),
+            "an .ico header, not whatever the exe happened to hold"
+        );
+        // Saving is atomic: the temporary file is renamed away, not left behind.
+        let leftovers: Vec<_> = std::fs::read_dir(&covers)
+            .expect("read the covers directory")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "a .tmp file was left behind");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_executable_without_an_icon_is_reported_not_silently_empty() {
+        let root = scratch_dir("noicon");
+        let covers = root.join("covers");
+        let bare = root.join("bare.exe");
+        let mut bytes = b"MZ".to_vec();
+        bytes.resize(4098, 0);
+        std::fs::write(&bare, bytes).expect("write the fixture");
+        let error = save_exe_icon_to(&bare, "abc123", &covers).expect_err("no icon to save");
+        assert!(
+            error.to_string().contains("no icon"),
+            "the reference's message, byte for byte: {error}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "bare.exe carries no icon to use as a cover"
+        );
+        assert!(!covers.join("abc123.ico").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_missing_executable_names_itself_in_the_error() {
+        // `extract_icon` folds a missing file into `None`, so the error is
+        // still `NoIcon` — and it still names the file, as `Path(name).name`
+        // does when there is a name to take.
+        let root = scratch_dir("missing");
+        let error = save_exe_icon_to(&root.join("gone.exe"), "abc123", &root.join("covers"))
+            .expect_err("no file, no icon");
+        assert_eq!(
+            error.to_string(),
+            "gone.exe carries no icon to use as a cover"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
