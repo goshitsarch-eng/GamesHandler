@@ -165,72 +165,18 @@ pub enum ReleasesStatus {
     Error(String),
 }
 
-/// Artwork found for a game.
+/// Artwork found for a game, re-exported from its canonical home.
 ///
-/// A port of `covers.CoverHit` (`covers.py:258-269`) carrying the fields the
-/// interface actually reads: the five `coverFetched` puts in a map
-/// (`bridge.py:575-581`) reduce to these, and [`Self::origin_label`] is the
-/// derived `origin` that the toast names.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CoverHit {
-    /// The Steam application id, `0` when the artwork did not come from Steam.
-    pub appid: i64,
-    /// The name the artwork is for — Steam's name, which may differ from the
-    /// user's.
-    pub name: String,
-    /// The shelf it was found on, for a later re-fetch.
-    pub category: String,
-    /// Where the image was written.
-    pub cover_path: PathBuf,
-    /// Where it came from, for attribution.
-    pub source_url: String,
-    /// `STEAM_SOURCE` or `ICON_SOURCE`; see [`Self::origin_label`].
-    pub source: String,
-}
-
-/// The `STEAM_SOURCE` marker in `covers.py`.
-pub const STEAM_SOURCE: &str = "steam";
-/// The `ICON_SOURCE` marker in `covers.py` — art taken from the executable's own
-/// icon rather than from Steam.
-pub const ICON_SOURCE: &str = "icon";
-
-impl CoverHit {
-    /// Artwork found on Steam, which is the default the Python dataclass
-    /// carries (`source: str = STEAM_SOURCE`, `covers.py:264`).
-    ///
-    /// A constructor rather than a struct literal at each call site: the
-    /// default is part of the ported shape, and spelling it out here is what
-    /// keeps [`STEAM_SOURCE`] from being a constant nothing reads.
-    pub fn from_steam(
-        appid: i64,
-        name: String,
-        category: String,
-        cover_path: PathBuf,
-        source_url: String,
-    ) -> Self {
-        Self {
-            appid,
-            name,
-            category,
-            cover_path,
-            source_url,
-            source: STEAM_SOURCE.to_string(),
-        }
-    }
-
-    /// Where the artwork came from, phrased for the toast that announces it.
-    ///
-    /// `covers.py:266-269`. Only the icon case is special-cased; everything
-    /// else is called "Steam", which is what the original does — including for
-    /// a source that is neither.
-    pub fn origin_label(&self) -> &'static str {
-        if self.source == ICON_SOURCE {
-            "the app icon"
-        } else {
-            "Steam"
-        }
-    }
-}
+/// [`CoverHit`](gamehandler_core::covers::CoverHit) is the port of
+/// `covers.CoverHit` (`covers.py:257-269`): the five fields `coverFetched`
+/// puts in a map (`bridge.py:575-581`) are a compatibility surface, so the
+/// shape — with [`from_steam`](gamehandler_core::covers::CoverHit::from_steam)
+/// and [`origin_label`](gamehandler_core::covers::CoverHit::origin_label) —
+/// lives in `core`, and this module re-exports it rather than maintaining a
+/// second copy. Every call site keeps working unchanged through this name.
+/// (The `STEAM_SOURCE`/`ICON_SOURCE` markers stay in `core`: nothing here
+/// names them outside the tests, which import them directly.)
+pub use gamehandler_core::covers::CoverHit;
 
 /// An easy-install that finished but could not find its game's executable.
 ///
@@ -1063,6 +1009,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gamehandler_core::covers::{ICON_SOURCE, STEAM_SOURCE};
 
     #[test]
     fn every_page_has_a_distinct_label_and_the_order_is_the_nav_order() {

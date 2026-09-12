@@ -161,28 +161,12 @@ pub fn shade(accent: usize) -> ([u8; 3], [u8; 3]) {
 
 /// Up to two uppercase initials for a placeholder plate.
 ///
-/// Port of `initials` (`covers.py:88-99`). `re.split(r"[^0-9A-Za-z]+", name)`
-/// is a split on runs of non-alphanumerics, which is what
-/// [`char::is_ascii_alphanumeric`] gives here — note *ASCII*, since Python's
-/// character class is explicit and would split on `é`. A name with no word
-/// characters at all gets `"?"`, which is also `CoverArt.qml`'s default.
+/// [`gamehandler_core::covers::initials`], where the rule lives: the strings
+/// are user-visible and must match `covers.py:97-104`, which makes them a
+/// compatibility surface, and those live in `core` — the same reason
+/// [`accent_of`] reaches through to [`gamehandler_core::covers::accent_index`].
 pub fn initials(name: &str) -> String {
-    let words: Vec<&str> = name
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .collect();
-
-    match words.as_slice() {
-        [] => "?".to_string(),
-        // `words[0][:2].upper()` — two characters, not two bytes.
-        [only] => only.chars().take(2).collect::<String>().to_uppercase(),
-        [first, second, ..] => {
-            let mut out = String::with_capacity(2);
-            out.extend(first.chars().take(1));
-            out.extend(second.chars().take(1));
-            out.to_uppercase()
-        }
-    }
+    gamehandler_core::covers::initials(name)
 }
 
 /// The plate shade index for a game.
