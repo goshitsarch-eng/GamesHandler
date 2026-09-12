@@ -194,43 +194,13 @@ const HANDLED_ELSEWHERE: [(&str, &str); 1] = [(
 /// the sha can confirm it. `32f5601`, `ce1cd7a` and `e27c4ea` are red for the
 /// same reason; `2ce15e9` is green because it is the repair. Nothing was
 /// reverted — the current tree is green and the entry is correctly gone.
-const KNOWN_DEAD: [(&str, &str, &str); 2] = [
-    // variant, module, why — the task that owns it
-    (
-    "FetchCoverForForm",
-    "form",
-    "#80 / T-11. **Not debt: a false positive the guard cannot model, and one the tree \
-     already couples shut.** `view/form.rs` constructs it, but only inside \
-     `if !COVER_FETCH_MISSING` — the flag is `true`, so the FIND COVER button is not drawn and \
-     nothing is reachable. This guard reads source as text and cannot see the flag, so it \
-     reports the emission. That is a limit of the scan, not a defect in the tree, which is why \
-     this entry sits in the deferral list rather than in a bug report. \
-     \
-     **The deletion condition is enforced, twice, and the first time as a compile error — it \
-     is not the prose sentence it reads as.** `main.rs`'s \
-     `the_find_cover_button_is_drawn_iff_its_message_is_handled` carries \
-     `const { assert!(COVER_FETCH_MISSING, …) }`, so flipping the flag does not fail a test a \
-     reader has to find — it fails the *build*, measured: `E0080: evaluation panicked: this \
-     reached the state the constant exists for`. The same test asserts \
-     `handled == !COVER_FETCH_MISSING` in both directions, so the flag cannot go `false` while \
-     the arm is `{}`. And the moment the arm is handled, the staleness assertion below fires \
-     and demands this entry's deletion — that is this list's own rule, doing its job. There is \
-     no state in which this entry quietly defers a live control. \
-     \
-     Cite those two by name if you touch them: the previous text here gave `main.rs:1339` and \
-     `main.rs:3355`, and a line number in a comment is the hand-copied fact this file's header \
-     warns about — `1339` was `1043` when the entry was first written.",
-    ),
-    (
-        "FetchCover",
-        "library",
-        "U5. **Genuine debt with an imminent owner, not a false positive.** The library's \
-         context menu sends it from the Find-cover-art item (U2's entry point) and the arm is \
-         `{}` until U5 wires the fetch. The menu item is reachable and inert in the meantime, \
-         which is exactly what this list exists to name. Delete when U5 handles the arm — the \
-         staleness assertion enforces it.",
-    ),
-];
+/// Empty, and U5 emptied it: `FetchCoverForForm`'s arm is written and its
+/// button ungated, and `FetchCover`'s arm is written behind U2's menu item —
+/// so the staleness assertion below fired on both entries and they were
+/// deleted, which is this list's own rule doing its job. The const stays (at
+/// length zero) so the next genuine deferral has a list to join rather than a
+/// mechanism to rebuild.
+const KNOWN_DEAD: [(&str, &str, &str); 0] = [];
 
 /// The repository root, derived rather than hardcoded.
 fn repo_root() -> PathBuf {
@@ -648,8 +618,8 @@ impl Covered {
 ///
 /// Anchored on `view::<name>::` so a bare `runners::` from the core crate does
 /// not count, and read through [`production_src`] so the test module's
-/// references (`crate::view::form::COVER_FETCH_MISSING` at `main.rs:3330`) do
-/// not make a module look rendered when only a test names it.
+/// references (a `crate::view::form::…` constant named only from `mod tests`)
+/// do not make a module look rendered when only a test names it.
 fn rendered_in_main(main_src: &str, modules: &BTreeSet<String>) -> Vec<String> {
     let (prod, _) = production_src(main_src);
     let mut out = BTreeSet::new();
@@ -1202,12 +1172,42 @@ fn the_guard_covers_a_control_outside_the_page_dispatch() {
 /// a dead emission" — were exercised by nothing, so a reader could conclude the
 /// list was inert and the suite would not contradict them. Two reviewers did.
 ///
+/// U5 emptied the deferral list by handling the last dead arms, so the tree no
+/// longer offers a standing dead emission to work from — and the old revision
+/// of this test panicked exactly there, prescribing deletion or staging. It is
+/// staging: a handled, emitted arm is re-emptied in a mutated copy (the same
+/// `empty_arm` `the_guard_notices_a_re_emptied_arm` uses) and both cases run
+/// against that. Deletion would have dropped #78's coverage of the machinery
+/// the next genuine deferral needs.
+///
 /// The second case is the one that matters: it passes a **page** name where a
 /// module name belongs, which is the shape the old key invited, and requires the
 /// guard to say so rather than silently deferring nothing.
 #[test]
 fn the_deferral_key_is_a_module_and_a_bad_key_is_reported() {
-    let guard = Guard::parse(&read("crates/app/src/main.rs"));
+    let src = read("crates/app/src/main.rs");
+    let live = Guard::parse(&src);
+    // Any emission the tree handles, chosen by shape rather than by name —
+    // variants get renamed, and a name-keyed pick would quietly fall through.
+    let target = live
+        .covered
+        .iter()
+        .flat_map(|page| {
+            let (view_src, _) =
+                production_src(&read(&format!("crates/app/src/view/{}.rs", page.module)));
+            emissions(&view_src)
+        })
+        .find(|variant| live.handled.contains(variant))
+        .unwrap_or_else(|| {
+            panic!(
+                "no `Message` variant is both emitted by a covered module and handled, so no \
+                 dead emission can be staged. Either the guard's coverage has collapsed or \
+                 every page has gone back behind `pending_page`."
+            )
+        });
+    let mutated = empty_arm(&src, &target);
+    assert_ne!(mutated, src, "empty_arm did not change the source");
+    let guard = Guard::parse(&mutated);
     let dead = guard.dead_emissions();
     let covered: BTreeSet<&str> = guard.covered.iter().map(|c| c.module.as_str()).collect();
 
@@ -1217,9 +1217,9 @@ fn the_deferral_key_is_a_module_and_a_bad_key_is_reported() {
         .first()
         .unwrap_or_else(|| {
             panic!(
-                "no dead emission on this tree, so this test cannot exercise the deferral. \
-                 Delete the test or point it at a call that takes the deferral list as a \
-                 parameter — asserting over an empty list is the vacuity #32 is about."
+                "re-emptying `{target}` produced no dead emission, so the deferral has nothing \
+                 to run against. `empty_arm` changed the source but the guard does not read it \
+                 as dead."
             )
         })
         .clone();

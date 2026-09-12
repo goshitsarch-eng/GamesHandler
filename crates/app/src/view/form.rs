@@ -29,28 +29,29 @@
 //! [`crate::state::GameForm::apply`], tested without a display, and
 //! [`crate::Message::SaveGameForm`] is what carries the values there.
 //!
-//! Four of the reference's controls are **not drawn**, each because drawing it
+//! Three of the reference's controls are **not drawn**, each because drawing it
 //! would put a control on screen that cannot do what it appears to do:
 //!
 //! - the executable and cover file choosers (`:101-106`, `:159-164`, and the two
 //!   `FileDialog`s at `:334-361`) — [`crate::Message::PickExeFile`] and
-//!   [`crate::Message::PickCoverFile`], both still empty arms;
-//! - **Find cover** (`:151-158`) — [`crate::Message::FetchCoverForForm`], likewise
-//!   empty, recorded by [`COVER_FETCH_MISSING`];
+//!   [`crate::Message::PickCoverFile`], both still empty arms (U6);
 //! - the runner selector, for a Linux game only (`:172-183`) — not a missing
 //!   message but a missing *capability*, recorded by
 //!   [`RUNNER_ROW_HIDDEN_FOR_LINUX`].
 //!
+//! **Find cover** (`:151-158`) used to be the fourth: its arm was empty, so the
+//! button was gated behind a `COVER_FETCH_MISSING` constant the suite read.
+//! U5 wrote the arm and deleted the gate with the constant — the same device
+//! the credits page used for its dead links, whose `LINKS_OPEN` was deleted
+//! when P-65 wired them.
+//!
 //! Two of the reference's values are still drawn either way, because those are
 //! reads rather than writes: the cover row shows [`NO_COVER`] or the stored path,
 //! and the runner's *value* is visible in the Library row's subtitle even when the
-//! selector is not drawn here. Both gaps are values a test reads rather than
-//! comments — the same device the credits page used for its dead links, whose
-//! `LINKS_OPEN` constant was deleted when P-65 wired them.
+//! selector is not drawn here.
 //!
 //! [`crate::Message::PickExeFile`]: crate::Message::PickExeFile
 //! [`crate::Message::PickCoverFile`]: crate::Message::PickCoverFile
-//! [`crate::Message::FetchCoverForForm`]: crate::Message::FetchCoverForForm
 
 use cosmic::iced::Length;
 use cosmic::widget::{
@@ -133,21 +134,6 @@ pub const ENVIRONMENT_PLACEHOLDER: &str = "KEY=value pairs. Overrides the toggle
 /// which the row's `enabled:` reads (`:309`).
 pub const VIRTUAL_DESKTOP_TOGGLE: &str = "virtual_desktop";
 
-/// Whether **Find cover** can be drawn at all.
-///
-/// `true` means it cannot: [`Message::FetchCoverForForm`] is an empty arm, so a
-/// button sending it would visibly do nothing. The day that arm is written this
-/// becomes `false` and
-/// `the_find_cover_button_is_drawn_iff_its_message_is_handled` fails, so the
-/// note cannot outlive the gap.
-///
-/// That test's name is a code span rather than a link because it lives in
-/// `main.rs`'s `mod tests`, which rustdoc does not see — the bracket form
-/// emitted a broken-intra-doc-link warning instead of a pointer.
-///
-/// [`Message::FetchCoverForForm`]: crate::Message::FetchCoverForForm
-pub const COVER_FETCH_MISSING: bool = true;
-
 /// Whether the runner row is **omitted** for a Linux game.
 ///
 /// `true` because the reference's runner combo is `enabled: !form.isLinux`
@@ -166,8 +152,9 @@ pub const COVER_FETCH_MISSING: bool = true;
 /// [`TextInput`]: cosmic::widget::text_input::TextInput
 ///
 /// `the_runner_row_is_hidden_exactly_when_it_cannot_be_disabled` fails the day
-/// this becomes `false`. It is a value rather than a comment for the reason
-/// [COVER_FETCH_MISSING] is.
+/// this becomes `false`. It is a value rather than a comment so the suite reads
+/// the gap instead of trusting prose — the device `COVER_FETCH_MISSING` was
+/// before U5 deleted it with the gap it recorded.
 pub const RUNNER_ROW_HIDDEN_FOR_LINUX: bool = true;
 
 // ---------------------------------------------------------------------------
@@ -725,23 +712,24 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
             } else {
                 form.cover_path.as_str()
             };
-            let mut row = Row::new().push(text::caption(shown.to_string())).spacing(6);
-            if !COVER_FETCH_MISSING {
-                row = row.push(
-                    button::standard(FIND_COVER).on_press(Message::FetchCoverForForm {
-                        token: 0,
-                        game_id: form.game_id.clone().unwrap_or_default(),
-                        name: form.name.clone(),
-                        // `form.isLinux ? "" : exeField.text` (`:157`).
-                        exe: if form.is_linux {
-                            String::new()
-                        } else {
-                            form.exe_path.clone()
-                        },
-                    }),
-                );
-            }
-            row.width(Length::Fill).into()
+            let row = Row::new().push(text::caption(shown.to_string())).spacing(6);
+            // `token: 0`: the view cannot mint the lookup token (it holds no
+            // `&mut State`), so the arm does — see `FetchCoverForForm`.
+            row.push(
+                button::standard(FIND_COVER).on_press(Message::FetchCoverForForm {
+                    token: 0,
+                    game_id: form.game_id.clone().unwrap_or_default(),
+                    name: form.name.clone(),
+                    // `form.isLinux ? "" : exeField.text` (`:157`).
+                    exe: if form.is_linux {
+                        String::new()
+                    } else {
+                        form.exe_path.clone()
+                    },
+                }),
+            )
+            .width(Length::Fill)
+            .into()
         }));
 
     // ---- Compatibility tool ------------------------------------------------

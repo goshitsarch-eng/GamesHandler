@@ -1874,6 +1874,24 @@ impl Shell {
                     Ok(game) => {
                         let is_new = existing.is_none();
                         let name = game.name.clone();
+                        // `if not game.cover_path: self.fetchCover(game.id)`
+                        // (`bridge.py:444-445`): a save without artwork starts
+                        // a lookup. Captured before the store moves the game;
+                        // the notice below is the batched toast, and the fetch
+                        // is the same task `Message::FetchCover` builds.
+                        let fetch = game.cover_path.is_empty().then(|| {
+                            let game_id = game.id.clone();
+                            let name = game.name.clone();
+                            let exe = (!game.is_linux() && !game.exe_path.is_empty())
+                                .then(|| PathBuf::from(&game.exe_path));
+                            cosmic::app::Task::perform(
+                                async move {
+                                    let result = cover_lookup(&name, &game_id, exe.as_deref());
+                                    Message::CoverFetchFinished { game_id, result }
+                                },
+                                cosmic::Action::App,
+                            )
+                        });
                         let stored = if is_new {
                             self.state.library.add(game)
                         } else {
@@ -1892,7 +1910,13 @@ impl Shell {
                         } else {
                             format!("Updated “{name}”")
                         };
-                        return self.state.toast_task(notice);
+                        let notice = self.state.toast_task(notice);
+                        match fetch {
+                            Some(fetch) => {
+                                return cosmic::app::Task::batch([notice, fetch]);
+                            }
+                            None => return notice,
+                        }
                     }
                 }
             }
@@ -2100,23 +2124,120 @@ impl Shell {
             Message::SetWindowHidden(_hidden) => {}
 
             // ---- Covers ----------------------------------------------------
-            // TODO(T-11): the saved-game fetch; `covers::fetch_cover` is
-            // network-bound, so it belongs in a future task, never on the UI
-            // thread.
-            Message::FetchCover(_game_id) => {}
-            Message::CoverFetchFinished { game_id: _game_id, result: _result } => {}
-            // TODO(T-11): allocate the token with
-            // `State::next_form_cover_token` at *emission* time, not here.
+            // `fetchCover` (`bridge.py:537-560`). Silent for an unknown id —
+            // the reference returns before spawning — and `""` for the exe of
+            // a Linux game, which has none. The lookup runs on a worker
+            // (D-48); the reply re-checks the game for the same reason
+            // `bridge.py:547-549` does.
+            Message::FetchCover(game_id) => {
+                let Some(game) = self.state.library.get(&game_id).cloned() else {
+                    return cosmic::task::none();
+                };
+                let name = game.name.clone();
+                let exe = (!game.is_linux() && !game.exe_path.is_empty())
+                    .then(|| PathBuf::from(&game.exe_path));
+                return cosmic::app::Task::perform(
+                    async move {
+                        let result = cover_lookup(&name, &game_id, exe.as_deref());
+                        Message::CoverFetchFinished { game_id, result }
+                    },
+                    cosmic::Action::App,
+                );
+            }
+            // The `done` of `fetchCover` (`bridge.py:546-558`): re-check the
+            // game, write what the hit carries, persist, and name the source.
+            // A failure toasts the raw message — `_async`'s default `fail`
+            // (`bridge.py:161`) — and a failed *save* is reported rather than
+            // raised, the divergence `Message::LaunchStarted` records for
+            // `mark_played`: the reference lets `done`'s exception escape to
+            // the Qt loop, which is not a behaviour to reproduce.
+            Message::CoverFetchFinished { game_id, result } => {
+                let Ok(hit) = result else {
+                    return self.state.toast_task(result.unwrap_err());
+                };
+                let Some(mut game) = self.state.library.get(&game_id).cloned() else {
+                    return cosmic::task::none();
+                };
+                game.cover_path = hit.cover_path.to_string_lossy().into_owned();
+                if hit.appid != 0 {
+                    game.steam_appid = hit.appid;
+                }
+                if game.display_category() == "Uncategorized" && !hit.category.is_empty() {
+                    game.category = hit.category.clone();
+                }
+                let name = game.name.clone();
+                if let Err(error) = self.state.library.update(game) {
+                    return self.state.toast_task(format!("Could not save “{name}”: {error}"));
+                }
+                return self.state.toast_task(format!(
+                    "Cover set from {}: {}",
+                    hit.origin_label(),
+                    hit.name
+                ));
+            }
+            // `fetchCoverForForm` (`bridge.py:562-588`). The token is
+            // allocated here, at emission — `State::next_form_cover_token`,
+            // the same shape `runner_rows_token` uses — and the carried token
+            // is ignored: the view cannot bump (it holds no `&mut State`), so
+            // it sends `0` and the arm mints the real one. The `exe` is
+            // stripped but not URL-decoded: `as_local_path`'s decoding is the
+            // chooser's job (T-15), and the form has no chooser until U6, so
+            // what reaches here is typed text, not a `file://` URL.
             Message::FetchCoverForForm {
                 token: _token,
-                game_id: _game_id,
-                name: _name,
-                exe: _exe,
-            } => {}
-            // TODO(T-11): drop the reply when `token` is no longer the form's
-            // current one — `bridge.py:547-549` re-checks the game id for
-            // exactly this reason.
-            Message::FormCoverFetchFinished { token: _token, result: _result } => {}
+                game_id,
+                name,
+                exe,
+            } => {
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    return self.state.toast_task("Enter a game name first".to_string());
+                }
+                let token = self.state.next_form_cover_token();
+                let exe = (!exe.trim().is_empty()).then(|| PathBuf::from(exe.trim()));
+                let looking = self.state.toast_task(format!("Looking for artwork for “{name}”…"));
+                let fetch = cosmic::app::Task::perform(
+                    async move {
+                        let result = cover_lookup(&name, &game_id, exe.as_deref());
+                        Message::FormCoverFetchFinished { token, result }
+                    },
+                    cosmic::Action::App,
+                );
+                return cosmic::app::Task::batch([looking, fetch]);
+            }
+            // `coverFetched`'s half of `fetchCoverForForm` (`bridge.py:571-585`)
+            // plus the QML that answers it (`GameFormPage.qml:57-68`). A reply
+            // whose token is not the form's current one is a late answer
+            // about an older lookup and is dropped — the counter is this
+            // port's form of the QML's `token !== gameId` check, per lookup
+            // rather than per form. The notice fires whether or not a form is
+            // still open, as the reference's `notify` does; the fields are
+            // written only while one is.
+            Message::FormCoverFetchFinished { token, result } => {
+                if token != self.state.form_cover_token {
+                    return cosmic::task::none();
+                }
+                let Ok(hit) = result else {
+                    return self.state.toast_task(result.unwrap_err());
+                };
+                if let Some(form) = self.state.game_form.as_mut() {
+                    form.cover_path = hit.cover_path.to_string_lossy().into_owned();
+                    if hit.appid != 0 {
+                        form.steam_appid = hit.appid.to_string();
+                    }
+                    if !hit.category.is_empty()
+                        && hit.category != "Uncategorized"
+                        && form.category.trim() == "Uncategorized"
+                    {
+                        form.category = hit.category.clone();
+                    }
+                }
+                return self.state.toast_task(format!(
+                    "Cover found via {}: {}",
+                    hit.origin_label(),
+                    hit.name
+                ));
+            }
 
             // ---- Runners ---------------------------------------------------
             // T-11's messages, delegated rather than written here: the page
@@ -2998,6 +3119,56 @@ fn locate_message(
     }
 }
 
+/// `fetch_cover`'s own default (`covers.py:359`): twenty seconds for the
+/// whole lookup, Steam and icon alike. One constant because the reference has
+/// one default; a lookup that needs more patience than a store search is a
+/// lookup that has already failed.
+const COVER_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// The worker half of both cover lookups: `fetch_cover` over the production
+/// client, failing to the rendered string.
+///
+/// Called inside `Task::perform`'s future, like `start_prefix_tool` and
+/// `open_prefix_folder` — the blocking client needs no async adaptation
+/// because the future runs on a worker (D-48). The `Err` is a `String`
+/// because `_async` turns whatever the work raised into one before handing it
+/// to `fail` (`bridge.py:157`), and the default `fail` notifies it verbatim —
+/// so the reply arms toast the string untouched.
+fn cover_lookup(name: &str, game_id: &str, exe: Option<&Path>) -> Result<CoverHit, String> {
+    gamehandler_core::covers::fetch_cover(
+        &crate::http::UreqClient,
+        name,
+        game_id,
+        exe,
+        &gamehandler_core::paths::covers_dir(),
+        COVER_FETCH_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// The cover a finished easy install carries:
+/// `game.cover_path = str(save_exe_icon(exe_path, game_id))`, with `""` when
+/// that raises (`bridge.py:907-911`) — a store launcher is not a Steam
+/// product, so the executable the vendor just installed carries the right
+/// artwork already.
+///
+/// # What is tested, and what is read
+///
+/// The `""` half is pinned below (an exe with no icon keeps the empty
+/// string). The success half — bytes in, `.ico` path out — is `core`'s
+/// `save_exe_icon_to`, tested there against PEs its own builders synthesise;
+/// rebuilding that fixture here would duplicate a binary-format builder
+/// across crates, so the three-line seam is read.
+fn easy_install_cover(executable: &Path, game_id: &str) -> String {
+    gamehandler_core::covers::save_exe_icon_to(
+        executable,
+        game_id,
+        &gamehandler_core::paths::covers_dir(),
+    )
+    .map(|path| path.to_string_lossy().into_owned())
+    .unwrap_or_default()
+}
+
 fn easy_install_wizard_finished(
     state: &mut State,
     found: Option<&Path>,
@@ -3093,18 +3264,13 @@ fn cancel_easy_install(state: &mut State, token: &str) -> cosmic::app::Task<Mess
 /// `_finish_easy_install` (`bridge.py:905-919`): the entry, the guards, and the
 /// signal.
 ///
-/// # What is not here, and why it is named rather than skipped
-///
-/// `bridge.py:907-911` sets the entry's cover to the executable's own icon —
-/// `game.cover_path = str(save_exe_icon(exe_path, game_id))`, with an empty
-/// string when that raises. **`save_exe_icon` has no counterpart in this tree:**
-/// it is `covers.py:307-317` over `exe_icons.extract_icon`, and `core::exe_icons`
-/// does not exist (`crates/core/src/lib.rs` names it as planned and nothing
-/// else does). So the entry is created with no cover, which is the reference's
-/// *own* fallback for a file whose icon cannot be read — a real state, not a
-/// placeholder — and P-58's "with the vendor icon" is therefore **unmet**, not
-/// deferred to Phase 3. The port that closes it is `core::exe_icons`, which
-/// task T-05 owns.
+/// The entry's cover is the executable's own icon
+/// ([`easy_install_cover`], `bridge.py:907-911`) — which used to be the
+/// paragraph this one replaces: "`save_exe_icon` has no counterpart in this
+/// tree ... the port that closes it is `core::exe_icons`, which task T-05
+/// owns." T-05 landed as A1/A2 and U5 wired it here, so an install whose
+/// executable carries an icon now gets it as its cover, and an iconless one
+/// keeps the reference's own `""` fallback.
 fn finish_easy_install(
     state: &mut State,
     record: &crate::state::PendingInstall,
@@ -3121,13 +3287,14 @@ fn finish_easy_install(
         state.running_install = None;
         return state.toast_task(format!("Could not install {}: {message}", record.installer_name));
     };
-    let game = game_from_install(
+    let mut game = game_from_install(
         installer,
         executable,
         &record.prefix,
         &record.runner_id,
         Some(&record.game_id),
     );
+    game.cover_path = easy_install_cover(executable, &game.id);
     let game_id = game.id.clone();
     let name = game.name.clone();
     let added = state.library.add(game);
@@ -4686,8 +4853,14 @@ mod tests {
                             name: "Half-Life 2".to_string(),
                             exe: "/tmp/g.exe".to_string(),
                         }),
+        // `token: 0`, not `1`: the guard drives every sample against a fresh
+        // shell, whose `form_cover_token` is still `0` — a reply token of `1`
+        // would be dropped as a stale answer about an older lookup, and the
+        // arm reported as unwritten. (The `FetchCoverForForm` sample beside it
+        // carries `1` too, but that arm mints its own token and ignores the
+        // carried one.)
         Message::FormCoverFetchFinished { .. } => ("FormCoverFetchFinished", Message::FormCoverFetchFinished {
-                            token: 1,
+                            token: 0,
                             result: Err("lookup failed".to_string()),
                         }),
         Message::FetchReleases { .. } => ("FetchReleases", Message::FetchReleases {
@@ -4999,6 +5172,16 @@ mod tests {
             // reach here (see the removal tests for the unheld half).
             "ConfirmDeleteGame",
             "DeleteGameConfirmed",
+            // U5's four. Live because the library's context menu sends
+            // `FetchCover` (U2's entry point), the form's Find-cover button
+            // sends `FetchCoverForForm`, and each request has its reply. The
+            // stale-token silence in the form reply is what the sample's
+            // token keeps out of reach here (see the cover tests for the
+            // stale half).
+            "FetchCover",
+            "CoverFetchFinished",
+            "FetchCoverForForm",
+            "FormCoverFetchFinished",
             "Notify",
             // T-09's five. They are live because the Library page needs them:
             // the search box, the category filter, the button that clears both
@@ -5741,14 +5924,15 @@ mod tests {
     /// wrong runner would produce an entry that looks fine in a listing and
     /// fails on launch.
     ///
-    /// # What is not asserted, because it is not built
-    ///
-    /// `cover_path`. The reference sets it to the executable's own icon
-    /// (`:907-911`) and **this tree has no `exe_icons`** — see
-    /// [`finish_easy_install`]. The assertion below pins the empty string the
-    /// reference's own `except` clause produces, so the day T-05 lands, this
-    /// test fails and says which field changed rather than quietly agreeing
-    /// with the new behaviour.
+    /// `cover_path` pins the empty string — and that is still the right value
+    /// here, for a narrower reason than it used to be. The reference sets it
+    /// to the executable's own icon (`:907-911`), and this tree *has*
+    /// `exe_icons` now (T-05 landed as A1/A2, U5 wired it in
+    /// [`finish_easy_install`]) — but the fixture's executable is a path with
+    /// no icon behind it, so the wiring takes the reference's own `except`
+    /// fallback. The `""` below is that fallback, not a missing port; the
+    /// seam's own test is
+    /// `an_install_whose_executable_has_no_icon_keeps_no_cover`.
     #[test]
     fn a_wizard_that_found_the_executable_makes_a_library_entry() {
         let prefix = install_prefix("found");
@@ -6520,20 +6704,17 @@ mod tests {
         }
     }
 
-    /// **Find cover is drawn exactly when its message is handled.**
+    /// **Find cover is drawn, and its message is handled.**
     ///
-    /// [`crate::view::form::COVER_FETCH_MISSING`] is the port's statement that
-    /// `FetchCoverForForm`'s arm is still empty, and it is read here rather than
-    /// left as prose: the day the arm is written, this test fails until the
-    /// constant is flipped, and flipping it puts the button on screen.
-    ///
-    /// Both directions, so neither "always draw it" nor "never draw it" passes:
-    /// the button's label is absent exactly while the constant is `true`, and its
-    /// message is handled exactly when the constant is `false`. Today that is
-    /// absent-and-unhandled, and the assertion below names which of the two it is
-    /// so a failure says what changed rather than only that something did.
+    /// This used to be the iff the missing fetch needed: the button's label
+    /// absent exactly while `COVER_FETCH_MISSING` was `true`, and its message
+    /// handled exactly when the constant was `false` — plus a compile-time
+    /// assertion that broke the build the day the constant flipped. U5 wrote
+    /// the arm, drew the button unconditionally, and deleted the constant with
+    /// its note in `view/form.rs`; what remains is the conjunction, so neither
+    /// "drawn but dead" nor "handled but unreachable" passes.
     #[test]
-    fn the_find_cover_button_is_drawn_iff_its_message_is_handled() {
+    fn the_find_cover_button_is_drawn_and_its_message_is_handled() {
         let handled = is_handled(
             &mut shell_with_work_to_do(),
             Message::FetchCoverForForm {
@@ -6546,30 +6727,580 @@ mod tests {
         let drawn = drawn_strings(shell_with_form_open(true, false).view_with_overlays());
         let button_on_screen = drawn.iter().any(|text| text == crate::view::form::FIND_COVER);
 
-        assert_eq!(
-            button_on_screen, !crate::view::form::COVER_FETCH_MISSING,
-            "the button is drawn from `COVER_FETCH_MISSING` and nothing else"
+        assert!(
+            button_on_screen,
+            "the reference's Find cover (`GameFormPage.qml:151-158`) is not on screen"
         );
-        assert_eq!(
-            handled, !crate::view::form::COVER_FETCH_MISSING,
-            "the reference's Find cover (`GameFormPage.qml:151-158`) is on screen only \
-             while its message does nothing: button on screen = {button_on_screen}, \
-             `FetchCoverForForm` handled = {handled}, `COVER_FETCH_MISSING` = {}. When \
-             the arm lands, set the constant to `false` in the same change.",
-            crate::view::form::COVER_FETCH_MISSING
+        assert!(
+            handled,
+            "the Find cover button is drawn but its message does nothing"
         );
-        // A *compile-time* assertion, because that is the strongest form this can
-        // take: flipping `COVER_FETCH_MISSING` to `false` without drawing the
-        // button breaks the build with this message rather than failing one test
-        // a reader has to find. Clippy's `assertions_on_constants` is what asks
-        // for the const block, and it is right to.
-        const {
-            assert!(
-                crate::view::form::COVER_FETCH_MISSING,
-                "this reached the state the constant exists for; delete the note in \
-                 `view/form.rs` with it"
-            )
+    }
+
+    /// Fetching a cover for a game the library does not hold is silence: the
+    /// reference returns before spawning (`bridge.py:539-540`), so there is no
+    /// lookup to answer and nothing to say.
+    #[test]
+    fn fetching_a_cover_for_an_unknown_game_is_silence() {
+        let mut shell = shell_with_work_to_do();
+
+        let effect = observe(&mut shell, Message::FetchCover("absent".to_string()));
+
+        assert!(
+            !effect.state_changed && effect.task_units == 0,
+            "an unknown id must not start a lookup: {effect:?}"
+        );
+    }
+
+    /// Fetching a cover for a held game starts the lookup. The lookup itself
+    /// is a worker task no test drives (it reaches the network); the reply
+    /// tests below cover everything the task's answer can do.
+    #[test]
+    fn fetching_a_cover_for_a_held_game_starts_a_lookup() {
+        let mut shell = shell_with_work_to_do();
+
+        let effect = observe(&mut shell, Message::FetchCover("g".to_string()));
+
+        assert!(
+            effect.task_units > 0,
+            "a held id must return the lookup task: {effect:?}"
+        );
+    }
+
+    /// A finished fetch writes what the hit carries — cover, app id, and the
+    /// category when the game has none — persists, and names the source
+    /// (`bridge.py:546-558`). The category write is P-25: Steam's genre
+    /// auto-categorises a game the user never categorised.
+    #[test]
+    fn a_finished_fetch_writes_the_cover_and_names_its_source() {
+        let mut shell = shell_with_work_to_do();
+        let hit = CoverHit::from_steam(
+            70,
+            "Half-Life".to_string(),
+            "Action".to_string(),
+            PathBuf::from("/tmp/hl.jpg"),
+            "https://example.invalid/hl.jpg".to_string(),
+        );
+
+        let _ = observe(
+            &mut shell,
+            Message::CoverFetchFinished {
+                game_id: "g".to_string(),
+                result: Ok(hit),
+            },
+        );
+
+        let game = shell.state.library.get("g").expect("the fixture holds `g`");
+        assert_eq!(game.cover_path, "/tmp/hl.jpg");
+        assert_eq!(game.steam_appid, 70);
+        assert_eq!(game.category, "Action");
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("Cover set from Steam: Half-Life"),
+            "the toast must name the source and the hit; toasts: {:?}",
+            shell.state.toasts
+        );
+    }
+
+    /// A finished fetch does not recategorise a game the user categorised:
+    /// the auto-categorise fires only for `Uncategorized` (`bridge.py:552`).
+    #[test]
+    fn a_finished_fetch_leaves_a_categorised_game_alone() {
+        let mut shell = shell_with_work_to_do();
+        let mut categorised = shell.state.library.get("g").expect("the fixture holds `g`").clone();
+        categorised.category = "Puzzle".to_string();
+        shell.state.library.update(categorised).unwrap();
+        let hit = CoverHit::from_steam(
+            70,
+            "Half-Life".to_string(),
+            "Action".to_string(),
+            PathBuf::from("/tmp/hl.jpg"),
+            "https://example.invalid/hl.jpg".to_string(),
+        );
+
+        let _ = observe(
+            &mut shell,
+            Message::CoverFetchFinished {
+                game_id: "g".to_string(),
+                result: Ok(hit),
+            },
+        );
+
+        let game = shell.state.library.get("g").expect("the fixture holds `g`");
+        assert_eq!(game.cover_path, "/tmp/hl.jpg", "the cover is still written");
+        assert_eq!(game.category, "Puzzle", "the user's category must win");
+    }
+
+    /// A finished fetch for a game that left while the lookup ran is
+    /// silence: the re-check (`bridge.py:547-549`) finds nothing to write to.
+    #[test]
+    fn a_finished_fetch_for_a_missing_game_is_silence() {
+        let mut shell = shell_with_work_to_do();
+        let hit = CoverHit::from_steam(
+            70,
+            "Half-Life".to_string(),
+            "Action".to_string(),
+            PathBuf::from("/tmp/hl.jpg"),
+            "https://example.invalid/hl.jpg".to_string(),
+        );
+
+        let effect = observe(
+            &mut shell,
+            Message::CoverFetchFinished {
+                game_id: "absent".to_string(),
+                result: Ok(hit),
+            },
+        );
+
+        assert!(
+            !effect.state_changed && effect.task_units == 0,
+            "a game that left must not be written back: {effect:?}"
+        );
+    }
+
+    /// A failed fetch reports the raw message: `_async`'s default `fail`
+    /// notifies `str(exc)` verbatim (`bridge.py:157-161`), and the reply arm
+    /// toasts the string untouched.
+    #[test]
+    fn a_failed_fetch_reports_the_raw_message() {
+        let mut shell = shell_with_work_to_do();
+
+        let _ = observe(
+            &mut shell,
+            Message::CoverFetchFinished {
+                game_id: "g".to_string(),
+                result: Err("No Steam cover found for \u{201c}Zork\u{201d}".to_string()),
+            },
+        );
+
+        assert!(
+            format!("{:?}", shell.state.toasts)
+                .contains("No Steam cover found for \u{201c}Zork\u{201d}"),
+            "the failure must surface verbatim; toasts: {:?}",
+            shell.state.toasts
+        );
+    }
+
+    /// A hit with no app id — the exe icon, which carries `appid=0`
+    /// (`covers.py:324`) — leaves the stored id alone (`bridge.py:550-551`).
+    #[test]
+    fn a_finished_fetch_with_no_appid_keeps_the_old_one() {
+        let mut shell = shell_with_work_to_do();
+        let mut identified = shell.state.library.get("g").expect("the fixture holds `g`").clone();
+        identified.steam_appid = 999;
+        shell.state.library.update(identified).unwrap();
+        let hit = CoverHit::from_steam(
+            0,
+            "Setup".to_string(),
+            "Uncategorized".to_string(),
+            PathBuf::from("/tmp/setup.ico"),
+            "C:\\setup.exe".to_string(),
+        );
+
+        let _ = observe(
+            &mut shell,
+            Message::CoverFetchFinished {
+                game_id: "g".to_string(),
+                result: Ok(hit),
+            },
+        );
+
+        assert_eq!(
+            shell.state.library.get("g").expect("the fixture holds `g`").steam_appid,
+            999,
+            "an appid of zero must not overwrite a stored one"
+        );
+    }
+
+    /// An icon hit says where it came from: `origin_label`'s "the app icon"
+    /// in the toast's source slot.
+    #[test]
+    fn a_finished_fetch_from_the_app_icon_says_so() {
+        let mut shell = shell_with_work_to_do();
+        let hit = CoverHit {
+            appid: 0,
+            name: "Setup".to_string(),
+            category: "Uncategorized".to_string(),
+            cover_path: PathBuf::from("/tmp/setup.ico"),
+            source_url: "C:\\setup.exe".to_string(),
+            source: gamehandler_core::covers::ICON_SOURCE.to_string(),
         };
+
+        let _ = observe(
+            &mut shell,
+            Message::CoverFetchFinished {
+                game_id: "g".to_string(),
+                result: Ok(hit),
+            },
+        );
+
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("Cover set from the app icon: Setup"),
+            "the toast must name the icon source; toasts: {:?}",
+            shell.state.toasts
+        );
+    }
+
+    /// A finished fetch the disk refuses to persist is reported, not raised:
+    /// the reference lets `done`'s exception escape to the Qt loop, which is
+    /// not a behaviour to reproduce (see `CoverFetchFinished`).
+    #[test]
+    fn a_finished_fetch_that_cannot_persist_is_reported() {
+        let stale = std::env::temp_dir()
+            .join(format!("gh-cli-u5-cover-fail-{}", std::process::id()));
+        let _ = std::fs::remove_file(&stale);
+        let (root, library) = library_with("u5-cover-fail", &[("g1", "Hades")]);
+        let mut shell = Shell::new();
+        shell.state.library = library;
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::write(&root, b"a file, not a directory").unwrap();
+        let hit = CoverHit::from_steam(
+            70,
+            "Hades".to_string(),
+            "Action".to_string(),
+            PathBuf::from("/tmp/hades.jpg"),
+            "https://example.invalid/hades.jpg".to_string(),
+        );
+
+        let _ = observe(
+            &mut shell,
+            Message::CoverFetchFinished {
+                game_id: "g1".to_string(),
+                result: Ok(hit),
+            },
+        );
+
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("Could not save \u{201c}Hades\u{201d}"),
+            "the save failure must surface with the game's name; toasts: {:?}",
+            shell.state.toasts
+        );
+        std::fs::remove_file(&root).unwrap();
+    }
+
+    /// The form's lookup without a name is refused before anything is minted:
+    /// no token, no task, just the reference's sentence (`bridge.py:565-567`).
+    #[test]
+    fn asking_the_form_to_fetch_without_a_name_is_refused() {
+        let mut shell = shell_with_work_to_do();
+
+        let effect = observe(
+            &mut shell,
+            Message::FetchCoverForForm {
+                token: 0,
+                game_id: "g".to_string(),
+                name: "   ".to_string(),
+                exe: String::new(),
+            },
+        );
+
+        assert_eq!(
+            shell.state.form_cover_token, 0,
+            "a refused lookup must not mint a token"
+        );
+        assert!(
+            effect.task_units > 0
+                && format!("{:?}", shell.state.toasts).contains("Enter a game name first"),
+            "the refusal must be the reference's sentence: {effect:?}"
+        );
+    }
+
+    /// The form's lookup mints a token, announces itself, and starts the
+    /// fetch: the notice plus the task (`bridge.py:568` and the `_async`).
+    /// The carried token is ignored — the view sends `0` and the arm mints
+    /// the real one — so sending `99` still yields `1`.
+    #[test]
+    fn asking_the_form_to_fetch_mints_a_token_and_announces_the_lookup() {
+        let mut shell = shell_with_work_to_do();
+
+        let effect = observe(
+            &mut shell,
+            Message::FetchCoverForForm {
+                token: 99,
+                game_id: "g".to_string(),
+                name: "Half-Life 2".to_string(),
+                exe: String::new(),
+            },
+        );
+
+        assert_eq!(
+            shell.state.form_cover_token, 1,
+            "the arm must mint the lookup's token, ignoring the carried one"
+        );
+        assert!(
+            effect.task_units >= 2,
+            "the notice without the fetch is half the request: {effect:?}"
+        );
+        assert!(
+            format!("{:?}", shell.state.toasts)
+                .contains("Looking for artwork for \u{201c}Half-Life 2\u{201d}\u{2026}"),
+            "the announcement must be the reference's sentence; toasts: {:?}",
+            shell.state.toasts
+        );
+    }
+
+    /// A form reply for a superseded lookup is dropped: its token is not the
+    /// form's current one, so it is a late answer about an older world.
+    #[test]
+    fn a_stale_form_reply_is_dropped() {
+        let mut shell = shell_with_work_to_do();
+        shell.state.form_cover_token = 2;
+        let hit = CoverHit::from_steam(
+            70,
+            "Half-Life".to_string(),
+            "Action".to_string(),
+            PathBuf::from("/tmp/hl.jpg"),
+            "https://example.invalid/hl.jpg".to_string(),
+        );
+
+        let effect = observe(
+            &mut shell,
+            Message::FormCoverFetchFinished {
+                token: 1,
+                result: Ok(hit),
+            },
+        );
+
+        assert!(
+            !effect.state_changed && effect.task_units == 0,
+            "a stale reply must change nothing and say nothing: {effect:?}"
+        );
+    }
+
+    /// A current form reply writes the form — cover, app id, and the category
+    /// when the form's is `Uncategorized` — and names the source
+    /// (`bridge.py:571-585`, `GameFormPage.qml:57-68`).
+    #[test]
+    fn a_form_reply_writes_the_form_and_names_its_source() {
+        let mut shell = shell_with_work_to_do();
+        shell.state.game_form.as_mut().expect("the fixture opens a form").category =
+            "Uncategorized".to_string();
+        let hit = CoverHit::from_steam(
+            70,
+            "Half-Life".to_string(),
+            "Action".to_string(),
+            PathBuf::from("/tmp/hl.jpg"),
+            "https://example.invalid/hl.jpg".to_string(),
+        );
+
+        let _ = observe(
+            &mut shell,
+            Message::FormCoverFetchFinished {
+                token: 0,
+                result: Ok(hit),
+            },
+        );
+
+        let form = shell.state.game_form.as_ref().expect("the form stays open");
+        assert_eq!(form.cover_path, "/tmp/hl.jpg");
+        assert_eq!(form.steam_appid, "70");
+        assert_eq!(form.category, "Action");
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("Cover found via Steam: Half-Life"),
+            "the toast must name the source and the hit; toasts: {:?}",
+            shell.state.toasts
+        );
+    }
+
+    /// A form reply does not recategorise a form the user categorised, and an
+    /// `Uncategorized` hit categorises nothing: the QML's two guards
+    /// (`GameFormPage.qml:62-64`).
+    #[test]
+    fn a_form_reply_keeps_a_categorised_form_and_an_empty_hit_category() {
+        let mut shell = shell_with_work_to_do();
+        shell.state.game_form.as_mut().expect("the fixture opens a form").category =
+            "Puzzle".to_string();
+        let hit = CoverHit::from_steam(
+            70,
+            "Half-Life".to_string(),
+            "Action".to_string(),
+            PathBuf::from("/tmp/hl.jpg"),
+            "https://example.invalid/hl.jpg".to_string(),
+        );
+
+        let _ = observe(
+            &mut shell,
+            Message::FormCoverFetchFinished {
+                token: 0,
+                result: Ok(hit),
+            },
+        );
+
+        assert_eq!(
+            shell.state.game_form.as_ref().expect("the form stays open").category,
+            "Puzzle",
+            "the user's category must win over the hit's"
+        );
+
+        let mut shell = shell_with_work_to_do();
+        shell.state.game_form.as_mut().expect("the fixture opens a form").category =
+            "Uncategorized".to_string();
+        let blank = CoverHit::from_steam(
+            70,
+            "Half-Life".to_string(),
+            "Uncategorized".to_string(),
+            PathBuf::from("/tmp/hl.jpg"),
+            "https://example.invalid/hl.jpg".to_string(),
+        );
+
+        let _ = observe(
+            &mut shell,
+            Message::FormCoverFetchFinished {
+                token: 0,
+                result: Ok(blank),
+            },
+        );
+
+        assert_eq!(
+            shell.state.game_form.as_ref().expect("the form stays open").category,
+            "Uncategorized",
+            "an `Uncategorized` hit must not write its own blank"
+        );
+    }
+
+    /// A form reply with no app id leaves the form's alone: the QML's
+    /// `if (hit.steamAppid)` (`GameFormPage.qml:61`).
+    #[test]
+    fn a_form_reply_with_no_appid_keeps_the_old_one() {
+        let mut shell = shell_with_work_to_do();
+        let form = shell.state.game_form.as_mut().expect("the fixture opens a form");
+        form.steam_appid = "999".to_string();
+        let hit = CoverHit::from_steam(
+            0,
+            "Setup".to_string(),
+            "Uncategorized".to_string(),
+            PathBuf::from("/tmp/setup.ico"),
+            "C:\\setup.exe".to_string(),
+        );
+
+        let _ = observe(
+            &mut shell,
+            Message::FormCoverFetchFinished {
+                token: 0,
+                result: Ok(hit),
+            },
+        );
+
+        assert_eq!(
+            shell.state.game_form.as_ref().expect("the form stays open").steam_appid,
+            "999",
+            "an appid of zero must not overwrite a stored one"
+        );
+    }
+
+    /// A form reply after the form closed still notifies: the reference emits
+    /// `notify` whether or not the page is there to answer `coverFetched`
+    /// (`bridge.py:585`), and only the field writes need the form.
+    #[test]
+    fn a_form_reply_after_the_form_closed_still_notifies() {
+        let mut shell = shell_with_work_to_do();
+        shell.state.game_form = None;
+        let hit = CoverHit::from_steam(
+            70,
+            "Half-Life".to_string(),
+            "Action".to_string(),
+            PathBuf::from("/tmp/hl.jpg"),
+            "https://example.invalid/hl.jpg".to_string(),
+        );
+
+        let effect = observe(
+            &mut shell,
+            Message::FormCoverFetchFinished {
+                token: 0,
+                result: Ok(hit),
+            },
+        );
+
+        assert!(
+            effect.task_units > 0
+                && format!("{:?}", shell.state.toasts).contains("Cover found via Steam: Half-Life"),
+            "the notice must fire with no form to write: {effect:?}"
+        );
+    }
+
+    /// A failed form lookup reports the raw message, like the library reply.
+    #[test]
+    fn a_failed_form_lookup_reports_the_raw_message() {
+        let mut shell = shell_with_work_to_do();
+
+        let _ = observe(
+            &mut shell,
+            Message::FormCoverFetchFinished {
+                token: 0,
+                result: Err("connection refused".to_string()),
+            },
+        );
+
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("connection refused"),
+            "the failure must surface verbatim; toasts: {:?}",
+            shell.state.toasts
+        );
+    }
+
+    /// Saving without a cover starts a lookup alongside the notice (P-31):
+    /// `if not game.cover_path: self.fetchCover(game.id)` (`bridge.py:444`).
+    #[test]
+    fn saving_without_a_cover_starts_a_lookup() {
+        let mut shell = shell_with_work_to_do();
+        let mut form =
+            GameForm::new_template(&shell.state.settings, "coverless".to_string());
+        form.set_field(crate::state::FormField::Name, "Coverless".to_string());
+
+        let effect = observe(&mut shell, Message::SaveGameForm(form));
+
+        assert!(
+            effect.task_units >= 2,
+            "the notice without the fetch is half the save: {effect:?}"
+        );
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("Added \u{201c}Coverless\u{201d}"),
+            "the notice must still fire; toasts: {:?}",
+            shell.state.toasts
+        );
+    }
+
+    /// Saving with a cover starts no lookup: the notice is the whole answer.
+    #[test]
+    fn saving_with_a_cover_starts_no_lookup() {
+        let mut shell = shell_with_work_to_do();
+        let mut form =
+            GameForm::new_template(&shell.state.settings, "covered".to_string());
+        form.set_field(crate::state::FormField::Name, "Covered".to_string());
+        form.set_field(
+            crate::state::FormField::CoverPath,
+            "/tmp/covered.jpg".to_string(),
+        );
+
+        let effect = observe(&mut shell, Message::SaveGameForm(form));
+
+        assert_eq!(
+            effect.task_units, 1,
+            "a covered save must return the notice alone: {effect:?}"
+        );
+    }
+
+    /// An install whose executable carries no icon keeps no cover: the
+    /// reference's own `except` fallback (`bridge.py:910-911`), which is what
+    /// a missing file reaches. The success half is `core`'s
+    /// `save_exe_icon_to`, tested there (see [`easy_install_cover`]).
+    #[test]
+    fn an_install_whose_executable_has_no_icon_keeps_no_cover() {
+        let missing = std::env::temp_dir().join(format!(
+            "gh-no-such-exe-{}-{}",
+            std::process::id(),
+            "u5"
+        ));
+        let _ = std::fs::remove_file(&missing);
+
+        assert_eq!(
+            easy_install_cover(&missing, "install-9"),
+            "",
+            "an unreadable executable must fall back to the empty string"
+        );
+        assert!(
+            !missing.exists(),
+            "the probe must not create the file it failed to read"
+        );
     }
 
     /// **The runner row is hidden exactly when it cannot be drawn disabled.**
