@@ -91,7 +91,8 @@ pub const DARK: &str = "dark";
 // separately, which is how two arms that must agree come to disagree.
 //
 // `"dark"` is both a scheme the user may choose and the value the load path
-// folds an absent or invalid one to (`settings.rs:145-147`); the production code
+// folds an absent or invalid one to (`Settings::from_dict`'s colour-scheme fold,
+// `crates/core/src/settings.rs:155-157`); the production code
 // never needs to name that second role, and the tests below assert the
 // relationship instead of restating it.
 
@@ -106,7 +107,8 @@ pub const DARK: &str = "dark";
 /// as `"system"`.
 ///
 /// A stored value that is neither is unreachable in practice: the load path
-/// folds it to `"dark"` (`settings.rs:145-147`) and the message path ignores
+/// folds it to `"dark"` (`Settings::from_dict`, `crates/core/src/settings.rs:155-157`)
+/// and the message path ignores
 /// it (`main.rs`'s `SetColorScheme` arm). The arm is therefore a defence rather
 /// than a behaviour — and it is written to match the reference's *fallback*
 /// rather than to guess, because those two differ: folding an unknown value to

@@ -268,7 +268,8 @@ pub fn runner_labels(choices: &[(String, String)]) -> Vec<String> {
 /// Which entry of the colour-scheme selector the stored value selects.
 ///
 /// `None` when the stored value is not one of the three — the loader folds an
-/// unrecognised scheme to `"dark"` (`settings.rs:89-91`, and the fallback is the
+/// unrecognised scheme to `"dark"` (`Settings::from_dict`,
+/// `crates/core/src/settings.rs:155-157`, and the fallback is the
 /// literal `"dark"`, not `COLOR_SCHEMES[0]` — FINDINGS F-E), so this is
 /// reachable only if the two lists disagree. A dropdown with no selection rather
 /// than a panic or a silently-wrong highlight, the same shape as

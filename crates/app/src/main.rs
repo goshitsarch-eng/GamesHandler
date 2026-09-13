@@ -1920,7 +1920,8 @@ impl Shell {
             // `_set_view_mode` (`bridge.py:210-214`) and `_set_sort_mode`
             // (`223-228`) both *ignore* a value outside the allowed set rather
             // than storing it. The load path already does this
-            // (`settings.rs:148-153`); the message path did not, so a stale UI
+            // (`Settings::from_dict`'s view- and sort-mode folds,
+            // `crates/core/src/settings.rs:158-163`); the message path did not, so a stale UI
             // could write a mode the code does not handle and the next start
             // would silently fold it back — the same defect D-34 names, on the
             // other side of the file.
@@ -6690,7 +6691,8 @@ mod tests {
     /// **An out-of-set view mode or sort mode is ignored, not stored.**
     ///
     /// `bridge.py:210-214` and `223-228` both *ignore* an unrecognised value,
-    /// and the load path already folds one (`settings.rs:148-153`) — so the
+    /// and the load path already folds one (`Settings::from_dict`,
+    /// `crates/core/src/settings.rs:158-163`) — so the
     /// message path was the one place the check was missing, and a stale UI
     /// could write a mode the code does not handle.
     ///

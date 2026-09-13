@@ -178,7 +178,8 @@ pub fn sort_labels() -> Vec<String> {
 /// `None` when the stored mode is not in the list, which is the same shape as
 /// `installers::runner_index`: a dropdown with no selection rather than a panic
 /// or a silently-wrong highlight. The loader has already folded an unrecognised
-/// value to `"name"` (`settings.rs:151-153`), so this is reachable only if the
+/// value to `"name"` (`Settings::from_dict`'s sort-mode fold,
+/// `crates/core/src/settings.rs:161-163`), so this is reachable only if the
 /// two lists disagree — which `sort_keys_are_the_ones_the_settings_accept`
 /// is what prevents. (Backticks rather than a link: it is a `cfg(test)`
 /// function, so it has no documented item to point at.)

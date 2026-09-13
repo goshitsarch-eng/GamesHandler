@@ -61,20 +61,29 @@ pub fn runner_label(is_linux: bool, manager_label: &str) -> String {
 /// [`resolved_runner_label`](super::widgets::resolved_runner_label), which is
 /// [`RunnerManager::label`], and that function cannot return an empty string
 /// for **any** input: an empty or unknown `runner_id` folds to `"System Wine"`
-/// (`runners/mod.rs:1099-1116`). So no game the application can draw reaches
-/// this branch.
+/// (the `runner_id.is_empty()` arm and the `get`-fallback tail of
+/// `RunnerManager::label` in `crates/core/src/runners/mod.rs`). So no game the
+/// application can draw reaches this branch.
 ///
 /// That last step is the one worth not taking on faith, since it says the
 /// branch is dead — and it is a fact about the crate's call sites, not about
-/// this file, so it is written here with the command that checks it. The only
-/// two places that hand a label to a widget are `view/library.rs:343` and
-/// `:360`, and each resolves it on the line before it uses it:
+/// this file. So it is stated by **name**: the only two places that hand a
+/// label to a widget are `grid_body` and `row_labels` in `view/library.rs`,
+/// and each of them resolves the label through `resolved_runner_label` rather
+/// than accepting one. (Plain code spans, not links: both are private, and a
+/// bracketed link to a private item is a broken intra-doc link rather than a
+/// pointer — the same note `view/library.rs` makes about a test name.) Grep for
+/// `resolved_runner_label(` in `crates/app/src` and you get those two call
+/// sites and the function's own definition; there is no third caller and no
+/// path that constructs a label any other way.
 ///
-/// ```text
-/// $ grep -rn 'resolved_runner_label(' crates/app/src/view/library.rs
-/// 343:        let label = widgets::resolved_runner_label(runners, game);
-/// 360:        let label = widgets::resolved_runner_label(runners, game);
-/// ```
+/// This paragraph used to carry a `$ grep` transcript with line numbers
+/// instead. It was re-measured and the numbers had drifted by +570 lines, and
+/// the code the transcript showed was no longer what those lines contain —
+/// which is the failure mode this project has written down for itself in
+/// `view/widgets.rs`: *a pointer that no longer lands is worse than no
+/// pointer, because it is trusted*. A symbol survives an edit; a line number
+/// does not.
 ///
 /// So the branch is unreachable *and stays anyway*: it is a property of this
 /// function's contract, not a workaround for one caller's bug. `subtitle` is
