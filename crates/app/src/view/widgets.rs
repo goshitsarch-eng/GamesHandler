@@ -88,11 +88,12 @@ use cosmic::Element;
 use cosmic::iced::gradient::Linear;
 use cosmic::iced::widget::container;
 use cosmic::iced::{Alignment, Background, Border, Color, Length, Radians};
-use cosmic::widget::{Column, Row, button, image, mouse_area, text};
+use cosmic::widget::{Column, Row, Space, button, image, mouse_area, text};
 use gamehandler_core::models::Game;
 use gamehandler_core::runners::RunnerManager;
 
 use super::cover::{self, CoverSource};
+use super::cover_cache::CoverCache;
 use super::meta;
 use super::metrics;
 
@@ -251,8 +252,25 @@ pub enum CoverPlan {
 /// draws it, so "what a tile says" is a value with one definition
 /// ([`plate_text`]) that the test reads directly, and [`cover_box`] has no
 /// string of its own to get wrong.
-pub fn cover_plan(game: &Game) -> CoverPlan {
-    match CoverSource::classify(&game.cover_path) {
+///
+/// # The kind comes from the cache, and that is PERF-01's fix
+///
+/// This function used to call [`CoverSource::classify`] itself, on every frame,
+/// per tile — and [`framed`] called it again for the same tile, so the file was
+/// `stat`ed and `open`ed twice per drawn cover per frame. The audit measured
+/// 6,624 cover-file syscalls over a 100-redraw window in which **all 333 cover
+/// paths were touched every frame**, in a window that shows a few dozen tiles
+/// (`docs/audit/PERFORMANCE.md`, PERF-01). The answer is a function of the file
+/// and cannot change between frames, so it is asked once and kept; the argument
+/// for the cache's lifetime and invalidation is in [`CoverCache`]'s docs.
+///
+/// `cache` is a parameter rather than a `thread_local` on purpose: the page's
+/// dependencies are readable from its signature (see
+/// [`super::library::LibraryPage`]), and a cache a test cannot substitute is a
+/// cache a test cannot measure. Every `*_cover_spec` caller passes the one
+/// [`crate::State::cover_cache`] the app owns.
+pub fn cover_plan(cache: &CoverCache, game: &Game) -> CoverPlan {
+    match cache.kind(&game.cover_path) {
         CoverSource::Photo => CoverPlan::Photo,
         CoverSource::Icon => CoverPlan::IconOnPlate {
             inset: metrics::ICON_INSET,
@@ -288,8 +306,13 @@ pub fn preview_label() -> &'static str {
 /// The single-argument form exists for a grid that lays out a column of tiles
 /// and wants them all the same shape; a caller with its own box should use
 /// [`cover_box`] instead, which is what [`card`] and [`row`] do.
-pub fn cover_tile<M: Clone + 'static>(game: &Game, width: f32) -> Element<'_, M> {
+pub fn cover_tile<'a, M: Clone + 'static>(
+    cache: &CoverCache,
+    game: &'a Game,
+    width: f32,
+) -> Element<'a, M> {
     cover_box(
+        cache,
         game,
         CoverSpec {
             width,
@@ -301,11 +324,15 @@ pub fn cover_tile<M: Clone + 'static>(game: &Game, width: f32) -> Element<'_, M>
 }
 
 /// A game's cover in an explicit box — a renderer for [`cover_plan`].
-pub fn cover_box<M: Clone + 'static>(game: &Game, spec: CoverSpec) -> Element<'_, M> {
-    match cover_plan(game) {
-        CoverPlan::Photo => framed(game, spec, 0.0),
+pub fn cover_box<'a, M: Clone + 'static>(
+    cache: &CoverCache,
+    game: &'a Game,
+    spec: CoverSpec,
+) -> Element<'a, M> {
+    match cover_plan(cache, game) {
+        CoverPlan::Photo => framed(cache, game, spec, 0.0),
         CoverPlan::IconOnPlate { inset } => {
-            let inner = framed(game, spec, inset);
+            let inner = framed(cache, game, spec, inset);
             plate(game, spec, inner)
         }
         CoverPlan::InitialsOnPlate { text } => {
@@ -386,12 +413,17 @@ fn play_button<'a, M: Clone + 'static>(game_id: &str, on_play: M) -> Element<'a,
 /// *list row* that gained it, and a card that showed it too would render a
 /// string the reference never renders. T-30 is scoped to the row for this
 /// reason; see [`row`].
-pub fn card<'a, M: Clone + 'static>(game: &'a Game, label: &str, on_play: M) -> Element<'a, M> {
+pub fn card<'a, M: Clone + 'static>(
+    cache: &CoverCache,
+    game: &'a Game,
+    label: &str,
+    on_play: M,
+) -> Element<'a, M> {
     let (cell_w, cell_h) = metrics::GRID_CELL;
     let spec = card_cover_spec();
 
     let body = Column::new()
-        .push(cover_box(game, spec))
+        .push(cover_box(cache, game, spec))
         .push(name_and_subtitle(game, subtitle_of(game, label)))
         .push(play_button(&game.id, on_play.clone()))
         .spacing(metrics::CARD_MARGIN)
@@ -458,12 +490,13 @@ pub struct RowLabels<'a> {
 /// (`LibraryPage.qml:276-280`), and by a double click anywhere on the row
 /// (`:239`). Both are the same message, for the reason [`card`] gives.
 pub fn row<'a, M: Clone + 'static>(
+    cache: &CoverCache,
     game: &'a Game,
     labels: &RowLabels<'_>,
     on_play: M,
 ) -> Element<'a, M> {
     let line = Row::new()
-        .push(cover_box(game, row_cover_spec()))
+        .push(cover_box(cache, game, row_cover_spec()))
         .push(name_and_subtitle(game, row_subtitle_of(game, labels)))
         .push(play_button(&game.id, on_play.clone()))
         .spacing(metrics::CARD_MARGIN)
@@ -497,12 +530,12 @@ pub fn row<'a, M: Clone + 'static>(
 /// `classify`, so the picker and the tile agree about which games have
 /// artwork by construction — and so the one thing they *do* differently, words
 /// instead of initials, is visible as a single arm.
-pub fn cover_preview<M: Clone + 'static>(game: &Game) -> Element<'_, M> {
+pub fn cover_preview<'a, M: Clone + 'static>(cache: &CoverCache, game: &'a Game) -> Element<'a, M> {
     let spec = preview_cover_spec();
 
-    match cover_plan(game) {
+    match cover_plan(cache, game) {
         CoverPlan::InitialsOnPlate { .. } => preview_label_widget(spec),
-        CoverPlan::Photo | CoverPlan::IconOnPlate { .. } => framed(game, spec, 0.0),
+        CoverPlan::Photo | CoverPlan::IconOnPlate { .. } => framed(cache, game, spec, 0.0),
     }
 }
 
@@ -724,13 +757,55 @@ fn row_subtitle_of(game: &Game, labels: &RowLabels<'_>) -> String {
 }
 
 /// A cover image in a box of exactly `spec`'s size, inset by `inset`.
-fn framed<'a, M: Clone + 'static>(game: &'a Game, spec: CoverSpec, inset: f32) -> Element<'a, M> {
-    let source = CoverSource::classify(&game.cover_path);
-    let picture = image(image::Handle::from_path(&game.cover_path))
-        .content_fit(source.content_fit())
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .border_radius(spec.radius);
+///
+/// # The pixels now come from the cache, and that is PERF-02's fix
+///
+/// This used to build `image::Handle::from_path(&game.cover_path)`, which hands
+/// the renderer a *path*: the renderer then decodes that file at the source
+/// image's own dimensions and keeps the result until a frame does not draw it
+/// (`iced/tiny_skia/src/raster.rs:151-171`, `:232-237`). With PERF-03's
+/// per-frame draw of every game, that is a 600×900 pixmap resident per cover —
+/// the audit measured **771,656 kB** of RSS for 333 covers at that size, against
+/// the 719 MB of pixels the arithmetic predicts (`docs/audit/PERFORMANCE.md`,
+/// PERF-02), i.e. essentially all of them resident.
+///
+/// So the decode moves here: [`CoverCache::image`] decodes the file once, to at
+/// most [`super::cover_cache::DECODE_MAX`] in either axis, keeps the smallest amount
+/// of decoded data the UI can draw from, and holds it under a byte budget. The
+/// renderer is handed `Handle::Rgba` — pixels, not a path — so it never sees
+/// the source size at all. Its own copy of what we hand it is bounded by what
+/// is *drawn*, which PERF-03's window bounds in turn.
+///
+/// # Nothing about the drawing changes
+///
+/// The fit, the radius, the box and the inset are the same values as before,
+/// and the case where the pixels are unavailable draws what the old code drew
+/// in that case: an empty box of the same size, because that is what the
+/// renderer does with a handle it cannot load (`raster.rs:152-160` inserts a
+/// `None` entry and `draw` returns early, `:196`). A cover file that was
+/// deleted between the classify and the decode therefore renders exactly as it
+/// did, rather than becoming a plate or a panic — this is external state and
+/// neither of those is an acceptable answer to it.
+fn framed<'a, M: Clone + 'static>(
+    cache: &CoverCache,
+    game: &'a Game,
+    spec: CoverSpec,
+    inset: f32,
+) -> Element<'a, M> {
+    let source = cache.kind(&game.cover_path);
+    let picture: Element<'a, M> = match cache.image(&game.cover_path) {
+        Some(handle) => image(handle)
+            .content_fit(source.content_fit())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .border_radius(spec.radius)
+            .into(),
+        // Fills the box without drawing anything, which is the renderer's own
+        // behaviour for an image it cannot load. `Space` rather than an empty
+        // `container` so that the layout contribution is explicit and the
+        // `PICTURE_ID` container below still holds exactly one child.
+        None => Space::new().width(Length::Fill).height(Length::Fill).into(),
+    };
 
     // The inset is applied whether or not it is zero, so the two branches
     // cannot drift in their width/height handling.
@@ -852,6 +927,44 @@ fn rgb(channels: [u8; 3]) -> Color {
     Color::from_rgb8(channels[0], channels[1], channels[2])
 }
 
+/// A real `.webp`: 24x16, lossless VP8L, 118 bytes, from libwebp.
+///
+/// Embedded rather than generated at test time, and shipped without the
+/// generator, because generating one would need a webp *encoder* and the
+/// point is the *decoder*: `image/webp` is the only thing that reads these
+/// bytes, and it arrives through libcosmic's `animated-image` feature
+/// (D-29), which is the single reason that feature is on. Nothing at test
+/// time needs libwebp or a C toolchain.
+///
+/// Generated once, off-tree, by a 30-line program against libwebp 1.6.0: a
+/// 24x16 RGBA buffer — four quadrants plus a per-pixel ramp on the blue
+/// channel, so it is a picture rather than a flat block — through
+/// `WebPEncodeLosslessRGBA(px, 24, 16, 24 * 4, &out)`, the output written
+/// verbatim. That is the whole recipe; these bytes are the whole fixture.
+///
+/// **Module scope and `pub(crate)` since the cover decode moved**, which is why
+/// this is no longer declared inside `mod tests`: `super::cover_cache`'s tests
+/// decode the same bytes through the decoder the app now uses, and the point of
+/// D-29 is that the *application's* path reads a user's `.webp` — a fixture only
+/// this module's tests can reach would leave that path untested the moment the
+/// decode stopped going through `image::Handle::from_path`. One definition
+/// rather than two copies of 118 bytes that could drift.
+#[cfg(test)]
+pub(crate) const WEBP_COVER: [u8; 118] = [
+    0x52, 0x49, 0x46, 0x46, 0x6e, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c,
+    0x62, 0x00, 0x00, 0x00, 0x2f, 0x17, 0xc0, 0x03, 0x00, 0xcd, 0x95, 0x21, 0xa2, 0xff, 0xb1, 0x2b,
+    0x78, 0x14, 0xbc, 0xff, 0x01, 0x26, 0x91, 0x24, 0x49, 0x4a, 0xbc, 0x4a, 0x56, 0xd3, 0xfa, 0x77,
+    0xf2, 0x5d, 0xa1, 0xc3, 0x8a, 0x1a, 0x49, 0x8a, 0x6a, 0x2f, 0xc0, 0xff, 0x0b, 0x11, 0x48, 0x42,
+    0x8c, 0xa2, 0xb6, 0x91, 0x1c, 0xbf, 0x76, 0xaf, 0xf1, 0x87, 0x70, 0x20, 0x7b, 0x4c, 0xc0, 0xfc,
+    0xe8, 0xaf, 0xee, 0x70, 0xfa, 0xa3, 0x33, 0x06, 0x00, 0x58, 0x04, 0xc2, 0x0d, 0x6c, 0xb2, 0x02,
+    0x87, 0x52, 0x81, 0x4b, 0xad, 0xc0, 0xa3, 0x55, 0xe0, 0xd3, 0xab, 0xcf, 0x8b, 0x07, 0x26, 0x3c,
+    0x27, 0x3a, 0x00, 0x03, 0xbf, 0x19,
+];
+
+/// The size [`WEBP_COVER`] declares: 24x16, as encoded.
+#[cfg(test)]
+pub(crate) const WEBP_COVER_SIZE: (u32, u32) = (24, 16);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -877,6 +990,26 @@ mod tests {
     /// uses (`1700000000.0`), so a label asserted here and a label asserted
     /// there are the same label.
     const FROZEN_NOW: f64 = 1_700_000_000.0;
+
+    /// A fresh [`CoverCache`] for a builder call in a test.
+    ///
+    /// A function rather than a shared `static`, because the cache is
+    /// `RefCell`-based and not `Sync`; and an expression rather than a `let` in
+    /// every test, because the builders take the cache by shared reference and
+    /// hand back an `Element` whose lifetime is tied to the *game*, not to the
+    /// cache (`widgets::card<'a, M>(cache: &CoverCache, game: &'a Game, …) ->
+    /// Element<'a, M>`), so the temporary lives exactly as long as the call
+    /// needs it.
+    ///
+    /// These tests are about what a tile *draws*, and every game in them has a
+    /// `cover_path` pointing at a file that does not exist, so the cache takes
+    /// the no-cover branch and the assertions are unchanged from before it
+    /// existed. That is deliberate: a test that started passing differently
+    /// because a cache appeared beside it would be pinning the cache, not the
+    /// widget.
+    fn cache() -> CoverCache {
+        CoverCache::new()
+    }
 
     /// The subtitle a widget shows, reached through the same path the widgets
     /// use. These are the strings a user reads, so they are asserted as
@@ -975,15 +1108,16 @@ mod tests {
     #[test]
     fn a_tile_draws_the_initials_and_a_picker_draws_the_words() {
         let game = Game::new_named("Half-Life 2");
+        let cache = CoverCache::new();
 
-        let mut tile: Element<'_, ()> = cover_box(&game, row_cover_spec());
+        let mut tile: Element<'_, ()> = cover_box(&cache, &game, row_cover_spec());
         assert_eq!(
             texts(&traversal(&mut tile)),
             ["HL"],
             "a library tile draws the game's initials and nothing else"
         );
 
-        let mut picker: Element<'_, ()> = cover_preview(&game);
+        let mut picker: Element<'_, ()> = cover_preview(&cache, &game);
         assert_eq!(
             texts(&traversal(&mut picker)),
             [cover::NO_COVER_LABEL],
@@ -1013,7 +1147,7 @@ mod tests {
         let manager = RunnerManager::at("/nonexistent");
         let label = resolved_runner_label(&manager, &game);
 
-        let mut card: Element<'_, ()> = card(&game, &label, ());
+        let mut card: Element<'_, ()> = card(&cache(), &game, &label, ());
         assert_eq!(
             texts(&traversal(&mut card)),
             ["HL", "Half-Life 2", "System Wine", "Play"]
@@ -1024,7 +1158,7 @@ mod tests {
             runner: &label,
             last_played: &played,
         };
-        let mut row: Element<'_, ()> = row(&game, &labels, ());
+        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, ());
         assert_eq!(
             texts(&traversal(&mut row)),
             ["HL", "Half-Life 2", "System Wine · Never played", "Play"]
@@ -1058,7 +1192,7 @@ mod tests {
             runner: &label,
             last_played: &played,
         };
-        let mut row: Element<'_, ()> = row(&game, &labels, ());
+        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, ());
         let row_seen = traversal(&mut row);
         let row_texts = texts(&row_seen);
         assert_eq!(
@@ -1071,7 +1205,7 @@ mod tests {
             ]
         );
 
-        let mut card: Element<'_, ()> = card(&game, &label, ());
+        let mut card: Element<'_, ()> = card(&cache(), &game, &label, ());
         let card_seen = traversal(&mut card);
         let card_texts = texts(&card_seen);
         assert_eq!(
@@ -1110,7 +1244,7 @@ mod tests {
             runner: "System Wine",
             last_played: &played,
         };
-        let mut row: Element<'_, ()> = row(&game, &labels, ());
+        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, ());
 
         assert_eq!(
             texts(&traversal(&mut row)),
@@ -1155,7 +1289,7 @@ mod tests {
             last_played: &played,
         };
 
-        let mut card: Element<'_, ()> = card(&game, &label, ());
+        let mut card: Element<'_, ()> = card(&cache(), &game, &label, ());
         let card_seen = traversal(&mut card);
         assert!(
             texts(&card_seen).contains(&PLAY_LABEL),
@@ -1169,7 +1303,7 @@ mod tests {
             ids(&card_seen)
         );
 
-        let mut row: Element<'_, ()> = row(&game, &labels, ());
+        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, ());
         let row_seen = traversal(&mut row);
         assert!(
             texts(&row_seen).contains(&PLAY_LABEL),
@@ -1215,7 +1349,7 @@ mod tests {
             last_played: &played,
         };
 
-        let mut card: Element<'_, &str> = card(&game, &label, "launch");
+        let mut card: Element<'_, &str> = card(&cache(), &game, &label, "launch");
         let (cell_w, cell_h) = metrics::GRID_CELL;
         let card_hit = Point::new(cell_w / 2.0, cell_h / 2.0);
         assert_eq!(
@@ -1225,7 +1359,7 @@ mod tests {
              exactly once"
         );
 
-        let mut row: Element<'_, &str> = row(&game, &labels, "launch");
+        let mut row: Element<'_, &str> = row(&cache(), &game, &labels, "launch");
         let row_hit = Point::new(20.0, metrics::LIST_ROW_HEIGHT / 2.0);
         assert_eq!(
             published_by_double_click(&mut row, row_hit),
@@ -1312,9 +1446,9 @@ mod tests {
         let available = metrics::GRID_CELL.0 - 2.0 * metrics::CARD_MARGIN;
         let one_line = metrics::CARD_NAME_SIZE * metrics::LINE_HEIGHT_RATIO;
 
-        let mut short_card: Element<'_, ()> = card(&short, "", ());
+        let mut short_card: Element<'_, ()> = card(&cache(), &short, "", ());
         let short_parts = column_children_of(&mut short_card);
-        let mut long_card: Element<'_, ()> = card(&long, "", ());
+        let mut long_card: Element<'_, ()> = card(&cache(), &long, "", ());
         let long_parts = column_children_of(&mut long_card);
         assert_eq!(
             long_parts.len(),
@@ -1379,7 +1513,7 @@ mod tests {
         let long_label = "Proton-GE-Proton9-20-x86_64 ".repeat(8);
         let subtitle = subtitle_of(&long, &long_label);
         let subtitle_line = metrics::CARD_SUBTITLE_SIZE * metrics::LINE_HEIGHT_RATIO;
-        let mut labelled_card: Element<'_, ()> = card(&long, &long_label, ());
+        let mut labelled_card: Element<'_, ()> = card(&cache(), &long, &long_label, ());
         let labelled_parts = column_children_of(&mut labelled_card);
         assert_eq!(
             labelled_parts[1].height,
@@ -1404,7 +1538,7 @@ mod tests {
         );
 
         // The fix itself, stated as what it is: one line, in both delegates.
-        let mut card_el: Element<'_, ()> = card(&long, "", ());
+        let mut card_el: Element<'_, ()> = card(&cache(), &long, "", ());
         let card_seen = traversal_at_width(&mut card_el, metrics::GRID_CELL.0);
         assert_eq!(
             drawn(&card_seen, &title_of(&long)).height,
@@ -1420,7 +1554,7 @@ mod tests {
         // Narrow on purpose: the row is a `Length::Fill` line inside the page, so
         // a wide window would never wrap its text and the row's half of this
         // would be untested.
-        let mut row_el: Element<'_, ()> = row(&long, &labels, ());
+        let mut row_el: Element<'_, ()> = row(&cache(), &long, &labels, ());
         let row_seen = traversal_at_width(&mut row_el, 400.0);
         assert_eq!(
             drawn(&row_seen, &title_of(&long)).height,
@@ -1446,7 +1580,7 @@ mod tests {
         // 4, `../migration/REPORT.md` residual 4). Measured rather than argued,
         // because that finding and its retraction were both made from captures:
         // the name's *drawn* box must not exceed the width the cell gives it.
-        let mut card_for_width: Element<'_, ()> = card(&long, "", ());
+        let mut card_for_width: Element<'_, ()> = card(&cache(), &long, "", ());
         let wide = traversal_at_width(&mut card_for_width, available);
         let name_box = drawn(&wide, &title_of(&long));
         assert!(
@@ -1578,7 +1712,7 @@ mod tests {
 
         // One element, read two ways: the layout node's sizes, and the bounds the
         // traversal reports for the strings inside it.
-        let mut card_el: Element<'_, ()> = card(&game, "Shooter", ());
+        let mut card_el: Element<'_, ()> = card(&cache(), &game, "Shooter", ());
         let parts = column_children_of(&mut card_el);
         assert_eq!(
             parts[2].height,
@@ -1632,7 +1766,7 @@ mod tests {
             "a card must not answer to another game's key"
         );
 
-        let mut card: Element<'_, ()> = card(&one, "", ());
+        let mut card: Element<'_, ()> = card(&cache(), &one, "", ());
         let seen = traversal(&mut card);
         assert!(
             !ids(&seen).contains(&Id::from(play_button_id(&two.id))),
@@ -1700,7 +1834,7 @@ mod tests {
 
         // "Halo" so that the initials "HA" cannot be confused with the name.
         let game = Game::new_named("Halo");
-        let mut card: Element<'_, ()> = card(&game, "", ());
+        let mut card: Element<'_, ()> = card(&cache(), &game, "", ());
         let seen = traversal(&mut card);
         let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
 
@@ -1741,7 +1875,7 @@ mod tests {
             runner: "",
             last_played: "",
         };
-        let mut row: Element<'_, ()> = row(&game, &labels, ());
+        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, ());
         let seen = traversal(&mut row);
         let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
 
@@ -1794,7 +1928,7 @@ mod tests {
         let spec = card_cover_spec();
 
         let with_photo_game = with_photo("Half-Life 2");
-        let mut photo: Element<'_, ()> = cover_box(&with_photo_game, spec);
+        let mut photo: Element<'_, ()> = cover_box(&cache(), &with_photo_game, spec);
         assert_eq!(
             ids(&traversal(&mut photo)),
             [Id::from(PICTURE_ID)],
@@ -1802,7 +1936,7 @@ mod tests {
         );
 
         let with_icon_game = with_icon("Half-Life 2");
-        let mut icon: Element<'_, ()> = cover_box(&with_icon_game, spec);
+        let mut icon: Element<'_, ()> = cover_box(&cache(), &with_icon_game, spec);
         assert_eq!(
             ids(&traversal(&mut icon)),
             [Id::from(PLATE_ID), Id::from(PICTURE_ID)],
@@ -1810,11 +1944,81 @@ mod tests {
         );
 
         let bare = Game::new_named("Half-Life 2");
-        let mut placeholder: Element<'_, ()> = cover_box(&bare, spec);
+        let mut placeholder: Element<'_, ()> = cover_box(&cache(), &bare, spec);
         assert_eq!(
             ids(&traversal(&mut placeholder)),
             [Id::from(PLATE_ID), Id::from(INITIALS_ID)],
             "a game with no artwork is the plate and its initials"
+        );
+    }
+
+    /// **PERF-01's measurement, at the level the audit measured it.**
+    ///
+    /// A real tile, built the way the page builds it, over many frames: the
+    /// filesystem is read once per cover and the pixels are decoded once per
+    /// cover — not once per tile per frame.
+    ///
+    /// # What the counter is a counter of
+    ///
+    /// [`CoverCache::classify_calls`] counts calls that reached
+    /// `CoverSource::classify`, which is `Path::new(..).is_file()` (a `statx`)
+    /// plus, when the file exists, a `File::open` and a four-byte read. It is
+    /// therefore the number of cover-file syscalls this frame *issued*, and the
+    /// audit's 6,624-syscall measurement is 200 of these for 100 frames of one
+    /// tile — `cover_plan` and `framed` each classified, so **twice per tile per
+    /// frame**. The pre-fix body of `cover_plan` is therefore
+    /// `CoverSource::classify(&game.cover_path)`, and restoring it makes this
+    /// test fail with `left: 0, right: 3` rather than with `left: 150`: the
+    /// uncached call does not touch the counter at all. That direction is
+    /// deliberate — a builder that bypassed the cache would otherwise pass a
+    /// count-based assertion by not being counted.
+    ///
+    /// # The control, which is the half that makes it a measurement
+    ///
+    /// `decode_calls() == 3` and `image_calls() == 75` are asserted together, so
+    /// "no filesystem work" cannot be reached by a builder that stopped asking
+    /// for covers. And the *drawn* result is asserted too: each tile really is
+    /// the picture and not the plate, which is what `PICTURE_ID` alone in the
+    /// traversal means — see
+    /// `a_photograph_is_drawn_alone_while_an_icon_and_a_placeholders_are_on_the_plate`.
+    #[test]
+    fn a_frame_of_tiles_classifies_each_cover_once() {
+        let cache = CoverCache::new();
+        let spec = card_cover_spec();
+        // Three games with three *different* cover files, so three is the answer
+        // only if the key really is the path.
+        let games: Vec<Game> = (0..3)
+            .map(|n| with_photo(&format!("Windowed {n}")))
+            .collect();
+
+        for _ in 0..25 {
+            for game in &games {
+                let mut tile: Element<'_, ()> = cover_box(&cache, game, spec);
+                assert_eq!(
+                    ids(&traversal(&mut tile)),
+                    [Id::from(PICTURE_ID)],
+                    "the tile draws its cover, so the cache was actually asked"
+                );
+            }
+        }
+
+        assert_eq!(
+            cache.classify_calls(),
+            3,
+            "25 frames of 3 tiles = 75 tiles: one stat and one open per cover, \
+             not per tile and not per frame"
+        );
+        assert_eq!(cache.decode_calls(), 3);
+        assert_eq!(
+            cache.image_calls(),
+            75,
+            "the cache was asked 75 times, so the count above is not low because \
+             nothing asked"
+        );
+        assert_eq!(
+            cache.resident_images(),
+            3,
+            "and all three are resident, so the 75 asks were hits"
         );
     }
 
@@ -1871,7 +2075,7 @@ mod tests {
         assert_eq!(metrics::ICON_INSET, 18.0);
 
         let with_icon_game = with_icon("Half-Life 2");
-        let mut icon: Element<'_, ()> = cover_box(&with_icon_game, spec);
+        let mut icon: Element<'_, ()> = cover_box(&cache(), &with_icon_game, spec);
         assert_eq!(
             leaves(&mut icon),
             [Size::new(188.0 - 2.0 * 18.0, 207.0 - 2.0 * 18.0)],
@@ -1881,7 +2085,7 @@ mod tests {
         // A photograph is cropped to the box instead, so its inset is zero.
         let with_photo_game = with_photo("Half-Life 2");
         assert_decodes(&with_photo_game, "the photograph this branch draws");
-        let mut photo: Element<'_, ()> = cover_box(&with_photo_game, spec);
+        let mut photo: Element<'_, ()> = cover_box(&cache(), &with_photo_game, spec);
         assert_eq!(
             leaves(&mut photo),
             [Size::new(188.0, 207.0)],
@@ -2283,34 +2487,6 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
-    /// A real `.webp`: 24x16, lossless VP8L, 118 bytes, from libwebp.
-    ///
-    /// Embedded rather than generated at test time, and shipped without the
-    /// generator, because generating one would need a webp *encoder* and the
-    /// point is the *decoder*: `image/webp` is the only thing that reads these
-    /// bytes, and it arrives through libcosmic's `animated-image` feature
-    /// (D-29), which is the single reason that feature is on. Nothing at test
-    /// time needs libwebp or a C toolchain.
-    ///
-    /// Generated once, off-tree, by a 30-line program against libwebp 1.6.0: a
-    /// 24x16 RGBA buffer — four quadrants plus a per-pixel ramp on the blue
-    /// channel, so it is a picture rather than a flat block — through
-    /// `WebPEncodeLosslessRGBA(px, 24, 16, 24 * 4, &out)`, the output written
-    /// verbatim. That is the whole recipe; these bytes are the whole fixture.
-    const WEBP_COVER: [u8; 118] = [
-        0x52, 0x49, 0x46, 0x46, 0x6e, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38,
-        0x4c, 0x62, 0x00, 0x00, 0x00, 0x2f, 0x17, 0xc0, 0x03, 0x00, 0xcd, 0x95, 0x21, 0xa2, 0xff,
-        0xb1, 0x2b, 0x78, 0x14, 0xbc, 0xff, 0x01, 0x26, 0x91, 0x24, 0x49, 0x4a, 0xbc, 0x4a, 0x56,
-        0xd3, 0xfa, 0x77, 0xf2, 0x5d, 0xa1, 0xc3, 0x8a, 0x1a, 0x49, 0x8a, 0x6a, 0x2f, 0xc0, 0xff,
-        0x0b, 0x11, 0x48, 0x42, 0x8c, 0xa2, 0xb6, 0x91, 0x1c, 0xbf, 0x76, 0xaf, 0xf1, 0x87, 0x70,
-        0x20, 0x7b, 0x4c, 0xc0, 0xfc, 0xe8, 0xaf, 0xee, 0x70, 0xfa, 0xa3, 0x33, 0x06, 0x00, 0x58,
-        0x04, 0xc2, 0x0d, 0x6c, 0xb2, 0x02, 0x87, 0x52, 0x81, 0x4b, 0xad, 0xc0, 0xa3, 0x55, 0xe0,
-        0xd3, 0xab, 0xcf, 0x8b, 0x07, 0x26, 0x3c, 0x27, 0x3a, 0x00, 0x03, 0xbf, 0x19,
-    ];
-
-    /// The size [`WEBP_COVER`] declares: 24x16, as encoded.
-    const WEBP_COVER_SIZE: (u32, u32) = (24, 16);
-
     /// A game whose cover is a photograph: a real `.webp` that decodes.
     ///
     /// **It used to be twelve bytes of PNG header** — `\x89PNG\r\n\x1a\n` and
@@ -2321,6 +2497,9 @@ mod tests {
     /// assertion these fixtures fed was satisfied whether or not a picture was
     /// ever drawn. Pointing the fixture at bytes that really decode is what
     /// makes "a photograph" mean a photograph.
+    ///
+    /// The bytes themselves are [`WEBP_COVER`], at module scope because
+    /// `super::cover_cache`'s tests decode them too.
     fn with_photo(name: &str) -> Game {
         let mut game = Game::new_named(name);
         game.cover_path = cover_fixture("photo", &WEBP_COVER);

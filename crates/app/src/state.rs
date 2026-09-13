@@ -726,6 +726,93 @@ pub struct State {
     pub search_text: String,
     /// was `_category_filter`, defaulting to "All".
     pub category_filter: String,
+    /// The Library page's cache of what each game's cover *is* and *looks like*.
+    ///
+    /// One cache for the whole app, not per page, because the three pages that
+    /// draw a cover — the Library, the form's picker, and anything a future page
+    /// adds — ask the same question about the same files, and a second cache
+    /// would be a second set of decodes. [`crate::view::cover_cache::CoverCache`]
+    /// carries the argument for the type and for its lifetime.
+    ///
+    /// # Why it is here and not recomputed per frame
+    ///
+    /// This is PERF-01's and PERF-02's fix, and both findings are the same
+    /// mistake at two levels: a per-frame call for a value that only changes
+    /// when a file does. The audit measured 6,624 cover-file syscalls over a
+    /// 100-redraw window and 771,656 kB of RSS for 333 covers
+    /// (`docs/audit/PERFORMANCE.md`, PERF-01 and PERF-02). A field that outlives
+    /// the frame is what makes the call happen once.
+    ///
+    /// # Its two invalidation points, and who calls them
+    ///
+    /// [`CoverCache::forget`](crate::view::cover_cache::CoverCache::forget)
+    /// takes one game's path;
+    /// [`CoverCache::clear`](crate::view::cover_cache::CoverCache::clear) takes
+    /// the lot. `forget` is called where the app *knows* a cover file was
+    /// rewritten — never on a guess, and never per frame:
+    ///
+    /// - [`crate::Message::CoverFileChosen`]'s copy of the picked file into
+    ///   `covers_dir()` (the destination is named after the game, so a second
+    ///   pick lands on the same path);
+    /// - both `CoverFetchFinished` arms, for the same reason and on the same
+    ///   path;
+    /// - the easy install's icon extraction, whose path is derived from the
+    ///   game id too.
+    ///
+    /// `clear` has **no production caller today**: the library is loaded once
+    /// and nothing replaces it at runtime, so the re-read it belongs to does not
+    /// happen yet. That is stated on
+    /// [`crate::view::cover_cache`]'s module docs rather than left for a reader
+    /// to discover by grepping.
+    ///
+    /// An edit made outside the app is not seen until one of those happens or
+    /// the app restarts. That is the admitted limit, pinned by a test there
+    /// rather than left as a sentence.
+    pub cover_cache: crate::view::cover_cache::CoverCache,
+    /// How far the Library page is scrolled down, in logical pixels.
+    ///
+    /// Written by [`crate::Message::SetLibraryScroll`], which iced's
+    /// `Scrollable::on_scroll` publishes — see that variant for why the view
+    /// cannot read this off the widget tree itself.
+    ///
+    /// It is the **requested** offset and not the clamped one, which is
+    /// deliberate: `view::library::visible_range` turns it into a row window,
+    /// and that window has to be right on the frame the user asked for the
+    /// scroll, before the widget has clamped anything. The widget is what
+    /// clamps its own drawing, and it does (`Scrollable::scroll` clamps against
+    /// its content bounds), so a value past the end here means "the window at
+    /// the end", not "draw past the content".
+    pub library_scroll_offset: f32,
+    /// The **width** of the Library page's viewport, in logical pixels.
+    ///
+    /// The grid's column count is a function of this (`view::library::grid_columns`),
+    /// and the height alone cannot give it. `0.0` until the first publish, with
+    /// the same fallback as the height.
+    ///
+    /// It comes from `on_scroll`'s `Viewport::bounds()` — the scrollable's laid
+    /// out box — rather than from the window, so that it describes the same
+    /// frame as the offset beside it. A width read from the window while the
+    /// offset came from a published viewport would be two frames' geometry
+    /// mixed, and the one thing a windowed grid must not do is compute its
+    /// columns for a layout that is not the one the cards are drawn into.
+    pub library_scroll_width: f32,
+    /// The height of the Library page's viewport, in logical pixels.
+    ///
+    /// `0.0` until the scrollable has laid out and published once; see
+    /// [`crate::Message::SetLibraryScroll`]. `view::library::visible_range`
+    /// reads a zero as "not known yet" and uses its own default, so the very
+    /// first frame of a page — which is laid out with no viewport at all —
+    /// still builds a window of rows rather than none.
+    pub library_scroll_viewport: f32,
+    /// The height the Library page's content had when the scroll was published.
+    ///
+    /// Not used by the window computation: the window is a function of rows and
+    /// the offset, and deriving it from a *measured* height would make the
+    /// number of built rows depend on how tall the previously built rows turned
+    /// out to be, which is a feedback loop rather than a bound. It is kept
+    /// because the value is what makes "the offset is past the end" decidable,
+    /// which is the one case `visible_range` has to handle rather than clamp.
+    pub library_scroll_content: f32,
     /// was `_installer_search`.
     pub installer_search: String,
     /// was `_installer_category`, defaulting to "All".
@@ -879,6 +966,16 @@ impl State {
             confirm_remove_runner: None,
             search_text: String::new(),
             category_filter: "All".to_string(),
+            cover_cache: crate::view::cover_cache::CoverCache::new(),
+            // The page starts at the top, and a fresh start is the only state
+            // these three have ever had: there is no persisted scroll position
+            // in the reference's settings either (`Settings::load`'s field set
+            // is `bridge.py:147-160`), so a restored offset would be a
+            // behaviour the Python app does not have.
+            library_scroll_offset: 0.0,
+            library_scroll_width: 0.0,
+            library_scroll_viewport: 0.0,
+            library_scroll_content: 0.0,
             installer_search: String::new(),
             installer_category: "All".to_string(),
             installer_catalog: Vec::new(),

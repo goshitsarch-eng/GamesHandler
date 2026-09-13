@@ -651,6 +651,53 @@ pub enum Message {
     /// (`LibraryPage.qml:118-121`), and a single message is what makes them
     /// atomic — so the page cannot be drawn with one cleared and not the other.
     ClearFilters,
+    /// The Library page was scrolled: how far, and the box it happened in.
+    ///
+    /// # Why this is a message and not cached geometry
+    ///
+    /// The Library body builds only a window of its rows, so it has to know
+    /// things it cannot compute itself: the scroll offset, and the size of the
+    /// viewport it is laying into. Both are properties of the widget tree iced
+    /// builds, and neither is readable from inside `view()` — the page is
+    /// *inside* the scrollable, and its layout limits are `[0, ∞]` however tall
+    /// the window is. iced publishes both through `Scrollable::on_scroll`
+    /// (`iced/widget/src/scrollable.rs:183`), which is the only route from that
+    /// widget back to this state.
+    ///
+    /// The variant carries four numbers rather than a
+    /// [`Viewport`](cosmic::iced::widget::scrollable::Viewport), because
+    /// `Viewport`'s accessors return iced types this crate would then have to
+    /// keep in `State` for no benefit: `absolute_offset().y` and the two
+    /// dimensions of its two `Rectangle`s are the whole of what the window
+    /// computation reads, and naming them here is what makes
+    /// `view::library::visible_range` a pure function of plain numbers rather
+    /// than of a widget.
+    ///
+    /// `viewport_width` and `viewport_height` are `0.0` on the first publish,
+    /// from a call that has no scrollable state to read yet
+    /// (`iced/widget/src/scrollable.rs:1072`, reached from the `Scrollable`'s
+    /// `update` on the frame the wrapper was constructed). `visible_range` and
+    /// `grid_columns` each read a zero as "not known yet" and fall back to their
+    /// own defaults, so a zero never becomes a window of no rows.
+    ///
+    /// The other direction — a stale non-zero value after the window is resized
+    /// — cannot happen for long: iced publishes again on the first frame after
+    /// the resize, because `notify_viewport` compares the bounds it was last
+    /// told about against the current ones (`:2060-2074`).
+    ///
+    /// # The handler is a write, and that is the whole of it
+    ///
+    /// It stores the four numbers and publishes nothing. In particular it does
+    /// **not** clamp the offset to the content: scrolling to a requested offset
+    /// is what makes the window the right one on the frame the user asks for it,
+    /// and the widget clamps only its own drawing. See
+    /// `view::library::visible_range`.
+    SetLibraryScroll {
+        offset: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+        content_height: f32,
+    },
 
     // ---- Library: the games themselves -----------------------------------
     /// Save the open form — add or update, decided by the form's game id.
@@ -1423,6 +1470,19 @@ impl Shell {
                     // takes `now` as a parameter for exactly this; see
                     // `LibraryPage::now`.
                     now: gamehandler_core::models::now(),
+                    covers: &self.state.cover_cache,
+                    // The four numbers iced published from the scrollable. The
+                    // width is in here rather than read off the window because
+                    // it comes from the same source as the rest — the bounds
+                    // the scrollable last laid out at — and mixing a measured
+                    // width with a published offset is how the two get to
+                    // disagree about which frame they describe.
+                    scroll: view::library::ScrollGeometry {
+                        offset: self.state.library_scroll_offset,
+                        viewport_height: self.state.library_scroll_viewport,
+                        viewport_width: self.state.library_scroll_width,
+                        content_height: self.state.library_scroll_content,
+                    },
                 };
                 view::library::view(page)
             }
@@ -1846,6 +1906,19 @@ impl Shell {
                     &gamehandler_core::paths::covers_dir(),
                 ) {
                     Ok(destination) => {
+                        // PERF-01/PERF-02: the copy just wrote bytes at
+                        // `destination`, which is `covers_dir()/<game_id>.<ext>`
+                        // (`copy_custom_cover`) — a path this cache may already
+                        // hold the *previous* cover's answer and pixels for,
+                        // because the same game picking a second custom cover
+                        // lands on the same name. Dropping the entry is what
+                        // makes the new file visible; without it the picker
+                        // would keep drawing the old cover until a restart, which
+                        // is the staleness `cover_cache`'s module docs admit and
+                        // this is the line that bounds it.
+                        self.state
+                            .cover_cache
+                            .forget(&destination.to_string_lossy());
                         if let Some(form) = self.state.game_form.as_mut() {
                             form.cover_path = destination.to_string_lossy().into_owned();
                         }
@@ -1873,7 +1946,8 @@ impl Shell {
             // `_set_color_scheme` (`bridge.py:197-203`) does two things and this
             // port did only the first: it ignores a value outside
             // `COLOR_SCHEMES` (the load path already folds one,
-            // `settings.rs:89-91`) **and then applies it**. Storing is the guard;
+            // `crates/core/src/settings.rs:155-157`) **and then applies it**.
+            // Storing is the guard;
             // `theme::apply` is the second half, which the reference spells
             // `self._theme.apply(value)` (`bridge.py:201-202`).
             //
@@ -1997,6 +2071,26 @@ impl Shell {
             Message::ClearFilters => {
                 self.state.search_text.clear();
                 self.state.category_filter = view::library::ALL_CATEGORIES.to_string();
+            }
+            // PERF-03: the offset and the box the page is drawn in. A plain
+            // write — see the variant's docs for why there is no task here and
+            // no clamping.
+            //
+            // The four are stored as given, including zeros, which is what the
+            // pre-layout publish carries. Folding a zero to a default *here*
+            // would be a second place that knows what a zero means;
+            // `view::library::visible_range` is where that is decided and where
+            // it is tested.
+            Message::SetLibraryScroll {
+                offset,
+                viewport_width,
+                viewport_height,
+                content_height,
+            } => {
+                self.state.library_scroll_offset = offset;
+                self.state.library_scroll_width = viewport_width;
+                self.state.library_scroll_viewport = viewport_height;
+                self.state.library_scroll_content = content_height;
             }
 
             // ---- Library: the games themselves -----------------------------
@@ -2333,6 +2427,13 @@ impl Shell {
                 let Some(mut game) = self.state.library.get(&game_id).cloned() else {
                     return cosmic::task::none();
                 };
+                // The lookup wrote the cover to a path in `covers_dir()`, derived
+                // from the game id — so a *second* fetch for the same game
+                // rewrites the file this cache is already holding. See
+                // `CoverFileChosen` above for the full argument.
+                self.state
+                    .cover_cache
+                    .forget(&hit.cover_path.to_string_lossy());
                 game.cover_path = hit.cover_path.to_string_lossy().into_owned();
                 if hit.appid != 0 {
                     game.steam_appid = hit.appid;
@@ -2399,6 +2500,13 @@ impl Shell {
                 let Ok(hit) = result else {
                     return self.state.toast_task(result.unwrap_err());
                 };
+                // Same rewrite as `CoverFetchFinished` above, and the same
+                // reason for the `forget`: the file is written by the lookup at a
+                // path derived from the game id, so looking a second time
+                // replaces the bytes this cache already answered for.
+                self.state
+                    .cover_cache
+                    .forget(&hit.cover_path.to_string_lossy());
                 if let Some(form) = self.state.game_form.as_mut() {
                     form.cover_path = hit.cover_path.to_string_lossy().into_owned();
                     if hit.appid != 0 {
@@ -3584,7 +3692,13 @@ fn finish_easy_install(
         &record.runner_id,
         Some(&record.game_id),
     );
-    game.cover_path = easy_install_cover(executable, &game.id);
+    // The icon is extracted to a path derived from the game id
+    // (`easy_install_cover`), so a re-install over an id the library already
+    // holds replaces bytes this cache may already have answered for. Dropped
+    // for the same reason as `CoverFileChosen`'s copy.
+    let cover = easy_install_cover(executable, &game.id);
+    state.cover_cache.forget(&cover);
+    game.cover_path = cover;
     let game_id = game.id.clone();
     let name = game.name.clone();
     let added = state.library.add(game);
@@ -5190,6 +5304,21 @@ mod tests {
                         }),
         Message::SetSearchText(_) => ("SetSearchText", Message::SetSearchText("half".to_string())),
         Message::SetCategoryFilter(_) => ("SetCategoryFilter", Message::SetCategoryFilter("Action".to_string())),
+        // All four **non-zero**, and the four are all different from each other.
+        // A fresh shell starts at `0.0` on all four (`State::new`), which is the
+        // value the pre-layout publish carries, so a sample of zeros would write
+        // what is already there and be reported as an unwritten arm (D-34) — and
+        // four *equal* non-zero values would still be one field's worth of
+        // evidence, because a handler that assigned one of them to all four
+        // would look the same. These are the four the `Covers` fixture below
+        // measures against, in `view::library`'s units: an offset past the fold,
+        // and a 1200×800 window.
+        Message::SetLibraryScroll { .. } => ("SetLibraryScroll", Message::SetLibraryScroll {
+                            offset: 640.0,
+                            viewport_width: 1200.0,
+                            viewport_height: 800.0,
+                            content_height: 4200.0,
+                        }),
         Message::ClearFilters => ("ClearFilters", Message::ClearFilters),
         // A **named** form, not the empty one. `shell_with_work_to_do` holds an
         // empty template, whose name is `""` and which `GameForm::apply` refuses
@@ -5637,6 +5766,14 @@ mod tests {
             "ClearFilters",
             "SetViewMode",
             "SetSortMode",
+            // PERF-03's one. Live because the Library page's scrollable
+            // publishes its viewport through `on_scroll` on every scroll, which
+            // is the only route from that widget to the window the body builds.
+            // It is in this list rather than treated as bookkeeping for the
+            // reason the list exists: the four floats are what the window is
+            // computed from, and an arm that stopped writing them would show a
+            // page frozen at whatever offset it last saw.
+            "SetLibraryScroll",
             // T-13's four. Live because the Settings page draws the controls
             // that produce them, and guarded because the reference guards them.
             "SetColorScheme",

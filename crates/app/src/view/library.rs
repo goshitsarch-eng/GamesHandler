@@ -45,7 +45,7 @@
 use cosmic::Element;
 use cosmic::iced::Length;
 use cosmic::widget::{
-    Column, Row, button, container, context_menu, menu, scrollable, text, text_input,
+    Column, Id, Row, Space, button, container, context_menu, menu, scrollable, text, text_input,
 };
 use gamehandler_core::models::{Game, Library, format_last_played};
 use gamehandler_core::runners::RunnerManager;
@@ -53,6 +53,8 @@ use gamehandler_core::runners::RunnerManager;
 use crate::Message;
 use crate::state::PrefixTool;
 
+use super::cover_cache::CoverCache;
+use super::metrics;
 use super::widgets;
 
 /// The filter value that means "do not filter", as [`super::installers`] spells
@@ -238,8 +240,263 @@ pub fn toggled_mode(view_mode: &str) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// The page
+// The scrollable, and the window of rows it makes
 // ---------------------------------------------------------------------------
+
+/// The Library page's scrollable, so its offset can be read back and (in a
+/// future slice) written.
+///
+/// The page is one scrollable for both view modes — the toolbar and the body
+/// scroll together, which is what the reference does: `LibraryPage.qml` puts a
+/// single `ScrollView`/`ListView` around the grid and the list alike, and its
+/// header stays with the content. A second scrollable per mode would be two
+/// widgets to keep in step for no visible difference.
+pub const LIBRARY_SCROLL_ID: &str = "gamehandler.library.scroll";
+
+/// How many screenfuls of rows the Library page builds beyond what is on
+/// screen.
+///
+/// **A viewport-height margin, not a row count, and that is the load-bearing
+/// choice.** A fixed count would be wrong at both ends: 10 rows is most of a
+/// 1200×800 window and a seventh of a 4K one, where 10 cards is not even the
+/// rows the grid draws at once. A margin expressed in *viewports* is the same
+/// amount of work relative to what the user can see, whatever the window and
+/// whatever the mode.
+///
+/// **Measured, not chosen:** the audit's covers are 200×300 in the grid
+/// (`metrics::GRID_CELL`) and 61.2 in the list ([`metrics::LIST_ROW_HEIGHT`]),
+/// so a 1200×800 window draws about 3 grid rows (900 px of covers) or 13 list
+/// rows (796 px), and two viewports of margin is ~40 grid rows / 26 list rows
+/// of *slack in pixels* — far more than a scroll of any speed outruns, because
+/// the scroll event that carries the offset is published in the frame the
+/// offset changes, before `view()` reads it. One viewport would be enough for
+/// correctness; two is what makes a fling not show a blank edge.
+pub const WINDOW_VIEWPORTS: f32 = 2.0;
+
+/// The viewport height assumed before the scrollable has published one.
+///
+/// `State::library_scroll_viewport` starts at `0.0` (see
+/// [`crate::Message::SetLibraryScroll`]), and a window of `0.0` rows would draw
+/// an empty Library page on the frames before the first publish. The fallback
+/// is deliberately close to the smallest window this app is usable in rather
+/// than to a large one: the first publish follows the first layout, so this
+/// covers one or two frames, and a number that is too small costs one extra
+/// frame before the rest appears, where a number that is too large costs work
+/// on every frame the publish is missing.
+pub const ASSUMED_VIEWPORT_HEIGHT: f32 = 800.0;
+
+/// A half-open range of indices into the filtered list that the page builds.
+///
+/// `end` is exclusive, so `end - start` is the number of rows and
+/// `games[start..end]` is exactly what [`list_body`] and [`grid_body`] draw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowWindow {
+    /// First built row.
+    pub start: usize,
+    /// One past the last built row.
+    pub end: usize,
+}
+
+impl RowWindow {
+    /// How many rows are built.
+    pub fn len(self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    /// Whether `index` is built.
+    pub fn contains(self, index: usize) -> bool {
+        index >= self.start && index < self.end
+    }
+}
+
+/// How many rows the grid puts on one line at `viewport_width`.
+///
+/// # This is a decision and not a measurement, and it has to match iced's
+///
+/// `grid_body` draws a `Row::wrap()`, and iced decides where to wrap by laying
+/// the children out and breaking when `x + child.width > max_width`
+/// (`iced/widget/src/row.rs:534-541`). This function is the same rule done in
+/// arithmetic, because the window has to be computed *before* any of those
+/// children exist. So the numbers have to agree with iced's:
+///
+/// - a card is `metrics::GRID_CELL.0` wide — `card` pins that with
+///   `width(Fixed(..))`, and `Limits` makes a fixed width `min == max`
+///   (`iced/core/src/layout/limits.rs:60-66`), so the child's size does not
+///   depend on anything;
+/// - `Row::new().spacing(6)` puts 6 px between children, and the trailing
+///   spacing of a line is trimmed rather than counted
+///   (`iced/widget/src/row.rs:563-565`).
+///
+/// # The two ways this can be wrong, and what happens
+///
+/// Too **few** columns means the real grid wraps earlier than the window
+/// assumed, so the window covers more rows than it needs to and the built set
+/// is a superset of what is drawn. Too **many** would leave a gap: the window
+/// would believe rows it never built are on screen. The `max(1)` is the
+/// degenerate case — a viewport narrower than one card — where iced still draws
+/// one card per line and a zero here would divide by zero below.
+///
+/// `viewport_width` is `0.0` on the pre-layout frame, which is why the
+/// fallback is spelled out rather than left to the division: `0 / 206` is 0
+/// columns and `max(1)` catches it, but only by accident of the clamp. The
+/// named constant makes it a decision.
+pub fn grid_columns(viewport_width: f32) -> usize {
+    let width = if viewport_width.is_finite() && viewport_width > 0.0 {
+        viewport_width
+    } else {
+        GRID_VIEWPORT_WIDTH_FALLBACK
+    };
+    let (card, spacing) = (metrics::GRID_CELL.0, GRID_SPACING);
+    // `floor((w + spacing) / (card + spacing))` is iced's rule read the other
+    // way round: `k` cards and the `k-1` gaps between them take
+    // `k * card + (k - 1) * spacing` and must not exceed `width`.
+    let columns = ((width + spacing) / (card + spacing)).floor() as usize;
+    columns.max(1)
+}
+
+/// The viewport width assumed before the scrollable has published one.
+///
+/// The same one-frame case as [`ASSUMED_VIEWPORT_HEIGHT`], and the same
+/// reasoning: the number only has to be sane for the frame before the first
+/// layout, and the layout is where the truth comes from. 1200 is the width the
+/// audit measured against (`docs/audit/PERFORMANCE.md`, PERF-01: "a 1200×800
+/// window").
+pub const GRID_VIEWPORT_WIDTH_FALLBACK: f32 = 1200.0;
+
+/// The gap [`grid_body`] puts between cards, and between the rows of cards.
+///
+/// One constant read by the builder and by [`grid_columns`], because two copies
+/// is two chances for the window's arithmetic and the grid's to disagree about
+/// where a line ends. `Row::new().spacing(6)` is the builder's half and this is
+/// the window's; the test below pins them together.
+pub const GRID_SPACING: f32 = 6.0;
+
+/// The gap [`list_body`] puts between rows — `Column::new().spacing(6)`.
+pub const LIST_SPACING: f32 = 6.0;
+
+/// Which rows of a filtered list a page of `viewport_height` has to build.
+///
+/// # The whole of PERF-03's fix, as arithmetic
+///
+/// The audit measured that every game in the library was given a built
+/// `Element` on every frame — `list_body` and `grid_body` looped over all
+/// `shown` games (`docs/audit/PERFORMANCE.md`, PERF-03, citing the loops that
+/// are now bounded) — which is what made the cover `stat`/`open` and the
+/// decoded-cover residency apply to the whole library rather than to the page.
+/// This function is the bound: the caller builds `window.len()` rows and pads
+/// the rest of the scroll height with two spacers, so the *content* is still
+/// the size the user expects and only the *construction* is bounded.
+///
+/// # Why a row height and not a measured height
+///
+/// Because both widgets are fixed-height by construction: a list row is
+/// `height(Fixed(LIST_ROW_HEIGHT))` and a card is pinned to
+/// `metrics::GRID_CELL.1`. A window derived from measured layout would be a
+/// feedback loop — the number of rows built would depend on how tall the rows
+/// built last frame turned out to be — and this project has already paid for
+/// one number defined by the thing it was supposed to be an input to (#96, see
+/// [`metrics::PLAY_BUTTON_HEIGHT`]). The heights are constants; the arithmetic
+/// over them is testable without a renderer, which is the property the rest of
+/// this module is built on.
+///
+/// # What is built
+///
+/// `ceil(viewport_rows)` below the first visible row, plus
+/// [`WINDOW_VIEWPORTS`] viewports of margin above and below. The margin above
+/// matters as much as the one below: scrolling *up* is the case where a window
+/// that only looked forward would show unbuilt rows, and it is the one a
+/// "start at the last visible row" implementation gets wrong.
+///
+/// # The index arithmetic is in `f64`, and that is not decoration
+///
+/// The offsets are `f32` logical pixels and the row height is 61.2 — a value
+/// `f32` cannot hold exactly (`metrics.rs`'s own test measures
+/// `18.0f32 * 2.8f32` as `50.399998`). Dividing a 6-digit offset by that in
+/// `f32` loses about a unit in the last place of the *quotient*, which at the
+/// end of a 500-row list is the difference between the last row and beyond it.
+/// The inputs stay `f32` — that is what iced hands over — and the division that
+/// turns pixels into row indices is done once, in `f64`.
+///
+/// # Degenerate inputs, and why each has an answer rather than a panic
+///
+/// Every one of these is external state as far as this function is concerned
+/// (a window resize, a first frame before layout, a list emptied by a search
+/// while the offset still points past it), so none of them is a reason to take
+/// the app down:
+///
+/// - `total == 0` — nothing to build; the empty range.
+/// - `total == 1` — exactly one row whatever the geometry; every list has to
+///   be able to show its first entry.
+/// - `viewport_height <= 0.0` — the pre-layout frame; [`ASSUMED_VIEWPORT_HEIGHT`].
+/// - `row_height <= 0.0` — cannot happen for a caller using `metrics`, and an
+///   infinite row count would be worse than a wrong one, so one row.
+/// - `offset` past the end — the window lands on the last rows rather than
+///   beyond them, because the alternative is an empty page under a scrollbar
+///   the user has dragged to the bottom.
+/// - a non-finite `offset` or height (`NaN`, `±∞`) — the comparison below is
+///   the guard: `first` is only computed when the offset is finite and positive
+///   and the row height is positive, so a `NaN` offset takes the `0` arm.
+///   *Not* clamped arithmetically, which for `NaN` would be another `NaN`.
+pub fn visible_range(
+    offset: f32,
+    viewport_height: f32,
+    row_height: f32,
+    total: usize,
+) -> RowWindow {
+    if total == 0 {
+        return RowWindow { start: 0, end: 0 };
+    }
+    if total == 1 {
+        // One row, always built. This is the case a "first visible row" window
+        // gets wrong on a list that is shorter than the viewport: the row is
+        // on screen, and a window computed from the offset alone would build
+        // it only if the offset happened to be in its range.
+        return RowWindow { start: 0, end: 1 };
+    }
+
+    let row_height = if row_height.is_finite() && row_height > 0.0 {
+        row_height
+    } else {
+        // One row rather than an infinite window: `total` rows of zero height
+        // would otherwise all be "visible".
+        return RowWindow {
+            start: 0,
+            end: total,
+        };
+    };
+    let viewport_height = if viewport_height.is_finite() && viewport_height > 0.0 {
+        viewport_height
+    } else {
+        ASSUMED_VIEWPORT_HEIGHT
+    };
+
+    // See the doc note: the division is `f64`, the inputs are not.
+    let first = if offset.is_finite() && offset > 0.0 {
+        (f64::from(offset) / f64::from(row_height)).floor()
+    } else {
+        0.0
+    };
+    let rows_on_screen = (f64::from(viewport_height) / f64::from(row_height)).ceil();
+    // A non-finite `rows_on_screen` cannot reach here (`viewport_height` and
+    // `row_height` are both finite and positive above), but the margin is
+    // computed from it, so it is bounded rather than assumed.
+    let margin = if rows_on_screen.is_finite() {
+        rows_on_screen * f64::from(WINDOW_VIEWPORTS)
+    } else {
+        0.0
+    };
+
+    let last = first + rows_on_screen + margin;
+    let start = (first - margin).max(0.0);
+
+    // `total` is a `usize` and every bound above is finite by now, so the
+    // conversion is the saturating one and the min is what makes the window a
+    // subset of the list — which is the property the spacers depend on.
+    let start = (start as usize).min(total - 1);
+    let end = (last.ceil().max(0.0) as usize).clamp(start + 1, total);
+
+    RowWindow { start, end }
+}
 
 /// The page's inputs, all borrowed from [`crate::State`].
 ///
@@ -291,9 +548,81 @@ pub struct LibraryPage<'a> {
     ///
     /// The caller supplies [`gamehandler_core::models::now`].
     pub now: f64,
+    /// [`crate::State::cover_cache`] — the classify and decode memo.
+    ///
+    /// Taken here rather than reached for globally, for the reason the rest of
+    /// this struct is a bundle: the page's dependencies are readable from its
+    /// signature. It is the `&`-shared cache the widget builders ask through,
+    /// so a test can hand the page a cache of its own and read back how many
+    /// filesystem reads the frame it just built actually performed — which is
+    /// [`CoverCache::classify_calls`], the counter
+    /// `widgets::a_frame_of_tiles_classifies_each_cover_once` asserts on.
+    pub covers: &'a CoverCache,
+    /// How far the page is scrolled, and how tall the box it is drawn in is.
+    ///
+    /// A struct rather than three floats on this bundle because the three move
+    /// together: they are one reading of one widget, published together and
+    /// consumed together, and a caller that passed a fresh offset with a stale
+    /// height would build the window for a frame that never existed. See
+    /// [`ScrollGeometry`].
+    pub scroll: ScrollGeometry,
+}
+
+/// What the window computation needs to know about the scrollable.
+///
+/// The three numbers of [`crate::Message::SetLibraryScroll`], grouped so the
+/// page takes them as one value, plus the convention that every one of them is
+/// `0.0` until the first publish — which [`visible_range`] and [`grid_columns`]
+/// each read as "not known yet" rather than as a measurement of zero.
+///
+/// `viewport_width` is here rather than derived from `viewport_height` because
+/// the two are genuinely independent: the grid's column count is a function of
+/// the width, and the list's row count of the height.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ScrollGeometry {
+    /// [`crate::State::library_scroll_offset`].
+    pub offset: f32,
+    /// [`crate::State::library_scroll_viewport`] — the **height** of the
+    /// viewport. `0.0` before the first layout.
+    pub viewport_height: f32,
+    /// [`crate::State::library_scroll_width`] — the **width** of the viewport,
+    /// from the same publish as the other three
+    /// (`Viewport::bounds().width`). `0.0` before the first layout, which
+    /// [`grid_columns`] reads as "use [`GRID_VIEWPORT_WIDTH_FALLBACK`]".
+    ///
+    /// The offset and the width come from the same `Viewport` in the same
+    /// message rather than one of them being derived here, because mixing a
+    /// measured width with a published offset would describe two different
+    /// frames — the one the page is about to be drawn in and the one the
+    /// scrollable last measured.
+    pub viewport_width: f32,
+    /// [`crate::State::library_scroll_content`].
+    pub content_height: f32,
 }
 
 /// The page.
+///
+/// # The whole page is wrapped in one scrollable, with an id and an `on_scroll`
+///
+/// That is PERF-03's other half, and the two halves are one decision. The body
+/// is virtualized by [`visible_range`], which needs the offset and the viewport
+/// size; those come from the scrollable the body is *inside*, and
+/// `Scrollable::on_scroll` (`iced/widget/src/scrollable.rs:183`) is the only
+/// route from that widget to this state. Wrapping is what lets iced hand the
+/// viewport back; the `Id` is not required by `on_scroll` (a scrollable needs
+/// an id only to be scrolled *to* from elsewhere), but it is set here for the
+/// next slice — a "go to top" affordance or a keyboard shortcut — and because
+/// an unaddressed scrollable is one nothing can ever reach, which is the same
+/// reason [`SEARCH_INPUT_ID`] exists.
+///
+/// iced publishes the viewport from the scrollable's own `update`, in the frame
+/// that changed it (`:1285`) and from the `RedrawRequested` arm that drives
+/// auto-scrolling (`:1262`) — long before `view()` for that frame runs, so the
+/// offset the window is computed from is the one the user's scroll produced,
+/// not last frame's. And it publishes *only* on a change: the redundant case
+/// returns before `shell.publish` (`:2058-2076`), so an idle app sends no
+/// messages at all — which is the property `docs/audit/PERFORMANCE.md`'s
+/// verified-sound item 1 is about, and the one this must not break.
 pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
     let categories = category_options(&page.library.categories());
     let shown = page
@@ -375,14 +704,110 @@ pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
         }
         EmptyState::None => {
             body = body.push(if page.view_mode == LIST {
-                list_body(&shown, page.runners, page.now)
+                list_body(&shown, page.runners, page.now, page.covers, page.scroll)
             } else {
-                grid_body(&shown, page.runners)
+                grid_body(&shown, page.runners, page.covers, page.scroll)
             });
         }
     }
 
-    container(scrollable(body)).padding(18).into()
+    // `on_scroll` is what makes the window possible; see this function's docs.
+    // The four numbers are read off the `Viewport` iced hands over, and
+    // `bounds()` is the viewport's box where `content_bounds()` is the
+    // content's — swapping the two would make the window grow as the user
+    // scrolled, which is the feedback loop `visible_range`'s doc refuses.
+    container(
+        scrollable(body)
+            .id(Id::from(LIBRARY_SCROLL_ID))
+            .on_scroll(|viewport| Message::SetLibraryScroll {
+                offset: viewport.absolute_offset().y,
+                viewport_width: viewport.bounds().width,
+                viewport_height: viewport.bounds().height,
+                content_height: viewport.content_bounds().height,
+            }),
+    )
+    .padding(18)
+    .into()
+}
+
+/// One list body row, wrapped in the game's context menu.
+///
+/// Split out of [`list_body`] so that the row builder and the menu builder are
+/// written once, at the loop that is now a window. Extracting it is also what
+/// makes the window's effect visible to a test: the count of these inside a
+/// built body is the count of rows the frame constructed, which is the quantity
+/// PERF-03 is about.
+fn list_row<'a>(
+    game: &'a Game,
+    runners: &'a RunnerManager,
+    now: f64,
+    covers: &CoverCache,
+) -> Element<'a, Message> {
+    // Both strings are resolved here, where the row data is assembled, and
+    // carried as data — `resolved_runner_label`'s doc explains why the
+    // manager must not be reached from inside the builder.
+    let (runner, last_played) = row_labels(game, runners, now);
+    let labels = widgets::RowLabels {
+        runner: &runner,
+        last_played: &last_played,
+    };
+    // The launch is built here, where the game is in hand, and handed to the
+    // row as a value: `view/widgets.rs` names no `Message` of its own, which
+    // is the property that keeps its tests message-free. Constructing it
+    // inside the builder would also move the emission off this page, where
+    // `tests/dispatch_coverage.rs` can see it.
+    Element::from(context_menu(
+        widgets::row(covers, game, &labels, Message::LaunchGame(game.id.clone())),
+        Some(game_menu_trees(game)),
+    ))
+}
+
+/// A spacer that stands in for a **run of `rows` unbuilt rows**, gaps included.
+///
+/// The window's other half, and it is what keeps the *content* the size the user
+/// expects while the *construction* is bounded: the scrollable's content bounds
+/// are the sum of the built rows and these, so the scrollbar's thumb is the
+/// right size and the offset the user asks for is the one they get.
+///
+/// # The `(rows - 1)` is the whole of the arithmetic, and its absence is a bug
+///
+/// A run of `rows` rows occupies `rows * row_height` plus the `rows - 1` gaps
+/// *between* them. A spacer sized to `rows * row_height` alone is short by those
+/// gaps, and the shortfall is not a rounding error: it is `(rows - 1) *
+/// LIST_SPACING`, which for a 500-row library is 2,994 px of drift between one
+/// scroll position and another — the content height would change as the user
+/// scrolled, and the window that is computed *from* the offset would be computed
+/// against bounds that the window itself had moved.
+///
+/// That was this function's first version, and it was wrong. Measured by
+/// `the_spacers_keep_the_page_the_height_the_full_list_would_have`, which
+/// built the same 500-game page at three geometries and got 30,902.4 px for the
+/// windowed ones and 31,052.4 px for the run with every row built: 150.002 px,
+/// which is 25 × 6.0 — the 25 gaps the two windows differed by. The test is the
+/// reason this line has a `- 1` in it.
+///
+/// The derivation, so a reader can check the `- 1` rather than trust it. With
+/// `a` leading and `c` trailing unbuilt rows, `b` built rows (`a + b + c = n`),
+/// and `Column`'s spacing between adjacent children:
+///
+/// | spacer height | children | gaps | total |
+/// |---|---|---|---|
+/// | `a*h` | `b + 1 + 1` | `b + 1` | `n*h + (a + b + c + 1)*s` — **two gaps too many** |
+/// | `a*h + (a-1)*s` | `b + 1 + 1` | `b + 1` | `n*h + (n - 1)*s` |
+///
+/// The second row is the all-rows-built body's own height,
+/// `n * row_height + (n - 1) * LIST_SPACING` — which is the number the offset
+/// is measured against in the first place.
+///
+/// `rows` is never 0: the caller checks before pushing, because a `Space` of
+/// height `-6.0` is a negative layout contribution rather than a no-op.
+fn rows_spacer(rows: usize) -> Element<'static, Message> {
+    debug_assert!(rows > 0, "an empty run has no height to stand in for");
+    let height = rows as f32 * metrics::LIST_ROW_HEIGHT + (rows as f32 - 1.0) * LIST_SPACING;
+    Space::new()
+        .width(Length::Fill)
+        .height(Length::Fixed(height))
+        .into()
 }
 
 /// The list: one row per game, each with its last-played label.
@@ -392,28 +817,175 @@ pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
 /// [`grid_body`]'s twin: `LibraryPage.qml` draws the two delegates with
 /// different text, and only the row carries the timestamp (`:269` against the
 /// card's `:192`).
-fn list_body<'a>(games: &[&'a Game], runners: &'a RunnerManager, now: f64) -> Element<'a, Message> {
-    let mut body = Column::new().spacing(6).width(Length::Fill);
-    for game in games {
-        // Both strings are resolved here, where the row data is assembled, and
-        // carried as data — `resolved_runner_label`'s doc explains why the
-        // manager must not be reached from inside the builder.
-        let (runner, last_played) = row_labels(game, runners, now);
-        let labels = widgets::RowLabels {
-            runner: &runner,
-            last_played: &last_played,
-        };
-        // The launch is built here, where the game is in hand, and handed to the
-        // row as a value: `view/widgets.rs` names no `Message` of its own, which
-        // is the property that keeps its tests message-free. Constructing it
-        // inside the builder would also move the emission off this page, where
-        // `tests/dispatch_coverage.rs` can see it.
-        body = body.push(context_menu(
-            widgets::row(game, &labels, Message::LaunchGame(game.id.clone())),
+///
+/// # The loop is over a window, and that is PERF-03
+///
+/// The audit measured this loop building a row for **every** game in the
+/// filtered library on every frame (`docs/audit/PERFORMANCE.md`, PERF-03, which
+/// cites the `for game in games` at the line this replaced). It now builds
+/// [`visible_range`]'s window and pads the rest with [`rows_spacer`]s, so the
+/// work is a function of the window's height rather than of the library's size.
+///
+/// The spacers are why the two modes are not one loop: the list is a single
+/// column of fixed-height rows, so one spacer above and one below is exact,
+/// where the grid needs a spacer per *line* to preserve its wrap points. See
+/// [`grid_body`].
+fn list_body<'a>(
+    games: &[&'a Game],
+    runners: &'a RunnerManager,
+    now: f64,
+    covers: &CoverCache,
+    scroll: ScrollGeometry,
+) -> Element<'a, Message> {
+    let window = visible_range(
+        scroll.offset,
+        scroll.viewport_height,
+        list_row_pitch(),
+        games.len(),
+    );
+
+    let mut body = Column::new().spacing(LIST_SPACING).width(Length::Fill);
+    if window.start > 0 {
+        body = body.push(rows_spacer(window.start));
+    }
+    for game in &games[window.start..window.end] {
+        body = body.push(list_row(game, runners, now, covers));
+    }
+    let tail = games.len() - window.end;
+    if tail > 0 {
+        body = body.push(rows_spacer(tail));
+    }
+    body.into()
+}
+
+/// The height one list row takes in the column: the row and the gap under it.
+///
+/// **The pitch and not the row height**, because the offset the window is
+/// computed from is a distance down a column of `spacing`-separated rows, so
+/// row `k` starts at `k * (height + spacing)` and not at `k * height`. Using
+/// the bare height would put the window one row further down for every ten
+/// rows scrolled, which is a blank edge at the bottom of a long list — the
+/// exact failure this window exists to avoid, and invisible in a short one.
+///
+/// A gap after the *last* row is not part of the content
+/// ([`rows_spacer`]'s doc), and that is why this is used for the division and
+/// not for the spacer heights.
+fn list_row_pitch() -> f32 {
+    metrics::LIST_ROW_HEIGHT + LIST_SPACING
+}
+
+/// The grid: the cards, wrapped.
+///
+/// `Row::wrap` rather than a fixed number of columns: the reference's grid is a
+/// `GridView` whose `cellWidth` is 200 (`LibraryPage.qml:139`), so the column
+/// count is whatever fits — which is what wrapping gives and what a hard-coded
+/// count would get wrong on every window width but one.
+///
+/// # The window, and why its spacers are per line
+///
+/// PERF-03 applies here as it does to [`list_body`], but the spacer arithmetic
+/// is not the same, because the content is not one column. The **wrap points**
+/// are what a naive window would move: iced breaks a line when the next card
+/// would pass the right edge (`iced/widget/src/row.rs:534-541`), so a body that
+/// started at card 40 with nothing before it would re-flow from the left margin
+/// and draw a different grid. So the rows *before* the window are laid down as
+/// whole lines — `start_row` of them, each a full row of columns — which puts
+/// the first built card back at the column the full grid would have given it.
+///
+/// Each spacer is `columns` card-widths wide, which is what makes it exactly one
+/// line tall: `grid_columns` is the same rule iced wraps by, so a spacer that
+/// occupies `columns` children takes exactly one line. A single spacer spanning
+/// the whole height would be *taller* by the vertical spacing between lines
+/// (`Row::wrap` adds `vertical_spacing` per line, `:543`), which is why this is
+/// a count of lines and not a count of pixels.
+///
+/// # Where the grid can be short, stated
+///
+/// The columns here are computed from [`ScrollGeometry::viewport_width`], which
+/// the caller supplies because `on_scroll` publishes a viewport *rectangle* and
+/// this crate keeps only the three numbers the window needs
+/// ([`crate::Message::SetLibraryScroll`]). A width that is wrong means the
+/// spacers hold the wrong number of columns, so a line may hold one card fewer
+/// or more than the built rows beside it. The consequence is a scrollbar whose
+/// range is off by up to a line at the very bottom — the cards themselves are
+/// always built, because the window's *row* range comes from the height, and
+/// each row's cards are contiguous. Recorded rather than papered over.
+fn grid_body<'a>(
+    games: &[&'a Game],
+    runners: &'a RunnerManager,
+    covers: &CoverCache,
+    scroll: ScrollGeometry,
+) -> Element<'a, Message> {
+    let columns = grid_columns(scroll.viewport_width);
+    let line_pitch = metrics::GRID_CELL.1 + GRID_SPACING;
+
+    // The window is computed over *lines*, so the index arithmetic in
+    // `visible_range` — which is about a list — is reused by asking it for the
+    // lines of a list of `ceil(games / columns)` entries, then widening the
+    // answer back to cards. Doing it the other way round (windows over cards,
+    // divided by columns) would need the division to round *out* at both ends
+    // to keep every card of a partly-visible line, which is the same answer
+    // with one more place to get it wrong.
+    let lines = games.len().div_ceil(columns);
+    let line_window = visible_range(scroll.offset, scroll.viewport_height, line_pitch, lines);
+
+    let first_card = line_window.start * columns;
+    let end_card = (line_window.end * columns).min(games.len());
+    let start_line = line_window.start;
+    let tail_lines = lines - line_window.end;
+
+    // Children go on the `Row` and the whole row wraps: `Wrapping` itself has
+    // no `push`, only the spacing and alignment of the wrapped lines.
+    let mut row = Row::new().spacing(GRID_SPACING);
+    if start_line > 0 {
+        row = row.push(grid_lines_spacer(start_line));
+    }
+    for game in &games[first_card..end_card] {
+        let label = widgets::resolved_runner_label(runners, game);
+        // Built here rather than in the builder; see `list_body`.
+        row = row.push(context_menu(
+            widgets::card(covers, game, &label, Message::LaunchGame(game.id.clone())),
             Some(game_menu_trees(game)),
         ));
     }
-    body.into()
+    if tail_lines > 0 {
+        row = row.push(grid_lines_spacer(tail_lines));
+    }
+    row.wrap().into()
+}
+
+/// A spacer standing in for a **run of `lines` unbuilt grid lines**, gaps
+/// included.
+///
+/// **Full width, which is what makes it a line of its own.** A `Row` breaks when
+/// the running `x` plus the next child's width would pass the right edge
+/// (`iced/widget/src/row.rs:534-541`), so a child as wide as the row's own
+/// maximum cannot share a line with anything: the card that follows it is
+/// placed at column 0 of the next line — which is exactly the column card
+/// `start_line * columns` has in the fully built grid, so the windowed grid's
+/// cards land on the columns they belong to. That is the property the whole
+/// window depends on: without it a windowed grid would re-flow from the left
+/// margin and draw a different picture.
+///
+/// **One spacer for the whole run, not one per line.** A run of `lines` lines
+/// occupies `lines * GRID_CELL.1` plus the `lines - 1` vertical gaps *between*
+/// them, and `Row::wrap` adds only the gaps *between children* (`:543`) — so a
+/// spacer of `lines * GRID_CELL.1` alone is short by `(lines - 1) *
+/// GRID_SPACING` exactly as [`rows_spacer`]'s first version was short by its
+/// own. The derivation is that function's, at one row per line.
+///
+/// The empty `Space` inside is what gives the `container` something to be: a
+/// `Container` with no content would still take the fixed height, but it would
+/// report no child, and the grid's shape is read through child counts.
+///
+/// `lines` is never 0: the caller checks before pushing.
+fn grid_lines_spacer(lines: usize) -> Element<'static, Message> {
+    debug_assert!(lines > 0, "an empty run has no height to stand in for");
+    let height = lines as f32 * metrics::GRID_CELL.1 + (lines as f32 - 1.0) * GRID_SPACING;
+    container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(height))
+        .into()
 }
 
 /// The two labels one list row is built from: the runner, and the last-played
@@ -443,27 +1015,6 @@ fn row_labels(game: &Game, runners: &RunnerManager, now: f64) -> (String, String
         widgets::resolved_runner_label(runners, game),
         format_last_played(game.last_played, now),
     )
-}
-
-/// The grid: the cards, wrapped.
-///
-/// `Row::wrap` rather than a fixed number of columns: the reference's grid is a
-/// `GridView` whose `cellWidth` is 200 (`LibraryPage.qml:139`), so the column
-/// count is whatever fits — which is what wrapping gives and what a hard-coded
-/// count would get wrong on every window width but one.
-fn grid_body<'a>(games: &[&'a Game], runners: &'a RunnerManager) -> Element<'a, Message> {
-    // Children go on the `Row` and the whole row wraps: `Wrapping` itself has
-    // no `push`, only the spacing and alignment of the wrapped lines.
-    let mut row = Row::new().spacing(6);
-    for game in games {
-        let label = widgets::resolved_runner_label(runners, game);
-        // Built here rather than in the builder; see `list_body`.
-        row = row.push(context_menu(
-            widgets::card(game, &label, Message::LaunchGame(game.id.clone())),
-            Some(game_menu_trees(game)),
-        ));
-    }
-    row.wrap().into()
 }
 
 /// One entry of a game's context menu: an action, or a divider.
@@ -960,17 +1511,339 @@ mod tests {
     }
 
     /// The page, built the way the shell builds it.
+    ///
+    /// The cache is fresh and the geometry is the zero one. Zero is the
+    /// pre-layout publish — no scrollable has reported itself yet — and
+    /// `visible_range` treats it as one assumed window rather than as "nothing
+    /// is visible", so a page built here draws the first screenful exactly as
+    /// the shell's first frame does. See
+    /// `a_page_with_no_published_geometry_still_draws_its_first_rows`.
     fn page_strings(library: &Library, view_mode: &str) -> Vec<String> {
+        page_strings_scrolled(library, view_mode, ScrollGeometry::default())
+    }
+
+    /// The same page, with the geometry the shell publishes stamped on it.
+    ///
+    /// The window tests need both halves of the same run: the *names the page
+    /// built* (read off the traversal, which is what a user would see) and the
+    /// *range the arithmetic says it should have built* (from
+    /// [`visible_range`]). Handing the same [`ScrollGeometry`] to both is what
+    /// makes them comparable.
+    fn page_strings_scrolled(
+        library: &Library,
+        view_mode: &str,
+        scroll: ScrollGeometry,
+    ) -> Vec<String> {
         let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
-        drawn_strings(view(LibraryPage {
+        let covers = CoverCache::new();
+        page_strings_with(library, view_mode, scroll, &covers, &runners)
+    }
+
+    /// The page with a cache the caller keeps, so a test can read the counters
+    /// back after building it.
+    fn page_strings_with(
+        library: &Library,
+        view_mode: &str,
+        scroll: ScrollGeometry,
+        covers: &CoverCache,
+        runners: &RunnerManager,
+    ) -> Vec<String> {
+        drawn_strings(page_element(library, view_mode, scroll, covers, runners))
+    }
+
+    /// The page as an `Element`, built the way the shell builds it.
+    fn page_element<'a>(
+        library: &'a Library,
+        view_mode: &'a str,
+        scroll: ScrollGeometry,
+        covers: &'a CoverCache,
+        runners: &'a RunnerManager,
+    ) -> Element<'a, Message> {
+        view(LibraryPage {
             library,
             search: "",
             category: ALL_CATEGORIES,
             sort_mode: "name",
             view_mode,
-            runners: &runners,
+            runners,
             now: 0.0,
-        }))
+            covers,
+            scroll,
+        })
+    }
+
+    /// The height the page lays out to, under unbounded limits.
+    ///
+    /// The same layout pass [`drawn_strings`] runs, stopped one step earlier:
+    /// the node's size instead of the strings the operation collected. It is
+    /// what makes the spacer test a measurement of the widget tree rather than
+    /// of the expression that built it.
+    fn page_height(mut element: Element<'_, Message>) -> f32 {
+        use cosmic::iced::advanced::Layout;
+        use cosmic::iced::advanced::layout::Limits;
+        use cosmic::iced::advanced::widget::Tree;
+        use cosmic::iced::{Font, Pixels, Size};
+
+        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
+        let mut tree = Tree::new(element.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
+        let _ = Layout::new(&node);
+        node.size().height
+    }
+
+    /// A library of `count` named games in a temp directory of its own.
+    ///
+    /// Named `Windowed N`, and the names are the whole point: every test below
+    /// reads *which rows the page built* by looking for those strings in the
+    /// traversal, so the numbers in the assertions and the numbers a reader can
+    /// reproduce are the same numbers the page was handed.
+    fn windowed_library(count: usize) -> Library {
+        let root = std::env::temp_dir().join(format!(
+            "gh-lib-window-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut library = Library::new_at(Some(root.join("games.json")), 0.0);
+        for n in 0..count {
+            // **Zero-padded**, because the page sorts by name (`sort_mode:
+            // "name"`) and `Library`'s comparison is the string's. `Windowed
+            // 10` precedes `Windowed 2` lexicographically, so an unpadded
+            // fixture would make "row 44" a name and not a position, and every
+            // index assertion below would be reading a different list from the
+            // one the window was computed over. Measured: the first version of
+            // these tests was unpadded and failed with `left: 10, right: 2`.
+            library
+                .add(Game::new_named(format!("Windowed {n:03}")))
+                .unwrap();
+        }
+        library
+    }
+
+    /// The indices of the `Windowed N` rows a traversal actually built.
+    fn built_rows(strings: &[String]) -> Vec<usize> {
+        strings
+            .iter()
+            .filter_map(|s| s.strip_prefix("Windowed "))
+            .filter_map(|n| n.parse::<usize>().ok())
+            .collect()
+    }
+
+    /// A 1200×800 window at `offset`, which is the geometry the audit measured
+    /// against (`docs/audit/PERFORMANCE.md`, PERF-01: "a 1200×800 window").
+    fn geometry_at(offset: f32) -> ScrollGeometry {
+        ScrollGeometry {
+            offset,
+            viewport_height: 800.0,
+            viewport_width: 1200.0,
+            content_height: 0.0,
+        }
+    }
+
+    /// **PERF-03's measurement, as a count of the rows the page built.**
+    ///
+    /// The audit's finding is that every game in the filtered library was given
+    /// a built `Element` on every frame — `list_body` and `grid_body` looped
+    /// over all of `shown` (`docs/audit/PERFORMANCE.md`, PERF-03). So the
+    /// assertion is on the number of rows a *frame* constructs, read from the
+    /// strings the built tree actually draws rather than from the arithmetic
+    /// that decided them: a `visible_range` that returned the right window and a
+    /// `list_body` that ignored it would pass an assertion made on the range and
+    /// fail this one.
+    ///
+    /// Pre-fix this is 500 names; post-fix it is one window. The two numbers are
+    /// three orders of magnitude apart, which is the point — this is not a
+    /// marginal change to assert.
+    #[test]
+    fn the_list_builds_a_window_of_rows_and_not_the_whole_library() {
+        let library = windowed_library(500);
+        let strings = page_strings_scrolled(&library, "list", geometry_at(0.0));
+        let built = built_rows(&strings);
+
+        assert!(
+            built.len() < 100,
+            "100 frames of the whole library is the defect; this frame built {}",
+            built.len()
+        );
+        assert!(
+            built.len() >= 14,
+            "and the window has to cover the 800 px on screen (13 rows at \
+             61.2 + 6) plus margin, or the page shows blank rows: {}",
+            built.len()
+        );
+        assert_eq!(
+            built,
+            (0..built.len()).collect::<Vec<_>>(),
+            "the window is contiguous and starts at the top"
+        );
+    }
+
+    /// The window follows the offset: scrolled to the middle, the rows on
+    /// screen are built and the first row is not.
+    ///
+    /// This is the half a "build the first N rows" implementation fails — the
+    /// cheapest way to make the count above small is to always build row 0, and
+    /// that page is blank from the second screenful down.
+    #[test]
+    fn the_window_follows_the_offset() {
+        let library = windowed_library(500);
+        // Row 44 of 67.2 px is at 2956.8–3024.0; the viewport is 800 tall, so
+        // rows 44..=56 are on screen.
+        let strings = page_strings_scrolled(&library, "list", geometry_at(3000.0));
+        let built = built_rows(&strings);
+
+        assert!(
+            !built.contains(&0),
+            "row 0 is 3000 px above the fold and must not be built: {:?}",
+            &built[..built.len().min(4)]
+        );
+        assert!(
+            built.contains(&44),
+            "row 44 is the first row the offset puts on screen, and it is not \
+             built: {:?}",
+            &built[..built.len().min(4)]
+        );
+        assert!(
+            built.contains(&56),
+            "row 56 is the last row on screen, and it is not built: built {}..{}",
+            built.first().copied().unwrap_or(0),
+            built.last().copied().unwrap_or(0)
+        );
+        assert_eq!(
+            built,
+            (built[0]..built[0] + built.len()).collect::<Vec<_>>(),
+            "contiguous"
+        );
+    }
+
+    /// And scrolling *up* is covered: the margin above the first visible row is
+    /// as large as the one below it.
+    ///
+    /// A window that only looked forward would show unbuilt rows the moment the
+    /// user scrolled up, which is the failure mode a "start at the first visible
+    /// row" implementation has and the reason [`WINDOW_VIEWPORTS`] is applied to
+    /// `start` as well as to `end`.
+    #[test]
+    fn the_window_has_margin_above_the_first_visible_row_too() {
+        let library = windowed_library(500);
+        let strings = page_strings_scrolled(&library, "list", geometry_at(3000.0));
+        let built = built_rows(&strings);
+        let first_on_screen = 44;
+
+        assert!(
+            built[0] < first_on_screen,
+            "the window starts at {} and the first row on screen is {first_on_screen}, \
+             so scrolling up by even one row draws a row that was never built",
+            built[0]
+        );
+    }
+
+    /// The grid is windowed the same way, and its window is in **lines**: a
+    /// 1200 px viewport is 5 columns and 15 lines of 306 px, so a frame builds
+    /// 5 cards per line and not 500.
+    #[test]
+    fn the_grid_builds_a_window_of_lines_and_not_the_whole_library() {
+        let library = windowed_library(500);
+        let strings = page_strings_scrolled(&library, "grid", geometry_at(0.0));
+        let built = built_rows(&strings);
+
+        assert_eq!(grid_columns(1200.0), 5, "1200 / 206 = 5 lines of 5");
+        assert!(built.len() < 100, "the grid built {} cards", built.len());
+        assert!(
+            built.len() >= 15,
+            "and it has to cover the 800 px on screen (3 lines of 306) plus \
+             margin: {}",
+            built.len()
+        );
+        // Lines are contiguous and start at column 0 — the property the
+        // full-width line spacer exists to preserve, because a window that
+        // started mid-line would put the first card at the wrong column.
+        assert_eq!(built[0], 0);
+        for (n, row) in built.iter().enumerate() {
+            assert_eq!(*row, n, "the grid's window is the first whole lines");
+        }
+    }
+
+    /// **The spacers keep the page the height it would have been if every row
+    /// were built.**
+    ///
+    /// The window bounds what is *constructed* and nothing else: the two `Space`
+    /// spacers stand in for the rows that are not, so the content the scrollable
+    /// scrolls is the same size, the thumb is the same height, and the bottom of
+    /// the list is still reachable.
+    ///
+    /// # Why this is a laid-out height and not arithmetic
+    ///
+    /// An arithmetic version — "the leading spacer covers `start` rows of
+    /// `LIST_ROW_HEIGHT` and the trailing one the rest" — is a restatement of the
+    /// builder's own expression and passes whatever the builder does, which is
+    /// this project's named defect class. The laid-out height is a different
+    /// quantity: it is the sum of what the widgets actually resolved to, so a
+    /// spacer of the wrong height, a missing spacer, or a `Space` that collapsed
+    /// to zero all move it.
+    ///
+    /// The three geometries are the same library seen three ways, and **the
+    /// third is the control**: a viewport taller than the whole list forces every
+    /// row to be built, so if it agrees with the two windowed runs then the
+    /// spacers really are substituting for the rows.
+    ///
+    /// # Measured, and the tolerance is a decision rather than a habit
+    ///
+    /// With the spacers correct this test measured **33,680.4 px at offset 0 and
+    /// at offset 3,000, and 33,680.234 px for the run with every row built** —
+    /// agreement to 0.166 px on a 33,680 px page, which is `f32` rounding of two
+    /// different summations of the same total (500 children added up by the
+    /// layout, against one `Fixed` height). The tolerance below is 1.0 px.
+    ///
+    /// The two errors it has to catch, with their sizes at this library, so the
+    /// tolerance is not a number chosen to make the test pass:
+    ///
+    /// - a spacer that forgot the gaps inside its own run — the bug this
+    ///   function's first version had — which is `(rows - 1) * LIST_SPACING`:
+    ///   150.002 px between the two windowed runs here, and 2,994 px at the
+    ///   bottom of the list;
+    /// - a spacer built from the grid's cell height instead of the row's:
+    ///   `500 * (300 - 61.2)` = 119,400 px.
+    ///
+    /// So the tolerance is 150× under the smallest failure it must see.
+    #[test]
+    fn the_spacers_keep_the_page_the_height_the_full_list_would_have() {
+        let library = windowed_library(500);
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+        let covers = CoverCache::new();
+
+        let height = |scroll: ScrollGeometry| {
+            page_height(page_element(&library, "list", scroll, &covers, &runners))
+        };
+
+        // `f32` rounding, see the doc above: 1.0 px against the 150.002 px the
+        // smallest real error here costs.
+        const TOLERANCE: f32 = 1.0;
+
+        let top = height(geometry_at(0.0));
+        let middle = height(geometry_at(3000.0));
+        assert!(
+            (top - middle).abs() <= TOLERANCE,
+            "the page is one height however far it is scrolled, or the offset \
+             the window is computed from is measured against bounds the window \
+             moved: {top} at the top, {middle} in the middle"
+        );
+
+        let everything = height(ScrollGeometry {
+            offset: 0.0,
+            viewport_height: 100_000.0,
+            viewport_width: 1200.0,
+            content_height: 0.0,
+        });
+        assert!(
+            (top - everything).abs() <= TOLERANCE,
+            "and it is the height of the whole list: the window replaces rows, \
+             it does not remove them — {top} windowed against {everything} with \
+             every row built"
+        );
     }
 
     /// `BUG-07`: the toolbar carries the create action **even when the library

@@ -43,3 +43,45 @@ ureq = { version = "3", features = ["platform-verifier"] }
 # that turns the answer into a path (`Url::to_file_path`). Already in the
 # lockfile as ashpd's dependency, so this adds no new source to vendor.
 url = "2"
+# The cover cache decodes covers itself, so that what it decodes is bounded
+# (PERF-02). `crate::view::cover_cache`'s module docs carry the argument and the
+# measurement; this line is the minimum that argument needs.
+#
+# # Why a decode in this crate at all
+#
+# The renderer decodes whatever it is handed at the source image's own size and
+# retains it until the frame that stopped drawing it
+# (`iced/tiny_skia/src/raster.rs:151-171`, `:232-237`), and its cache has no
+# public surface this crate can bound — `Pipeline`'s `load`/`allocate` are
+# private (`:138`, `:166`) and the only knob is `trim_cache`, which trims by
+# "hit this frame". A cover handed over as `Handle::Path` is therefore decoded
+# at 600×900 if that is what the file is, whatever the tile's size. Handing over
+# `Handle::Rgba` moves the decode to the side that knows how big the box is.
+#
+# # The feature list is libcosmic's own, deliberately
+#
+# `default-features = false` and this exact set is the *union* of what the
+# `libcosmic` dependency above already enables: its own
+# `image = { version = "0.25.10", default-features = false, features = ["ico",
+# "jpeg", "png"] }` (`Cargo.toml:139-143`) plus `image/gif`, `image/webp` and
+# `image/png` from `animated-image` (`:26-33`). Cargo unifies features across
+# the graph, so this changes no codec, pulls in no package that is not already
+# built for `libcosmic`, and leaves `image`'s own defaults (bmp, exr, ff, hdr,
+# pnm, qoi, tga, tiff, …) off — enabling *those* is what would add sources to
+# vendor and time to the build. `cargo tree -p gamehandler -i image` reports a
+# single node, and the only `Cargo.lock` change is one line adding `image` to
+# the `gamehandler` dependency list.
+#
+# # Why not a crate of its own
+#
+# Nothing here is a new capability: the app already decodes these exact formats
+# on this exact path, one layer down, through this exact crate. The choice is
+# only *where* in the pipeline the decode happens, and the answer has to be the
+# side that knows the drawn size.
+image = { version = "0.25.10", default-features = false, features = [
+    "gif",
+    "ico",
+    "jpeg",
+    "png",
+    "webp",
+] }

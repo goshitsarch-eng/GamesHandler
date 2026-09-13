@@ -40,6 +40,7 @@
 
 pub mod badge;
 pub mod cover;
+pub mod cover_cache;
 pub mod credits;
 pub mod form;
 pub mod installers;
