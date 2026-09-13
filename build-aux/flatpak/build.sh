@@ -31,13 +31,29 @@ if [ -z "$VERSION" ]; then
 fi
 
 cd "$ROOT"
+
+# PKG-03. `--install-deps-from=flathub` is a network operation: it names a remote
+# to resolve and install the runtime and SDK from. It stays the default here
+# because building a distributable bundle normally happens on a machine that may
+# not already have them — but it is conditional rather than unconditional, so
+# `GAMEHANDLER_BUILD_OFFLINE=1` builds a fully-provisioned machine with no
+# network at all. Same shape as `scripts/verify.sh --offline`, and for the same
+# reason: a build told not to use the network should not silently use it.
+FLAGS=(
+  --user
+  --force-clean
+  --disable-rofiles-fuse
+  --default-branch="$BRANCH"
+  --repo="$ROOT/flatpak-repo"
+)
+if [ "${GAMEHANDLER_BUILD_OFFLINE:-0}" = "1" ]; then
+  FLAGS+=(--disable-download)
+else
+  FLAGS+=(--install-deps-from=flathub)
+fi
+
 flatpak-builder \
-  --user \
-  --force-clean \
-  --disable-rofiles-fuse \
-  --install-deps-from=flathub \
-  --default-branch="$BRANCH" \
-  --repo="$ROOT/flatpak-repo" \
+  "${FLAGS[@]}" \
   "$ROOT/build-flatpak" \
   "$ROOT/build-aux/flatpak/$APP_ID.json"
 

@@ -90,7 +90,9 @@
 #   --keep-going     run every stage and report the full table instead of
 #                    stopping at the first failure (packaging.md §6 specifies
 #                    fail-fast; this is the flag for a full diagnostic sweep)
-#   --offline        pass --disable-download to flatpak-builder
+#   --offline        do not touch the network: pass --disable-download and omit
+#                    --install-deps-from=flathub, so the runtime and SDK must
+#                    already be installed (PKG-03)
 #   --hold SECONDS   forward the GUI hold interval to the smoke test
 #   --stage-timeout SECONDS
 #                    ceiling on a single stage; 0 disables the deadline. The
@@ -322,7 +324,9 @@ usage: scripts/verify.sh [options]
   --skip-smoke     skip the smoke-test stage only
   --keep-going     run every stage and report the full table instead of
                    stopping at the first failure
-  --offline        pass --disable-download to flatpak-builder
+  --offline        do not touch the network: pass --disable-download and omit
+                   --install-deps-from=flathub, so the runtime and SDK must
+                   already be installed.
   --hold SECONDS   forward the GUI hold interval to the smoke test
   --stage-timeout SECONDS
                    ceiling on a single stage; 0 disables it. Default 900,
@@ -1613,14 +1617,29 @@ stage_flatpak() {
         --user
         --force-clean
         --disable-rofiles-fuse
-        --install-deps-from=flathub
         --default-branch=stable
         --state-dir="$ROOT/.flatpak-builder"
         --repo="$REPO_DIR"
     )
     # packaging.md §6 called this --disable-network; flatpak-builder 1.4.10 has
     # no such flag, it has --disable-download.
-    [ "$OFFLINE" -eq 1 ] && flags+=(--disable-download)
+    #
+    # PKG-03. `--offline` has to mean *no network*, and `--install-deps-from` is
+    # a network operation — it names a remote to resolve and install the runtime
+    # and SDK from. Appending `--disable-download` beside it did not remove that,
+    # because the flag was *added*, never substituted: a run that called itself
+    # offline still reached flathub to resolve its deps. They are alternatives,
+    # not companions. Omitted offline, the resolution comes from the local
+    # flatpak installation, which is what a provisioned machine has; on a machine
+    # that lacks the runtime, flatpak-builder fails naming the missing runtime
+    # rather than quietly fetching it — which is the honest outcome for a run
+    # that was asked not to touch the network. `--disable-download` is kept
+    # because it also stops flatpak-builder fetching anything else mid-build.
+    if [ "$OFFLINE" -eq 1 ]; then
+        flags+=(--disable-download)
+    else
+        flags+=(--install-deps-from=flathub)
+    fi
     flatpak-builder "${flags[@]}" "$BUILD_DIR" "$MANIFEST"
 }
 
