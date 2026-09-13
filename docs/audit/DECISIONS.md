@@ -141,11 +141,12 @@ project's own named defect class.
 `REPORT.md` is generated from the same source rather than written beside it.
 
 **The convention was stated before it was implemented, and that is worth
-recording.** Only `BUGS.md` ended up carrying tails — 26 of its 47 rows, being
-23 `FIXED`, 1 `CLOSED` and 2 `PARTIAL`. The other five specialist documents carry
-none, so for those families the plan's status column is the only record and there
-is nothing to derive from. Both states were measured, not assumed:
-`grep -c 'Status: [A-Z]*' docs/audit/*.md` returns 26 for `BUGS.md`, 1 for
+recording.** At the time this was decided, only `BUGS.md` carried tails — 26 of
+its 47 rows, being 23 `FIXED`, 1 `CLOSED` and 2 `PARTIAL`. The other five
+specialist documents carried none, so for those families the plan's status column
+was the only record and there was nothing to derive from. Both states were
+measured, not assumed:
+`grep -c 'Status: [A-Z]*' docs/audit/*.md` returned 26 for `BUGS.md`, 1 for
 `SECURITY.md` (inside `SEC-01`'s fix cell) and **0** for the other four.
 
 The failure this produced is concrete. Regenerating `PLAN.md` from its own rows
@@ -156,9 +157,18 @@ wrong in exactly the direction that makes an audit look unfinished, and nothing
 would have caught it, because the two files were never compared.
 
 Both are now correct and both were recomputed from the rows rather than edited
-by hand. The remaining work — writing the five missing sets of tails — is the
-first item of the documentation pass, and until it is done `PLAN.md` says so in
-its own Status section rather than implying a derivation that is not happening.
+by hand.
+
+**And the missing tails have since been written, so this decision's own
+description of the tree has been overtaken — recorded here rather than silently
+edited, because the paragraph above was itself an instance of the defect the
+audit exists to find.** Re-counted by matching each specialist document's table
+rows on their ID cell and asking which contain `Status:`: `BUGS.md` 26
+(unchanged), `ARCHITECTURE.md` **7**, `COSMIC-UX.md` **1**, `PACKAGING.md` **1**,
+`SECURITY.md` 1 — and `PERFORMANCE.md` still **0**, not because the tails were
+skipped but because none of its eight rows is fixed, so there is no verdict for a
+tail to carry. The distinction matters: "0 tails" reads as the same gap whether
+the rows are open or the record is missing, and only one of those is a defect.
 
 ---
 

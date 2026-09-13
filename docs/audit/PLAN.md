@@ -38,23 +38,48 @@ when written and quietly drifted is the failure this audit is about.
 | `OPEN` | Not yet fixed |
 
 The status here and the `Status:` tail on the specialist row are updated **in the
-same commit** that changes them, and `BUGS.md` remains the authority for `BUG-xx`
-rows. A summary that drifts from the rows it summarises is this project's own named
-defect class — a statement that stops being inspected — so `REPORT.md` is generated
-from those tails rather than written beside them.
+same commit** that changes them. A summary that drifts from the rows it summarises
+is this project's own named defect class — a statement that stops being inspected
+— so `REPORT.md` is generated from these rows rather than written beside them.
 
-**Where the tails actually live, measured rather than assumed.** `BUGS.md` is the
-only specialist document whose rows carry `Status:` tails: **26 of its 47 rows** —
-23 `FIXED`, 1 `CLOSED`, 2 `PARTIAL`. The other 21 rows are the 20 open `P3` rows
-and `BUG-11`, whose withdrawal is recorded in its ID cell rather than as a tail.
-`SECURITY.md` carries one tail, inside `SEC-01`'s suggested-fix cell.
-`ARCHITECTURE.md`, `COSMIC-UX.md`, `PERFORMANCE.md` and `PACKAGING.md` carry
-**none** — `grep -c 'Status: [A-Z]*'` returns 0 for all four — so for those
-families the status column in the tables below is the only record. That is the
-reverse of the arrangement this section describes, and a real gap rather than a
-formatting choice: the tails were scheduled and not written, so those rows were
-corrected by hand from the commits. Closing this is the first item of the
-documentation pass.
+**Which document is the authority for which family, stated here because the row
+above used to claim `BUGS.md` was the authority for every family.** It is the
+authority for `BUG-xx` only. `ARCH-xx` rows are authoritative in
+`ARCHITECTURE.md`, `UX-xx` in `COSMIC-UX.md`, `PERF-xx` in `PERFORMANCE.md`,
+`SEC-xx` in `SECURITY.md` and `PKG-xx` in `PACKAGING.md`. The strongest reading
+of that claim — that a `PKG` fix needs no tail because `BUGS.md` owns the
+status — is the reading that produced the gap this pass had to repair: three
+`PKG` rows went `FIXED` in this file while the specialist row they summarise
+still described the defect, because the fix's commit touched `PACKAGING.md`
+in a *later* commit than the one that changed the status. A rule about two
+places staying in step is satisfied by a same-commit pair and violated by two
+commits a minute apart, and nothing here could tell the difference.
+
+**Where the tails actually live, measured rather than assumed.** Re-counted for
+this revision by matching the ID cell of every table row in each specialist
+document (`^\|\s*\*{0,2}\`?(BUG|ARCH|UX|PERF|SEC|PKG)-\d+`) and asking which of
+those rows contain `Status:`:
+
+| Document | Rows | `Status:` tails | Kinds |
+|---|---|---|---|
+| `BUGS.md` | 47 | 26 | 23 `FIXED`, 1 `CLOSED`, 2 `PARTIAL` |
+| `ARCHITECTURE.md` | 25 | 7 | 7 `FIXED` |
+| `COSMIC-UX.md` | 30 | 1 | 1 `FIXED` |
+| `SECURITY.md` | 10 | 1 | 1 `FIXED` (inside `SEC-01`'s suggested-fix cell) |
+| `PACKAGING.md` | 9 | 1 | 1 `FIXED` |
+| `PERFORMANCE.md` | 8 | 0 | — |
+
+`BUGS.md`'s 21 tail-less rows are the 20 open `P3` rows and `BUG-11`, whose
+withdrawal is recorded in its ID cell rather than as a tail. `PERFORMANCE.md`
+carries no tail because it has no fixed row to carry one — all eight are open.
+The previous revision of this paragraph described a state that no longer
+existed when it was read: it said `BUGS.md` was "the only specialist document
+whose rows carry `Status:` tails" and that the other four carried "**none** …
+`grep -c 'Status: [A-Z]*'` returns 0 for all four". That was true when the
+paragraph was written and false by the time the documentation pass it
+announced had run — which is this project's named defect class arriving in the
+file that names it, one paragraph above the sentence explaining why the numbers
+are generated rather than written.
 
 ## Owners
 
@@ -170,7 +195,7 @@ across families, not within them.
 | `PKG-02` | Nothing in the repository runs the verification chain automatically | S6 | — | Add CI (or a hook, or a `just`/`make` entry) that runs `scripts/verify.sh`; verify by breaking a test and watching the wiring fail. | OPEN |
 | `PKG-03` | Both the Flatpak build and the cargo-sources freshness check depend on things a clean checkout does not contain, and one of them needs the network by default | S6 | — | Make the Flatpak build and the cargo-sources check either self-provisioning or an explicit, reported skip with the reason; verify on a clean checkout. | OPEN |
 | `PKG-04` | flatpak-contents verifies placement and bytes but never runs the binary, and its one binary check is a text search inside the ELF rather than an execution | S6 | — | Execute the installed binary in `flatpak-contents` (a `--version` is enough); verify by planting a binary that cannot run and watching the stage fail. | OPEN |
-| `PKG-05` | The application ships a single 128×128 SVG and no PNG icon at any size | S6 | — | Ship PNGs at the sizes the specification names; verify with the AppStream validator and `flatpak-contents`. | OPEN |
+| `PKG-05` | The application ships a single 128×128 SVG and no PNG icon at any size | S6 | — | Ship PNGs at the sizes the specification names; verify with the AppStream validator and `flatpak-contents`. | FIXED `9e10566` |
 | `SEC-02` | --filesystem=home grants read-write to the entire home directory, which is broader than the directories the code touches | S4 | — | Narrow to the XDG roots the code actually touches plus the seven fixed search roots; verify by running the app in the narrowed sandbox and exercising every path-touching flow. | OPEN |
 | `SEC-03` | The Authenticode authenticity decision is weaker than it reads | S4 | — | Compare the publisher against the verifier's structured field rather than a case-folded substring of merged output; verify with a fixture whose output contains a matching substring in an unrelated field. | OPEN |
 | `SEC-04` | game_id is interpolated into a destination filename with no sanitisation at three sites in covers.rs, while the same class of bug was deliberately fixed in desktop.rs | S4 | — | Sanitise `game_id` at all three sites the way `desktop.rs` already does; verify with a `game_id` containing `/` and `..` and a write outside the covers directory. | OPEN |
