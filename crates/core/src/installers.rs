@@ -1628,6 +1628,13 @@ const SPAWN_RETRY_DELAY: Duration = Duration::from_millis(10);
 /// recovery path is then covered by a case that cannot flake, and the diagnosis
 /// above is covered separately by one that observes the kernel's own error
 /// (`a_held_open_script_is_executable_file_busy`).
+///
+/// The environment is **inherited** here and cleared by the two callers instead,
+/// because clearing it for the tests below would clear it for the fake verifier
+/// scripts those tests execute — and a script needs `PATH` to find its
+/// interpreter. That is a real constraint rather than a preference: it is why
+/// `SEC-09`'s fix is an `env_clear` at the spawn site rather than a default
+/// inside this helper.
 fn spawn_retrying(
     mut attempt_spawn: impl FnMut() -> std::io::Result<Child>,
 ) -> std::io::Result<Child> {
@@ -1673,6 +1680,30 @@ thread_local! {
 /// writes more than a pipe buffer's worth blocks instead of finishing. Ninety
 /// seconds is the reference's own bound and the verifier prints a page, so the
 /// branch is out of reach in practice; it is written down rather than assumed.
+///
+/// # The environment is cleared, and that is a divergence
+///
+/// `SECURITY.md` `SEC-09`. `subprocess.run` with no `env=` inherits the
+/// launcher's whole environment, and this port copied that here while every
+/// other spawn in the tree replaces it ([`wait_for_prefix_idle`] below,
+/// `start_prefix_tool`, `run_installer`). The child is `osslsigncode`, and it
+/// needs **nothing** from this process: the binary is resolved by the caller's
+/// `which` into an absolute path (`:1516`), the trust root and the file under
+/// test are absolute paths in the argv, and the program reads no configuration.
+/// So an empty environment is a complete one, and it means a hostile
+/// `LD_PRELOAD`, `OPENSSL_CONF` or `SSL_CERT_FILE` in the launcher's environment
+/// cannot redirect the verifier's answer — which matters more here than
+/// elsewhere, because this process's *output* is a security decision the
+/// launcher then trusts.
+///
+/// The cost is that `$PATH` is gone, which is why this is only safe for a
+/// program already resolved to a path. `view::plugins::run_to_completion` — the
+/// other inheriting spawn `SEC-09` named — clears too, and clears for the same
+/// reason; what it does *not* inherit is `osslsigncode`'s happy position of
+/// being convenient to test. It needed `install_command` and
+/// `privileged_command` rather than a temporary file, so it proves the same
+/// claim a level up: the verifier's environment is asserted here, the package
+/// manager's argv is asserted in `view::plugins`'s own tests.
 fn run_capturing(argv: &[String], timeout: Duration) -> Result<CommandOutput, RunFailure> {
     use std::process::Stdio;
 
@@ -1687,6 +1718,7 @@ fn run_capturing(argv: &[String], timeout: Duration) -> Result<CommandOutput, Ru
     let mut child = spawn_retrying(|| {
         ProcessCommand::new(program)
             .args(arguments)
+            .env_clear()
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -3778,8 +3810,13 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let path = directory.join("osslsigncode");
         std::fs::create_dir_all(directory).unwrap();
+        // `#!/bin/sh` plus the absolute path of the real shell, because
+        // `run_capturing` now spawns with a cleared environment (`SEC-09`) and a
+        // bare shebang would leave the kernel to resolve `sh` through a `PATH`
+        // the child no longer has.
         let body = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\nprintf '%s\\n' '{}'\nexit {exit}\n",
+            "#!{}\nprintf '%s\\n' \"$@\" >> '{}'\nprintf '%s\\n' '{}'\nexit {exit}\n",
+            fake_shell(),
             record.display(),
             output
         );
@@ -3790,9 +3827,56 @@ mod tests {
         path
     }
 
+    /// `/bin/sh` as an absolute path, for the fakes' shebangs.
+    ///
+    /// Hardcoded rather than looked up through `PATH`, because the whole point
+    /// is that the child has no `PATH` — and because a lookup here would make
+    /// the fakes depend on the developer's shell, which is the sort of hidden
+    /// input that turns a hermetic suite into one that passes on one machine.
+    fn fake_shell() -> &'static str {
+        "/bin/sh"
+    }
+
     /// A launch environment whose `osslsigncode` is `script`.
     fn verifier_env(script: &Path) -> FakeLaunchEnv {
         FakeLaunchEnv::new().with_which("osslsigncode", &script.to_string_lossy())
+    }
+
+    /// A fake verifier that prints an approving line and then dumps its own
+    /// environment to `env_record` (`SEC-09`).
+    ///
+    /// A separate helper rather than a flag on [`fake_osslsigncode`], because
+    /// the dump has to land in its own file: the other tests assert on the
+    /// merged stdout/stderr text and on the argv record, and adding lines to
+    /// either would change what they are reading.
+    fn fake_osslsigncode_dumping_env(
+        directory: &Path,
+        env_record: &Path,
+        output: &str,
+        exit: i32,
+    ) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = directory.join("osslsigncode");
+        std::fs::create_dir_all(directory).unwrap();
+        // `export -p` rather than `env`, because the shell's `export` is a
+        // builtin: with `PATH` cleared there is nothing to resolve `env`, `cat`
+        // or any other external command with, and the dump would be empty for
+        // the wrong reason. `printf` is a builtin too.
+        //
+        // Note what this *cannot* show: `sh` sets `PWD`, `SHLVL` and `OLDPWD`
+        // itself, so those three appear even in a completely empty environment.
+        // The test excludes them by name rather than assuming an empty dump.
+        let body = format!(
+            "#!{}\nprintf '%s\\n' '{}'\nexport -p > '{}'\nexit {exit}\n",
+            fake_shell(),
+            output,
+            env_record.display()
+        );
+        std::fs::write(&path, body).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        path
     }
 
     /// Every `.part` file left in `directory` — asserted empty after both a
@@ -4239,8 +4323,86 @@ mod tests {
         );
     }
 
+    /// `SEC-09`: the verifier runs with an empty environment, and the two
+    /// conditions that make that safe hold.
+    ///
+    /// The assertion is an *observation of the child*, not of the source: a
+    /// script prints its own exported environment, and the test asks whether any
+    /// variable this test process carries reached it. Under the pre-fix body the
+    /// answer is "most of them"; with `env_clear` it is none of them.
+    ///
+    /// Three names are excluded by construction rather than by luck: `sh` sets
+    /// `PWD`, `SHLVL` and `OLDPWD` for itself, so they appear in the dump even
+    /// when the environment it was given is empty. Asserting an empty dump
+    /// instead would fail for a reason that has nothing to do with this fix.
+    #[test]
+    fn the_verifier_is_spawned_without_the_launcher_s_environment() {
+        let scratch = Scratch::new("env-clear");
+        let steam = installer_by_id("steam").unwrap();
+        let path = touch(&scratch.path().join("SteamSetup.exe"));
+        let env_record = scratch.path().join("verifier-env");
+        let script = fake_osslsigncode_dumping_env(
+            scratch.path(),
+            &env_record,
+            "Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+            0,
+        );
+
+        verify_installer_authenticity(steam, &path, &verifier_env(&script)).unwrap();
+
+        let dumped = std::fs::read_to_string(&env_record).unwrap();
+        let names: Vec<&str> = dumped
+            .lines()
+            .filter_map(|line| line.strip_prefix("export "))
+            .filter_map(|rest| rest.split('=').next())
+            .collect();
+        assert!(
+            !names.is_empty(),
+            "the fake verifier wrote no environment at all — the dump, not the \
+             environment, is what failed here"
+        );
+        const SET_BY_THE_SHELL_ITSELF: [&str; 4] = ["PWD", "SHLVL", "OLDPWD", "_"];
+        let leaked: Vec<String> = std::env::vars()
+            .map(|(name, _)| name)
+            .filter(|name| !SET_BY_THE_SHELL_ITSELF.contains(&name.as_str()))
+            .filter(|name| names.contains(&name.as_str()))
+            .collect();
+        let sample: Vec<&String> = leaked.iter().take(5).collect();
+        assert!(
+            leaked.is_empty(),
+            "the verifier inherited {} variable(s) from the launcher, including {sample:?}",
+            leaked.len()
+        );
+
+        // The two conditions that make clearing safe, each asserted where it can
+        // be: the program is resolved to an absolute path before the spawn, so
+        // an empty `PATH` is not a problem for reaching it — asserted here by
+        // the fact that the script above ran at all, since it is only reachable
+        // by its own path.
+        assert!(script.is_absolute(), "{script:?}");
+        // ...and everything the verifier needs is in the argv. The trust root is
+        // the one input this could have got wrong, so it is checked rather than
+        // argued: the pinned-root recipe passes an absolute `-CAfile`.
+        let ubisoft = installer_by_id("ubisoft").unwrap();
+        let root = touch(&scratch.path().join("microsoft-root.pem"));
+        let argv_record = scratch.path().join("argv");
+        let script = fake_osslsigncode(
+            scratch.path(),
+            &argv_record,
+            "Signature verification: ok\nSubject: /CN=UBISOFT ENTERTAINMENT.",
+            0,
+        );
+        let env = FakeLaunchEnv::new()
+            .with_which("osslsigncode", &script.to_string_lossy())
+            .with_vars(&[("GAMEHANDLER_AUTHENTICODE_ROOT", &root.to_string_lossy())]);
+        verify_installer_authenticity(ubisoft, &path, &env).unwrap();
+        let recorded = std::fs::read_to_string(&argv_record).unwrap();
+        assert!(recorded.contains(&root.to_string_lossy().to_string()));
+    }
+
     /// `shutil.which("osslsigncode")` finding nothing is its own error, and it
     /// is reached before any process is spawned.
+
     #[test]
     fn a_missing_verifier_is_an_error_that_names_the_dependency() {
         let scratch = Scratch::new("no-verifier");

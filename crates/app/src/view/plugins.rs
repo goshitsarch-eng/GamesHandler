@@ -178,6 +178,35 @@ pub fn install_succeeded(exit_ok: bool, installed: bool) -> bool {
 /// `Ok(true)` when it exited 0. `Err` carries the rendered reason, which is
 /// either the spawn failure or [`timeout_message`] — the two things
 /// `subprocess.run` can raise here that `_async` would surface.
+///
+/// # The environment is replaced, not inherited (`SECURITY.md` `SEC-09`)
+///
+/// Of the two spawns the audit found inheriting the launcher's entire
+/// environment, this is the more security-relevant one: the child is a package
+/// manager being started through `pkexec` or `sudo`, i.e. code that will run as
+/// root. The reference's `subprocess.run(command, ...)` passes no `env=`, so
+/// this is a deliberate divergence, taken because the brief's decision order
+/// puts security first. The tree's other three spawns already replace the
+/// environment (`core`'s `installers::run_with_env` and `wait_for_prefix_idle`,
+/// this crate's `main::start_prefix_tool` and `main::run_installer`), and a
+/// security-relevant child inheriting `LD_PRELOAD` or `SUDO_ASKPASS` from the
+/// shell that launched the app is the inconsistency, not the convention.
+///
+/// Nothing in the child's argv depends on this process's environment, and that
+/// follows from [`plugins::privileged_command`] rather than from hope: the
+/// helper is resolved by `env.which` into an **absolute** path in the parent,
+/// and every argument after it is either that same absolute path or a package
+/// manager name from the fixed table in [`plugins::install_command`], which
+/// `pkexec` and `sudo` resolve themselves against their own secure `PATH`.
+///
+/// Measured, because the reasoning above would be worth little if `std` were
+/// resolving the program name *in the child*: with `env_clear()` applied and
+/// the child's `PATH` set to a directory that does not exist, a bare program
+/// name still spawns. `std` runs its `PATH` search loop in the parent, before
+/// the child exists, and `env_clear` only changes what the child *reads*. So
+/// clearing cannot break the lookup here — and where a spawn does fail, the
+/// failure is not silent: it is the `Err` this function already returns, which
+/// [`run_install`] renders as a failed install.
 pub fn run_to_completion(argv: &[String], timeout: Duration) -> Result<bool, String> {
     let Some((program, args)) = argv.split_first() else {
         // `subprocess.run([])` raises `IndexError`, which `_async` renders as
@@ -187,6 +216,7 @@ pub fn run_to_completion(argv: &[String], timeout: Duration) -> Result<bool, Str
     };
     let mut child = std::process::Command::new(program)
         .args(args)
+        .env_clear()
         .spawn()
         .map_err(|error| error.to_string())?;
 
@@ -579,5 +609,132 @@ mod tests {
     fn the_plan_names_the_helper_the_user_sees() {
         let (notice, _task) = install_plan("mangohud").expect("mangohud is in the catalogue");
         assert_eq!(notice, "Installing MangoHud…");
+    }
+
+    /// A [`PluginEnv`] that answers from a fixed table, so the argv the page
+    /// builds can be pointed at a program this test controls.
+    ///
+    /// `SEC-09`'s test needs the *real* `install_command` and
+    /// `privileged_command` to run — a hand-built argv would prove nothing
+    /// about what the page actually spawns — so the injectable host is what
+    /// gets faked, not the command.
+    struct ScriptedPluginEnv {
+        which: Vec<(&'static str, PathBuf)>,
+        files: Vec<&'static str>,
+    }
+
+    impl gamehandler_core::paths::Env for ScriptedPluginEnv {
+        fn var(&self, _key: &str) -> Option<String> {
+            // The reference has no `GAMEHANDLER_*` reads on this path, and
+            // returning `None` for everything keeps the fake from quietly
+            // describing a host that does not exist.
+            None
+        }
+    }
+
+    impl PluginEnv for ScriptedPluginEnv {
+        fn which(&self, name: &str) -> Option<PathBuf> {
+            self.which
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, path)| path.clone())
+        }
+
+        fn exists(&self, path: &str) -> bool {
+            self.files.contains(&path)
+        }
+
+        fn euid(&self) -> Option<u32> {
+            // Not root, so `privileged_command` takes the `pkexec` branch
+            // instead of handing the argv back untouched — which is the
+            // arrangement that makes the helper a path this test chose.
+            Some(1000)
+        }
+    }
+
+    #[test]
+    fn the_package_manager_is_spawned_without_the_launcher_s_environment() {
+        // `SEC-09`, and the half that matters most: this child is a package
+        // manager about to run as root through `pkexec`, so the environment it
+        // inherits is the one worth being strict about.
+        //
+        // The fake `pkexec` is a shell script, which is what makes the child's
+        // environment readable — and the read is by a shell *builtin*, because
+        // with the environment cleared there is no `PATH` left to resolve
+        // `env` or `cat` with. A dump that came from an external command would
+        // be empty for the wrong reason and would pass whatever the fix did.
+        let directory =
+            std::env::temp_dir().join(format!("gh-sec09-plugins-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let record = directory.join("environment");
+        let pkexec = directory.join("pkexec");
+        std::fs::write(
+            &pkexec,
+            format!("#!/bin/sh\nexport -p > '{}'\nexit 1\n", record.display()),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&pkexec).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&pkexec, permissions).unwrap();
+        }
+
+        let env = ScriptedPluginEnv {
+            which: vec![
+                ("apt-get", PathBuf::from("/usr/bin/apt-get")),
+                ("pkexec", pkexec.clone()),
+            ],
+            files: vec!["/etc/debian_version"],
+        };
+        let plugin = plugins::plugin_by_id("mangohud").expect("mangohud is in the catalogue");
+
+        // Through `run_install`, not around it: that is the production path,
+        // so the argv under test is the argv the page really builds.
+        let outcome = run_install(plugin, &env);
+        assert_eq!(
+            outcome,
+            Ok(false),
+            "the fake `pkexec` exits 1, so the reference's two-part success test \
+             has to answer 'not installed'"
+        );
+
+        let dumped = std::fs::read_to_string(&record).unwrap_or_else(|error| {
+            panic!("the fake pkexec never ran, so this test observed nothing: {error}")
+        });
+        let seen: Vec<String> = dumped
+            .lines()
+            .filter_map(|line| line.strip_prefix("export "))
+            .filter_map(|line| line.split('=').next())
+            .map(str::to_string)
+            // `sh` sets these itself in *every* environment, an empty one
+            // included — measured with `env -i /bin/sh -c 'export -p'`, which
+            // prints exactly these three and nothing else. They are excluded by
+            // construction rather than assumed absent.
+            .filter(|name| !matches!(name.as_str(), "PWD" | "SHLVL" | "OLDPWD"))
+            .collect();
+
+        // The control, and the reason this test cannot go green for the wrong
+        // reason: the dump is only evidence of a cleared environment if the
+        // launcher had an environment to clear. Without a name to inherit, an
+        // inheritance bug leaves nothing to find.
+        let parent: Vec<String> = std::env::vars().map(|(name, _)| name).collect();
+        assert!(
+            !parent.is_empty(),
+            "the launcher exports nothing, so this test could not detect a leak"
+        );
+        let inherited: Vec<&String> = parent.iter().filter(|name| seen.contains(name)).collect();
+        assert!(
+            inherited.is_empty(),
+            "the package manager inherited {} variable(s) from the launcher: {inherited:?}",
+            inherited.len()
+        );
+        assert!(
+            seen.is_empty(),
+            "the package manager's environment is not empty: {seen:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&directory);
     }
 }
