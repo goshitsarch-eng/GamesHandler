@@ -114,12 +114,13 @@
 //! `installers.py` reaches the outside world in three ways, and each one is a
 //! parameter here rather than an import:
 //!
-//! * [`HttpClient`] (D-26) for the download. `core` has no networking
-//!   dependency and must not acquire one, so the binary injects `ureq`.
-//! * [`LaunchEnv`] for `shutil.which` and for `os.environ` — the same seam the
-//!   runner code uses. The `osslsigncode` and `wineserver` lookups go through
-//!   it, which is what lets this file's tests point them at scripts they wrote
-//!   without touching `PATH`.
+//! * [`HttpClient`](crate::runners::proton::HttpClient) (D-26) for the
+//!   download. `core` has no networking dependency and must not acquire one,
+//!   so the binary injects `ureq`.
+//! * [`LaunchEnv`](crate::runners::LaunchEnv) for `shutil.which` and for
+//!   `os.environ` — the same seam the runner code uses. The `osslsigncode` and
+//!   `wineserver` lookups go through it, which is what lets this file's tests
+//!   point them at scripts they wrote without touching `PATH`.
 //! * [`InstallClock`] and [`IdleWait`] for the wizard poll. The reference
 //!   injects `sleep` and `clock` and *monkey-patches* `wait_for_prefix_idle` in
 //!   its own suite; there is no monkey-patching in Rust, so the idle wait is a
