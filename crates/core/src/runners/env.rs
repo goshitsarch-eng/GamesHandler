@@ -46,6 +46,20 @@ pub trait LaunchEnv: Env {
     /// A [`BTreeMap`] rather than a `HashMap` because nothing in the Python
     /// code depends on insertion order, and a deterministic iteration order
     /// makes a dumped environment comparable in a test or an oracle vector.
+    ///
+    /// # Non-UTF-8 entries
+    ///
+    /// A [`String`]-valued map cannot represent an environment variable whose
+    /// bytes are not valid UTF-8, and this map is *the whole* child environment
+    /// rather than a layer over an inherited one (every spawn site is
+    /// `env_clear()` then `.envs(…)`, matching Python's `Popen(env=dict(...))`).
+    /// Such a variable is therefore dropped rather than passed through. That is
+    /// a deliberate, documented narrowing: `std::env::vars()` **panics** on one
+    /// of these, and a launch that refuses to start is a worse answer than a
+    /// launch missing one variable. Python loses the variable at the same point
+    /// — its launch path is pure `str` and `subprocess` encodes with
+    /// `surrogateescape`, so a non-UTF-8 value never survives
+    /// `dict(os.environ)`'s trip through `subprocess` as itself either.
     fn environ(&self) -> BTreeMap<String, String>;
 
     /// `os.environ.get(name)`.
@@ -72,7 +86,7 @@ impl LaunchEnv for SystemLaunchEnv {
     }
 
     fn environ(&self) -> BTreeMap<String, String> {
-        std::env::vars().collect()
+        decode_environ(std::env::vars_os())
     }
 
     fn var(&self, name: &str) -> Option<String> {
@@ -90,6 +104,37 @@ impl LaunchEnv for SystemLaunchEnv {
 /// Flatpak-launched app with a deliberately empty `PATH` still finds
 /// `/usr/bin/wine`.
 const DEFPATH: &str = "/bin:/usr/bin";
+
+/// Turn the process environment into the `String`-valued map the launch path
+/// carries, dropping the entries that cannot be represented.
+///
+/// The plain way to write this is `std::env::vars().collect()`, and it is what
+/// this function replaced. It is not merely lossy on a non-UTF-8 variable —
+/// `std::env::vars()` **panics** when it meets one, because it unwraps the
+/// `OsString`→`String` conversion internally. A single such variable anywhere in
+/// the environment (a `LC_*`, a `PATH` component, a game-specific variable the
+/// user exported from a byte-oriented shell) took down the whole launch with an
+/// `OsString` panic, on every launch path, since `environ()` is the first thing
+/// each of them calls. A dropped variable is a degraded launch; a panic is no
+/// launch at all, and the settings the caller inserts afterwards (`WINEPREFIX`,
+/// `WINE`, `WINESERVER`, per-game `environment=`) are unaffected either way.
+///
+/// Names are required to be valid UTF-8; a name that is not is dropped with its
+/// value, since no key in the map could address it. This is a `String`-typed
+/// boundary by construction ([`LaunchEnv::environ`]), so the alternative is a
+/// wider type across every consumer, which this defect does not warrant.
+fn decode_environ<I>(vars: I) -> BTreeMap<String, String>
+where
+    I: IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+{
+    vars.into_iter()
+        .filter_map(|(name, value)| {
+            let name = name.into_string().ok()?;
+            let value = value.into_string().ok()?;
+            Some((name, value))
+        })
+        .collect()
+}
 
 /// `shutil.which(name)`, with the environment supplied rather than read.
 ///
@@ -590,5 +635,62 @@ pub(crate) mod tests {
     fn an_unknown_anticheat_kind_is_not_an_error() {
         let env = FakeEnv::new(&[("HOME", "/nonexistent-home-for-test")]);
         assert_eq!(find_anticheat_runtime("vac", &[], &env), None);
+    }
+
+    /// The bytes of a variable that is not valid UTF-8: `0xFF` alone.
+    #[cfg(unix)]
+    fn invalid_utf8() -> std::ffi::OsString {
+        use std::os::unix::ffi::OsStringExt;
+        std::ffi::OsString::from_vec(vec![0xff])
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_non_utf8_variable_is_dropped_rather_than_panicking() {
+        // The defect: `std::env::vars()` panics on this input, and it was the
+        // first thing every launch path called.
+        let decoded = decode_environ([
+            (
+                std::ffi::OsString::from("GOOD"),
+                std::ffi::OsString::from("kept"),
+            ),
+            (std::ffi::OsString::from("BAD_VALUE"), invalid_utf8()),
+            (invalid_utf8(), std::ffi::OsString::from("bad name")),
+            (
+                std::ffi::OsString::from("ALSO_GOOD"),
+                std::ffi::OsString::from("kept"),
+            ),
+        ]);
+
+        // The representable entries survive, in both directions.
+        assert_eq!(decoded.get("GOOD").map(String::as_str), Some("kept"));
+        assert_eq!(decoded.get("ALSO_GOOD").map(String::as_str), Some("kept"));
+        // The two unrepresentable ones are gone, and one bad variable does not
+        // take its neighbours with it.
+        assert_eq!(decoded.len(), 2, "got {decoded:?}");
+        assert!(!decoded.contains_key("BAD_VALUE"));
+    }
+
+    #[test]
+    fn an_ordinary_environment_is_unchanged_by_the_decode() {
+        // Anti-vacuity: the decoding must not alter the ordinary case, or the
+        // test above would pass on a function that returns nothing at all.
+        let decoded = decode_environ([
+            (
+                std::ffi::OsString::from("HOME"),
+                std::ffi::OsString::from("/home/tester"),
+            ),
+            (
+                std::ffi::OsString::from("PATH"),
+                std::ffi::OsString::from("/usr/bin"),
+            ),
+        ]);
+        assert_eq!(
+            decoded,
+            BTreeMap::from([
+                ("HOME".to_string(), "/home/tester".to_string()),
+                ("PATH".to_string(), "/usr/bin".to_string()),
+            ])
+        );
     }
 }
