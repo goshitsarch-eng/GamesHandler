@@ -112,6 +112,16 @@ pub const EASY_INSTALL: &str = "Easy install";
 pub const DOWNLOAD_A_RUNNER: &str = "Download a runner";
 pub const CLEAR_FILTERS: &str = "Clear filters";
 
+/// The toolbar's create action. `LibraryPage.qml:18-23`, the page's `actions:`
+/// block.
+///
+/// Its **own** string, not [`ADD_FIRST_GAME`], because the two are not the same
+/// control even though they emit the same message: the reference draws this one
+/// in the page header whether or not the library is empty, and the first-game
+/// wording only under the empty state. Reusing the longer label in the toolbar
+/// would make the row grow with it for no reason. Finding #13.
+pub const ADD_GAME: &str = "Add game";
+
 // ---------------------------------------------------------------------------
 // The decisions, as data
 // ---------------------------------------------------------------------------
@@ -324,6 +334,13 @@ pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
             .push(button::standard(view_toggle).on_press(Message::SetViewMode(
                 toggled_mode(page.view_mode).to_string(),
             )))
+            // The page's create action, which the reference keeps in the header
+            // and therefore shows **whenever there is a library at all**. It was
+            // ported into the `NoGames` empty state only, so once a user had one
+            // game the sole route to the form was `Ctrl+N` — invisible in the UI,
+            // and (measured at T-19) swallowed while a text field has focus.
+            // `BUG-07`.
+            .push(button::standard(ADD_GAME).on_press(Message::OpenNewGameForm))
             .spacing(8)
             .align_y(cosmic::iced::Alignment::Center)
             .width(Length::Fill),
@@ -904,6 +921,90 @@ mod tests {
         assert_eq!(EASY_INSTALL, "Easy install");
         assert_eq!(DOWNLOAD_A_RUNNER, "Download a runner");
         assert_eq!(CLEAR_FILTERS, "Clear filters");
+    }
+
+    /// Every string the page actually draws, by walking the built widget tree.
+    ///
+    /// Copied in shape from `view::settings`'s `drawn_strings`, and here for the
+    /// reason `BUG-07` is a finding at all: no test in this file had ever built
+    /// [`view`], so a control could leave the page — it did — without a single
+    /// assertion noticing. Constant-level tests cannot see *where* a widget is.
+    fn drawn_strings(mut element: Element<'_, Message>) -> Vec<String> {
+        use cosmic::iced::advanced::widget::{Operation, Tree};
+        use cosmic::iced::advanced::{Layout, layout::Limits};
+        use cosmic::iced::{Font, Pixels, Rectangle, Size};
+
+        #[derive(Default)]
+        struct Texts(Vec<String>);
+        impl Operation for Texts {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
+                self.0.push(text.to_string());
+            }
+        }
+
+        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
+        let mut tree = Tree::new(element.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
+        let mut texts = Texts::default();
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
+        texts.0
+    }
+
+    /// The page, built the way the shell builds it.
+    fn page_strings(library: &Library, view_mode: &str) -> Vec<String> {
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+        drawn_strings(view(LibraryPage {
+            library,
+            search: "",
+            category: ALL_CATEGORIES,
+            sort_mode: "name",
+            view_mode,
+            runners: &runners,
+            now: 0.0,
+        }))
+    }
+
+    /// `BUG-07`: the toolbar carries the create action **even when the library
+    /// already has games**.
+    ///
+    /// The reference keeps "Add Game" in the page's `actions:` block
+    /// (`LibraryPage.qml:18-23`), so it is present whether or not the library is
+    /// empty. The port drew the equivalent button only inside the `NoGames`
+    /// state, which meant a user with one game had no visible way to add a
+    /// second — `Ctrl+N` is invisible in the UI and is swallowed while a text
+    /// field has focus.
+    ///
+    /// Built and traversed rather than asserted on the constant, because the
+    /// defect was *where the button is*, not what it says: a test that checked
+    /// `ADD_GAME == "Add game"` would have passed on the broken tree.
+    #[test]
+    fn the_toolbar_offers_add_game_once_the_library_is_not_empty() {
+        let root = std::env::temp_dir().join(format!("gh-lib-addbtn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut library = Library::new_at(Some(root.join("games.json")), 0.0);
+        library.add(windows_game()).unwrap();
+
+        let strings = page_strings(&library, GRID);
+        assert!(
+            strings.iter().any(|s| s == ADD_GAME),
+            "the toolbar must offer {ADD_GAME:?} with a non-empty library; got {strings:?}"
+        );
+        // And the empty state still offers its own, longer-wording button —
+        // the two are different controls, so this is not a duplicate assertion.
+        let empty = page_strings(&Library::new_at(Some(root.join("empty.json")), 0.0), GRID);
+        assert!(
+            empty.iter().any(|s| s == ADD_FIRST_GAME),
+            "the empty state keeps {ADD_FIRST_GAME:?}; got {empty:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// "All" leads the filter, and the library's own categories follow in its
