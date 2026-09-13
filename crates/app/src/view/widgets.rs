@@ -97,10 +97,6 @@ use super::cover_cache::CoverCache;
 use super::meta;
 use super::metrics;
 
-/// The plate's text. White at slightly under full opacity, as `CoverArt.qml`
-/// sets it (`color: "#ffffff"; opacity: 0.92`).
-const PLATE_TEXT: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.92);
-
 /// The font size of the picker's "No cover yet", from
 /// `GameFormPage.qml:148-151`.
 const PREVIEW_LABEL_SIZE: f32 = 11.0;
@@ -311,16 +307,23 @@ pub fn cover_tile<'a, M: Clone + 'static>(
     game: &'a Game,
     width: f32,
 ) -> Element<'a, M> {
-    cover_box(
-        cache,
-        game,
-        CoverSpec {
-            width,
-            height: metrics::tile_height(width),
-            radius: metrics::TILE_RADIUS,
-            compact: false,
-        },
-    )
+    cover_box(cache, game, tile_cover_spec(width))
+}
+
+/// The cover box the library **grid** asks for, at a given tile width.
+///
+/// The fourth `*_cover_spec`, and the one that carries an argument: a grid tile
+/// is as wide as the column that holds it, not a constant. It exists for the
+/// same reason as the other three — the numbers live in one place, so a test
+/// that pins the spec is pinning what the widget draws — and `cover_tile` is its
+/// only drawing caller.
+pub fn tile_cover_spec(width: f32) -> CoverSpec {
+    CoverSpec {
+        width,
+        height: metrics::tile_height(width),
+        radius: metrics::TILE_RADIUS,
+        compact: false,
+    }
 }
 
 /// A game's cover in an explicit box — a renderer for [`cover_plan`].
@@ -329,15 +332,22 @@ pub fn cover_box<'a, M: Clone + 'static>(
     game: &'a Game,
     spec: CoverSpec,
 ) -> Element<'a, M> {
+    // Resolved once, above the match, so that the plate's gradient and the ink
+    // drawn on it cannot come from different shades: `plate` fills with
+    // `plate_style(accent, ..)` and `initials_only` picks its colour from the
+    // same number. Two calls to `accent_of` would agree — it is a hash of the
+    // id — but nothing in the types would say they had to.
+    let accent = cover::accent_of(&game.id);
+
     match cover_plan(cache, game) {
         CoverPlan::Photo => framed(cache, game, spec, 0.0),
         CoverPlan::IconOnPlate { inset } => {
             let inner = framed(cache, game, spec, inset);
-            plate(game, spec, inner)
+            plate(spec, accent, inner)
         }
         CoverPlan::InitialsOnPlate { text } => {
-            let inner = initials_only(text, spec);
-            plate(game, spec, inner)
+            let inner = initials_only(text, spec, accent);
+            plate(spec, accent, inner)
         }
     }
 }
@@ -827,6 +837,151 @@ fn framed<'a, M: Clone + 'static>(
         .into()
 }
 
+/// The factor iced's text layout gives a single line's box over its font size.
+///
+/// `LineHeight::default()` is `Relative(1.4)` (`iced/core/src/text.rs:244-248`),
+/// so a one-line `text` widget's box is 1.4 x its size whatever the font.
+/// Measured, twice, on the two plates the app draws: the initials on a 36 x 50.4
+/// row plate are 21 px and their box is 29.4 = 1.4 x 21 tall, and on the 188 x
+/// 207 card plate they are 64 px and 89.6 = 1.4 x 64 — the second number is the
+/// one this file already records in
+/// [`an_icons_picture_is_inset_inside_the_plate_by_the_icon_inset`].
+///
+/// It is named because [`plate_text_band`] turns it into the band of the plate
+/// the glyphs cover, and a wrong factor there picks the wrong ink.
+const LINE_BOX_FACTOR: f32 = 1.4;
+
+/// WCAG 2.x relative luminance of an opaque colour.
+///
+/// Linearise each channel with the sRGB transfer function, then weight them
+/// 0.2126 / 0.7152 / 0.0722 (`https://www.w3.org/TR/WCAG22/#dfn-relative-luminance`).
+///
+/// It is here, rather than only in the test, because [`plate_text_color`]
+/// *chooses* with it. The test below computes the ratio again from its own copy
+/// of this arithmetic and evaluates the colour this function returned, so a
+/// mistake here shows up as a failing ratio instead of being mirrored on both
+/// sides — which is what would happen if the two shared one implementation.
+fn relative_luminance(colour: Color) -> f32 {
+    fn channel(value: f32) -> f32 {
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    0.2126 * channel(colour.r) + 0.7152 * channel(colour.g) + 0.0722 * channel(colour.b)
+}
+
+/// WCAG 2.x contrast ratio between two opaque colours, from 1.0 to 21.0.
+fn contrast_ratio(a: Color, b: Color) -> f32 {
+    let (first, second) = (relative_luminance(a), relative_luminance(b));
+    (first.max(second) + 0.05) / (first.min(second) + 0.05)
+}
+
+/// The gradient offsets a plate's initials line box spans on a `spec` box.
+///
+/// The initials are centred on the plate (`initials_only` aligns both axes), the
+/// plate's gradient runs from offset 0.0 at the top edge to 1.0 at the bottom
+/// ([`PLATE_GRADIENT_ANGLE`]), and a line box is [`LINE_BOX_FACTOR`] of the font
+/// size — so these two numbers are the top and bottom edges of the text as
+/// offsets *into the gradient*.
+///
+/// A pure function of the spec, and public, because it is the thing a test can
+/// check against a real layout: [`initials_only`] has no id to read a box off
+/// and the traversal's text bounds are the only measurement of it there is.
+pub fn plate_text_band(spec: CoverSpec) -> (f32, f32) {
+    let size = metrics::initials_size(spec.width, spec.height, spec.compact);
+    let half = LINE_BOX_FACTOR * size / 2.0;
+    (
+        ((spec.height / 2.0 - half) / spec.height).clamp(0.0, 1.0),
+        ((spec.height / 2.0 + half) / spec.height).clamp(0.0, 1.0),
+    )
+}
+
+/// The colour a plate's gradient shows at `offset` into it.
+///
+/// Channel by channel between [`plate_stops`]' two colours, which is what the
+/// application's renderer does with them. `wgpu` is deliberately absent from the
+/// feature list (DECISIONS D-11), so the drawing backend is `iced_tiny_skia`,
+/// which hands the stops straight to a `tiny_skia::LinearGradient` and samples
+/// it (`iced/tiny_skia/src/engine.rs:164-193`). The other backend would not
+/// agree: its shader smooth-steps the mix factor
+/// (`iced/wgpu/src/shader/quad/gradient.wgsl`, `smoothstep(curr, next, coord)`),
+/// which leaves a *lighter* colour behind the same glyphs, so the ink derived
+/// from this function is the conservative one only for the backend in use.
+fn plate_colour_at(accent: usize, offset: f32) -> Color {
+    let [(_, top), (_, bottom)] = plate_stops(accent);
+
+    Color::from_rgb(
+        top.r + (bottom.r - top.r) * offset,
+        top.g + (bottom.g - top.g) * offset,
+        top.b + (bottom.b - top.b) * offset,
+    )
+}
+
+/// The colour a plate's initials are drawn in, for `accent`'s gradient.
+///
+/// # Why this is derived and not a constant (UX-17)
+///
+/// It was `Color::from_rgba(1.0, 1.0, 1.0, 0.92)` — `CoverArt.qml`'s
+/// `color: "#ffffff"; opacity: 0.92`, one pair for all eight shades and every
+/// size. Measured against the region the glyphs actually cover — the band
+/// [`plate_text_band`] returns, not the plate's top edge — that pair was:
+///
+/// | shade | row plate (21 px) | card plate (64 px) |
+/// |---|---|---|
+/// | 0, 1, 3, 5, 6, 7 | 4.655 - 6.092 | 4.905 - 6.416 |
+/// | 2 | **4.246** | 4.501 |
+/// | 4 | **3.516** | 3.737 |
+///
+/// The audit's number for the worst of these was 2.98, measured against the
+/// shade's *lightest stop* — the colour at the plate's top edge, 10.5 px above
+/// the text box on a row plate, and never behind a glyph. The real worst pair is
+/// 3.516, at shade 4 on a row; the arithmetic is in the test below, which
+/// recomputes it from a laid-out plate. So the row's figure is wrong and its
+/// conclusion is right: **two** of the eight shades, not one, were under 4.5:1.
+///
+/// The fix is to stop fixing the pair. The ink is now the better of opaque white
+/// and opaque black *for the plate it is about to be drawn on*: the shade
+/// because the gradient is the shade's, and the spec because the band is the
+/// spec's. The 0.92 alpha could not stay either — compositing at 0.92 always
+/// lowers the ink's luminance, and it is what put shade 2 under (4.246 against
+/// the same ink opaque). For the twenty-four (shade, spec) pairs this app draws,
+/// the derivation resolves to opaque white every time, so what the change buys
+/// for today's palette is that alpha; it is written as a choice so that a
+/// re-picked shade is re-decided and re-asserted rather than re-copied.
+///
+/// # What it does not close
+///
+/// No ink can bring shade 4 to 4.5:1 at these sizes. Over the row plate's band
+/// the two candidates are 3.845 (white) and 3.226 (black) and the plate is
+/// nowhere lighter than either — the gradient's own luminance range across the
+/// text is the binding constraint, not the choice of ink. Shade 4 therefore
+/// clears the 3:1 that applies to it as large text and not the 4.5:1 that would
+/// apply if it were small; see [`initials_only`] for why it is large.
+pub fn plate_text_color(accent: usize, spec: CoverSpec) -> Color {
+    let (top, bottom) = plate_text_band(spec);
+    let behind = [
+        plate_colour_at(accent, top),
+        plate_colour_at(accent, bottom),
+    ];
+
+    let worst = |ink: Color| {
+        behind
+            .iter()
+            .map(|colour| contrast_ratio(ink, *colour))
+            .fold(f32::INFINITY, f32::min)
+    };
+
+    // A tie goes to white, which is what the reference draws these in.
+    if worst(Color::BLACK) > worst(Color::WHITE) {
+        Color::BLACK
+    } else {
+        Color::WHITE
+    }
+}
+
 /// The initials, centred — what a library tile shows for a game with no cover.
 ///
 /// No words: `CoverArt.qml`'s text is `art.initials` alone. The "No cover yet"
@@ -834,7 +989,26 @@ fn framed<'a, M: Clone + 'static>(
 /// and a test below pins the difference. The string is a parameter rather than
 /// a call to [`plate_text`] here so that this function has no string of its
 /// own to get wrong: it draws what [`cover_plan`] put in the plan.
-fn initials_only<'a, M: Clone + 'static>(text_of_game: String, spec: CoverSpec) -> Element<'a, M> {
+///
+/// # The weight
+///
+/// **Bold**, which is `CoverArt.qml:45`'s `font.bold: true` and was missing
+/// here: this drew the default regular weight, and the port had no note saying
+/// it meant to. It is not decoration. The row plate's initials are 21 px
+/// (`initials_size(36, 50.4, true)`), which is 15.75 pt — under the 24 px at
+/// which regular text counts as large, so as regular text they would owe 4.5:1,
+/// and shade 4 cannot reach it from any ink. `font.bold` makes it 15.75 pt
+/// *bold*, over the 14 pt bold the same clause names, so the bar is 3:1 and
+/// every shade clears it. The card plate's 64 px was never in question.
+///
+/// The `style: Text.Raised` / `styleColor: "#66000000"` shadow beside it is
+/// still absent: it is not reachable from iced's `text`, and a drop shadow is
+/// not contrast in any case.
+fn initials_only<'a, M: Clone + 'static>(
+    text_of_game: String,
+    spec: CoverSpec,
+    accent: usize,
+) -> Element<'a, M> {
     container(
         text(text_of_game)
             .size(metrics::initials_size(
@@ -842,7 +1016,8 @@ fn initials_only<'a, M: Clone + 'static>(text_of_game: String, spec: CoverSpec) 
                 spec.height,
                 spec.compact,
             ))
-            .class(PLATE_TEXT),
+            .font(cosmic::font::bold())
+            .class(plate_text_color(accent, spec)),
     )
     .id(INITIALS_ID)
     .align_x(Alignment::Center)
@@ -851,12 +1026,16 @@ fn initials_only<'a, M: Clone + 'static>(text_of_game: String, spec: CoverSpec) 
 }
 
 /// A gradient plate of exactly `spec`'s size with `content` centred on it.
+///
+/// The `accent` is a parameter rather than looked up from the game, because its
+/// other reader is the ink [`initials_only`] draws the words in: one number, two
+/// consumers, and no way for them to disagree. [`cover_box`] is where it is
+/// resolved.
 fn plate<'a, M: Clone + 'static>(
-    game: &'a Game,
     spec: CoverSpec,
+    accent: usize,
     content: Element<'a, M>,
 ) -> Element<'a, M> {
-    let accent = cover::accent_of(&game.id);
     container(content)
         .id(PLATE_ID)
         .width(Length::Fixed(spec.width))
@@ -2271,6 +2450,318 @@ mod tests {
             dx.abs() < 1e-5,
             "the gradient must not run sideways (got dx={dx})"
         );
+    }
+
+    // ---- UX-17: the ink the initials are drawn in -------------------------
+    //
+    // The tests below compute the ratio themselves, from the shade constants,
+    // rather than calling [`super::contrast_ratio`] back. That function is what
+    // `plate_text_color` *chooses* with, so a test that asked it would agree
+    // with itself — including if the gamma were wrong on both sides. Same for
+    // the band: it is measured off a real laid-out plate, and the widget's own
+    // [`plate_text_band`] is checked against the measurement rather than
+    // trusted.
+
+    /// WCAG 2.x relative luminance, written out here so the numbers below are
+    /// the test's own.
+    fn luminance([r, g, b]: [f32; 3]) -> f32 {
+        fn channel(value: f32) -> f32 {
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        }
+
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
+    const BLACK: [f32; 3] = [0.0, 0.0, 0.0];
+
+    /// WCAG 2.x contrast ratio between two opaque colours, 1.0 to 21.0.
+    fn contrast(ink: [f32; 3], behind: [f32; 3]) -> f32 {
+        let (first, second) = (luminance(ink), luminance(behind));
+        (first.max(second) + 0.05) / (first.min(second) + 0.05)
+    }
+
+    /// The colour a plate shows at `offset` into its gradient.
+    ///
+    /// The same lerp `plate_colour_at` performs, deliberately re-derived from
+    /// [`plate_stops`] rather than reached through it: the stops are the
+    /// widget's, the interpolation is the test's reading of the renderer.
+    fn behind(accent: usize, offset: f32) -> [f32; 3] {
+        let [(_, top), (_, bottom)] = plate_stops(accent);
+        [
+            top.r + (bottom.r - top.r) * offset,
+            top.g + (bottom.g - top.g) * offset,
+            top.b + (bottom.b - top.b) * offset,
+        ]
+    }
+
+    /// The pair UX-17 was made at — `CoverArt.qml:43-44`'s `#ffffff` at
+    /// `opacity: 0.92`, composited over whatever the plate shows there.
+    fn the_pair_before(accent: usize, offset: f32) -> [f32; 3] {
+        let alpha = 0.92;
+        let under = behind(accent, offset);
+        [0, 1, 2].map(|channel| alpha + (1.0 - alpha) * under[channel])
+    }
+
+    /// An ink as it lands on the plate: `colour` composited over what is behind
+    /// it, which is the colour a reader's eye actually receives.
+    ///
+    /// The alpha is load-bearing and was got wrong here first. Reading `r`, `g`
+    /// and `b` off a `Color` and calling that "what is drawn" silently discards
+    /// the alpha, so `white at 0.92` measured as opaque white — and the contrast
+    /// test below then passed against the very pair it exists to reject. It was
+    /// the mutation proof that found it: reverting `plate_text_color` to the
+    /// audit's constant left the test green.
+    fn landed(colour: Color, under: [f32; 3]) -> [f32; 3] {
+        let alpha = colour.a.clamp(0.0, 1.0);
+        let ink = [colour.r, colour.g, colour.b];
+        [0, 1, 2].map(|channel| ink[channel] * alpha + (1.0 - alpha) * under[channel])
+    }
+
+    /// A real plate and the initials drawn on it, from one laid-out `cover_box`.
+    fn plate_and_initials(spec: CoverSpec) -> (Rectangle, Rectangle) {
+        let game = Game::new_named("Celeste");
+        let mut el: Element<'_, ()> = cover_box(&cache(), &game, spec);
+        let seen = traversal(&mut el);
+
+        let plate = seen
+            .iter()
+            .find(|seen| seen.id == Some(Id::from(PLATE_ID)))
+            .expect("the plate container is on the tree")
+            .bounds;
+        let initials = *drawn(&seen, &cover::initials(&game.name));
+
+        (plate, initials)
+    }
+
+    /// The gradient offsets a real plate's initials span, measured.
+    fn measured_band(spec: CoverSpec) -> (f32, f32) {
+        let (plate, initials) = plate_and_initials(spec);
+        (
+            (initials.y - plate.y) / plate.height,
+            (initials.y + initials.height - plate.y) / plate.height,
+        )
+    }
+
+    /// The three boxes the app draws initials in.
+    ///
+    /// The picker's fourth box is absent on purpose: `cover_preview` draws
+    /// [`preview_label_widget`] — words — for every game without artwork, so
+    /// `initials_only` is never built at a preview spec. A test that included it
+    /// would be asserting about a plate the application does not draw.
+    fn initials_specs() -> [(&'static str, CoverSpec); 3] {
+        [
+            ("row", row_cover_spec()),
+            ("card", card_cover_spec()),
+            ("grid tile", tile_cover_spec(metrics::GRID_CELL.0)),
+        ]
+    }
+
+    /// The font each text node in a built element hands the renderer, with the
+    /// content it was built for.
+    ///
+    /// # Why this reads the tree rather than measuring
+    ///
+    /// Weight is not visible from outside a `Text` widget: `Widget` has no
+    /// accessor for it, `operation::text` reports only `(id, bounds, text)`
+    /// (`iced/core/src/widget/operation.rs:63`) with no font on it, and the
+    /// renderer's `measure` is the shaped *advance*, which in this environment
+    /// is the same for every weight — `"CE"` at 21, 64 and 68 px measures
+    /// 24.948002, 76.032005 and 80.784004 px in `default`, `bold` **and**
+    /// `semibold`, to six decimals, while a different *family* does differ
+    /// (`mono` → 76.800003 at 64 px). The cause is the font stack, not the
+    /// widget: [`cosmic::font::default`] names `Open Sans` (`src/font.rs:10-13`)
+    /// and `bold` raises only `weight`, but Open Sans is not installed here, so
+    /// fontconfig resolves both to `NotoSans[wght].ttf` — a variable font that
+    /// the shaper registers as one face and does not vary by axis. A weight
+    /// asserted through width on this machine would pass against any weight at
+    /// all, which is this repository's own defect class.
+    ///
+    /// `Widget::layout` caches a `text::State<P>` in the node's `Tree` state,
+    /// and its paragraph carries the font the text was shaped with —
+    /// `Paragraph::font` (`iced/core/src/text/paragraph.rs:35`), set from the
+    /// `Text` the widget built (`:17`). Reading that is a real assertion about
+    /// what the plate asks the renderer to draw; it is the *input* to shaping,
+    /// so it shows the request and not that this machine's face honours it.
+    fn text_fonts<M: Clone + 'static>(el: &mut Element<'_, M>) -> Vec<(String, Font)> {
+        // The trait, for `Paragraph::font`; the associated type, for the state
+        // the text widget caches it in.
+        use cosmic::iced::advanced::text::Paragraph as _;
+
+        type Paragraph = <cosmic::Renderer as cosmic::iced::advanced::text::Renderer>::Paragraph;
+        type State = cosmic::iced::widget::text::State<Paragraph>;
+
+        fn visit(tree: &Tree, fonts: &mut Vec<(String, Font)>) {
+            // Matched rather than `downcast_ref`ed: `Tree::state`'s accessor
+            // *panics* on a stateless node (`iced/core/src/widget/tree.rs:480`),
+            // and most nodes in a plate are stateless.
+            if let cosmic::iced::advanced::widget::tree::State::Some(state) = &tree.state
+                && let Some(state) = state.downcast_ref::<State>()
+            {
+                fonts.push((state.content().to_string(), state.raw().font()));
+            }
+            for child in &tree.children {
+                visit(child, fonts);
+            }
+        }
+
+        let (tree, _) = crate::view::a11y::harness::built(el);
+        let mut fonts = Vec::new();
+        visit(&tree, &mut fonts);
+        fonts
+    }
+    /// **UX-17.** Every plate's initials are drawn at the contrast their ink was
+    /// chosen for, over the region the glyphs cover — and better than the fixed
+    /// white-at-0.92 pair the finding was made at.
+    ///
+    /// The bar is 3:1 rather than 4.5:1 because these are large text: the row
+    /// plate draws at 21 px = 15.75 pt and [`initials_only`] draws it bold, as
+    /// `CoverArt.qml:45` does, and WCAG 2.2 §1.4.3 counts 14 pt **bold** as
+    /// large. The weight is pinned by
+    /// [`a_coverless_tiles_initials_are_drawn_bold_like_the_reference`], so this
+    /// bar is the right one only while that test passes.
+    ///
+    /// The numbers, on the row plate (before → after): shade 4 **3.516 →
+    /// 3.845**, shade 2 **4.246 → 4.705**, the other six 4.655-6.092 →
+    /// 5.173-6.881. Shade 4 is still under 4.5:1 and no ink reaches it there —
+    /// the candidates are 3.845 white and 3.226 black — which is stated rather
+    /// than closed: what closes it is the plate's own gradient or a bigger
+    /// drawing, not the ink. Every failure prints the whole table.
+    #[test]
+    fn the_plates_initials_clear_the_contrast_bar_and_beat_the_pair_they_replaced() {
+        let mut report = String::new();
+
+        for (plate, spec) in initials_specs() {
+            let (top, bottom) = measured_band(spec);
+
+            for accent in 0..cover::COVER_ACCENTS {
+                let ink = plate_text_color(accent, spec);
+                let after = contrast(landed(ink, behind(accent, top)), behind(accent, top)).min(
+                    contrast(landed(ink, behind(accent, bottom)), behind(accent, bottom)),
+                );
+                let before = contrast(the_pair_before(accent, top), behind(accent, top)).min(
+                    contrast(the_pair_before(accent, bottom), behind(accent, bottom)),
+                );
+                // The candidate that was not chosen, composited the same way the
+                // chosen one is, so the two numbers are the same quantity. Both
+                // candidates `plate_text_color` can return are opaque; the test
+                // would not be comparing like with like if one were not.
+                let other_ink = if ink.r + ink.g + ink.b > 1.5 {
+                    BLACK
+                } else {
+                    WHITE
+                };
+                let other = contrast(other_ink, behind(accent, top))
+                    .min(contrast(other_ink, behind(accent, bottom)));
+
+                report.push_str(&format!(
+                    "{plate:>9} shade {accent}: was {before:.3} (white at 0.92), now {after:.3} \
+                     ({}), the other ink would be {other:.3}\n",
+                    if other_ink == BLACK { "white" } else { "black" },
+                ));
+
+                assert!(
+                    after >= 3.0,
+                    "shade {accent} on the {plate} plate is drawn at {after:.3}:1, under the 3:1 \
+                     WCAG 1.4.3 asks of large text. Pairs:\n{report}"
+                );
+                assert!(
+                    after > before,
+                    "shade {accent} on the {plate} plate is drawn at {after:.3}:1, which is no \
+                     better than the fixed white-at-0.92 pair this replaced ({before:.3}:1). The \
+                     ink is meant to be chosen for the plate it lands on, not to be that constant \
+                     with the alpha shuffled. Pairs:\n{report}"
+                );
+                assert!(
+                    after >= other,
+                    "shade {accent} on the {plate} plate is drawn at {after:.3}:1 when the other \
+                     candidate ink would have given {other:.3}:1 — `plate_text_color` picked the \
+                     worse of the two. Pairs:\n{report}"
+                );
+            }
+        }
+    }
+
+    /// The band the ink is chosen over is the band the glyphs occupy.
+    ///
+    /// This is the assumption the whole derivation rests on and the one part of
+    /// it no layout can show on its own: the ink is picked for a *region*, and a
+    /// region that is not where the text is picks a colour for a plate nobody
+    /// sees. The right-hand side is a measurement, not the same expression
+    /// again — a test that recomputed `plate_text_band` would agree with it even
+    /// with the line-height factor wrong.
+    #[test]
+    fn the_band_the_ink_is_chosen_over_is_the_band_the_glyphs_occupy() {
+        for (plate, spec) in initials_specs() {
+            let (top, bottom) = measured_band(spec);
+            let (claimed_top, claimed_bottom) = plate_text_band(spec);
+
+            assert!(
+                (top - claimed_top).abs() < 1e-4 && (bottom - claimed_bottom).abs() < 1e-4,
+                "on the {plate} plate the initials' box spans {top:.5}..{bottom:.5} of the \
+                 gradient, and plate_text_band says {claimed_top:.5}..{claimed_bottom:.5}. The \
+                 ink is chosen for the band the function claims, so a band that is not the drawn \
+                 one picks a colour for a region no glyph is in."
+            );
+        }
+    }
+
+    /// The initials are drawn **bold**, which is `CoverArt.qml:45`'s
+    /// `font.bold: true`.
+    ///
+    /// The weight is not decoration. The row plate draws its initials at 21 px
+    /// = 15.75 pt, which WCAG 2.2 §1.4.3 counts as large text only through its
+    /// 14 pt **bold** clause; as regular text the same 21 px owes 4.5:1, and
+    /// shade 4 of the plate gradient cannot reach 4.5:1 from any ink (3.845
+    /// white, 3.226 black). So this test is what makes the 3:1 bar that
+    /// [`the_plates_initials_clear_the_contrast_bar_and_beat_the_pair_they_replaced`]
+    /// asserts the correct bar — which is why it is asserted here rather than
+    /// left as a comment.
+    ///
+    /// The font is read off the built tree by [`text_fonts`], not measured;
+    /// the doc there records why width cannot answer this question in this
+    /// environment, and what that costs. The anti-vacuity assertion is the
+    /// first one: if `cosmic::font::bold()` were itself the default weight, the
+    /// loop below would pass against any weight at all.
+    #[test]
+    fn a_coverless_tiles_initials_are_drawn_bold_like_the_reference() {
+        assert_ne!(
+            cosmic::font::bold(),
+            cosmic::font::default(),
+            "`bold` and `default` are the same font, so asserting a plate draws one rather than \
+             the other would pass against either and this test would inspect nothing"
+        );
+
+        let game = Game::new_named("Celeste");
+        let initials = cover::initials(&game.name);
+
+        for (plate, spec) in initials_specs() {
+            let mut el: Element<'_, ()> = cover_box(&cache(), &game, spec);
+            let fonts = text_fonts(&mut el);
+
+            let (content, font) = fonts
+                .iter()
+                .find(|(content, _)| *content == initials)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the {plate} plate built no text node reading {initials:?}; it built \
+                         {fonts:?}. There is no weight to read, and a plate whose initials went \
+                         missing is not a plate whose initials are bold."
+                    )
+                });
+
+            assert_eq!(
+                *font,
+                cosmic::font::bold(),
+                "the {plate} plate draws {content:?} in {font:?}. The reference draws it bold \
+                 (`CoverArt.qml:45`), and at 21 px on the row plate the weight is what puts the \
+                 initials in WCAG 1.4.3's large-text class."
+            );
+        }
     }
 
     // ---- Reaching the widget a builder returned ---------------------------
