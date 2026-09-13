@@ -64,16 +64,19 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 34 | 32 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 17 | 16 `FIXED`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 18 | 15 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
+| `COSMIC-UX.md` | 30 | 19 | 16 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 6 `FIXED`, 1 `PARTIAL` |
-| `PACKAGING.md` | 10 | 8 | 6 `FIXED`, 2 `PARTIAL` |
+| `PACKAGING.md` | 11 | 9 | 7 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
-`BUGS.md`'s 15 tail-less rows are its fourteen open `P3` rows plus the withdrawn
+`BUGS.md`'s 14 tail-less rows are its thirteen open `P3` rows plus the withdrawn
 `BUG-11`, which carries no severity because it is not a defect. That sentence read
-"20 … nineteen" until this revision, and was wrong twice over: the row count was
-measurable from the table above it, and the sentence explaining the number agreed
-with the number instead of with the rows. Each of the
+"20 … nineteen" until an earlier revision and "15 … fourteen" until this one, and
+was wrong both times in the same way: the row count was measurable from the table
+above it, and the sentence explaining the number agreed with the number instead of
+with the rows. It read "15 … fourteen" because two rows that carried no tail when
+it was written have since gained one — which is the drift this paragraph is about,
+caught the second time by re-deriving the pair rather than by reading it. Each of the
 other five documents gained tails in the commits that fixed the rows they
 describe (`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`, `41d4b34`,
 `8f7269e`, `6069056`, `d855015` and `SEC-09`'s own), so the pair rule was kept
@@ -131,19 +134,19 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 51 | 41 | 0 | 10 |
+| P2 | 52 | 43 | 0 | 9 |
 | P3 | 49 | 12 | 0 | 37 |
-| **Total** | **129** | **82** | **0** | **47** |
+| **Total** | **130** | **84** | **0** | **46** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 16 | 0 | 9 |
 | `BUG-xx` | `BUGS.md` | 46 | 32 | 0 | 14 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
-| `PKG-xx` | `PACKAGING.md` | 10 | 6 | 0 | 4 |
+| `PKG-xx` | `PACKAGING.md` | 11 | 7 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
-| `UX-xx` | `COSMIC-UX.md` | 29 | 15 | 0 | 14 |
-| **Total** | | **129** | **82** | **0** | **47** |
+| `UX-xx` | `COSMIC-UX.md` | 29 | 16 | 0 | 13 |
+| **Total** | | **130** | **84** | **0** | **46** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -157,8 +160,10 @@ leaves out is `ARCH-24`. This sentence read "three" and named three ids until
 `ARCH-24` was refuted; the count is here because a reader should not have to union
 four documents to learn how many findings were withdrawn. `Remaining` counts `PARTIAL` as
 remaining, because a half-fixed finding is not closed; `Fixed` therefore excludes
-them and the six `PARTIAL` rows (`BUG-47`, `PKG-03`, `PKG-06`, `UX-06`,
-`SEC-05`) appear in `Remaining` until they are finished. That read "two"
+them and the six `PARTIAL` rows — `BUG-47`; `PKG-03`, `PKG-06`; `UX-06`, `UX-14`;
+`SEC-05` — appear in `Remaining` until they are finished, and
+`scripts/plan-counts.py` prints that list on every run so the sentence beside it
+has something to be checked against. That read "two"
 while the status cells said five — a count beside the rows rather than taken
 from them, which is the shape this file has been corrected for twice already.
 
@@ -233,7 +238,7 @@ across families, not within them.
 | `UX-04` | The application configures no minimum window size, so the window can be dragged to 1×1 and every page becomes unusable | S2 | — | Set the window minimum and assert it is at least what the narrowest page layout needs (`UX-08`, `UX-09`, `UX-21`). | FIXED — `MIN_WINDOW = (420.0, 480.0)` in `main.rs`, applied to the app's one `cosmic::app::Settings`; the test reads the numbers back out of `Main.qml` **and** requires the builder to use them, because the finding's shape was a value nothing applied |
 | `UX-05` | "Add Game" has no always-visible control | S2 | duplicate of `BUG-07` | As `BUG-07`; the toolbar button is the always-visible control. | FIXED with `BUG-07` |
 
-### P2 — 51
+### P2 — 52
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
@@ -270,6 +275,7 @@ across families, not within them.
 | `PKG-03` | Both the Flatpak build and the cargo-sources freshness check depend on things a clean checkout does not contain, and one of them needs the network by default | S6 | — | Make the Flatpak build and the cargo-sources check either self-provisioning or an explicit, reported skip with the reason; verify on a clean checkout. **Half fixed; the generator half is `PARTIAL` for a stated reason.** The row's second half was the more damaging one and is now closed: the coverage check — the only part that needs no external tool — sat *after* the generator lookup inside the same function, so a missing generator returned 99 (SKIP) and the tool-free half never ran at all. The stage is split in two: `cargo-sources` (coverage, always runs) and `cargo-sources-fresh` (regeneration, may SKIP), and `find_cargo_generator` now prefers a vendored `build-aux/flatpak/flatpak-cargo-generator.py` before the host-wide paths. **The vendoring itself was not done**, and the reason is not effort: the only copy on this host is `/tmp/gh-gen/flatpak-cargo-generator.py` — a non-durable path the row itself flags — and it carries no version string, no upstream commit and no provenance metadata, so vendoring it would put a file in the tree whose origin nobody can name or update. A 511-line MIT file with an unnameable upstream is a worse artefact than a documented skip. `--install-deps-from=flathub` is now the `else` branch of `--offline`. | PARTIAL |
 | `PKG-04` | flatpak-contents verifies placement and bytes but never runs the binary, and its one binary check is a text search inside the ELF rather than an execution | S6 | — | Execute the installed binary in `flatpak-contents` (a `--version` is enough); verify by planting a binary that cannot run and watching the stage fail. | FIXED `ead99e7`, re-fixed `f278b7d` |
 | `PKG-05` | The application ships a single 128×128 SVG and no PNG icon at any size | S6 | — | Ship PNGs at the sizes the specification names; verify with the AppStream validator and `flatpak-contents`. | FIXED `9e10566` |
+| `PKG-11` | The verification chain was red at `fd7cf01`, and a red stage truncates every stage after it: `doc` failed with four unresolved intra-doc links and the twelve stages behind it did not run | S6 | — | Repair the four links and run `scripts/verify.sh` end to end, proving the stages behind `doc` execute. | FIXED |
 | `PKG-10` | The checked-in `Cargo.lock` does not match the manifest at `d56782d`: it lists `iced_accessibility` as a dependency of `gamehandler` and `crates/app/Cargo.toml` does not declare it, so `cargo metadata --locked` fails on a clean checkout | S6 | — | A `cargo-lock` stage running `cargo metadata --offline --locked`; verify by dropping a line from the lock and watching the stage fail. | FIXED |
 | `SEC-02` | --filesystem=home grants read-write to the entire home directory, which is broader than the directories the code touches | S4 | — | Narrow to the XDG roots the code actually touches plus the seven fixed search roots; verify by running the app in the narrowed sandbox and exercising every path-touching flow. **Fixed as `home:ro` plus one `:create` carve-out, by measurement; the suggested `xdg-data`/`xdg-config`/`xdg-cache` form was measured wrong for this manifest and not applied.** The three XDG shares are absent from the grant as written and present as `~/.var/app/<id>/{data,config,cache}`, so granting them would have moved the app's own files into the sandbox; `xdg-cache` has no reader in `crates/` at all. What the sandbox probe settled: `touch ~/.config/gh-sec02-w2` and `touch ~/.local/share/gh-sec02-w3` both succeeded before and are refused now, the three home-side anti-cheat roots stay readable, and a planted executable still runs — which is the claim `packaging.md` §3 had asserted and never demonstrated. The carve-out is `~/.local/share/applications:create` for `shortcut_directory_in`, measured to override the broader read-only grant both ways. `tests/test_packaging.py` pins the narrowed pair, the **absence** of the bare `--filesystem=home` (which `home:ro` would otherwise satisfy), and the set of writable grants; three mutations fail three distinct named assertions. | FIXED |
 | `SEC-03` | The Authenticode authenticity decision is weaker than it reads | S4 | — | Compare the publisher against the verifier's structured field rather than a case-folded substring of merged output; verify with a fixture whose output contains a matching substring in an unrelated field. **Status: FIXED `937ef5b`**, and the half `SECURITY.md` listed as unsettleable is **settled**: the tool is absent from the host but present inside the Flatpak (2.14), and without `-CAfile` a self-signed certificate exits 1, while **with** it a certificate whose `Subject` is `O=Evil Example Ltd,CN=Totally Unrelated Signer` signed `-n "Valve Corp."` verifies exit 0 carrying `Text description: Valve Corp.` — so the old substring predicate over merged output accepted it. The fix parses `Subject:` lines only. A deliberate divergence from `installers.py:594-595`, recorded as one. | FIXED |
@@ -278,7 +284,7 @@ across families, not within them.
 | `UX-07` | Escape does not close either dialog | S2 | — | Implement `on_escape` to close the open dialog; verify by opening each dialog and pressing Escape. **Status: FIXED `109a88e`.** `App::on_escape` → `Shell::dismiss_dialogs`, on `Shell` for the same reason `focus_library_search` is (an `App` cannot be built off a display). It clears the two confirmation dialogs and deliberately not the form, which `CloseDialog` also clears — the reference's own split, `PromptDialog`'s default `CloseOnEscape` against a pushed `Page` with no Escape binding. Two tests: one reads the state back, the other reads `on_escape`'s body with comments stripped and says in its own doc that it is the weaker instrument. | FIXED |
 | `UX-09` | The Installers search field is a hard 396 px, the only Length::Fixed used for a *field* anywhere in the views, so it overflows the page below about 430 px of content width | S2 | — | Let the search field fill its row; verify at 400 px content width. **Status: FIXED `4831eb5`** — `Length::Fill`, matching `view/library.rs`'s search box. Measured at 420 px: the field took 396 px of a 384 px row and squeezed the category selector to 16 px of its 36; now 166 px and 36 px. `container(input).max_width(396.0)` was tried first and is inert on a `Fill` child of a `Row` (a 1200 px probe measured 600 px with and without it), so the reference's ceiling is not expressible here and the comment points at `UX-25`. The test compares the selector against its width with room to spare rather than asserting 396, because a test written against the number would have passed against the defect. **UX-10 depends on this row.** | FIXED |
 | `UX-10` | Installers and Runners have no outer gutter | S2 | — | Give both views the same outer padding the other five have; verify by comparing the five view tails. **Status: FIXED `e4a3eac`** — both pages end in `container(scrollable(body)).padding(view::GUTTER)`, `GUTTER = 18`, the value the five other views already used, shared so the two cannot drift. Measured at 420 px: leftmost strings 0.0 → 18.0 on both, Runners' rightmost 420.0 → 402.0. The tests measure nodes at a stated window size via `harness::laid_out`, not the padding read back out of the builder. **UX-09 had to land first**, proved: with the gutter and the old 396 px field the Installers row's rightmost node is 410 rather than 402. | FIXED |
-| `UX-11` | A capability the UI advertises is not drawn: the game form's cover preview | S2 | — | Draw the cover preview and the "No cover yet" placeholder the reference has; verify with tree-walking assertions on the form. | OPEN |
+| `UX-11` | A capability the UI advertises is not drawn: the game form's cover preview | S2 | — | Draw the cover preview and the "No cover yet" placeholder the reference has; verify with tree-walking assertions on the form. | FIXED |
 | `UX-12` | Three icon-only buttons have no accessible name and no tooltip | S2 | — | Give all three `button::icon` sites an accessible name and a tooltip; verify the drawn strings and the a11y nodes. **Status: FIXED `1992b42`.** All three icon buttons carry a name — `BROWSE_EXE_HINT` and `BROWSE_COVER_HINT` for the two browse buttons, `remove_hint(name)` for the per-row uninstall — set through an `Accessible::wrap` helper rather than `builder.name` at each site, and the two hints double as tooltips. Verified on the built element: the two names must **differ**, and the case where a control publishes a node labelled `Some("")` is covered, since a name that is *set* and one that is *plumbed* look identical in source. | FIXED |
 | `UX-13` | Re-picking a custom cover silently destroys the previous one | S2 | — | Refuse or confirm an overwrite, or keep both files; verify by picking a cover twice and checking the first still exists. **Status: FIXED `502aa61`.** The additive shape was taken over the dialog this row suggested: a second pick keeps the cover it replaces as `<id>.preserved-<n>.<suffix>`, because **the reference destroys the first cover too** (`covers.py:295-304`, `GameFormPage.qml:349-361`), so the destructive act was unintended on both sides. Order is load-bearing — copy, then preserve, then rename — or re-picking the current cover truncates it to empty. `MAX_PRESERVED_COVERS` refuses rather than destroys at the far end. Regression tests compare the whole directory, not the returned path, which is identical before and after. | FIXED |
 | `UX-14` | Toasts are the app's universal error channel, and they are invisible to assistive technology and expire after 5 s | S2 | — | Give the toaster an accessibility node and make the duration reasonable for a screen reader; verify the node list from a built toaster. | PARTIAL |

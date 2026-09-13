@@ -145,6 +145,31 @@ def status_problems(plan: str) -> list[str]:
     return problems
 
 
+def partial_rows(plan: str) -> list[str]:
+    """The finding ids whose status is `PARTIAL` — the half-fixed ones, which
+    count as `Remaining` in every table above.
+
+    A function because the prose paragraphs in `PLAN.md` and `REPORT.md` name
+    what the `PARTIAL` rows *are* and how many there are, and the count moved
+    from five to six while both were reading it by hand. The tables are derived;
+    the same number in a sentence is derived too. The sentence itself is not
+    generated — it says why each row is half-done, which is not arithmetic.
+
+    It reads the plan text rather than [`parse`]'s tuples because the id is not
+    in them: they carry the severity, the family and the status, which is all the
+    tables need and not enough to *name* a row. The first version of this
+    function returned the families for that reason and its docstring claimed they
+    were ids — a return value disagreeing with the sentence above it, which is
+    the defect shape these audit fixes keep closing.
+    """
+    ids = []
+    for line in plan.splitlines():
+        match = ROW.match(line)
+        if match and status_cell(line).startswith("PARTIAL"):
+            ids.append(f"{match.group(1)}-{match.group(2)}")
+    return ids
+
+
 def parse(plan: str):
     """`(severity, family, status)` per row, plus the section headers seen."""
     section = None
@@ -553,6 +578,9 @@ def main() -> int:
             if line.startswith("|") and line not in report:
                 problems.append(
                     f"REPORT.md table line not present verbatim: {line}")
+    partials = partial_rows(plan)
+    print(f"PARTIAL: {len(partials)} ({', '.join(partials)})")
+
     for section, stated in headers:
         if stated is None:
             continue

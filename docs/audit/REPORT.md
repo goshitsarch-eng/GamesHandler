@@ -51,7 +51,7 @@ target has moved is a present-tense count of a moving target, which is the shape
 of error `PLAN.md` records against its own `BUGS.md` row. What is true at every
 revision is what the paragraph now says.
 
-**This is not a final report.** 47 of 129 defects are still open, most of them
+**This is not a final report.** 46 of 130 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -61,11 +61,11 @@ and the section *What remains, honestly* says which is which.
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 46 | 32 | 2 | 14 |
 | `ARCH-xx` | Architecture, code quality | 25 | 16 | 1 | 9 |
-| `UX-xx` | libcosmic / COSMIC UX | 29 | 15 | 1 | 14 |
+| `UX-xx` | libcosmic / COSMIC UX | 29 | 16 | 1 | 13 |
 | `PERF-xx` | Performance, resource | 8 | 6 | 0 | 2 |
 | `SEC-xx` | Security, robustness | 11 | 7 | 0 | 4 |
-| `PKG-xx` | Packaging, platform, QA | 10 | 6 | 0 | 4 |
-| **Total** | | **129** | **82** | **4** | **47** |
+| `PKG-xx` | Packaging, platform, QA | 11 | 7 | 0 | 4 |
+| **Total** | | **130** | **84** | **4** | **46** |
 
 The `Found` column is defects; the four refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
@@ -78,14 +78,15 @@ By severity:
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 51 | 41 | 0 | 10 |
+| P2 | 52 | 43 | 0 | 9 |
 | P3 | 49 | 12 | 0 | 37 |
-| **Total** | **129** | **82** | **0** | **47** |
+| **Total** | **130** | **84** | **0** | **46** |
 
 `Not a defect` is not a euphemism for "wontfix": all four rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`, `BUG-15`,
 `UX-08`, `ARCH-24`). Six of the rows counted as `Remaining` above are `PARTIAL` rather
-than untouched, and each names the half that is still missing: `BUG-47` (the
+than untouched — the six `PARTIAL` rows, which `scripts/plan-counts.py` prints
+by name on every run — and each names the half that is still missing: `BUG-47` (the
 ellipsis is commented but cannot be asserted — iced offers no downcast and
 `Text::format` is private), `PKG-03` (the freshness check is split and always
 runs; the generator half is unvendored because the only copy to hand has no
@@ -157,13 +158,13 @@ is **met for P0 and P1** and **not met for P2**, where the reason is that the
 work is unfinished rather than impossible. Stating that plainly is the point of
 this section.
 
-Where the 47 rows are:
+Where the 46 rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All five fixed and each verified by restoring the pre-fix body and watching the new test fail. |
 | P1 | 0 | **Closed.** `SEC-11` — the approved-publisher gate reading signer-chosen text as a certificate subject — was the last row here and is fixed; the recipe this report first sketched for it was measured wrong and corrected in the fix. `UX-01`–`UX-03` were the four upstream-widget accessibility gaps plus `ARCH-02`, all fixed, and the three widget rows each record the residue that is upstream's rather than this port's. |
-| P2 | 10 | Actionable. The largest concentration is `UX` (4); the rest are 4 `ARCH`, 1 `BUG` and 1 `PKG`. |
+| P2 | 9 | Actionable. The largest concentration is `UX` (3); the rest are 4 `ARCH`, 1 `BUG` and 1 `PKG`. |
 | P3 | 37 | Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. The 13 open `BUG` rows are all here, along with 10 `UX`, 5 `ARCH`, 4 `SEC`, 3 `PKG` and 2 `PERF`. |
 
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
@@ -230,8 +231,8 @@ flagging — and both now have those controls pinned in tests.
 | `PERFORMANCE.md` | 8 findings on CPU, memory and frame cost |
 | `SECURITY.md` | 11 findings on the sandbox, process launching and the dependency graph |
 | `ARCHITECTURE.md` | 26 ids on structure, contracts and code quality — 25 defects, 1 refuted |
-| `PACKAGING.md` | 10 findings on the Flatpak, the desktop entry and the gate |
-| `PLAN.md` | All 133 rows: owner, dependencies, verification, status — 129 defects and the 4 refuted rows the tables above exclude |
+| `PACKAGING.md` | 11 findings on the Flatpak, the desktop entry and the gate |
+| `PLAN.md` | All 134 rows: owner, dependencies, verification, status — 130 defects and the 4 refuted rows the tables above exclude |
 | `DECISIONS.md` | The seven decisions this audit made (`D-57`–`D-63`) |
 
 Each document's scope section states whether it is still read-only. That
