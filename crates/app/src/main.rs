@@ -1150,18 +1150,16 @@ pub struct Shell {
 /// and its footer is Cancel plus a custom Remove action — Cancel closes, and
 /// Remove sends the row's `runnerId` to `uninstallRunner` and then closes
 /// (`RunnersPage.qml:259-271`). The port renders the same three parts through
-/// libcosmic's own composition: `cosmic::widget::dialog` builds the
-/// titled card (`src/widget/dialog.rs`), and `cosmic::widget::popover` lays it
-/// over the body the way libcosmic itself lays an application dialog over its
-/// view (`src/app/mod.rs:874-887`), `modal(true)` so background input is
-/// captured and `on_close` so dismissing it sends [`Message::CloseDialog`].
+/// libcosmic's own composition: `cosmic::widget::dialog` builds the titled card
+/// (`src/widget/dialog.rs`), and [`dialog_over`] lays it over the body behind an
+/// input-blocking scrim.
 ///
 /// This is a free function over `(body, pending)` rather than a method on
 /// [`State`] or a page module for the same reason [`Shell::view_body`]'s arms
 /// borrow rather than build: the dialog needs the already-built body beneath
 /// it, and the page's view does not know a dialog is open. P-37.
 ///
-/// # Why a `Column`, and not `popover`
+/// # Why not `popover`, and what the composition is now
 ///
 /// The first version composed the dialog over the body with
 /// `cosmic::widget::popover` — the same widget libcosmic itself uses to lay an
@@ -1174,15 +1172,14 @@ pub struct Shell {
 /// test would then be asserting the absence it was written to refute, which is
 /// the D-44 defect wearing a dialog's clothes.
 ///
-/// So the dialog is drawn **inline above the body**, in a `Column`: title,
-/// subtitle and both actions are ordinary widgets in the tree, `operate` sees
-/// them, and the tests below photograph what the user sees. The cost is
-/// stated rather than hidden: this is not a floating overlay — the page sits
-/// below the dialog rather than dimmed behind it — and a libcosmic `popover`
-/// whose popup an `Operation` could reach would be the composition to return
-/// to. What is preserved is the behaviour the reference's dialog promises:
-/// the title names the pending removal, both actions are drawn, Cancel closes
-/// without removing, and Remove removes the pending id and then closes.
+/// The second version answered that with a `Column` — the dialog in one band,
+/// the page in the next — and paid for it with UX-06: in sequence, the page is
+/// neither behind the dialog nor blocked by it, so every control on it stayed
+/// live under an open destructive prompt. [§ `dialog_over`](dialog_over) has
+/// the measurement and the composition that replaces it. What is preserved is
+/// the behaviour the reference's dialog promises: the title names the pending
+/// removal, both actions are drawn, Cancel closes without removing, and Remove
+/// removes the pending id and then closes.
 ///
 /// # The Remove button's message, and the gap beside it
 ///
@@ -1203,10 +1200,10 @@ pub struct Shell {
 /// The game-removal dialog over the library it names: `removeDialog`
 /// (`LibraryPage.qml:346-360`).
 ///
-/// Same composition as [`remove_runner_dialog`] — a `Column`, not a `popover`,
-/// for the reason recorded there — and the same contract: the title names the
-/// pending game, Cancel closes without removing, and Remove removes the
-/// pending id and then closes. The subtitle is the reference's verbatim: the
+/// Same composition as [`remove_runner_dialog`] — [`dialog_over`], not a
+/// `popover`, for the reason recorded there — and the same contract: the title
+/// names the pending game, Cancel closes without removing, and Remove removes
+/// the pending id and then closes. The subtitle is the reference's verbatim: the
 /// entry goes, the prefix and game files stay.
 ///
 /// `name` is looked up by the caller, which owns the library; the id fallback
@@ -1218,7 +1215,7 @@ fn remove_game_dialog<'a>(
     name: &str,
     game_id: &str,
 ) -> cosmic::Element<'a, Message> {
-    use cosmic::widget::{Column, button, dialog};
+    use cosmic::widget::{button, dialog};
     let popup: cosmic::Element<'a, Message> = dialog()
         .title(format!("Remove “{name}”?"))
         .body(
@@ -1230,14 +1227,14 @@ fn remove_game_dialog<'a>(
                 .on_press(Message::DeleteGameConfirmed(game_id.to_string())),
         )
         .into();
-    Column::new().push(popup).push(body).into()
+    dialog_over(body, popup)
 }
 
 fn remove_runner_dialog<'a>(
     body: cosmic::Element<'a, Message>,
     pending: &crate::state::PendingRunnerRemoval,
 ) -> cosmic::Element<'a, Message> {
-    use cosmic::widget::{Column, button, dialog};
+    use cosmic::widget::{button, dialog};
     let popup: cosmic::Element<'a, Message> = dialog()
         .title(pending.title())
         .body(crate::state::remove_runner_subtitle())
@@ -1247,7 +1244,96 @@ fn remove_runner_dialog<'a>(
                 .on_press(Message::RemoveRunnerConfirmed(pending.runner_id.clone())),
         )
         .into();
-    Column::new().push(popup).push(body).into()
+    dialog_over(body, popup)
+}
+
+/// A confirmation dialog over the page it asks about: the page, the input wall,
+/// the dialog — bottom to top (UX-06).
+///
+/// # Why this is a `Stack` and no longer a `Column`
+///
+/// The `Column` it replaces put the two parts in *sequence* — the dialog in one
+/// band, the page in the next — so the page was neither behind the dialog nor
+/// blocked by it, and every control on it stayed live under an open destructive
+/// prompt. Measured before the change, at a 420 px window: a click on the
+/// library's own "Add your first game" button, while `Remove “GE-Proton9-5”?`
+/// was open, still published `OpenNewGameForm`. The composition the finding
+/// asks for — an input-blocking surface *between* the two — cannot be written
+/// as a `Column` at all: a third child of a `Column` is a third band, not a
+/// layer, so a full-size wrapper there would push the dialog off the bottom
+/// rather than sit behind it. `Stack` is iced's "content on top of other
+/// content" widget and is the composition the three-part description needs.
+///
+/// What the `Column` was *right* about is kept: this is not a `popover`. The
+/// rationale for abandoning `Popover` ([`remove_runner_dialog`]'s header) is
+/// that `Popover::operate` skips both halves when `modal && popup.is_some()`,
+/// which makes this file's `drawn_strings` instrument photograph an empty tree —
+/// and `Stack::operate` traverses *every* child (`iced/widget/src/stack.rs:212-231`),
+/// so the dialog, the scrim and the page under them are all still visible to it.
+///
+/// # What the page's layout does now, stated rather than hidden
+///
+/// The page is no longer reflowed downward when a dialog opens; it is drawn
+/// where it always is and the scrim covers it. That is the reference's own
+/// behaviour — `Kirigami.PromptDialog` is a floating `Popup`, not a band above
+/// the page (`LibraryPage.qml:346`, `RunnersPage.qml:257`) — and it is a
+/// visible change from the previous revision rather than a side effect of it.
+fn dialog_over<'a>(
+    body: cosmic::Element<'a, Message>,
+    popup: cosmic::Element<'a, Message>,
+) -> cosmic::Element<'a, Message> {
+    use cosmic::iced::Length;
+    use cosmic::iced::widget::Stack;
+    // Explicitly `Fill` on both axes: a `Stack`'s size is otherwise taken from
+    // its base layer's size *hint*, and the page below hands back `Shrink`
+    // (`Container::size` reports the length it was given, and these pages set
+    // none), which would collapse the stack to the body's intrinsic size.
+    Stack::new()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .push(body)
+        .push(dialog_scrim())
+        .push(popup)
+        .into()
+}
+
+/// The dimmed, input-blocking surface a dialog draws over its page (UX-06).
+///
+/// `mouse_area` is what actually blocks: iced's `MouseArea::update` calls
+/// `shell.capture_event()` on a left press **whether or not it carries a
+/// message** (`iced/widget/src/mouse_area.rs:466-493` — the `on_press` arm
+/// publishes, then both arms fall through to the same capture). So a scrim with
+/// no handler at all is an input wall rather than an inert rectangle, and it
+/// costs no message: clicking the dimmed page while a dialog is open does
+/// nothing, which is what the reference's modal `Popup` does.
+///
+/// It sits *above* the page and *below* the dialog in the [`dialog_over`]
+/// stack, so the dialog's own buttons are reached first —
+/// `Stack::update` walks its children back to front and stops at the first one
+/// that captures the event (`iced/widget/src/stack.rs:251-266`).
+fn dialog_scrim<'a>() -> cosmic::Element<'a, Message> {
+    use cosmic::iced::widget::container::Style;
+    use cosmic::iced::{Background, Length};
+    use cosmic::theme::Container;
+    use cosmic::widget::{Space, container, mouse_area};
+
+    mouse_area(
+        container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .class(Container::custom(|theme| {
+                // The theme's own `shade` — the colour libcosmic uses for the
+                // shadow under a dialog (`src/theme/style/iced.rs:706`) — at
+                // half alpha, so the dimming follows the light/dark scheme
+                // rather than being a hard-coded black.
+                let shade: cosmic::iced::Color = theme.cosmic().shade.into();
+                Style {
+                    background: Some(Background::Color(cosmic::iced::Color { a: 0.5, ..shade })),
+                    ..Default::default()
+                }
+            })),
+    )
+    .into()
 }
 
 fn page_entry_task(state: &mut State, page: Page) -> cosmic::app::Task<Message> {
@@ -8912,6 +8998,120 @@ mod tests {
         );
     }
 
+    /// **A click on the page under an open dialog reaches nothing (UX-06).**
+    ///
+    /// The dialogs used to be composed as a `Column` — the dialog in one band,
+    /// the page in the next — so the page was neither behind the dialog nor
+    /// blocked by it and every control on it stayed live under an open
+    /// destructive prompt. [`dialog_over`] replaces that with a `Stack`: the page,
+    /// an input-blocking [`dialog_scrim`], the dialog. This is the measurement
+    /// the finding was written from and the one its fix has to move.
+    ///
+    /// # Why the click is real, and why the control matters
+    ///
+    /// `captured` is not the signal: `MouseArea::update` captures a left press
+    /// whether or not it carries a message (`iced/widget/src/mouse_area.rs:466`),
+    /// so the scrim captures in the *fixed* case and the page's own button
+    /// captures in the broken one. What discriminates is the **message** — the
+    /// page's own button publishes [`Message::OpenNewGameForm`], and the broken
+    /// composition published it under an open "Remove …?" prompt.
+    ///
+    /// The first click is the control, and it is what keeps the second from being
+    /// vacuous: a point that reaches no control at all would pass the "nothing
+    /// published" assertion in any composition, including the broken one. It also
+    /// pins the point to the *page's* button — the same string the closed
+    /// composition draws — so the second click is on the same pixel.
+    ///
+    /// The third click is the other half: the scrim must block the page without
+    /// sealing off the dialog, so the dialog's own Cancel still publishes.
+    #[test]
+    fn a_click_on_the_page_under_an_open_dialog_reaches_nothing() {
+        let window = cosmic::iced::Size::new(420.0, 800.0);
+        let target = crate::view::library::ADD_FIRST_GAME;
+
+        // The control: nothing open, the page's own button, a real press.
+        let shell = Shell::new();
+        let closed = laid_out_texts(&mut shell.view_with_overlays(), window);
+        let point = closed
+            .iter()
+            .find(|(text, _)| text == target)
+            .map(|(_, bounds)| bounds.center())
+            .unwrap_or_else(|| {
+                panic!(
+                    "a fresh shell opens on the Library page, whose empty state draws \
+                     {target:?}; the page drew {:?} instead",
+                    closed.iter().map(|(text, _)| text).collect::<Vec<_>>()
+                )
+            });
+        let (messages, captured) = click_at(&mut shell.view_with_overlays(), window, point);
+        assert!(
+            captured,
+            "a press at {point:?} — the centre of the page's own {target:?} button — \
+             was captured by nothing, so this point is not on the button and the \
+             assertion below would pass without touching the page at all"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::OpenNewGameForm)),
+            "with no dialog open, the press must publish `OpenNewGameForm`: without \
+             this the check below cannot tell a blocked page from a point that \
+             never reached a control"
+        );
+
+        // The finding: the same point, with a destructive prompt open.
+        let mut shell = Shell::new();
+        let _ = shell.update(Message::ConfirmRemoveRunner {
+            runner_id: "GE-Proton9-5".to_string(),
+            name: "GE-Proton9-5".to_string(),
+        });
+        let open = laid_out_texts(&mut shell.view_with_overlays(), window);
+        let under = open
+            .iter()
+            .find(|(text, _)| text == target)
+            .map(|(_, bounds)| bounds.center())
+            .unwrap_or_else(|| {
+                panic!(
+                    "the page must stay drawn under the dialog rather than be \
+                     replaced by it, so {target:?} must still be in the tree; the \
+                     overlay drew {:?}",
+                    open.iter().map(|(text, _)| text).collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(
+            under, point,
+            "the open dialog must not reflow the page: the same control is at \
+             {under:?} under the prompt and {point:?} without it, so the press \
+             below would be measuring a different pixel than the control"
+        );
+        let (messages, _) = click_at(&mut shell.view_with_overlays(), window, under);
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::OpenNewGameForm)),
+            "a press on the page's own {target:?} button, with a removal prompt \
+             open over it, published `OpenNewGameForm` — that is UX-06 back: the \
+             prompt is not modal and the page under it is still live. Messages: \
+             {messages:?}"
+        );
+
+        // And the dialog is not sealed off by its own scrim.
+        let cancel = open
+            .iter()
+            .find(|(text, _)| text == "Cancel")
+            .map(|(_, bounds)| bounds.center())
+            .expect("the dialog draws Cancel");
+        let (messages, _) = click_at(&mut shell.view_with_overlays(), window, cancel);
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::CloseDialog)),
+            "the press at {cancel:?} — the centre of the dialog's own Cancel \
+             button — published {messages:?} rather than `CloseDialog`, so the \
+             scrim is in front of the dialog as well as behind it"
+        );
+    }
+
     /// **The runner dialog is a modal over the page, not a layer replacing
     /// it.**
     ///
@@ -9567,6 +9767,109 @@ mod tests {
             .as_widget_mut()
             .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
         texts.0
+    }
+
+    /// The strings a real element hands the operation traversal, **each with the
+    /// rectangle the framework laid it out in at a stated window size**.
+    ///
+    /// [`drawn_strings`] is the same walk under [`layout::Limits::MAX`], which is
+    /// an infinite window. That is right for every question it was written for —
+    /// which strings are drawn — and wrong for a layout one: a control that
+    /// overflows a 420 px window is handed all the room it wants and measures as
+    /// fitting, so an assertion that something "fits" made through it cannot
+    /// fail. `UX-06` is a layout finding — *where* a click lands — so the window
+    /// size is named here and the bounds are the framework's own.
+    fn laid_out_texts<M: Clone + 'static>(
+        element: &mut cosmic::Element<'_, M>,
+        window: cosmic::iced::Size,
+    ) -> Vec<(String, cosmic::iced::Rectangle)> {
+        use cosmic::iced::advanced::widget::Operation;
+        use cosmic::iced::advanced::{Layout, layout::Limits};
+
+        #[derive(Default)]
+        struct Texts(Vec<(String, cosmic::iced::Rectangle)>);
+        impl Operation for Texts {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn text(
+                &mut self,
+                _id: Option<&cosmic::widget::Id>,
+                bounds: cosmic::iced::Rectangle,
+                text: &str,
+            ) {
+                self.0.push((text.to_string(), bounds));
+            }
+        }
+
+        let (mut tree, _) = crate::view::a11y::harness::built(element);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &crate::view::a11y::harness::renderer(),
+            &Limits::new(cosmic::iced::Size::ZERO, window),
+        );
+        let mut texts = Texts::default();
+        element.as_widget_mut().operate(
+            &mut tree,
+            Layout::new(&node),
+            &crate::view::a11y::harness::renderer(),
+            &mut texts,
+        );
+        texts.0
+    }
+
+    /// A left click — press *and* release — at `position`, and every message the
+    /// tree published while handling it.
+    ///
+    /// # Why this exists rather than a call into the harness
+    ///
+    /// [`crate::view::a11y::harness`] dispatches events with
+    /// [`mouse::Cursor::Unavailable`], which is right for its own questions (what
+    /// a page publishes, which nodes carry an id) and cannot click anything: a
+    /// widget's hit test is `cursor.position_over(bounds)`, and a cursor with no
+    /// position is over nothing. `UX-06` is precisely the question of which
+    /// widget a click reaches, so it needs a cursor at a real point.
+    ///
+    /// The tree, the layout and the renderer are the real ones for the same
+    /// reason: a click asserted against a layout nobody drew is a claim about
+    /// arithmetic rather than about the page.
+    fn click_at<M: Clone + 'static>(
+        element: &mut cosmic::Element<'_, M>,
+        window: cosmic::iced::Size,
+        position: cosmic::iced::Point,
+    ) -> (Vec<M>, bool) {
+        use cosmic::iced::advanced::widget::Tree;
+        use cosmic::iced::advanced::{Layout, layout::Limits};
+        use cosmic::iced::mouse;
+
+        let renderer = crate::view::a11y::harness::renderer();
+        let mut tree = Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &Limits::new(cosmic::iced::Size::ZERO, window),
+        );
+        let mut messages: Vec<M> = Vec::new();
+        let mut captured = false;
+        let mut clipboard = cosmic::iced::advanced::clipboard::Null;
+        for event in [
+            cosmic::iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            cosmic::iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ] {
+            let mut shell = cosmic::iced::advanced::Shell::new(&mut messages);
+            element.as_widget_mut().update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Available(position),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &cosmic::iced::Rectangle::INFINITE,
+            );
+            captured |= shell.is_event_captured();
+        }
+        (messages, captured)
     }
 
     /// Labels where the port and the reference disagree: `(page, what
