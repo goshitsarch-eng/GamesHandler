@@ -193,6 +193,7 @@ STAGES=(
     "cli|stage_cli|the headless CLI --list/--launch/--version, against a library it must read"
     "oracle-freshness|stage_oracle|the checked-in fixtures equal what the Python generators produce"
     "python-tests|stage_python|the Python suite stays green (D-17)"
+    "cargo-lock|stage_cargo_lock|Cargo.lock agrees with the manifests it was generated from (PKG-10)"
     "plan-counts|stage_plan_counts|docs/audit/PLAN.md's summary tables equal the rows they summarise"
     "cargo-sources|stage_cargo_sources|cargo-sources.json is fresh against Cargo.lock and covers every git source"
     "flatpak-build|stage_flatpak|flatpak-builder builds the manifest"
@@ -1245,6 +1246,26 @@ stage_python() {
 }
 
 # ---------------------------------------------------------------------------
+# Stage: cargo-lock — Cargo.lock agrees with the manifests it was generated from
+#
+# PKG-10. `be31a7b` committed a lockfile that reflected a *concurrent* change in
+# the same working tree, so the lock declared a dependency of `gamehandler` that
+# the commit's own `Cargo.toml` did not have — and because a lockfile is
+# generated, readers treat it as derived and have no reason to compare it against
+# its input. `cargo metadata --locked` exits 101 on that tree and nothing here
+# ran it.
+#
+# `--offline` because this is a check about two files agreeing and must not need
+# the network; `--locked` because that is the flag that makes cargo *compare*
+# instead of quietly rewriting the lock into agreement. Proved able to fail:
+# dropping one entry from `gamehandler`'s dependency list in the lock makes this
+# exit 101, and restoring it makes it exit 0.
+# ---------------------------------------------------------------------------
+stage_cargo_lock() {
+    cargo metadata --offline --locked --format-version 1 >/dev/null
+}
+
+# ---------------------------------------------------------------------------
 # Stage: plan-counts — docs/audit/PLAN.md's summary tables equal its rows
 #
 # `PLAN.md` is the audit's schedule and its two summary tables are its headline
@@ -2210,6 +2231,7 @@ run_stage test
 run_stage cli
 run_stage oracle-freshness
 run_stage python-tests
+run_stage cargo-lock
 run_stage plan-counts
 run_stage cargo-sources
 # Everything from here to `release_flatpak_lock` is one critical section over

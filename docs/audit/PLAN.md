@@ -102,19 +102,19 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
 | P1 | 23 | 18 | 0 | 5 |
-| P2 | 51 | 18 | 0 | 33 |
+| P2 | 52 | 19 | 0 | 33 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **127** | **41** | **0** | **86** |
+| **Total** | **128** | **42** | **0** | **86** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 7 | 0 | 18 |
 | `BUG-xx` | `BUGS.md` | 45 | 23 | 0 | 22 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 3 | 0 | 5 |
-| `PKG-xx` | `PACKAGING.md` | 9 | 4 | 0 | 5 |
+| `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
 | `SEC-xx` | `SECURITY.md` | 10 | 3 | 0 | 7 |
 | `UX-xx` | `COSMIC-UX.md` | 30 | 1 | 0 | 29 |
-| **Total** | | **127** | **41** | **0** | **86** |
+| **Total** | | **128** | **42** | **0** | **86** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -193,7 +193,7 @@ across families, not within them.
 | `UX-04` | The application configures no minimum window size, so the window can be dragged to 1×1 and every page becomes unusable | S2 | — | Set the window minimum and assert it is at least what the narrowest page layout needs (`UX-08`, `UX-09`, `UX-21`). | OPEN |
 | `UX-05` | "Add Game" has no always-visible control | S2 | duplicate of `BUG-07` | As `BUG-07`; the toolbar button is the always-visible control. | FIXED with `BUG-07` |
 
-### P2 — 51
+### P2 — 52
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
@@ -230,6 +230,7 @@ across families, not within them.
 | `PKG-03` | Both the Flatpak build and the cargo-sources freshness check depend on things a clean checkout does not contain, and one of them needs the network by default | S6 | — | Make the Flatpak build and the cargo-sources check either self-provisioning or an explicit, reported skip with the reason; verify on a clean checkout. | OPEN |
 | `PKG-04` | flatpak-contents verifies placement and bytes but never runs the binary, and its one binary check is a text search inside the ELF rather than an execution | S6 | — | Execute the installed binary in `flatpak-contents` (a `--version` is enough); verify by planting a binary that cannot run and watching the stage fail. | FIXED `ead99e7`, re-fixed `f278b7d` |
 | `PKG-05` | The application ships a single 128×128 SVG and no PNG icon at any size | S6 | — | Ship PNGs at the sizes the specification names; verify with the AppStream validator and `flatpak-contents`. | FIXED `9e10566` |
+| `PKG-10` | The checked-in `Cargo.lock` does not match the manifest at `d56782d`: it lists `iced_accessibility` as a dependency of `gamehandler` and `crates/app/Cargo.toml` does not declare it, so `cargo metadata --locked` fails on a clean checkout | S6 | — | A `cargo-lock` stage running `cargo metadata --offline --locked`; verify by dropping a line from the lock and watching the stage fail. | FIXED |
 | `SEC-02` | --filesystem=home grants read-write to the entire home directory, which is broader than the directories the code touches | S4 | — | Narrow to the XDG roots the code actually touches plus the seven fixed search roots; verify by running the app in the narrowed sandbox and exercising every path-touching flow. | OPEN |
 | `SEC-03` | The Authenticode authenticity decision is weaker than it reads | S4 | — | Compare the publisher against the verifier's structured field rather than a case-folded substring of merged output; verify with a fixture whose output contains a matching substring in an unrelated field. | OPEN |
 | `SEC-04` | game_id is interpolated into a destination filename with no sanitisation at three sites in covers.rs, while the same class of bug was deliberately fixed in desktop.rs | S4 | — | A game id containing `/` or `\` is refused by all three writes with `UnsafeId`, asserted on the *absolute path the write would have created* and on the transfer not being made; plus the accepted cases (`..`, ``, a real 32-hex id) in the same test, so a refusal-everything implementation fails it | FIXED `88578db` |

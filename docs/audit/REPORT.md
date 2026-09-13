@@ -5,14 +5,14 @@ what was fixed, and what is still open, in one table. `PLAN.md` is the schedule
 — every finding with its owner, dependencies and verification method. This file
 is the accounting. The six specialist documents hold the arguments.
 
-**State at this writing.** Branch `audit-hardening`, commit `be76f37`. The
+**State at this writing.** Branch `audit-hardening`, commit `48e036e`. The
 numbers below are generated from `PLAN.md`'s rows and were recomputed rather
 than carried over; where an earlier revision of a document disagreed with them,
 the disagreement is recorded in `DECISIONS.md` D-59 rather than smoothed away.
 The `Fixed` column counts `FIXED` only; the two `PARTIAL` rows are counted in
 `Remaining`, because a half-fixed finding is not closed.
 
-**This report tracks a moving tree, and it has already moved three times.** It
+**This report tracks a moving tree, and it has already moved four times.** It
 was first written at `6187ff2` with 28 fixed. Three ARCH findings were then
 closed (`ARCH-05`, `ARCH-16`, `ARCH-18`), and `PKG-01`, `PKG-02`, `PKG-04` and
 `PKG-05` followed. `PERF-01`, `PERF-02` and `PERF-03` are the most recent, in
@@ -22,9 +22,12 @@ where its rows said 32, and this file's `Found` column counted the two refuted
 rows twice. Both are now computed from the rows by the same reading, and both
 mistakes are recorded rather than quietly overwritten. A report whose figures
 lag the rows it claims to summarise is the defect this audit exists to find, one
-level up.
+level up — and the fourth move is the proof of it: `88578db` marked `SEC-04`
+`FIXED` and `48e036e` marked `SEC-09` `FIXED`, and neither regenerated `PLAN.md`'s
+tables, so this file inherited a count that was three rows stale. That is now a
+`plan-counts` stage in `scripts/verify.sh` rather than an intention.
 
-**This is not a final report.** 88 of 127 defects are still open, most of them
+**This is not a final report.** 86 of 128 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -36,9 +39,9 @@ and the section *What remains, honestly* says which is which.
 | `ARCH-xx` | Architecture, code quality | 25 | 7 | 0 | 18 |
 | `UX-xx` | libcosmic / COSMIC UX | 30 | 1 | 0 | 29 |
 | `PERF-xx` | Performance, resource | 8 | 3 | 0 | 5 |
-| `SEC-xx` | Security, robustness | 10 | 1 | 0 | 9 |
-| `PKG-xx` | Packaging, platform, QA | 9 | 4 | 0 | 5 |
-| **Total** | | **127** | **39** | **2** | **88** |
+| `SEC-xx` | Security, robustness | 10 | 3 | 0 | 7 |
+| `PKG-xx` | Packaging, platform, QA | 10 | 5 | 0 | 5 |
+| **Total** | | **128** | **42** | **2** | **86** |
 
 The `Found` column is defects; the two refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 47 rows and this table says
@@ -51,9 +54,9 @@ By severity:
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
 | P1 | 23 | 18 | 0 | 5 |
-| P2 | 51 | 17 | 0 | 34 |
-| P3 | 49 | 0 | 0 | 49 |
-| **Total** | **127** | **39** | **0** | **88** |
+| P2 | 52 | 19 | 0 | 33 |
+| P3 | 49 | 1 | 0 | 48 |
+| **Total** | **128** | **42** | **0** | **86** |
 
 `Not a defect` is not a euphemism for "wontfix": both rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`,
@@ -101,13 +104,13 @@ So the brief's standard — `Remaining` should be zero for actionable P0/P1/P2 �
 is **not met**, and the reason is that the work is unfinished, not that it is
 impossible. Stating that plainly is the point of this section.
 
-Where the 88 rows are:
+Where the 86 rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All four fixed and each verified by restoring the pre-fix body and watching the new test fail. |
 | P1 | 5 | Real and actionable. Four are `UX` (keyboard and accessibility gaps in dropdowns, togglers and text inputs — upstream libcosmic widget gaps; a local wrapper fixes most of each, and `UX-01`'s popup cannot be opened from the keyboard without an upstream patch, which the row says). The fifth, `ARCH-02`, is an architecture row of the same kind as those already fixed. |
-| P2 | 34 | Actionable. The largest concentration is `UX` (15) and `ARCH` (10); the rest are 3 `SEC`, 3 `PERF`, 2 `BUG` and 1 `PKG`. |
+| P2 | 33 | Actionable. The largest concentration is `UX` (15) and `ARCH` (10); the rest are 3 `SEC`, 3 `PERF`, 2 `BUG` and 1 `PKG`. |
 | P3 | 49 | Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. The 20 open `BUG` rows are all here, along with 10 `UX`, 7 `ARCH`, 6 `SEC`, 4 `PKG` and 2 `PERF`. |
 
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
@@ -163,7 +166,7 @@ flagging — and both now have those controls pinned in tests.
 | `SECURITY.md` | 10 findings on the sandbox, process launching and the dependency graph |
 | `ARCHITECTURE.md` | 25 findings on structure, contracts and code quality |
 | `PACKAGING.md` | 9 findings on the Flatpak, the desktop entry and the gate |
-| `PLAN.md` | All 129 rows: owner, dependencies, verification, status — 127 defects and the 2 refuted ones |
+| `PLAN.md` | All 130 rows: owner, dependencies, verification, status — 128 defects and the 2 refuted ones |
 | `DECISIONS.md` | The seven decisions this audit made (`D-57`–`D-63`) |
 
 Each document's scope section states whether it is still read-only. That
