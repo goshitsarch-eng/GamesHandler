@@ -12,15 +12,40 @@
 //!   [`verify_installer_authenticity`], [`wineserver_binary`],
 //!   [`wait_for_prefix_idle`], [`wait_for_installer`].
 //!
-//! # What this file still does not do, named so no caller assumes it
+//! # Callers
 //!
-//! It has no *caller*. [`download_installer`] and [`wait_for_installer`] are
-//! the easy-install worker's two halves and nothing in the app drives them yet
-//! — `view/installers.rs` renders the nine cards and its own module doc says
-//! the missing piece was the catalog; what is missing *now* is the wiring, which
-//! is T-12's second half. A `core` module landing is not a feature landing, and
-//! the honest statement of what is left is "these five functions have no call
-//! site outside their own tests", not "the page installs things".
+//! **These functions are wired.** This header used to say the opposite — that
+//! the file "has no *caller*" and that five named functions "have no call site
+//! outside their own tests" — and every clause of that was false by the time it
+//! was read. The easy-install worker
+//! ([`easy_install_worker`](crate::installers)) lives in the app crate at
+//! `crates/app/src/main.rs:3160`, wired there by T-38, and it drives this file's
+//! download and wizard halves directly:
+//!
+//! | Function | Production call site |
+//! |---|---|
+//! | [`download_installer`] | `crates/app/src/main.rs:3174` |
+//! | [`wait_for_installer`] | `crates/app/src/main.rs:3219` |
+//! | [`wait_for_prefix_idle`] | `crates/app/src/main.rs:3225` |
+//! | [`verify_installer_authenticity`] | `crates/core/src/installers.rs:1929` |
+//! | [`wineserver_binary`] | `crates/core/src/installers.rs:2045` |
+//!
+//! `wait_for_prefix_idle` reaches the worker as the closure `wait_for_installer`
+//! is handed (`crates/app/src/main.rs:3226`), not as a statement of its own,
+//! which is why its row's line is inside that call.
+//!
+//! Every row above is checked by `crates/core/tests/wiring_claims.rs`, which
+//! reads this table and fails when a cited file stops containing a live call.
+//! A row's line number is a locator; when the call moves, that test names the
+//! line it moved to so the row can be corrected in the same commit.
+//!
+//! The header was corrected because a false "not landed yet" is not a neutral
+//! error: a maintainer reading the crate that is supposed to be self-describing
+//! is told the whole install path is unwired, and may re-wire it, delete it, or
+//! decline to touch it. `crates/app/src/view/installers.rs:46-50` records that
+//! this exact failure mode has already happened once in this project, which is
+//! why the rule here is that a stale claim about wiring is a defect and not a
+//! stale comment.
 //!
 //! Two smaller things that are genuinely incomplete rather than unwired:
 //!
