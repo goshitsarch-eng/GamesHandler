@@ -5,37 +5,42 @@ what was fixed, and what is still open, in one table. `PLAN.md` is the schedule
 — every finding with its owner, dependencies and verification method. This file
 is the accounting. The six specialist documents hold the arguments.
 
-**State at this writing.** Branch `audit-hardening`, commit `6187ff2`. The
+**State at this writing.** Branch `audit-hardening`, commit `0c92f9e`. The
 numbers below are generated from `PLAN.md`'s rows and were recomputed rather
 than carried over; where an earlier revision of a document disagreed with them,
 the disagreement is recorded in `DECISIONS.md` D-59 rather than smoothed away.
 
-**This is not a final report.** 99 of 129 findings are still open, most of them
+**This report tracks a moving tree, and it has already moved once.** It was
+first written at `6187ff2` with 28 fixed. Three more ARCH findings have since
+been closed (`ARCH-05`, `ARCH-16`, `ARCH-18`), so the tables below are
+regenerated rather than left standing — a report whose figures lag the rows it
+claims to summarise is the defect this audit exists to find, one level up.
+
+**This is not a final report.** 96 of 129 findings are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
-and the section *What remains, honestly* says which is which. A report that
-claimed otherwise would be the defect this audit exists to find.
+and the section *What remains, honestly* says which is which.
 
 ## Summary
 
 | Category | Role | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 47 | 23 | 2 | 22 |
-| `ARCH-xx` | Architecture, code quality | 25 | 4 | 0 | 21 |
+| `ARCH-xx` | Architecture, code quality | 25 | 7 | 0 | 18 |
 | `UX-xx` | libcosmic / COSMIC UX | 30 | 1 | 0 | 29 |
 | `PERF-xx` | Performance, resource | 8 | 0 | 0 | 8 |
 | `SEC-xx` | Security, robustness | 10 | 0 | 0 | 10 |
 | `PKG-xx` | Packaging, platform, QA | 9 | 0 | 0 | 9 |
-| **Total** | | **129** | **28** | **2** | **99** |
+| **Total** | | **129** | **31** | **2** | **96** |
 
 By severity:
 
 | Severity | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
-| P1 | 23 | 12 | 0 | 11 |
-| P2 | 53 | 12 | 2 | 39 |
+| P1 | 23 | 13 | 0 | 10 |
+| P2 | 53 | 14 | 2 | 37 |
 | P3 | 49 | 0 | 0 | 49 |
-| **Total** | **129** | **28** | **2** | **99** |
+| **Total** | **129** | **31** | **2** | **96** |
 
 `Not a defect` is not a euphemism for "wontfix": both rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`,
@@ -83,13 +88,13 @@ So the brief's standard — `Remaining` should be zero for actionable P0/P1/P2 �
 is **not met**, and the reason is that the work is unfinished, not that it is
 impossible. Stating that plainly is the point of this section.
 
-Where the 99 rows are:
+Where the 96 rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All four fixed and each verified by restoring the pre-fix body and watching the new test fail. |
-| P1 | 11 | Real and actionable. Five are `UX` (keyboard and accessibility gaps in dropdowns, togglers and text inputs — these are upstream libcosmic widget gaps, and the work is a local widget or an upstream patch, both of which this repository can do). The rest are architecture, performance and packaging rows of the same kind as those already fixed. |
-| P2 | 39 | Actionable. The largest concentration is `UX` (15) and `ARCH` (12). |
+| P1 | 10 | Real and actionable. Four are `UX` (keyboard and accessibility gaps in dropdowns, togglers and text inputs — these are upstream libcosmic widget gaps, and the work is a local widget or an upstream patch, both of which this repository can do). The rest are architecture, performance and packaging rows of the same kind as those already fixed. |
+| P2 | 37 | Actionable. The largest concentration is `UX` (15) and `ARCH` (10). |
 | P3 | 49 | Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. The 20 open `BUG` rows are all here. |
 
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
@@ -100,7 +105,7 @@ them for a backlog item:
   and contribute no accessibility node, and the cause is in the *pinned*
   libcosmic widgets: `toggler` has no `operate` at all. Closing these is a local
   widget or an upstream patch rather than an edit to this code, and the audit
-  has argued both. Three agents are on them now.
+  has argued both.
 * **`SEC-10`** — five live RustSec advisories, none reachable from the shipped
   binary, all transitive pins owned by libcosmic. There is no fix available at
   this layer, and the brief forbids upgrading for version numbers alone. The
