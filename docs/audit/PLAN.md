@@ -64,7 +64,7 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 39 | 37 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 20 | 18 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 24 | 19 `FIXED`, 3 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
+| `COSMIC-UX.md` | 30 | 25 | 20 `FIXED`, 3 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 10 | 9 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
@@ -136,8 +136,8 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 22 | 0 | 27 |
-| **Total** | **130** | **97** | **0** | **33** |
+| P3 | 49 | 23 | 0 | 26 |
+| **Total** | **130** | **98** | **0** | **32** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -146,8 +146,8 @@ advocate reviews every row before it is called done and owns no row.
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 9 | 0 | 2 |
-| `UX-xx` | `COSMIC-UX.md` | 29 | 19 | 0 | 10 |
-| **Total** | | **130** | **97** | **0** | **33** |
+| `UX-xx` | `COSMIC-UX.md` | 29 | 20 | 0 | 9 |
+| **Total** | | **130** | **98** | **0** | **32** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -340,7 +340,7 @@ across families, not within them.
 | `SEC-09` | Two of the app's process spawns inherit the launcher's entire environment, and they are the two security-relevant ones: the package-manager install and the Authenticode verifier | S4 | — | Clear the environment at the two spawn sites and pass back only what the child needs; verify by dumping the child's environment. | FIXED |
 | `UX-21` | Grid cells are fixed at 200×300 with a fixed column count, so at narrow widths the library grid runs off the right edge and the cards there cannot be reached | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-22` | Two heading levels do the same job | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: OPEN** — located precisely, not changed. Section headings are `title4` on Settings/Plugins/Credits/form (via the pinned `settings_section` helper) and `title3` on Runners (4) and Installers (1). Not changed: on those two pages `title3` is the top rung of a three-level hierarchy (`title3` section → `title4` item → 14 px list heading), so reconciling upward collapses two rungs — and the change is purely visual, verifiable only by looking at the pages, which this environment has no display for. The row now carries the decision and its cost instead of a call-site count. | OPEN |
-| `UX-23` | Page padding is a hardcoded 18 and the theme's spacing tokens are never consulted | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `UX-23` | Page padding is a hardcoded 18 and the theme's spacing tokens are never consulted | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** `view::GUTTER: u16 = 18` is deleted and `view::gutter()` returns `cosmic::theme::spacing().space_s`; all seven pages pad by it. UX-10's constant only *mechanically* partly satisfied this row — it held the literal, so it named the number without consulting the theme, and it had two users while five pages still wrote `.padding(18)`, which is why the row was genuinely OPEN. `18` is not a token at any density; `space_s` (16) is nearest, off by 2, and the page moves 18 → 16 (2 px per side, 4 px wider content) as the price of the token, stated rather than asserted to look better. Mutation-checked: `gutter()` back to `18` fails both page edge tests (`leftmost node at x = 18, expected 16`), reverting `view/library.rs` to `.padding(18)` fails the new guard (`["library"]`), and dropping the padding in `view/plugins.rs` fails its positive half. Density responsiveness itself is untestable here — `theme::spacing()` reads a `pub(crate)` static with no public writer. | FIXED |
 | `UX-24` | The app's only widget id is the library search box, so only that one field can ever be focused programmatically, and no dialog sets an initial focus | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | PARTIAL |
 | `UX-25` | No page bounds its content width, so at 2560 px and above the settings rows become "label … far-away control" pairs and the credits prose runs to an unreadably long measure | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-26` | Long names and subtitles are hard-cut mid-glyph with no ellipsis marker, where the reference elides | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |

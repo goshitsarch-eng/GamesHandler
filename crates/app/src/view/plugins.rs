@@ -411,7 +411,7 @@ pub fn view<'a>(page: PluginsPage<'a>) -> Element<'a, Message> {
         body = body.push(card(row));
     }
 
-    container(scrollable(body)).padding(18).into()
+    container(scrollable(body)).padding(super::gutter()).into()
 }
 
 #[cfg(test)]
