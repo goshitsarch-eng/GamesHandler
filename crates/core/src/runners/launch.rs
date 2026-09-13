@@ -384,15 +384,25 @@ pub fn launch(
             extra_argv.push(runner_executable);
         }
         extra_argv.push(extra.to_string());
-        // Detached and unreaped, exactly as Python leaves it: the extra app is
-        // a helper the user asked for, and its failure is not the title's.
-        let _ = Process::new(&extra_argv[0])
+        // Python is `subprocess.Popen(extra_argv, env=env)` with no `try`, so a
+        // missing or non-executable helper raises `FileNotFoundError` /
+        // `PermissionDenied` and that propagates out of `launch()` into
+        // `Could not launch "<name>": …`. The `?` reproduces that.
+        //
+        // A comment here used to say the helper's failure "is not the title's",
+        // and discarded the result on that basis. The reference does not agree,
+        // and it is right not to: a trainer or an overlay that silently does not
+        // start is a thing the user will spend an evening trying to debug from
+        // the game's side. See `BUG-05`.
+        //
+        // Detached and unreaped once started, exactly as Python leaves it.
+        Process::new(&extra_argv[0])
             .args(&extra_argv[1..])
             .envs(&environment)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn();
+            .spawn()?;
     }
 
     // Python's `cwd = game.working_directory or None`, then the executable's
@@ -1403,6 +1413,56 @@ mod tests {
         .err()
         .expect("a title with no executable must be refused");
         assert_eq!(error.to_string(), "No executable is configured");
+    }
+
+    /// A helper in `additional_app` that cannot start fails the launch, as it
+    /// does in the reference.
+    ///
+    /// `BUG-05`: the spawn result was discarded, so a trainer or overlay that
+    /// did not exist was silently dropped and the title launched as though the
+    /// configuration had been honoured. Python is `subprocess.Popen(extra_argv,
+    /// env=env)` with no `try`, so `FileNotFoundError` escapes as
+    /// `Could not launch "<name>": …`.
+    ///
+    /// A **Linux** title, deliberately: for a Windows one `runner_executable`
+    /// is prepended, so `extra_argv[0]` is the runner and a helper-only failure
+    /// is not what the spawn reports. With `runner_executable` empty — which is
+    /// every native title (`build_linux_command`) — `extra_argv` is the helper
+    /// alone, and the spawn's error is unambiguously the helper's. My first
+    /// draft used a Windows title and was measuring the wrong binary.
+    #[test]
+    fn a_helper_that_cannot_start_fails_the_launch() {
+        let root = scratch("launch-extra-app");
+        let exe = root.join("game");
+        write_script(&exe, "#!/bin/sh\nexit 0\n");
+
+        let mut game = Game::new_named("Test Title");
+        game.kind = "linux".to_string();
+        game.exe_path = exe.to_string_lossy().into_owned();
+        game.additional_app = root.join("no-such-helper").to_string_lossy().into_owned();
+
+        let manager = RunnerManager::at("/nonexistent");
+        let host = FakeLaunchEnv::new();
+        let error = launch(&game, &manager, &host, &NoShares)
+            .err()
+            .expect("a helper that does not exist cannot be started");
+        match error {
+            RunnerError::Io(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::NotFound, "got {error:?}");
+            }
+            other => panic!("expected the spawn's own io error, got {other:?}"),
+        }
+
+        // Anti-vacuity: the *same* game with a helper that does exist must get
+        // past this point, or the assertion above would also pass on a launch
+        // that refuses every `additional_app`.
+        let helper = root.join("helper");
+        write_script(&helper, "#!/bin/sh\nexit 0\n");
+        game.additional_app = helper.to_string_lossy().into_owned();
+        let mut running = launched_or_busy_retry(&game, &manager, &host, &NoShares)
+            .expect("a helper that exists must not block the launch");
+        let _ = running.child_mut().kill();
+        let _ = running.child_mut().wait();
     }
 
     /// The Proton gate is on the **runtime**, not on the family name, and both
