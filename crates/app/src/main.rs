@@ -3896,27 +3896,9 @@ impl cosmic::Application for App {
     }
 
     fn init(core: cosmic::Core, _flags: Self::Flags) -> (Self, cosmic::app::Task<Self::Message>) {
-        // These two loads are the only filesystem work *this block* does, and
-        // neither is fallible: `Settings.load` and `Library.load` degrade to
-        // defaults rather than raising (D-20, `models.py`).
-        //
-        // They are not the only reads at startup, and an earlier version of
-        // this comment claimed they were (PERF-04). The two `refresh_*` calls
-        // below are the rest, and they are not free: `refresh_plugins` walks
-        // `PATH` once per plugin through `is_installed` (`plugins.rs:84-86`)
-        // and reaches `detect_package_manager` (`:258-278`, up to five `which`
-        // scans plus two `/etc` probes) and `in_flatpak` (`:197-240`,
-        // `Path::exists("/.flatpak-info")`); `refresh_installers` calls
-        // `installer_categories()` and `runner_choices()` → `installed_protons()`,
-        // a `read_dir` over the runners directory plus a metadata read per
-        // runner. Measured with `strace -f -c -e trace=%file` at startup:
-        // **18** `statx` of `/.flatpak-info` and 6 each of `pacman`, `dnf` and
-        // `apt-get` under the user profile's `bin`. The dominant startup cost is
-        // not any of that — **187,490** of **190,438** path-bearing syscalls in
-        // the same run are libcosmic's icon-theme scan under `/usr/share/icons`,
-        // and it is much smaller inside the Flatpak. Do not attribute that to
-        // this code, and do not restate the two-loads claim: a comment asserting
-        // an invariant the code below it breaks is what sent this audit looking.
+        // The only loads *here*, and neither is fallible: `Settings.load` and
+        // `Library.load` degrade to defaults rather than raising (D-20). They
+        // are not the only reads at startup — see `PERFORMANCE.md` PERF-04.
         let settings = Settings::load(None);
         let library = Library::new(None);
         let runners = RunnerManager::new(&SystemLaunchEnv);
