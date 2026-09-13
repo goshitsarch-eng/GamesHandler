@@ -101,19 +101,26 @@ advocate reviews every row before it is called done and owns no row.
 | Severity | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
-| P1 | 23 | 12 | 0 | 11 |
-| P2 | 53 | 12 | 2 | 39 |
+| P1 | 23 | 15 | 0 | 8 |
+| P2 | 53 | 16 | 2 | 35 |
 | P3 | 49 | 0 | 0 | 49 |
-| **Total** | **129** | **28** | **2** | **99** |
+| **Total** | **129** | **35** | **2** | **92** |
 
-| Family | Document | Findings |
-|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 25 |
-| `BUG-xx` | `BUGS.md` | 47 |
-| `PERF-xx` | `PERFORMANCE.md` | 8 |
-| `PKG-xx` | `PACKAGING.md` | 9 |
-| `SEC-xx` | `SECURITY.md` | 10 |
-| `UX-xx` | `COSMIC-UX.md` | 30 |
+| Family | Document | Findings | Fixed | Withdrawn | Remaining |
+|---|---|---|---|---|---|
+| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 7 | 0 | 18 |
+| `BUG-xx` | `BUGS.md` | 47 | 23 | 2 | 22 |
+| `PERF-xx` | `PERFORMANCE.md` | 8 | 0 | 0 | 8 |
+| `PKG-xx` | `PACKAGING.md` | 9 | 3 | 0 | 6 |
+| `SEC-xx` | `SECURITY.md` | 10 | 1 | 0 | 9 |
+| `UX-xx` | `COSMIC-UX.md` | 30 | 1 | 0 | 29 |
+| **Total** | | **129** | **35** | **2** | **92** |
+
+These figures are computed from the rows below — by `### Pn` section for the
+severity table and by ID prefix for the family table — rather than maintained
+beside them. `Remaining` counts `PARTIAL` as remaining, because a half-fixed
+finding is not closed; `Fixed` therefore excludes them and the two `PARTIAL`
+rows appear in `Remaining` until they are finished.
 
 ## Findings
 
@@ -137,7 +144,7 @@ across families, not within them.
 | `ARCH-02` | The view layer's stated contract is false, and the code that violates it is the code the contract was written to describe | S5 | — | Either the two `view` `update` bodies move behind `Message` and `view/mod.rs:5-11` becomes true, or the paragraph is rewritten to describe the split the code has. A test walking `view/` for `&mut State` parameters enforces whichever is chosen. | OPEN |
 | `ARCH-03` | uninstall reports success for a removal that did not happen | S5 | duplicate of `BUG-03` | As `BUG-03`. The remaining `!target.is_dir()` arm returns `Ok(())` for an absent target, which is the intended convergence rather than the defect. | FIXED with `BUG-03` |
 | `ARCH-04` | One of the two "open something for the user" helpers discards its spawn failure and returns Ok(()); the other reports | S5 | duplicate of `BUG-04` | As `BUG-04`. | FIXED with `BUG-04` |
-| `ARCH-05` | A core module's own header declares the live easy-install path dead | S5 | — | Rewrite `installers.rs:15-23` in the present tense naming `easy_install_worker`; verify every function the header calls callerless has a non-test call site. | FIXED `9f07c41` |
+| `ARCH-05` | A core module's own header declares the live easy-install path dead | S5 | — | Rewrite `installers.rs:15-23` in the present tense naming `easy_install_worker`; verify every function the header calls callerless has a non-test call site. | FIXED `75fc739` (re-fixed after the line citations went stale) |
 | `ARCH-06` | A comment states that the toolkit cannot do something it can, and the paragraph is the recorded reason a known defect is deferred | S5 | duplicate of the comment half of `BUG-47` | The paragraph now records that the claim was false and what the pinned iced actually exposes; `name_ellipsize` holds the strategy. | FIXED with `BUG-47` |
 | `BUG-03` | "Removed {runner}" is toasted for a removal that never happened | S1 | — | `uninstall` on a symlinked build: pre-fix the link survives and `Ok(())` is returned, post-fix the link is unlinked. | FIXED `cf0434e` |
 | `BUG-04` | open_prefix_folder discards the xdg-open spawn result, so the prefix-folder menu item reports success when nothing opened | S1 | — | Verified end-to-end against the real binary — the helper was new, so there is no restorable pre-state. | FIXED `318d558` |
@@ -150,8 +157,8 @@ across families, not within them.
 | `PERF-01` | Every game's cover is classified on every frame — two filesystem syscalls per game with a cover, per frame — regardless of whether the tile is visible | S3 | — | Classify once at load or change and cache on the game; verify the per-frame syscall count (`strace -c -e trace=statx,newfstatat`) on a 500-game fixture. | OPEN |
 | `PERF-02` | Cover images are decoded at full source resolution and retained, and the cache is bounded only by "what was drawn in the last frame" — which, with no virtualization (PERF-03), is every game in the library | S3 | `PERF-03` | Bound the cache by bytes and decode at the drawn size; verify RSS on a 500-cover fixture (baseline 753 MB / 333 covers, measured). | OPEN |
 | `PERF-03` | Nothing is virtualized: every game in the filtered library gets a built Element every frame | S3 | — | Virtualize the grid and row lists; verify the built-element count per frame against a 500-game fixture. | OPEN |
-| `PKG-01` | The only check that executes the built artefact can execute a stale, previously installed build instead | S6 | — | Resolve which artefact `scripts/smoke-test.sh` executes after the build, or refuse to fall back when a tree build exists; verify by planting a stale installed build and observing the runner name it. | OPEN |
-| `SEC-01` | --device=all has no justification in launcher code | S4 | — | Narrow to `--device=dri`, then run the controller hotplug test `docs/migration/packaging.md` Q-2 asks for and record that test as the grant's justification. | OPEN |
+| `PKG-01` | The only check that executes the built artefact can execute a stale, previously installed build instead | S6 | — | Resolve which artefact `scripts/smoke-test.sh` executes after the build, or refuse to fall back when a tree build exists; verify by planting a stale installed build and observing the runner name it. | FIXED `8abac0b` |
+| `SEC-01` | --device=all has no justification in launcher code | S4 | — | Narrow to `--device=dri`, then run the controller hotplug test `docs/migration/packaging.md` Q-2 asks for and record that test as the grant's justification. | FIXED `e2c6476` |
 | `UX-01` | Dropdowns are in no keyboard focus ring and contribute no accessibility node | S2 | — | A test asserting the `Operation` from a built dropdown contains a focusable node. Upstream `Dropdown` has its `operate` hook commented out, so this needs a wrapper or a carried patch. | OPEN |
 | `UX-02` | Togglers are mouse-only | S2 | — | A test asserting a focused toggler responds to space/enter. Upstream `toggler` has **no** `operate` at all, so this needs a local widget or an upstream patch. | OPEN |
 | `UX-03` | Text inputs emit no accessibility node at all, so the entire add/edit-game form is invisible to a screen reader | S2 | — | A test asserting `a11y_nodes` is non-empty for a built `text_input`. Neither implementation defines it. | OPEN |
@@ -194,7 +201,7 @@ across families, not within them.
 | `PERF-06` | RunnerManager::label is uncached, walks the filesystem, and is called once per shown game per frame — and it reads and JSON-parses each runner's metadata only to discard the parsed value | S3 | — | Cache the label against the runner directory's mtime, or read the id without parsing metadata; verify the per-frame file opens on a 5-runner fixture. | OPEN |
 | `PKG-02` | Nothing in the repository runs the verification chain automatically | S6 | — | Add CI (or a hook, or a `just`/`make` entry) that runs `scripts/verify.sh`; verify by breaking a test and watching the wiring fail. | OPEN |
 | `PKG-03` | Both the Flatpak build and the cargo-sources freshness check depend on things a clean checkout does not contain, and one of them needs the network by default | S6 | — | Make the Flatpak build and the cargo-sources check either self-provisioning or an explicit, reported skip with the reason; verify on a clean checkout. | OPEN |
-| `PKG-04` | flatpak-contents verifies placement and bytes but never runs the binary, and its one binary check is a text search inside the ELF rather than an execution | S6 | — | Execute the installed binary in `flatpak-contents` (a `--version` is enough); verify by planting a binary that cannot run and watching the stage fail. | OPEN |
+| `PKG-04` | flatpak-contents verifies placement and bytes but never runs the binary, and its one binary check is a text search inside the ELF rather than an execution | S6 | — | Execute the installed binary in `flatpak-contents` (a `--version` is enough); verify by planting a binary that cannot run and watching the stage fail. | FIXED `ead99e7` |
 | `PKG-05` | The application ships a single 128×128 SVG and no PNG icon at any size | S6 | — | Ship PNGs at the sizes the specification names; verify with the AppStream validator and `flatpak-contents`. | FIXED `9e10566` |
 | `SEC-02` | --filesystem=home grants read-write to the entire home directory, which is broader than the directories the code touches | S4 | — | Narrow to the XDG roots the code actually touches plus the seven fixed search roots; verify by running the app in the narrowed sandbox and exercising every path-touching flow. | OPEN |
 | `SEC-03` | The Authenticode authenticity decision is weaker than it reads | S4 | — | Compare the publisher against the verifier's structured field rather than a case-folded substring of merged output; verify with a fixture whose output contains a matching substring in an unrelated field. | OPEN |
