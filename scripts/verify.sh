@@ -1592,9 +1592,29 @@ stage_cargo_sources_fresh() {
         echo "flatpak-cargo-generator.py not found, so cargo-sources.json cannot be"
         echo "checked for freshness. **The coverage half of this check DID run** — it"
         echo "is the previous stage and it needs no generator."
-        echo "Install it from flatpak/flatpak-builder-tools (cargo/), then put it on PATH,"
-        echo "set FLATPAK_CARGO_GENERATOR=/path/to/flatpak-cargo-generator.py, or drop a"
-        echo "copy at build-aux/flatpak/flatpak-cargo-generator.py."
+        # Pinned, not "from master" (PKG-03). The generator is not vendored into
+        # this repository — 511 lines of someone else's MIT code is a packaging
+        # decision with a maintenance cost, and PKG-03 records it as the open half
+        # rather than something to land inside a verification-script change. What
+        # this stage can do instead is make the copy reproducible: the command
+        # below fetches the exact revision the freshness check here was last run
+        # against, and the hash after it is the file that run produced, so a later
+        # reader can tell whether upstream has moved under them. Provenance is
+        # what the row objected to the absence of; a hash supplies it without
+        # embedding the file.
+        echo "Fetch the revision this stage was verified against, then re-run:"
+        echo
+        echo "  curl -fsSL https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/\\"
+        echo "    f03a673abe6ce189cea1c2857e2b44af2dd79d1f/cargo/flatpak-cargo-generator.py \\"
+        echo "    -o \"\${XDG_CACHE_HOME:-\$HOME/.cache}/flatpak-builder-tools/cargo/flatpak-cargo-generator.py\""
+        echo "  sha256sum ... # expect b373c8ab1a05378ec5d8ed0645c7b127bcec7d2f7a1798694fbc627d570d856c"
+        echo
+        echo "flatpak-builder-tools f03a673 (2025-08-16), 511 lines, MIT. Other accepted"
+        echo "locations: PATH, FLATPAK_CARGO_GENERATOR=/path/to/it, or a vendored copy at"
+        echo "build-aux/flatpak/flatpak-cargo-generator.py."
+        echo
+        echo "Note this stage is not offline even with the generator: regenerating needs"
+        echo "flathub's index and the 11 git sources."
         return 99   # 99 => SKIP
     fi
     echo "generator:   $gen"
