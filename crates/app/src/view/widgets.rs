@@ -88,7 +88,7 @@ use cosmic::Element;
 use cosmic::iced::gradient::Linear;
 use cosmic::iced::widget::container;
 use cosmic::iced::{Alignment, Background, Border, Color, Length, Radians};
-use cosmic::widget::{button, image, mouse_area, text, Column, Row};
+use cosmic::widget::{Column, Row, button, image, mouse_area, text};
 use gamehandler_core::models::Game;
 use gamehandler_core::runners::RunnerManager;
 
@@ -131,7 +131,6 @@ const PREVIEW_LABEL_ID: &str = "gamehandler.cover.preview-label";
 /// "Play"` on both the card's button (`LibraryPage.qml:205`) and the row's
 /// (`:277`).
 const PLAY_LABEL: &str = "Play";
-
 
 /// The box a caller wants a cover drawn in, and how to draw it.
 ///
@@ -387,11 +386,7 @@ fn play_button<'a, M: Clone + 'static>(game_id: &str, on_play: M) -> Element<'a,
 /// *list row* that gained it, and a card that showed it too would render a
 /// string the reference never renders. T-30 is scoped to the row for this
 /// reason; see [`row`].
-pub fn card<'a, M: Clone + 'static>(
-    game: &'a Game,
-    label: &str,
-    on_play: M,
-) -> Element<'a, M> {
+pub fn card<'a, M: Clone + 'static>(game: &'a Game, label: &str, on_play: M) -> Element<'a, M> {
     let (cell_w, cell_h) = metrics::GRID_CELL;
     let spec = card_cover_spec();
 
@@ -558,40 +553,82 @@ pub fn title_of(game: &Game) -> String {
 /// It is also what the reference does, which is the better reason: the card's
 /// two `QQC2.Label`s set `elide: Text.ElideRight` and no `wrapMode`
 /// (`LibraryPage.qml:182-197`), and `QQC2.Label`'s default is `Text.NoWrap`. The
-/// row's do the same (`:261-273`). So the reference never wraps these strings
-/// either — it truncates them.
+/// row's do the same (`:261-273`).
 ///
-/// # One divergence, recorded rather than closed
+/// # The ellipsis, and a comment here that was wrong
 ///
 /// The reference **elides** — it draws `The Elder Scrolls V Sky…` — and this
-/// iced has no ellipsis: [`Wrapping`] is `None`, `Word`, `Glyph` or
-/// `WordOrGlyph`, and there is no truncation-with-marker mode in this version.
-/// So a name too long for the card is cut at the card's edge instead of at a
-/// `…`. The width is still bounded — iced clamps the run to the limits it is
-/// given, so the string does not spill across its neighbours (measured: a
-/// 45-character name lays out 188.0 wide inside a 188.0 box) — and a one-line
-/// title that is cut off is a smaller defect than a Play control with nothing
-/// in it. Closing it needs an iced that can elide, so it is a bound on this fix
-/// and not a task inside it.
+/// code used to say that was unreachable: "this iced has no ellipsis: `Wrapping`
+/// is `None`, `Word`, `Glyph` or `WordOrGlyph`, and there is no
+/// truncation-with-marker mode in this version", with the divergence filed as a
+/// bound on the fix. **That was false**, and it was false in the direction that
+/// costs the most: it talked the fix out of existing. [`Wrapping`] and
+/// [`Ellipsize`] are *orthogonal* — `Wrapping` is how a line that does not fit
+/// is broken, `Ellipsize` is what happens after that — and iced does expose the
+/// second one: `Text::ellipsize` (`iced/core/src/widget/text.rs:166`) sets
+/// `Format::ellipsize` (`:809`), which the graphics layer hands to the shaper as
+/// `Buffer::set_ellipsize(cosmic_text::Ellipsize)`
+/// (`iced/graphics/src/text/paragraph.rs:92`, `iced/graphics/src/text.rs:378`).
+/// Under `Wrap::None` cosmic-text still ellipsizes: its `Wrap::None` branch calls
+/// `layout_line(.., width_opt, ellipsize)`, and `layout_spans` computes
+/// `check_ellipsizing = matches!(ellipsize, Start(_) | End(_)) && width_opt is
+/// finite` (`cosmic-text-0.19.0/src/shape.rs:2316`, `:1741`). So the reference's
+/// behaviour is reachable and this is it.
+///
+/// [`name_ellipsize`] holds the strategy, and its doc records what the unit test
+/// can and cannot reach: the *value* is asserted, the *wiring* is iced's and is
+/// verified by eye against the running app.
 ///
 /// [`Wrapping`]: cosmic::iced::widget::text::Wrapping
 /// [`Wrapping::None`]: cosmic::iced::widget::text::Wrapping::None
+/// [`Ellipsize`]: cosmic::iced::widget::text::Ellipsize
 fn name_and_subtitle<'a, M: Clone + 'static>(game: &'a Game, subtitle: String) -> Element<'a, M> {
     use cosmic::iced::widget::text::Wrapping;
     Column::new()
         .push(
             text(title_of(game))
                 .size(metrics::CARD_NAME_SIZE)
-                .wrapping(Wrapping::None),
+                .wrapping(Wrapping::None)
+                .ellipsize(name_ellipsize()),
         )
         .push(
             text(subtitle)
                 .size(metrics::CARD_SUBTITLE_SIZE)
-                .wrapping(Wrapping::None),
+                .wrapping(Wrapping::None)
+                .ellipsize(name_ellipsize()),
         )
         .spacing(metrics::CARD_TEXT_SPACING)
         .width(Length::Fill)
         .into()
+}
+
+/// The ellipsizing strategy for a card's or a row's name and subtitle.
+///
+/// `End(Lines(1))` is the reference's `Text.ElideRight` under `Text.NoWrap`
+/// (`LibraryPage.qml:186`, `:195`, `:265`, `:272`): one line, cut at the end,
+/// with the marker. [`Wrapping::None`] already forces the one line; the limit is
+/// what makes the cut happen at the *right* place rather than at whatever byte
+/// the layout ran out of room on.
+///
+/// # What the test below does and does not prove
+///
+/// [`Text`]'s `format` field is private and iced has no downcast anywhere, so
+/// nothing in this suite can read an `ellipsize` back off a built widget — a
+/// test that claimed to would be this project's dominant defect class, a check
+/// that passes without inspecting what it claims. So the test asserts the
+/// **strategy** (that this function returns what the reference asks for, and
+/// that both cards and rows call it) and the doc names the **wiring** as iced's,
+/// verified by eye against the running application rather than asserted here.
+/// The distinction is the point: the row that replaced a false claim should not
+/// replace it with an unfalsifiable one.
+///
+/// [`Wrapping::None`]: cosmic::iced::widget::text::Wrapping::None
+/// [`Text`]: cosmic::iced::widget::Text
+fn name_ellipsize() -> cosmic::iced::widget::text::Ellipsize {
+    use cosmic::iced::core::text::EllipsizeHeightLimit;
+    use cosmic::iced::widget::text::Ellipsize;
+
+    Ellipsize::End(EllipsizeHeightLimit::Lines(1))
 }
 
 /// The runner label for a game, resolved **where the row data is built**.
@@ -658,7 +695,10 @@ pub fn resolved_runner_label(manager: &RunnerManager, game: &Game) -> String {
 /// list row's line is [`row_subtitle_of`], which is this plus the last-played
 /// part — see [`card`] for why the two widgets deliberately differ.
 fn subtitle_of(game: &Game, label: &str) -> String {
-    meta::subtitle(game.display_category(), &meta::runner_label(game.is_linux(), label))
+    meta::subtitle(
+        game.display_category(),
+        &meta::runner_label(game.is_linux(), label),
+    )
 }
 
 /// The **list row's** line: [`subtitle_of`]'s string, then the last-played
@@ -714,7 +754,11 @@ fn framed<'a, M: Clone + 'static>(game: &'a Game, spec: CoverSpec, inset: f32) -
 fn initials_only<'a, M: Clone + 'static>(text_of_game: String, spec: CoverSpec) -> Element<'a, M> {
     container(
         text(text_of_game)
-            .size(metrics::initials_size(spec.width, spec.height, spec.compact))
+            .size(metrics::initials_size(
+                spec.width,
+                spec.height,
+                spec.compact,
+            ))
             .class(PLATE_TEXT),
     )
     .id(INITIALS_ID)
@@ -794,9 +838,7 @@ pub fn plate_stops(accent: usize) -> [(f32, Color); 2] {
 fn card_style(theme: &cosmic::Theme) -> container::Style {
     let cosmic = theme.cosmic();
     container::Style {
-        background: Some(Background::Color(
-            cosmic.background(false).base.into(),
-        )),
+        background: Some(Background::Color(cosmic.background(false).base.into())),
         border: Border {
             radius: metrics::CARD_RADIUS.into(),
             ..Default::default()
@@ -813,14 +855,14 @@ fn rgb(channels: [u8; 3]) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cosmic::iced::advanced::Layout;
     use cosmic::iced::advanced::layout::{Limits, Node};
     use cosmic::iced::advanced::widget::operation::Focusable;
     use cosmic::iced::advanced::widget::{Operation, Tree};
-    use cosmic::iced::advanced::Layout;
     // The trait, not a value: `measure_image` is `Renderer`'s method and is not
     // in scope without it.
-    use cosmic::iced::advanced::image::Renderer as _;
     use cosmic::iced::advanced::Shell;
+    use cosmic::iced::advanced::image::Renderer as _;
     use cosmic::iced::{Event, Point, mouse};
     use cosmic::iced::{Font, Pixels, Radius, Rectangle, Size};
     use cosmic::widget::Id;
@@ -852,7 +894,10 @@ mod tests {
         let mut game = Game::new_named("Half-Life 2");
         game.category = "Shooter".into();
         game.kind = "windows".into();
-        assert_eq!(subtitle_of(&game, "System Wine"), "Shooter \u{b7} System Wine");
+        assert_eq!(
+            subtitle_of(&game, "System Wine"),
+            "Shooter \u{b7} System Wine"
+        );
     }
 
     /// A Linux game says so whatever label it is handed — the label is
@@ -865,7 +910,10 @@ mod tests {
         let mut game = Game::new_named("Celeste");
         game.category = "Platformer".into();
         game.kind = "linux".into();
-        assert_eq!(subtitle_of(&game, "System Wine"), "Platformer \u{b7} Linux native");
+        assert_eq!(
+            subtitle_of(&game, "System Wine"),
+            "Platformer \u{b7} Linux native"
+        );
         assert_eq!(subtitle_of(&game, ""), "Platformer \u{b7} Linux native");
     }
 
@@ -1066,7 +1114,12 @@ mod tests {
 
         assert_eq!(
             texts(&traversal(&mut row)),
-            ["MY", "Mystery", "Shooter · System Wine · Never played", "Play"]
+            [
+                "MY",
+                "Mystery",
+                "Shooter · System Wine · Never played",
+                "Play"
+            ]
         );
     }
 
@@ -1295,7 +1348,8 @@ mod tests {
         // covers the *subtitle* as well as the name — both are clamped, and only
         // this one measures the block as a whole.
         assert_eq!(
-            long_parts[1].height, metrics::CARD_TEXT_BLOCK_HEIGHT,
+            long_parts[1].height,
+            metrics::CARD_TEXT_BLOCK_HEIGHT,
             "a card's name-and-subtitle block must be exactly the height the chrome \
              reserves, however long the name is. A taller block is a wrapped line, and \
              the cell has no slack to give it — it comes out of the Play control. The \
@@ -1307,8 +1361,8 @@ mod tests {
              must not come out of the control. Short: {short_parts:?}, long: {long_parts:?}"
         );
 
-        let content: f32 = long_parts.iter().map(|size| size.height).sum::<f32>()
-            + 2.0 * metrics::CARD_MARGIN;
+        let content: f32 =
+            long_parts.iter().map(|size| size.height).sum::<f32>() + 2.0 * metrics::CARD_MARGIN;
         let interior = metrics::GRID_CELL.1 - 2.0 * metrics::CARD_MARGIN;
         assert!(
             content <= interior,
@@ -1328,7 +1382,8 @@ mod tests {
         let mut labelled_card: Element<'_, ()> = card(&long, &long_label, ());
         let labelled_parts = column_children_of(&mut labelled_card);
         assert_eq!(
-            labelled_parts[1].height, metrics::CARD_TEXT_BLOCK_HEIGHT,
+            labelled_parts[1].height,
+            metrics::CARD_TEXT_BLOCK_HEIGHT,
             "the same block, with a subtitle long enough to wrap. Its parts were \
              {labelled_parts:?}"
         );
@@ -1339,9 +1394,8 @@ mod tests {
             "the card's subtitle must be a single line whatever its length"
         );
         // The same anti-vacuity as the name's, for the same reason.
-        let mut unclamped_subtitle: Element<'_, ()> = text(&subtitle)
-            .size(metrics::CARD_SUBTITLE_SIZE)
-            .into();
+        let mut unclamped_subtitle: Element<'_, ()> =
+            text(&subtitle).size(metrics::CARD_SUBTITLE_SIZE).into();
         let wrapped_subtitle = traversal_at_width(&mut unclamped_subtitle, available);
         assert!(
             drawn(&wrapped_subtitle, &subtitle).height > subtitle_line,
@@ -1377,9 +1431,8 @@ mod tests {
         // Anti-vacuity, and the sharpest form of it available: with iced's own
         // default wrapping this name *does* take more than one line at this
         // width, so the clamp is what the assertions above are measuring.
-        let mut unclamped: Element<'_, ()> = text(title_of(&long))
-            .size(metrics::CARD_NAME_SIZE)
-            .into();
+        let mut unclamped: Element<'_, ()> =
+            text(title_of(&long)).size(metrics::CARD_NAME_SIZE).into();
         let wrapped = traversal_at_width(&mut unclamped, available);
         assert!(
             drawn(&wrapped, &title_of(&long)).height > one_line,
@@ -1387,6 +1440,83 @@ mod tests {
              test cannot fail on a wrapping name and should be given a longer one",
             title_of(&long)
         );
+
+        // The width half, which is what the recorded "long titles overflow into
+        // the neighbour tile" finding was about (`../audit/BASELINE.md` open item
+        // 4, `../migration/REPORT.md` residual 4). Measured rather than argued,
+        // because that finding and its retraction were both made from captures:
+        // the name's *drawn* box must not exceed the width the cell gives it.
+        let mut card_for_width: Element<'_, ()> = card(&long, "", ());
+        let wide = traversal_at_width(&mut card_for_width, available);
+        let name_box = drawn(&wide, &title_of(&long));
+        assert!(
+            name_box.width <= available,
+            "a {} character name drew {:.4} px wide in a {available} px cell — it spills into \
+             the neighbour tile, which is the finding this assertion exists to keep dead. \
+             `Wrapping::None` clamps the run to the limits it is given, so a name wider than \
+             its box means the box was not what bounded it.",
+            title_of(&long).chars().count(),
+            name_box.width,
+        );
+        // Anti-vacuity for the assertion above: `available` must be a width this
+        // name actually fills, or `<=` would hold for a box that measured zero.
+        assert!(
+            name_box.width > available * 0.5,
+            "the name drew only {:.4} px of its {available} px cell, so the bound above is \
+             not being tested by this fixture — it would pass on any short string",
+            name_box.width
+        );
+    }
+
+    /// **The names are ellipsized the way the reference ellipsizes them.**
+    ///
+    /// See [`name_ellipsize`] for why this asserts the strategy and not the
+    /// rendered marker: `Text`'s `format` is private, iced has no downcast, and
+    /// the traversal above reports a widget's *fragment* (the full string) rather
+    /// than the shaped run, so **no test in this suite can observe a `…`**. A
+    /// test that claimed to would be this project's dominant defect class. The
+    /// marker is verified by eye against the running app; what is pinned here is
+    /// the input that decides it, so a change to the strategy is a failing test
+    /// rather than a silent return of the clipped-at-the-edge behaviour this
+    /// replaced.
+    ///
+    /// The layout half — that an ellipsized name is still one line and still
+    /// leaves the Play control its full height — is not asserted here because
+    /// `a_long_name_does_not_squeeze_the_play_control` already drives the real
+    /// card through a real layout, and that card now carries this strategy. The
+    /// two together are the whole check: this one pins the value, that one
+    /// proves the value does not break the cell.
+    #[test]
+    fn the_card_and_row_names_are_ellipsized_at_the_end() {
+        use cosmic::iced::core::text::EllipsizeHeightLimit;
+        use cosmic::iced::widget::text::Ellipsize;
+
+        assert_eq!(
+            name_ellipsize(),
+            Ellipsize::End(EllipsizeHeightLimit::Lines(1)),
+            "`Text.ElideRight` under `Text.NoWrap` (`LibraryPage.qml:186`, `:195`, `:265`, \
+             `:272`) is one line cut at the end with the marker. `End` rather than `Start` or \
+             `Middle` is the reference's choice, not a preference: a game's name is \
+             identified by its first words."
+        );
+        // `Lines(1)` and not `Height(..)`: the limit is the reference's own unit.
+        // `ElideRight` with no `wrapMode` is a *line* count, and a height limit
+        // would silently stop eliding if the font size ever changed
+        // (`metrics::CARD_NAME_SIZE` is a literal that is free to move).
+        assert!(
+            !matches!(name_ellipsize(), Ellipsize::None),
+            "the divergence this replaced was `Ellipsize::None` in all but name — a name too \
+             long for its tile was cut at the tile's edge with no marker. `None` here would \
+             reinstate it without the comment that used to explain it."
+        );
+        // Deliberately *not* asserted here: that the two builders call this, and
+        // that `Wrapping::None` accompanies it. The only ways to see either from a
+        // test are to grep this file's source text or to assert a constant
+        // against itself, and a source-text check standing in for a behaviour
+        // check is `BUGS.md` BUG-12 — the project already has one of those and
+        // does not need a second. The wiring is two calls in one function, three
+        // lines above this module's own card builder, and the layout test named
+        // above fails loudly if either is dropped.
     }
 
     /// **The Play control is exactly the height the card reserves for it.**
@@ -1436,7 +1566,9 @@ mod tests {
         let renderer = renderer();
         let mut tree = Tree::new(control.as_widget());
         let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let node = control.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let node = control
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
         assert_eq!(
             node.size().height,
             metrics::PLAY_BUTTON_HEIGHT,
@@ -1807,8 +1939,7 @@ mod tests {
         let game = with_icon("Half-Life 2");
         let measured = renderer().measure_image(&image::Handle::from_path(&game.cover_path));
         assert_eq!(
-            measured,
-            None,
+            measured, None,
             "these eight bytes are a truncated ICO header — a magic that classifies \
              as an icon and no image data — so the decoder must refuse them; \
              `Some(_)` means they now decode and `with_icon`'s comment no longer \
@@ -1993,12 +2124,7 @@ mod tests {
         /// the thing it checks" shape. Recorded here rather than asserted
         /// against a button built in the test, so the id is read off the same
         /// traversal that reads the rest of the tree.
-        fn focusable(
-            &mut self,
-            id: Option<&Id>,
-            bounds: Rectangle,
-            _state: &mut dyn Focusable,
-        ) {
+        fn focusable(&mut self, id: Option<&Id>, bounds: Rectangle, _state: &mut dyn Focusable) {
             self.0.push(Seen {
                 id: id.cloned(),
                 bounds,
@@ -2057,10 +2183,7 @@ mod tests {
     /// exactly the elements of the returned vector — each event gets a fresh
     /// `Shell` over the same vector, which is what lets one event's capture not
     /// hide the next event's publication.
-    fn published_by_double_click<M: Clone + 'static>(
-        el: &mut Element<'_, M>,
-        at: Point,
-    ) -> Vec<M> {
+    fn published_by_double_click<M: Clone + 'static>(el: &mut Element<'_, M>, at: Point) -> Vec<M> {
         let renderer = renderer();
         let mut tree = Tree::new(el.as_widget());
         let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
@@ -2091,9 +2214,7 @@ mod tests {
 
     /// The ids the traversal reported, in the order it reported them.
     fn ids(seen: &[Seen]) -> Vec<Id> {
-        seen.iter()
-            .filter_map(|seen| seen.id.clone())
-            .collect()
+        seen.iter().filter_map(|seen| seen.id.clone()).collect()
     }
 
     /// The strings the traversal was handed, in order.
@@ -2109,7 +2230,10 @@ mod tests {
             .find(|seen| seen.text.as_deref() == Some(text))
             .map(|seen| &seen.bounds)
             .unwrap_or_else(|| {
-                panic!("nothing drew {text:?}; the traversal drew {:?}", texts(seen))
+                panic!(
+                    "nothing drew {text:?}; the traversal drew {:?}",
+                    texts(seen)
+                )
             })
     }
 
@@ -2174,16 +2298,14 @@ mod tests {
     /// `WebPEncodeLosslessRGBA(px, 24, 16, 24 * 4, &out)`, the output written
     /// verbatim. That is the whole recipe; these bytes are the whole fixture.
     const WEBP_COVER: [u8; 118] = [
-        0x52, 0x49, 0x46, 0x46, 0x6e, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
-        0x56, 0x50, 0x38, 0x4c, 0x62, 0x00, 0x00, 0x00, 0x2f, 0x17, 0xc0, 0x03,
-        0x00, 0xcd, 0x95, 0x21, 0xa2, 0xff, 0xb1, 0x2b, 0x78, 0x14, 0xbc, 0xff,
-        0x01, 0x26, 0x91, 0x24, 0x49, 0x4a, 0xbc, 0x4a, 0x56, 0xd3, 0xfa, 0x77,
-        0xf2, 0x5d, 0xa1, 0xc3, 0x8a, 0x1a, 0x49, 0x8a, 0x6a, 0x2f, 0xc0, 0xff,
-        0x0b, 0x11, 0x48, 0x42, 0x8c, 0xa2, 0xb6, 0x91, 0x1c, 0xbf, 0x76, 0xaf,
-        0xf1, 0x87, 0x70, 0x20, 0x7b, 0x4c, 0xc0, 0xfc, 0xe8, 0xaf, 0xee, 0x70,
-        0xfa, 0xa3, 0x33, 0x06, 0x00, 0x58, 0x04, 0xc2, 0x0d, 0x6c, 0xb2, 0x02,
-        0x87, 0x52, 0x81, 0x4b, 0xad, 0xc0, 0xa3, 0x55, 0xe0, 0xd3, 0xab, 0xcf,
-        0x8b, 0x07, 0x26, 0x3c, 0x27, 0x3a, 0x00, 0x03, 0xbf, 0x19,
+        0x52, 0x49, 0x46, 0x46, 0x6e, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38,
+        0x4c, 0x62, 0x00, 0x00, 0x00, 0x2f, 0x17, 0xc0, 0x03, 0x00, 0xcd, 0x95, 0x21, 0xa2, 0xff,
+        0xb1, 0x2b, 0x78, 0x14, 0xbc, 0xff, 0x01, 0x26, 0x91, 0x24, 0x49, 0x4a, 0xbc, 0x4a, 0x56,
+        0xd3, 0xfa, 0x77, 0xf2, 0x5d, 0xa1, 0xc3, 0x8a, 0x1a, 0x49, 0x8a, 0x6a, 0x2f, 0xc0, 0xff,
+        0x0b, 0x11, 0x48, 0x42, 0x8c, 0xa2, 0xb6, 0x91, 0x1c, 0xbf, 0x76, 0xaf, 0xf1, 0x87, 0x70,
+        0x20, 0x7b, 0x4c, 0xc0, 0xfc, 0xe8, 0xaf, 0xee, 0x70, 0xfa, 0xa3, 0x33, 0x06, 0x00, 0x58,
+        0x04, 0xc2, 0x0d, 0x6c, 0xb2, 0x02, 0x87, 0x52, 0x81, 0x4b, 0xad, 0xc0, 0xa3, 0x55, 0xe0,
+        0xd3, 0xab, 0xcf, 0x8b, 0x07, 0x26, 0x3c, 0x27, 0x3a, 0x00, 0x03, 0xbf, 0x19,
     ];
 
     /// The size [`WEBP_COVER`] declares: 24x16, as encoded.
