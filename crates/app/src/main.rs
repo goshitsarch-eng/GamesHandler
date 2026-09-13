@@ -2515,47 +2515,18 @@ impl Shell {
             }
 
             // ---- Plugins ---------------------------------------------------
-            // `refreshPlugins()` — re-read the host and rebuild the rows.
-            Message::RefreshPlugins => {
-                self.state
-                    .refresh_plugins(&gamehandler_core::plugins::SystemPluginEnv);
-            }
-            // `installPlugin()` (`bridge.py:1006-1020`). The notice is pushed
-            // before the work starts, as the reference does, so the user has
-            // something on screen while a package manager prompts for a
-            // password; an id that does not resolve is a silent no-op rather
-            // than a notice about a helper that does not exist.
-            Message::InstallPlugin(plugin_id) => {
-                if let Some((notice, task)) = view::plugins::install_plan(&plugin_id) {
-                    // Pushed through [`State::toast_task`] so this notice gets
-                    // UX-14's duration and its copy for the live region; the
-                    // batch is what keeps `task` — the `which` lookups the
-                    // reference issues alongside the notice.
-                    let toast = self.state.toast_task(notice);
-                    return cosmic::app::Task::batch([toast, task]);
+            // The page owns its arms (ARCH-23) — the same shape
+            // [`view::installers::update`] and [`view::runners::update`] use,
+            // and the reason given in `view::plugins::update`'s header.
+            // `update` is total in the sense that matters here: it answers
+            // `None` for every message it does not own, so the arms below
+            // cannot be silently missed.
+            Message::RefreshPlugins
+            | Message::InstallPlugin(_)
+            | Message::PluginInstallFinished { .. } => {
+                if let Some(task) = view::plugins::update(&mut self.state, &message) {
+                    return task;
                 }
-            }
-            // The install's `done`/`fail` half (`bridge.py:1012-1024`). The
-            // rows are rebuilt first because `pluginsChanged.emit()` is the
-            // signal the page redraws from — reporting before refreshing would
-            // toast an outcome beside a button that still said "Install".
-            //
-            // `result`'s error arm is `InstallRunError` and not a `String`
-            // (`ARCH-10`), which is what lets this handler be the place the
-            // error becomes text — one line above the toast — rather than a
-            // place text arrives.
-            Message::PluginInstallFinished { plugin_id, result } => {
-                self.state
-                    .refresh_plugins(&gamehandler_core::plugins::SystemPluginEnv);
-                let name = gamehandler_core::plugins::plugin_by_id(&plugin_id)
-                    .map(|plugin| plugin.name)
-                    .unwrap_or(plugin_id.as_str());
-                let text = match result {
-                    Ok(true) => view::plugins::installed_message(name),
-                    Ok(false) => view::plugins::not_installed_message(name),
-                    Err(error) => view::plugins::install_failed_message(name, &error),
-                };
-                return self.state.toast_task(text);
             }
 
             // ---- Internal plumbing -----------------------------------------

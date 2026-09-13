@@ -42,6 +42,7 @@ use cosmic::widget::{Column, Row, button, container, scrollable, text};
 use gamehandler_core::plugins::{self, Plugin, PluginEnv, PluginRow, PluginState, SystemPluginEnv};
 
 use crate::Message;
+use crate::state::State;
 
 /// The heading above the list (`PluginsPage.qml:17`).
 pub const SECTION_HOST_PLUGINS: &str = "Host plugins";
@@ -366,6 +367,86 @@ pub fn install_plan(plugin_id: &str) -> Option<(String, Task<Message>)> {
         cosmic::Action::App,
     );
     Some((notice, task))
+}
+
+// ---------------------------------------------------------------------------
+// The handler
+// ---------------------------------------------------------------------------
+
+/// The Plugins page's half of the dispatcher (ARCH-23).
+///
+/// `None` means *this page does not handle that message*. Three arms live here
+/// and no others: the page's whole message surface is `RefreshPlugins`,
+/// `InstallPlugin` and `PluginInstallFinished`.
+///
+/// # Why this exists rather than staying inline in `Shell::update`
+///
+/// [`super::installers`] and [`super::runners`] each own a handler of this
+/// exact shape, and Plugins did not — its three arms sat in `Shell::update`
+/// itself. Nothing was *wrong* with either arrangement; the cost was that a
+/// contributor adding a fourth page had no rule to follow and would pick
+/// whichever they read first, which is what ARCH-23 is. This is the smaller of
+/// the two directions the row offered (moving all three page handlers up into
+/// `Shell::update` is the other, and is the one that would make
+/// [`super`]'s own header honest about the layering). The smaller direction was
+/// taken deliberately: it is three arms, it makes the three page modules
+/// consistent, and it does not require re-deriving a contract that `ARCH-02`
+/// already rewrote once.
+///
+/// What it costs is stated rather than implied: [`crate::state::State`] is now
+/// read by this module directly, exactly as the other two page modules do, so
+/// the "page modules are bound to this app's state" row of [`super`]'s table
+/// describes Plugins rather than merely tolerating it.
+///
+/// # The arms, and what each one is
+///
+/// `refreshPlugins()` — re-read the host and rebuild the rows.
+///
+/// [`Message::InstallPlugin`] is `installPlugin()` (`bridge.py:1006-1020`); the
+/// notice is pushed *before* the work starts, as the reference does, so there is
+/// something on screen while a package manager prompts for a password, and an
+/// id that does not resolve is a silent no-op rather than a notice about a
+/// helper that does not exist.
+///
+/// [`Message::PluginInstallFinished`] is the `done`/`fail` half
+/// (`bridge.py:1012-1024`). The rows are rebuilt first because
+/// `pluginsChanged.emit()` is the signal the page redraws from — reporting
+/// before refreshing would toast an outcome beside a button that still said
+/// "Install". `result`'s error arm is [`InstallRunError`] and not a `String`
+/// (`ARCH-10`), which is what lets this handler be the place the error becomes
+/// text — one line above the toast — rather than a place text arrives.
+///
+/// [`Message::InstallPlugin`]: crate::Message::InstallPlugin
+/// [`Message::PluginInstallFinished`]: crate::Message::PluginInstallFinished
+pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
+    match message {
+        Message::RefreshPlugins => {
+            state.refresh_plugins(&SystemPluginEnv);
+            Some(Task::none())
+        }
+        Message::InstallPlugin(plugin_id) => {
+            let (notice, task) = install_plan(plugin_id)?;
+            // Pushed through [`State::toast_task`] so this notice gets UX-14's
+            // duration and its copy for the live region; the batch is what keeps
+            // `task` — the `which` lookups the reference issues alongside the
+            // notice.
+            let toast = state.toast_task(notice);
+            Some(Task::batch([toast, task]))
+        }
+        Message::PluginInstallFinished { plugin_id, result } => {
+            state.refresh_plugins(&SystemPluginEnv);
+            let name = plugins::plugin_by_id(plugin_id)
+                .map(|plugin| plugin.name)
+                .unwrap_or(plugin_id.as_str());
+            let text = match result {
+                Ok(true) => installed_message(name),
+                Ok(false) => not_installed_message(name),
+                Err(error) => install_failed_message(name, error),
+            };
+            Some(state.toast_task(text))
+        }
+        _ => None,
+    }
 }
 
 /// One helper's card: the name, the subtitle, and the button.
