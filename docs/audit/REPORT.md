@@ -25,7 +25,7 @@ prose count beside them in this file and in `PLAN.md` was re-derived by counting
 the rows, and three were wrong when this paragraph was written (see the
 `PARTIAL` paragraph below and `PLAN.md`'s note on the `BUGS.md` row).
 
-The `Fixed` column counts `FIXED` only; the seven `PARTIAL` rows are counted in
+The `Fixed` column counts `FIXED` only; the eight `PARTIAL` rows are counted in
 `Remaining`, because a half-fixed finding is not closed.
 
 **This report tracks a moving tree, and the count is recomputed on every move.**
@@ -85,7 +85,7 @@ By severity:
 `Not a defect` is not a euphemism for "wontfix": all four rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`, `BUG-15`,
 `UX-08`, `ARCH-24`). Seven of the rows counted as `Remaining` above are `PARTIAL` rather
-than untouched — the seven `PARTIAL` rows, which `scripts/plan-counts.py` prints
+than untouched — the eight `PARTIAL` rows, which `scripts/plan-counts.py` prints
 by name on every run — and each names the half that is still missing: `ARCH-12`
 (the four dispatcher extractions landed in `3b6ee5a`, and the grouping half did
 not: re-measured, `Shell::update` is 965 lines over 59 arms, `State` carries 38
