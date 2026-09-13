@@ -65,7 +65,7 @@ those rows contain `Status:`:
 | `BUGS.md` | 48 | 39 | 37 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 20 | 18 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 21 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
-| `SECURITY.md` | 11 | 10 | 9 `FIXED`, 1 `PARTIAL` |
+| `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
@@ -136,8 +136,8 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 20 | 0 | 29 |
-| **Total** | **130** | **95** | **0** | **35** |
+| P3 | 49 | 21 | 0 | 28 |
+| **Total** | **130** | **96** | **0** | **34** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -145,9 +145,9 @@ advocate reviews every row before it is called done and owns no row.
 | `BUG-xx` | `BUGS.md` | 46 | 37 | 0 | 9 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
-| `SEC-xx` | `SECURITY.md` | 11 | 9 | 0 | 2 |
+| `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 17 | 0 | 12 |
-| **Total** | | **130** | **95** | **0** | **35** |
+| **Total** | | **130** | **96** | **0** | **34** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -348,7 +348,7 @@ across families, not within them.
 | `UX-28` | The Plugins page has no empty-state branch, unlike the other three list pages | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-29` | A dead Option<()> field and a stale comment about theme inertness | S2 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `UX-30` | A page body's scrollable does not put the page's own primary action within reach, and the page reports this as a layout failure twice | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `SEC-10` | Dependency hygiene: five live RustSec advisories against the locked graph, none reachable from the shipped binary, and no unused or duplicated direct dependency | S4 | — | Controls for the advisory matcher (it flags `time 0.1.0` and `openssl 0.10.0`; it clears `time 0.3.44` and `openssl 0.10.99`), plus `strings` over the shipped binary for the renderer reachability claim (44,912 `tiny_skia` matches, 0 `wgpu`) and a `grep` over `xkbcommon`'s source for the six affected `memmap2` functions | OPEN |
+| `SEC-10` | Dependency hygiene: five live RustSec advisories against the locked graph, none reachable from the shipped binary, and no unused or duplicated direct dependency | S4 | — | Controls for the advisory matcher (it flags `time 0.1.0` and `openssl 0.10.0`; it clears `time 0.3.44` and `openssl 0.10.99`), plus `strings` over the shipped binary for the renderer reachability claim (44,912 `tiny_skia` matches, 0 `wgpu`) and a `grep` over `xkbcommon`'s source for the six affected `memmap2` functions | FIXED |
 
 ### Not a defect — 4
 

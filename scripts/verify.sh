@@ -197,6 +197,7 @@ STAGES=(
     "oracle-freshness|stage_oracle|the checked-in fixtures equal what the Python generators produce"
     "python-tests|stage_python|the Python suite stays green (D-17)"
     "cargo-lock|stage_cargo_lock|Cargo.lock agrees with the manifests it was generated from (PKG-10)"
+    "advisories|stage_advisories|the locked graph still matches the recorded RustSec advisories (SEC-10)"
     "plan-counts|stage_plan_counts|docs/audit/PLAN.md's summary tables equal the rows they summarise"
     "cargo-sources|stage_cargo_sources|cargo-sources.json covers every git source in Cargo.lock (no generator needed)"
     "cargo-sources-fresh|stage_cargo_sources_fresh|cargo-sources.json equals a regenerated one (needs the external generator; may SKIP)"
@@ -1390,6 +1391,30 @@ stage_cargo_lock() {
 }
 
 # ---------------------------------------------------------------------------
+# Stage: advisories — the locked graph still matches the recorded advisories
+#
+# `SEC-10` found this repository had never been checked against an advisory
+# database, so the state was unknown rather than clean; the audit then did the
+# check by hand and wrote the result into `SECURITY.md` as a paragraph. A
+# paragraph does not re-run, and the window in which a transitive pin moves is
+# exactly the window a dependency bump opens — which is the event `SEC-10`
+# explicitly warns about, since two of its five advisories are cleared by the
+# next libcosmic bump.
+#
+# What this stage is NOT: a RustSec query. It compares `Cargo.lock` against
+# `docs/audit/advisories.json`, so it catches the graph moving *away* from what
+# was measured, and it cannot catch a new advisory against some other crate.
+# That limit is stated in the ledger and in the script rather than left implied.
+#
+# The check needs no network and no `cargo-audit`, both of which are absent
+# here — which is the other half of why it is vendored as a ledger instead of
+# queried live.
+# ---------------------------------------------------------------------------
+stage_advisories() {
+    python3 scripts/check-advisories.py
+}
+
+# ---------------------------------------------------------------------------
 # Stage: plan-counts — docs/audit/PLAN.md's summary tables equal its rows
 #
 # `PLAN.md` is the audit's schedule and its two summary tables are its headline
@@ -2488,6 +2513,7 @@ run_stage cli
 run_stage oracle-freshness
 run_stage python-tests
 run_stage cargo-lock
+run_stage advisories
 run_stage plan-counts
 run_stage cargo-sources
 run_stage cargo-sources-fresh

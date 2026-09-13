@@ -1,0 +1,88 @@
+{
+  "_what_this_is": [
+    "The RustSec advisories that apply to this repository's locked dependency graph,",
+    "recorded so `scripts/check-advisories.py` can re-check them on every `verify.sh`",
+    "run without network access and without `cargo-audit` installed.",
+    "",
+    "`SEC-10` found the repository had never been checked against an advisory database,",
+    "so the state was unknown rather than clean. That is fixed by this file existing and",
+    "by the stage that reads it. What is NOT fixed, and cannot be at this layer, is the",
+    "five live advisories themselves: every one is a transitive pin owned by",
+    "libcosmic/iced, and the audit brief forbids upgrading merely for version numbers.",
+    "",
+    "Every entry carries `locked` — the version resolved in Cargo.lock when the entry",
+    "was written — and the checker fails if the graph has moved off it, in EITHER",
+    "direction. A crate that reaches its `patched` version is good news that still needs",
+    "the ledger and `SEC-10` updated, so it is reported as drift rather than passed."
+  ],
+  "database": {
+    "source": "RustSec/advisory-db",
+    "cloned": "2026-09-13",
+    "crates": 922,
+    "note": "The clone itself is not vendored; it is large and its contents change independently of this repository. These entries are the frozen result of matching it against Cargo.lock, and the checker below compares the graph to them rather than to the live database. A crate that is affected by an advisory NOT listed here cannot be detected offline, and that limitation is stated rather than implied."
+  },
+  "withdrawn": [
+    {
+      "id": "RUSTSEC-2020-0053",
+      "crate": "dirs",
+      "reason": "withdrawn by RustSec"
+    },
+    {
+      "id": "RUSTSEC-2025-0007",
+      "crate": "ring",
+      "reason": "withdrawn by RustSec"
+    },
+    {
+      "id": "RUSTSEC-2022-0048",
+      "crate": "xml-rs",
+      "reason": "withdrawn by RustSec"
+    }
+  ],
+  "advisories": [
+    {
+      "id": "RUSTSEC-2026-0253",
+      "crate": "lru",
+      "kind": "unsound",
+      "summary": "use-after-free in LruCache::pop()",
+      "locked": "0.16.4",
+      "patched": "0.18.2",
+      "reachability": "NOT REACHABLE. lru sits on the icy_sixel/cryoglyph -> iced_wgpu path, and the shipped binary is the software renderer: `strings target/debug/gamehandler` matches tiny_skia 44,912 times and wgpu 0 times, so the unit is not linked in. If the renderer path changes, this re-opens."
+    },
+    {
+      "id": "RUSTSEC-2026-0186",
+      "crate": "memmap2",
+      "kind": "unsound",
+      "summary": "out-of-bounds in six range methods",
+      "locked": "0.8.0",
+      "patched": "0.9.11",
+      "reachability": "NOT REACHABLE. memmap2 is reached only by xkbcommon 0.7.0, which calls MmapOptions::new().map(..) and four other non-advisory methods; none of the six affected functions (advise_range, flush_range, unchecked_advise and the rest) occurs in the vendored source. If the xkbcommon call path changes, this re-opens."
+    },
+    {
+      "id": "RUSTSEC-2024-0436",
+      "crate": "paste",
+      "kind": "unmaintained",
+      "summary": "unmaintained (informational)",
+      "locked": "1.0.15",
+      "patched": null,
+      "reachability": "NOT REACHABLE on Linux. paste reaches this graph only through wgpu-hal -> metal, which is macOS-only. Informational in any case: unmaintained-only advisories record that a crate is no longer looked after, not that it is unsound."
+    },
+    {
+      "id": "RUSTSEC-2026-0206",
+      "crate": "rustybuzz",
+      "kind": "unmaintained",
+      "summary": "unmaintained (informational)",
+      "locked": "0.20.1",
+      "patched": null,
+      "reachability": "Reached through the text-shaping stack. Unmaintained-only, so this is a maintenance risk rather than a known defect; recorded so a future replacement is a deliberate decision."
+    },
+    {
+      "id": "RUSTSEC-2026-0192",
+      "crate": "ttf-parser",
+      "kind": "unmaintained",
+      "summary": "unmaintained (informational)",
+      "locked": "0.25.1",
+      "patched": null,
+      "reachability": "Reached through the text-shaping stack, alongside rustybuzz. Unmaintained-only; same standing as RUSTSEC-2026-0206 and recorded for the same reason."
+    }
+  ]
+}
