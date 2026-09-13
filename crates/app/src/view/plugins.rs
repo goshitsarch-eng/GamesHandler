@@ -398,39 +398,6 @@ mod tests {
             .unwrap_or_else(|error| panic!("{} must be readable: {error}", path.display()))
     }
 
-    /// Python's implicit string concatenation, undone.
-    ///
-    /// `bridge.py` writes its notifications as adjacent literals across lines,
-    /// and the joined text is what the user reads. Both a bare quote and a
-    /// prefixed one (`f"…"`) can follow, which is what `probe`/`quote` scan.
-    fn join_adjacent_literals(source: &str) -> String {
-        fn is_prefix(character: char) -> bool {
-            matches!(character, 'f' | 'F' | 'r' | 'R' | 'b' | 'B' | 'u' | 'U')
-        }
-        let chars: Vec<char> = source.chars().collect();
-        let mut out = String::with_capacity(source.len());
-        let mut index = 0;
-        while index < chars.len() {
-            if chars[index] == '"' {
-                let mut probe = index + 1;
-                while probe < chars.len() && chars[probe].is_whitespace() {
-                    probe += 1;
-                }
-                let mut quote = probe;
-                while quote < chars.len() && quote - probe < 2 && is_prefix(chars[quote]) {
-                    quote += 1;
-                }
-                if probe > index + 1 && quote < chars.len() && chars[quote] == '"' {
-                    index = quote + 1;
-                    continue;
-                }
-            }
-            out.push(chars[index]);
-            index += 1;
-        }
-        out
-    }
-
     #[test]
     fn the_button_is_the_qmls_three_labels_and_only_missing_acts() {
         // Both halves are read off `PluginsPage.qml` at test time. A page that
@@ -543,7 +510,9 @@ mod tests {
         // reference builds each of these from `plugin.name`, so the name is
         // substituted here with a value that cannot appear in the source and
         // the surrounding text is checked against the reference's own literal.
-        let bridge = join_adjacent_literals(&repo_file("gamehandler/bridge.py"));
+        let bridge = gamehandler_core::oracle_support::join_adjacent_literals(&repo_file(
+            "gamehandler/bridge.py",
+        ));
 
         let installing = installing_message("MangoHud");
         assert_eq!(installing, "Installing MangoHud…");

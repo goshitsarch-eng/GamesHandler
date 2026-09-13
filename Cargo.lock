@@ -1874,6 +1874,7 @@ version = "0.8.0"
 dependencies = [
  "bzip2",
  "flate2",
+ "gamehandler-core",
  "rustix 1.1.4",
  "serde",
  "serde_json",

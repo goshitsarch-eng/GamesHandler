@@ -53,6 +53,17 @@ pub mod plugins;
 pub mod runners;
 pub mod settings;
 
+/// Oracles shared with the application's tests (ARCH-13).
+///
+/// Behind a feature no build turns on: `gamehandler` reaches it through its
+/// `[dev-dependencies]`, and this crate through a `[dev-dependencies]` on
+/// itself, so `cargo build` and `cargo build --release` cannot pull it in.
+/// `scripts/verify.sh` builds both ways, so an accidental edge to it would fail
+/// there rather than ship. See the module's own docs for why the obvious
+/// `#[cfg(test)]` spelling does not work across crates.
+#[cfg(feature = "test-support")]
+pub mod oracle_support;
+
 #[cfg(test)]
 mod oracle_tests;
 

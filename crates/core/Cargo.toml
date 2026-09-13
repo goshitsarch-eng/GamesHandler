@@ -88,3 +88,18 @@ flate2 = { version = "1", default-features = false, features = ["zlib"] }
 # older one would add a second `linux-raw-sys` to the *direct* edge of a crate
 # that is meant to stay small. `fs` is not in `default` (which is only `std`).
 rustix = { version = "1", features = ["fs"] }
+
+[features]
+# Not a user-facing feature: the name says what it is so that a `cargo build`
+# log naming it reads as a test build. See `src/oracle_support.rs` for why the
+# shared oracles cannot be a `#[cfg(test)]` module (ARCH-13).
+test-support = []
+
+# The self dev-dependency is what turns the feature on for `cargo test -p
+# gamehandler-core`. A feature cannot be enabled for the crate's own test
+# target any other way: `[features]` is not additive within one crate, so
+# without this edge the feature would be off for core's tests and on only for
+# the application's — leaving the duplicate it was meant to remove in place,
+# with the tests still green.
+[dev-dependencies]
+gamehandler-core = { path = ".", features = ["test-support"] }

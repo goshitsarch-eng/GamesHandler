@@ -107,3 +107,24 @@ image = { version = "0.25.10", default-features = false, features = [
     "png",
     "webp",
 ] }
+
+# The application's tests read the same reference files as core's, so they share
+# core's oracles rather than keeping a second copy of the lexer (ARCH-13).
+#
+# This edge is **load-bearing, not a convenience**, and an earlier revision of
+# this comment said the opposite and was wrong: it claimed core's own
+# `[dev-dependencies]` on itself already turned the feature on here, so this was
+# redundant. It is not. Cargo does not activate a dependency's dev-dependencies
+# when that dependency is being built *for* someone else, so with this edge
+# removed `cargo check -p gamehandler --tests` fails with `cannot find
+# oracle_support in gamehandler_core` — measured, after the removal, not
+# reasoned about. The two `gamehandler-core` lines in `cargo tree -e features`
+# are the honest cost of that: one edge is the dependency, the other is the
+# feature that has to be asked for by whoever needs it.
+#
+# A dev-dependency is still the right shape, and the reason is the one that
+# matters for shipping: `cargo build` and `cargo build --release` exclude it, so
+# no release binary links the module. `cargo tree -p gamehandler -e features
+# --no-dev-dependencies` shows `default` alone.
+[dev-dependencies]
+gamehandler-core = { path = "../core", features = ["test-support"] }

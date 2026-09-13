@@ -613,50 +613,6 @@ mod tests {
             .unwrap_or_else(|error| panic!("{} must be readable: {error}", path.display()))
     }
 
-    /// Python's implicit string concatenation, undone.
-    ///
-    /// `bridge.py` writes a long sentence as several adjacent literals across
-    /// lines, and the joined text is what the user actually reads. Collapsing
-    /// `"` + whitespace + `"` back into one literal lets a sentence be looked
-    /// up in the source exactly as the page shows it, instead of as the source
-    /// happens to wrap it. The whitespace *inside* a literal is left alone —
-    /// only the newline and indentation between two literals are dropped.
-    ///
-    /// A following literal may carry a prefix, and `pluginsIntro` is where that
-    /// matters: it is written `"... host package " f"manager{detected}"`, so
-    /// the boundary is `"` + whitespace + `f"` and a joiner that only knew
-    /// about a bare quote found nothing. Up to two prefix letters are accepted
-    /// (`f`, `r`, `b`, `u` and their combinations), and the whitespace
-    /// requirement is what keeps this from merging anything that is not a
-    /// concatenation — `"Wine",` on the next line is protected by its comma.
-    fn join_adjacent_literals(source: &str) -> String {
-        fn is_prefix(character: char) -> bool {
-            matches!(character, 'f' | 'F' | 'r' | 'R' | 'b' | 'B' | 'u' | 'U')
-        }
-        let chars: Vec<char> = source.chars().collect();
-        let mut out = String::with_capacity(source.len());
-        let mut index = 0;
-        while index < chars.len() {
-            if chars[index] == '"' {
-                let mut probe = index + 1;
-                while probe < chars.len() && chars[probe].is_whitespace() {
-                    probe += 1;
-                }
-                let mut quote = probe;
-                while quote < chars.len() && quote - probe < 2 && is_prefix(chars[quote]) {
-                    quote += 1;
-                }
-                if probe > index + 1 && quote < chars.len() && chars[quote] == '"' {
-                    index = quote + 1;
-                    continue;
-                }
-            }
-            out.push(chars[index]);
-            index += 1;
-        }
-        out
-    }
-
     // ------------------------------------------------------------ catalogue
 
     #[test]
@@ -1132,7 +1088,8 @@ mod tests {
     fn the_row_subtitles_are_the_references_wording() {
         // Each state is compared against the text `bridge.py` actually
         // hardcodes, sliced out of the joined source rather than retyped.
-        let bridge = join_adjacent_literals(&repo_file("gamehandler/bridge.py"));
+        let bridge =
+            crate::oracle_support::join_adjacent_literals(&repo_file("gamehandler/bridge.py"));
         let mangohud = plugin_by_id("mangohud").unwrap();
 
         let sandboxed = FakePluginEnv::new().with_var("FLATPAK_ID", "x");
@@ -1192,7 +1149,8 @@ mod tests {
 
     #[test]
     fn the_intro_is_the_references_wording() {
-        let bridge = join_adjacent_literals(&repo_file("gamehandler/bridge.py"));
+        let bridge =
+            crate::oracle_support::join_adjacent_literals(&repo_file("gamehandler/bridge.py"));
 
         // The sandbox sentence is entirely literal in the reference — no
         // interpolation at all — so this comparison is exact in both
