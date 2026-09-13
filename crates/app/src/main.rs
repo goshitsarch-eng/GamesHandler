@@ -1186,6 +1186,20 @@ fn page_entry_task(state: &mut State, page: Page) -> cosmic::app::Task<Message> 
             view::runners::update(state, &Message::FetchReleases { family })
                 .unwrap_or_else(cosmic::app::Task::none)
         }
+        // `showPage` re-detects the host on arrival (`Main.qml:41-44`), and this
+        // arm was missing — `RefreshPlugins` had a handler and no producer
+        // anywhere, so installing MangoHud from a terminal and clicking Plugins
+        // left the row saying "Install" for the rest of the session. Adding the
+        // helper outside the app is the ordinary way to install it, which is why
+        // the reference re-detects at all rather than only after its own
+        // install. `BUG-08`.
+        //
+        // Same call the message's handler makes, so there is one implementation
+        // of "re-detect" whether it was triggered by arriving or by pressing.
+        Page::Plugins => {
+            state.refresh_plugins(&gamehandler_core::plugins::SystemPluginEnv);
+            cosmic::app::Task::none()
+        }
         _ => cosmic::app::Task::none(),
     }
 }
@@ -9106,6 +9120,43 @@ mod tests {
             shell.state.releases_status,
             crate::state::ReleasesStatus::Ready,
             "re-navigating to the page already showing re-ran the page-entry work"
+        );
+    }
+
+    /// **Arriving at the Plugins page re-detects the host; an empty row list
+    /// does not stay empty.**
+    ///
+    /// `BUG-08` is a *missing producer*: `RefreshPlugins` had a handler and the
+    /// page had a Refresh control, but nothing emitted it on arrival, and
+    /// `showPage` re-detects the host (`Main.qml:41-44`). So the one workflow the
+    /// reference designed this for — install MangoHud from a terminal, then click
+    /// Plugins — left the row saying "Install" for the rest of the session.
+    ///
+    /// The observable is the state the page draws, not the returned task: this
+    /// arm's task is `Task::none()`, so a test that asserted on `task_units` would
+    /// pass on a handler that did nothing at all. The rows are *emptied* first for
+    /// the reason `shell_with_work_to_do` empties them — a shell that already had
+    /// them would make this a write of what was already there and hide a missing
+    /// refresh behind an unchanged comparison.
+    #[test]
+    fn arriving_at_the_plugins_page_re_detects_the_host() {
+        let mut shell = Shell::new();
+        shell.state.plugins.clear();
+        shell.state.plugins_intro.clear();
+        // A page the shell is not on, so the arrival below is a real one.
+        shell.state.page = Page::Library;
+
+        let _ = shell.show_page(Page::Plugins);
+
+        assert_eq!(
+            shell.state.plugins.len(),
+            gamehandler_core::plugins::PLUGINS.len(),
+            "arriving at Plugins did not re-detect the host, so a helper \
+             installed outside the app stays invisible for the session"
+        );
+        assert!(
+            !shell.state.plugins_intro.is_empty(),
+            "the intro sentence is part of the same refresh and was left empty"
         );
     }
 
