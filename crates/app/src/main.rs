@@ -1713,6 +1713,31 @@ impl Shell {
     /// the dispatch arm and must not start depending on whether a form happens to
     /// be open. The overlay is a second question with its own tests, and this is
     /// the function they drive.
+    /// The root element: the page, the toaster, and the live region.
+    ///
+    /// Split out of [`cosmic::Application::view`] so that a test can build it
+    /// without an `App` — the same reason [`Self::view_with_overlays`] exists —
+    /// and because the three layers have a fixed order that is worth stating in
+    /// one place:
+    ///
+    /// * Every failure path in `bridge.py` ends in the `notify` signal, so the
+    ///   toaster is wrapped around the whole body rather than placed inside a
+    ///   page: a toast raised by one page must survive a navigation to another,
+    ///   and `Toasts` lives in `State` for exactly that reason. The body itself
+    ///   is [`Shell::view_with_overlays`], which falls through to
+    ///   [`Shell::view_body`] when nothing is open above it.
+    /// * [`view::a11y::live_notice`] wraps that (**UX-14**), publishing the
+    ///   message the toaster draws to assistive technology. It goes out here
+    ///   rather than inside a page for the same reason the toaster does: the
+    ///   message outlives the page that raised it. Its own doc records that
+    ///   nothing delivers the node at the pinned rev.
+    fn view_root(&self) -> cosmic::Element<'_, Message> {
+        view::a11y::live_notice(
+            self.state.notice.as_deref(),
+            toaster(&self.state.toasts, self.view_with_overlays()),
+        )
+    }
+
     fn view_with_overlays(&self) -> cosmic::Element<'_, Message> {
         // The game form takes precedence: it is a full-page layer that covers
         // whatever is open, while the runner dialog is a modal over the page
@@ -2820,16 +2845,19 @@ impl Shell {
             // difference a reader would have to find by launching something.
             Message::EasyInstallFinished { game_id, message } => {
                 let navigate = self.show_page(Page::Library);
+                // The one site whose duration was already `Long` before UX-14:
+                // `"long"` is QQC2's own word in the reference
+                // (`Main.qml:158`), and `Duration::Long` is the toolkit's
+                // spelling of the same idea, not a number chosen here. It is now
+                // the app's [`State::TOAST_DURATION`] as well, so this site and
+                // the other 38 agree.
+                self.state.note(&message);
                 let toast = self
                     .state
                     .toasts
                     .push(
                         toaster::Toast::new(message)
-                            // `"long"` is QQC2's own word in the reference, and
-                            // `toaster::Duration::Long` is 15 s — the toolkit's
-                            // spelling of the same idea, not a number chosen
-                            // here.
-                            .duration(toaster::Duration::Long)
+                            .duration(State::TOAST_DURATION)
                             .action("Play".to_string(), move |_| {
                                 installed_play_message(&game_id)
                             }),
@@ -2871,11 +2899,11 @@ impl Shell {
             // than a notice about a helper that does not exist.
             Message::InstallPlugin(plugin_id) => {
                 if let Some((notice, task)) = view::plugins::install_plan(&plugin_id) {
-                    let toast = self
-                        .state
-                        .toasts
-                        .push(cosmic::widget::toaster::Toast::new(notice))
-                        .map(cosmic::Action::App);
+                    // Pushed through [`State::toast_task`] so this notice gets
+                    // UX-14's duration and its copy for the live region; the
+                    // batch is what keeps `task` — the `which` lookups the
+                    // reference issues alongside the notice.
+                    let toast = self.state.toast_task(notice);
                     return cosmic::app::Task::batch([toast, task]);
                 }
             }
@@ -2899,11 +2927,7 @@ impl Shell {
                     Ok(false) => view::plugins::not_installed_message(name),
                     Err(error) => view::plugins::install_failed_message(name, &error),
                 };
-                return self
-                    .state
-                    .toasts
-                    .push(cosmic::widget::toaster::Toast::new(text))
-                    .map(cosmic::Action::App);
+                return self.state.toast_task(text);
             }
 
             // ---- Internal plumbing -----------------------------------------
@@ -2911,15 +2935,15 @@ impl Shell {
             // so this is the first handler worth having: it makes the others
             // implementable by reporting rather than by silently doing nothing.
             Message::Notify(text) => {
-                // `Toasts::push` returns `Task<Message>` (it is what schedules
-                // the toast's expiry), so it is mapped into the
-                // `Action<Message>` the application trait hands back. Returning
-                // `Task::none()` here would push the toast and never expire it.
-                return self
-                    .state
-                    .toasts
-                    .push(cosmic::widget::toaster::Toast::new(text))
-                    .map(cosmic::Action::App);
+                // Through [`State::toast_task`] rather than a second `push`, so
+                // that this route and the `update`-arm route cannot come apart:
+                // the duration (**UX-14**) and the copy the live region
+                // announces are set there, and a `push` written out again here
+                // would be a third place to forget one of them. It is the same
+                // `Toasts::push` and the same `Task` mapping the comment above
+                // describes — `Task::none()` here would push the toast and never
+                // expire it.
+                return self.state.toast_task(text);
             }
             // **Empty by decision, not by omission — and T-29 is the task that
             // decided it.** `architecture.md` §3.3 offers two shapes for the
@@ -2944,7 +2968,44 @@ impl Shell {
 }
 
 impl State {
-    /// A toast, as the [`Task`](cosmic::Task) the application trait wants.
+    /// The duration every toast this app raises is given.
+    ///
+    /// **UX-14.** The toolkit's default is `Duration::Short`, 5000 ms
+    /// (`src/widget/toaster/mod.rs:69-86`), and a failure that is gone in five
+    /// seconds is one a user who looked away never learns about. `Long` is
+    /// 15 000 ms and is the toolkit's own name for "this one matters": it is
+    /// what the reference reaches for when it has something the user must act
+    /// on — `showPassiveNotification(message, "long", "Play", …)` at
+    /// `Main.qml:158` — and the port already had it at that one site
+    /// ([`Message::EasyInstallFinished`]) before this.
+    ///
+    /// # Why every toast and not just the failures
+    ///
+    /// The reference's channel has *one* duration: `backend.notify` reaches
+    /// `root.showPassiveNotification(message)` with no severity at all
+    /// (`Main.qml:151`), and the failure/information distinction the audit
+    /// draws is one the QML does not make. Splitting it here would be a
+    /// divergence invented to satisfy a finding, and it would put a
+    /// per-message judgement at 38 push sites where nothing today knows which
+    /// is which.
+    ///
+    /// # What this does not fix
+    ///
+    /// A user who is away for longer than fifteen seconds still misses the
+    /// message, and that residue is real: the audit's own recommendation for it
+    /// is a *persistent line on the page that failed*, which is not what this
+    /// is. The audit cites `view/form.rs:503-515` as the pattern to copy and
+    /// that citation is wrong — at `532f1c0`, the commit the audit was written
+    /// against, those lines are `can_save` and `save_message`, a pair of pure
+    /// predicates, and `view/form.rs` renders no error text at all. There is no
+    /// such pattern in this repository to reuse, so building one is a page-level
+    /// design decision rather than a fix to the toaster, and it is named here
+    /// as the remaining gap rather than half-built.
+    const TOAST_DURATION: cosmic::widget::toaster::Duration =
+        cosmic::widget::toaster::Duration::Long;
+
+    /// A toast at [`State::TOAST_DURATION`], as the [`Task`](cosmic::Task) the
+    /// application trait wants.
     ///
     /// `Toasts::push` returns a task of its own — it is what schedules the
     /// toast's expiry — so a handler cannot both push a toast and finish with
@@ -2957,9 +3018,25 @@ impl State {
     /// `update` arm takes, where the text is already in hand and routing it
     /// through the enum would mean a second pass through the match.
     fn toast_task(&mut self, text: String) -> cosmic::app::Task<Message> {
+        self.notice = Some(text.clone());
         self.toasts
-            .push(cosmic::widget::toaster::Toast::new(text))
+            .push(cosmic::widget::toaster::Toast::new(text).duration(Self::TOAST_DURATION))
             .map(cosmic::Action::App)
+    }
+
+    /// The message for the live region, for a toast pushed by hand.
+    ///
+    /// ⚠️ Every site that calls `toasts.push` directly has to call this with the
+    /// same string, because `Toast`'s message cannot be read back out
+    /// ([`State::notice`]). There is exactly **one** such site —
+    /// [`Message::EasyInstallFinished`] — and it is the site that needs the
+    /// toast's own builder rather than the generic one, because its toast carries
+    /// a "Play" action built from the game id. Every other report in the app goes
+    /// through [`State::toast_task`], which sets this itself.
+    /// `the_hand_pushed_installed_toast_is_announced_too` is what keeps that
+    /// count honest.
+    fn note(&mut self, text: &str) {
+        self.notice = Some(text.to_string());
     }
 
     /// Persist the settings an `update` arm just mutated: `_save_settings`
@@ -4263,14 +4340,7 @@ impl cosmic::Application for App {
     /// whatever this returns, so a page can neither forget the sidebar nor draw
     /// a second one.
     fn view(&self) -> cosmic::Element<'_, Self::Message> {
-        // Every failure path in `bridge.py` ends in the `notify` signal, so the
-        // toaster is wrapped around the whole body rather than placed inside a
-        // page: a toast raised by one page must survive a navigation to another,
-        // and `Toasts` lives in `State` for exactly that reason. The body itself
-        // is [`Shell::view_with_overlays`], which a test can call without an
-        // `App` and which falls through to [`Shell::view_body`] when nothing is
-        // open above it.
-        toaster(&self.shell.state.toasts, self.shell.view_with_overlays())
+        self.shell.view_root()
     }
 }
 
@@ -9859,6 +9929,203 @@ mod tests {
             "the dialog must close once it has answered, even on failure"
         );
         std::fs::remove_file(&root).unwrap();
+    }
+
+    /// The text the app would announce, for a shell that has just raised
+    /// something.
+    ///
+    /// Panics rather than returning an `Option`, because UX-14's whole claim is
+    /// that a message *is* announced: a helper that let the caller decide what to
+    /// do about `None` would let every test below pass on an app that announces
+    /// nothing.
+    fn announced(shell: &Shell) -> String {
+        shell
+            .state
+            .notice
+            .clone()
+            .expect("UX-14: a message reached the toaster and nothing reached the live region")
+    }
+
+    /// The toasts' own `Debug` rendering.
+    ///
+    /// The only route to what is inside them: `Toast`'s `message` and `duration`
+    /// are private with no getters and `Toasts` exposes neither its `SlotMap` nor
+    /// its queue (`libcosmic src/widget/toaster/mod.rs:114-160`). Existing tests
+    /// in this file already read the store this way — `notifying_pushes_a_toast`
+    /// asserts on `num_elems` — so this is the same instrument, not a new one.
+    /// What it reads is the stored toast's own field, which is why a reverted
+    /// duration shows up here as `duration: Short`.
+    fn toast_store(shell: &Shell) -> String {
+        format!("{:?}", shell.state.toasts)
+    }
+
+    /// **UX-14: a message is announced to assistive technology, and the toast
+    /// carrying it lasts long enough to be read.**
+    ///
+    /// Both halves of the finding in one measurement, because either alone is a
+    /// fix that does not fix it: a message that is announced for five seconds is
+    /// announced to a user who is still reading it, and a fifteen-second toast
+    /// nobody announces is still invisible.
+    ///
+    /// `Notify` is the route every failure path in `bridge.py` ends at
+    /// (`Message::Notify`'s own doc), so it is the funnel the forty-odd report
+    /// sites take; the two hand-written routes are covered by the two tests
+    /// below.
+    #[test]
+    fn a_toast_is_announced_and_lasts_long_enough_to_be_read() {
+        let mut shell = Shell::new();
+        assert!(
+            shell.state.notice.is_none(),
+            "a shell that has said nothing must have nothing to announce"
+        );
+
+        let effect = observe(&mut shell, Message::Notify("the launch failed".to_string()));
+
+        assert_eq!(
+            announced(&shell),
+            "the launch failed",
+            "the live region must carry the message the toast carries, word for \
+             word — a second sentence here would be a second thing the app says"
+        );
+        let toasts = toast_store(&shell);
+        assert!(
+            toasts.contains("the launch failed"),
+            "the announcement and the toast must be the same message; toasts: \
+             {toasts}"
+        );
+        assert!(
+            toasts.contains("duration: Long"),
+            "the toolkit's default is `Duration::Short`, 5000 ms \
+             (`src/widget/toaster/mod.rs:69-86`), which is shorter than a \
+             sentence takes to read and shorter than a reader takes to reach the \
+             window; `Long` is 15 000 ms. Stored toasts: {toasts}"
+        );
+        assert!(
+            !toasts.contains("duration: Short"),
+            "one toast cannot be both: {toasts}"
+        );
+        assert!(
+            effect.task_units > 0,
+            "`Toasts::push` returns the task that schedules the expiry, and this \
+             route must still return it"
+        );
+    }
+
+    /// **The one toast the app pushes by hand is announced too.**
+    ///
+    /// `Message::EasyInstallFinished` cannot go through `State::toast_task`: its
+    /// toast carries a "Play" action built from the game id, so it needs
+    /// `Toasts::push`'s builder rather than the generic one. That is exactly the
+    /// site a fix written only into `toast_task` would miss — the installed
+    /// notice is the one the user must act on — so it is asserted separately
+    /// rather than assumed from the test above.
+    #[test]
+    fn the_hand_pushed_installed_toast_is_announced_too() {
+        let mut shell = shell_for_installs();
+
+        let _ = observe(
+            &mut shell,
+            Message::EasyInstallFinished {
+                game_id: "install-6".to_string(),
+                message: "Installed “Steam”".to_string(),
+            },
+        );
+
+        assert_eq!(
+            announced(&shell),
+            "Installed “Steam”",
+            "this toast has its own `push` call, so it has its own announcement \
+             to forget"
+        );
+        assert!(
+            toast_store(&shell).contains("duration: Long"),
+            "and its own duration: {}",
+            toast_store(&shell)
+        );
+    }
+
+    /// **The install flow's two other notices are announced**, so the fix is a
+    /// funnel rather than three edits that happen to agree today.
+    ///
+    /// `InstallPlugin` and `PluginInstallFinished` were two separate
+    /// `toasts.push` calls before UX-14 and now both go through
+    /// `State::toast_task`. This drives the first through the real dispatcher;
+    /// the id is read from the catalogue rather than written here, and the
+    /// `assert!` on `install_plan` is what stops the test passing vacuously on
+    /// an id no plugin answers to.
+    #[test]
+    fn the_plugin_notices_are_announced() {
+        // `install_plan` is the guard the `update` arm itself uses, so an id it
+        // does not know is an arm that pushes nothing — and a test written
+        // against such an id would assert nothing while looking like it did.
+        let (expected, _) = crate::view::plugins::install_plan("mangohud")
+            .expect("the sample id must name a plugin in the catalogue");
+
+        let mut shell = Shell::new();
+        let _ = observe(&mut shell, Message::InstallPlugin("mangohud".to_string()));
+
+        assert_eq!(announced(&shell), expected);
+        assert!(
+            toast_store(&shell).contains(&expected),
+            "toasts: {}",
+            toast_store(&shell)
+        );
+        assert!(
+            toast_store(&shell).contains("duration: Long"),
+            "toasts: {}",
+            toast_store(&shell)
+        );
+    }
+
+    /// **The app's own root publishes the last message as an assertive alert.**
+    ///
+    /// The row's verification is "verify the node list from a built toaster", and
+    /// this is that: [`Shell::view_root`] is the element `Application::view`
+    /// returns, so the nodes read off it are the nodes the app publishes, with
+    /// the toolkit's real `Toaster` in the middle.
+    ///
+    /// What it finds is one node, and that is the finding rather than a mistake
+    /// in the test: libcosmic's `Toaster` implements no `a11y_nodes` at all, so
+    /// the whole body under it publishes nothing and the notice lands as the
+    /// tree's root (`the_toolkits_toaster_publishes_no_node_at_all` measures
+    /// that directly, on a toaster with no app around it). The app cannot repair
+    /// it from outside — see the residue on `view::a11y::LiveNotice`.
+    #[test]
+    fn the_apps_root_publishes_the_last_message_as_an_assertive_alert() {
+        use iced_accessibility::accesskit::{Live, Role};
+
+        let mut shell = Shell::new();
+        let _ = observe(&mut shell, Message::Notify("the launch failed".to_string()));
+
+        let mut root = shell.view_root();
+        let nodes = crate::view::a11y::harness::published(&mut root);
+
+        let notice = nodes
+            .iter()
+            .find(|node| {
+                node.id
+                    == iced_accessibility::A11yId::Widget(cosmic::iced::advanced::widget::Id::from(
+                        view::a11y::NOTICE_ID,
+                    ))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "the app publishes no node for the live region, so a screen \
+                     reader is told nothing: {nodes:#?}"
+                )
+            });
+
+        assert_eq!(notice.role, Role::Alert);
+        assert_eq!(notice.label.as_deref(), Some("the launch failed"));
+        assert_eq!(notice.live, Some(Live::Assertive));
+        assert_eq!(
+            nodes.len(),
+            1,
+            "libcosmic's `Toaster` publishes nothing, so everything under it is \
+             swallowed and the notice is the entire tree; if this count has \
+             grown, the toolkit grew an `a11y_nodes` and the residue recorded on \
+             `view::a11y::LiveNotice` can be narrowed: {nodes:#?}"
+        );
     }
 
     /// `Notify` pushes a toast. Every failure path in `bridge.py` ends here, so

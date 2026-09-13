@@ -923,6 +923,22 @@ pub struct State {
     /// the close handler is [`crate::Message::DismissToast`] itself — which is
     /// why that variant exists and why it is a plain enum constructor.
     pub toasts: Toasts<Message>,
+    /// The last message the app raised, for the live region.
+    ///
+    /// The same text the newest toast carries, kept *here* as well because the
+    /// toolkit gives no way to read it back: `Toasts` owns a private `SlotMap`
+    /// and a private queue with no getter, and `Toast`'s `message` is private
+    /// with no accessor either (`src/widget/toaster/mod.rs:114-160`), so the
+    /// rendered toasts are write-only from outside. The toast is what a sighted
+    /// user reads; this copy is what [`crate::view::a11y::live_notice`] announces
+    /// to a screen reader, and it is written at the same three places the toast
+    /// is pushed so the two cannot say different things.
+    ///
+    /// Never cleared. A live region that empties itself is a region whose next
+    /// message can only be announced by changing a node twice; and the last
+    /// thing the app said is a true thing to report for as long as the app has
+    /// said nothing since.
+    pub notice: Option<String>,
     /// was the token passed to `coverFetched`; incremented per form lookup.
     pub form_cover_token: FormToken,
     /// was the `plugins` Property (`bridge.py:982-984`) — one row per helper,
@@ -994,6 +1010,7 @@ impl State {
             easy_pending: BTreeMap::new(),
             progress: None,
             toasts: Toasts::new(Message::DismissToast),
+            notice: None,
             form_cover_token: 0,
             theme_manager: None,
             plugins: Vec::new(),

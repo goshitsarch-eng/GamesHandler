@@ -190,8 +190,8 @@ use cosmic::iced::advanced::{Clipboard, Layout, Shell, layout, mouse, overlay, r
 use cosmic::iced::core::id::IdEq;
 use cosmic::iced::keyboard;
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector};
-use iced_accessibility::accesskit::{Action, Node, Rect, Role};
-use iced_accessibility::{A11yNode, A11yTree};
+use iced_accessibility::accesskit::{Action, Live, Node, Rect, Role};
+use iced_accessibility::{A11yId, A11yNode, A11yTree};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
@@ -965,6 +965,325 @@ impl<'a, Message: Clone + 'a> From<Accessible<'a, Message>> for Element<'a, Mess
     }
 }
 
+/// The id the app's live region carries.
+///
+/// **Fixed, not derived from the message.** A node whose id changed with its
+/// text would be a *new* node every time the app spoke, arriving beside a stale
+/// one; what a live region is for is the opposite — an assistive technology
+/// holds a node it already knows and is told its name changed. `stable_id` is
+/// not usable here for the same reason it is usable for the controls: there the
+/// name *is* the identity, here the identity is the role, and the name is the
+/// news.
+pub const NOTICE_ID: &str = "gamehandler-notice";
+
+/// The app's last message, published to assistive technology as a live region.
+///
+/// # What this is for
+///
+/// `C0SMIC-UX.md`'s UX-14: the toaster is the app's universal error channel and
+/// it is invisible to assistive technology. The toolkit's `Toaster` implements no
+/// `a11y_nodes` at all and `Toaster::operate` forwards only to its `content`
+/// (`src/widget/toaster/widget.rs:85-95`), so the toasts themselves are never
+/// visited by any operation and never appear in the tree — and the app cannot fix
+/// that from outside, because the toast elements are built inside `toaster()`
+/// from `Toasts`'s private `SlotMap` (`src/widget/toaster/mod.rs:56-65`, with
+/// `toasts`/`queue` private at `:154-160` and no getter on `Toast` for its
+/// message). What the app *can* do is publish the message itself, beside the
+/// toolkit's rendering of it, and that is what this wrapper does.
+///
+/// # Why the node is beside the page and not around it
+///
+/// The node is added as a **child of the content's root**, not made the root: a
+/// window whose root node is `Role::Alert` is a window announced as an alert, and
+/// the app's `view` hands this widget the whole body. So the content's own tree
+/// is returned with one extra node wired in, and the content's root node lists
+/// it. `Role::Alert` with [`Live::Assertive`] is the pair the accessibility API
+/// reserves for exactly this: `aria-live="assertive"` plus `role="alert"`, which
+/// is what "the user must be told this now" is spelled as. AT-SPI carries it
+/// through as `Politeness::Assertive`
+/// (`accesskit/platforms/atspi-common/src/node.rs:453-455`).
+///
+/// # What the app's tree actually looks like, measured
+///
+/// The child branch does not fire in this application, and the reason is a second
+/// upstream gap rather than a shape choice. **libcosmic's `Toaster` publishes
+/// nothing**: it overrides no `a11y_nodes`, so it inherits
+/// `iced_core::Widget`'s empty default (`iced/core/src/widget.rs:149-158`), and
+/// it forwards to nothing either — `Toaster::operate` reaches `self.content`
+/// alone (`src/widget/toaster/widget.rs:85-95`) while the toasts are laid out in
+/// an **overlay** (`Toaster::overlay`, `:150-180`) where the tree has no child
+/// for them. Since `Shell::view_root` wraps the whole body in `toaster()`, the
+/// body publishes no node at all and the content's root list is empty: the
+/// fallback below is what runs, and the notice becomes the tree's **root**.
+///
+/// `the_toolkits_toaster_publishes_no_node_at_all` measures that on a bare
+/// toaster (one node inside, zero through it) and
+/// `the_apps_root_publishes_the_last_message_as_an_assertive_alert` measures it
+/// on the app's real root. The fallback is kept rather than removed because it is
+/// the branch that keeps the message in *some* tree, and the day the toaster
+/// forwards, the first branch takes over with no other change.
+///
+/// # The residue, and it is the larger half
+///
+/// **At the pinned rev nothing delivers this.** `Widget::a11y_nodes` is collected
+/// by `UserInterface::a11y_nodes` (`iced/runtime/src/user_interface.rs:607`), and
+/// that method has no caller anywhere in the checkout: `TreeUpdate` is constructed
+/// exactly once in the whole tree, in
+/// `WinitActivationHandler::request_initial_tree`
+/// (`iced/winit/src/a11y.rs:18-33`), which returns a single `Role::Window` node
+/// carrying the window title and **no children**. The adapter stored at
+/// `iced/winit/src/lib.rs:666` is never handed a tree derived from the UI, and
+/// the `Control` enum (`:721-743`) has no variant that could carry one. So the
+/// node this wrapper publishes is correct, measured, and inert: it reaches the
+/// platform the day `iced_winit` starts sending what `a11y_nodes` returns, and
+/// UX-14's assistive-technology half cannot be closed from this repository.
+/// The same is true of every node UX-01, UX-02, UX-03 and UX-12 fixed — that is
+/// the part worth escalating, and it is recorded here because this is where it
+/// was measured.
+pub struct LiveNotice<'a, Message> {
+    text: Option<String>,
+    content: Element<'a, Message>,
+}
+
+/// Wrap `content` so that `text` is published as a live region.
+pub fn live_notice<'a, Message: Clone + 'a>(
+    text: Option<&str>,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    LiveNotice {
+        text: text.map(str::to_string),
+        content: content.into(),
+    }
+    .into()
+}
+
+impl<'a, Message: Clone + 'a>
+    cosmic::iced::advanced::Widget<Message, cosmic::Theme, cosmic::Renderer>
+    for LiveNotice<'a, Message>
+{
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&mut self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_mut(&mut self.content));
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &cosmic::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        let node = self
+            .content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits);
+        let size = node.size();
+        // The same one level of indirection `Accessible::layout` uses, so that
+        // every forwarded call reaches the content through
+        // `layout.children().next()` and the two agree about which rectangle is
+        // whose.
+        layout::Node::with_children(size, vec![node])
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        // No `operation.focusable`: a live region is not a control. Reporting
+        // one would put the whole page body on the Tab ring a second time.
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget_mut().operate(
+            &mut tree.children[0],
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            renderer,
+            operation,
+        );
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &cosmic::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &cosmic::Renderer,
+    ) -> mouse::Interaction {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            cursor,
+            viewport,
+        );
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &cosmic::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, cosmic::Theme, cosmic::Renderer>> {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+
+    fn drag_destinations(
+        &self,
+        state: &Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+        dnd_rectangles: &mut cosmic::iced::advanced::clipboard::DndDestinationRectangles,
+    ) {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget().drag_destinations(
+            &state.children[0],
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            renderer,
+            dnd_rectangles,
+        );
+    }
+
+    /// The whole of UX-14's assistive-technology half, and the reason the
+    /// residue above is stated on the type rather than here.
+    fn a11y_nodes(&self, layout: Layout<'_>, state: &Tree, cursor: mouse::Cursor) -> A11yTree {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        let mut tree = self.content.as_widget().a11y_nodes(
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            &state.children[0],
+            cursor,
+        );
+
+        let bounds = layout.bounds();
+        let mut node = Node::new(Role::Alert);
+        node.set_bounds(Rect::new(
+            f64::from(bounds.x),
+            f64::from(bounds.y),
+            f64::from(bounds.x + bounds.width),
+            f64::from(bounds.y + bounds.height),
+        ));
+        // Unlabelled when there is nothing to say. The node stays in the tree
+        // either way, so the first message is a *change* to a node the platform
+        // has already seen rather than a node appearing out of nowhere — which
+        // is what a live region is for, and why the id above is fixed.
+        if let Some(text) = self.text.as_ref() {
+            node.set_label(text.clone());
+        }
+        node.set_role(Role::Alert);
+        node.set_live(Live::Assertive);
+
+        let id = Id::from(NOTICE_ID);
+        let roots = tree.root_mut();
+        if roots.is_empty() {
+            // Nothing under the content published a node. In this application
+            // that is not the "a page that draws nothing" edge — it is every
+            // frame, because the content is a `Toaster` and libcosmic's
+            // `Toaster` publishes nothing at all (see the type's doc, and
+            // `the_toolkits_toaster_publishes_no_node_at_all`). The notice
+            // becomes the root, which is the only slot left that a reader can
+            // reach it from. `Alert` as a root is the wrong shape, and it is the
+            // right trade against a message that is in no tree at all.
+            roots.push(A11yNode::new(node, id));
+        } else {
+            for root in roots.iter_mut() {
+                root.add_children(vec![A11yId::Widget(id.clone())]);
+            }
+            tree.children_mut().push(A11yNode::new(node, id));
+        }
+        tree
+    }
+}
+
+impl<'a, Message: Clone + 'a> From<LiveNotice<'a, Message>> for Element<'a, Message> {
+    fn from(widget: LiveNotice<'a, Message>) -> Self {
+        Element::new(widget)
+    }
+}
+
 /// The measuring instrument: build an element, read what it reports.
 ///
 /// # Why this is a module of its own and not `mod tests`'s private business
@@ -1057,6 +1376,13 @@ pub(crate) mod harness {
         pub(crate) bounds: Option<Rect>,
         pub(crate) click: bool,
         pub(crate) focus: bool,
+        /// `Node::live` — `None` for every node that is not a live region.
+        ///
+        /// Added for UX-14: `Live` is the property that makes a screen reader
+        /// announce a change rather than wait to be asked, so a test that
+        /// asserted only the role and the label of the notice node would pass
+        /// against a node nobody is told about.
+        pub(crate) live: Option<Live>,
     }
 
     pub(crate) fn facts(node: &A11yNode) -> NodeFacts {
@@ -1070,6 +1396,7 @@ pub(crate) mod harness {
             bounds: raw.bounds(),
             click: raw.supports_action(Action::Click),
             focus: raw.supports_action(Action::Focus),
+            live: raw.live(),
         }
     }
 
@@ -2055,6 +2382,236 @@ mod tests {
             first, second,
             "two frames of the same control must report the same id, or \
              assistive technology sees a new node every frame"
+        );
+    }
+
+    // ---- UX-14: the live region ----------------------------------------------
+    //
+    // The row's own verification is "verify the node list from a built toaster",
+    // so these tests build real toasters rather than a stand-in for one.
+
+    /// The message every test below announces.
+    const NOTICE: &str = "Could not install Steam: no network";
+
+    /// A toaster holding one toast, built the way the app builds one: the
+    /// toaster is a *view* of `Toasts`, so the toast has to be pushed into the
+    /// store before the widget exists (`src/widget/toaster/mod.rs:14-52`).
+    ///
+    /// `Toasts::push` inserts synchronously — the `Task` it returns only
+    /// schedules the expiry — so this needs no runtime and the toast is in the
+    /// queue by the time the widget is built.
+    fn toaster_with_one_toast(message: &str) -> cosmic::widget::toaster::Toasts<Msg> {
+        let mut toasts = cosmic::widget::toaster::Toasts::new(|_| Msg::Picked(0));
+        let _ = toasts.push(cosmic::widget::toaster::Toast::new(message.to_string()));
+        toasts
+    }
+
+    /// A wrapped control, for a live region to sit beside.
+    fn a_page() -> Element<'static, Msg> {
+        toggled_widget(true)
+    }
+
+    /// The notice node out of a published list, by the id it is required to
+    /// carry.
+    fn notice_node(nodes: &[NodeFacts]) -> &NodeFacts {
+        let id = iced_accessibility::A11yId::Widget(Id::from(NOTICE_ID));
+        nodes.iter().find(|node| node.id == id).unwrap_or_else(|| {
+            panic!(
+                "no node carries `NOTICE_ID` ({NOTICE_ID:#?}), so the app has \
+                     nothing for an assistive technology to announce: {nodes:#?}"
+            )
+        })
+    }
+
+    /// **A message published through [`live_notice`] reaches the tree as an
+    /// assertive alert, beside the page rather than in place of it.**
+    ///
+    /// All four properties are asserted against a built element, and each one is
+    /// a separate way for UX-14 to come back:
+    ///
+    /// * the label is the message — without it the node announces nothing, which
+    ///   is the finding itself;
+    /// * `Live::Assertive` is what makes the platform *interrupt* rather than
+    ///   wait to be asked (AT-SPI maps it to `Politeness::Assertive`,
+    ///   `accesskit/platforms/atspi-common/src/node.rs:453-455`), and a node
+    ///   with a role and a label but `Live::Off` is one nobody is told about;
+    /// * the role is `Alert`, the API's own spelling of `role="alert"`;
+    /// * the page's own node is still there and still first — a wrapper that
+    ///   became the root would replace the page rather than sit beside it.
+    #[test]
+    fn a_live_notice_publishes_an_assertive_alert_beside_the_page() {
+        let mut el = live_notice(Some(NOTICE), a_page());
+        let nodes = published(&mut el);
+
+        assert_eq!(
+            nodes.len(),
+            2,
+            "the page's own node and the notice, and nothing else: {nodes:#?}"
+        );
+        assert_eq!(
+            nodes[0].role,
+            Role::Switch,
+            "the page must still be what the tree is rooted at: {nodes:#?}"
+        );
+        assert_eq!(nodes[0].label.as_deref(), Some("Enable DXVK by default"));
+
+        let notice = notice_node(&nodes);
+        assert_eq!(notice.role, Role::Alert);
+        assert_eq!(notice.label.as_deref(), Some(NOTICE));
+        assert_eq!(
+            notice.live,
+            Some(Live::Assertive),
+            "a role and a label are not an announcement: without `Live` the \
+             platform is never told the name changed"
+        );
+        assert!(
+            notice.bounds.is_some_and(|rect| rect.width() > 0.0),
+            "a node with no rectangle cannot be pointed at: {:?}",
+            notice.bounds
+        );
+        assert!(
+            !notice.focus && !notice.click,
+            "a live region is announced, not operated: reporting it focusable \
+             would put the whole page body on the Tab ring a second time \
+             (`LiveNotice::operate` deliberately does not)"
+        );
+    }
+
+    /// **With nothing to say the node is still there, unlabelled.**
+    ///
+    /// This is the half that a "publish only when there is a message" wrapper
+    /// gets wrong. A region that appears with its first message is a *new node*
+    /// arriving; one that is present and unlabelled has its name changed, which
+    /// is the only thing a live region is for — and it is why
+    /// [`NOTICE_ID`] is fixed. The assertion is `label == None` rather than
+    /// "no label", because an empty string is a name a screen reader will read
+    /// as silence while the platform still counts it as a change.
+    #[test]
+    fn a_live_notice_with_nothing_to_say_is_unlabelled_and_not_absent() {
+        let mut el = live_notice(None, a_page());
+        let nodes = published(&mut el);
+
+        assert_eq!(nodes.len(), 2, "{nodes:#?}");
+        let notice = notice_node(&nodes);
+        assert_eq!(notice.role, Role::Alert);
+        assert_eq!(notice.label, None, "there is nothing to announce yet");
+        assert_eq!(notice.live, Some(Live::Assertive));
+    }
+
+    /// **The wrapper is transparent to the keyboard and to the layout.**
+    ///
+    /// `LiveNotice` is not a control, so it must add no Tab stop of its own —
+    /// and the four forwarding methods have to reach the content through the one
+    /// level of `layout::Node::with_children` indirection `layout` builds, or the
+    /// page under it would stop responding to a key. Both halves are measured
+    /// here: the Tab ring is the same list, the content's rectangle is the same
+    /// rectangle, and a real Enter reaches the control Tab put the focus on.
+    #[test]
+    fn a_live_notice_is_transparent_to_the_keyboard_and_to_the_layout() {
+        let mut plain = a_page();
+        let plain_focusables = focusables(&mut plain);
+        let plain_bounds = published(&mut plain)[0].bounds;
+        assert_eq!(plain_focusables.len(), 1, "the control is one Tab stop");
+
+        let mut el = live_notice(Some(NOTICE), a_page());
+        assert_eq!(
+            focusables(&mut el),
+            plain_focusables,
+            "the wrapper must not add a Tab stop: it is not a control"
+        );
+        assert_eq!(
+            published(&mut el)[0].bounds,
+            plain_bounds,
+            "the wrapper must not move or resize what it wraps, or every \
+             rectangle the page publishes is off by the indirection"
+        );
+
+        let (mut tree, node) = built(&mut el);
+        tab_to(&mut el, &mut tree, &node);
+        let mut messages = Vec::new();
+        let dispatched = dispatch(
+            &mut el,
+            &mut tree,
+            &node,
+            &pressed(keyboard::Key::Named(key::Named::Enter)),
+            &mut messages,
+        );
+        assert_eq!(
+            dispatched.messages,
+            vec![Msg::Toggled(false)],
+            "Enter reached the wrapper and stopped there: the forwarding is \
+             going to a layout node that is not the content's"
+        );
+    }
+
+    /// **libcosmic's `Toaster` publishes nothing at all — not its content, and
+    /// not the toasts drawn over it.**
+    ///
+    /// This is the measurement UX-14's fix is shaped around, and it is worse than
+    /// the row says. `Toaster` overrides no `a11y_nodes`, so it inherits
+    /// `iced_core::Widget`'s default — an empty `A11yTree`
+    /// (`iced/core/src/widget.rs:149-158`) — and it does not *forward* either:
+    /// `Toaster::operate` reaches `self.content` alone
+    /// (`src/widget/toaster/widget.rs:85-95`), and the toasts are laid out inside
+    /// an **overlay** (`Toaster::overlay`, `:150-180`), where the widget tree has
+    /// no children for them at all.
+    ///
+    /// Two consequences, both measured below rather than argued:
+    ///
+    /// * the app wraps its whole body in `toaster()` (`Shell::view_root`), so
+    ///   today the body publishes **no** node — every node UX-01, UX-02, UX-03
+    ///   and UX-12 added is swallowed one line above where it is built;
+    /// * the wrapper this module adds is therefore the only node the app
+    ///   publishes, and it lands as the tree's *root*, which is the fallback
+    ///   branch in [`LiveNotice::a11y_nodes`] rather than the shape that branch
+    ///   was written for.
+    ///
+    /// The app cannot repair either from outside: the widget is libcosmic's, its
+    /// fields are private, and its toast store exposes no message to read back.
+    /// See the residue on [`LiveNotice`].
+    #[test]
+    fn the_toolkits_toaster_publishes_no_node_at_all() {
+        let toasts = toaster_with_one_toast(NOTICE);
+
+        let mut page = a_page();
+        assert_eq!(
+            published(&mut page).len(),
+            1,
+            "the control on its own does publish a node — otherwise the empty \
+             list below would prove nothing"
+        );
+
+        let mut wrapped: Element<'_, Msg> = cosmic::widget::toaster::toaster(&toasts, a_page());
+        let nodes = published(&mut wrapped);
+        assert!(
+            nodes.is_empty(),
+            "`Toaster` is expected to publish nothing; if this now has nodes, \
+             libcosmic has grown an `a11y_nodes` and the residue on `LiveNotice` \
+             can be narrowed: {nodes:#?}"
+        );
+
+        // What the app actually builds: the notice outside the toaster. The
+        // notice survives — it is the one node in the tree.
+        let mut root: Element<'_, Msg> = live_notice(
+            Some(NOTICE),
+            cosmic::widget::toaster::toaster(&toasts, a_page()),
+        );
+        let nodes = published(&mut root);
+        assert_eq!(
+            nodes.len(),
+            1,
+            "the body under the toaster is swallowed, so the notice is the \
+             whole tree: {nodes:#?}"
+        );
+        let notice = notice_node(&nodes);
+        assert_eq!(notice.role, Role::Alert);
+        assert_eq!(notice.label.as_deref(), Some(NOTICE));
+        assert_eq!(notice.live, Some(Live::Assertive));
+        assert!(
+            !nodes.iter().any(|node| node.role == Role::Switch),
+            "the control the toaster wraps is not in the tree, and a wrapper \
+             that published it would mean this test is no longer measuring the \
+             gap it documents: {nodes:#?}"
         );
     }
 }
