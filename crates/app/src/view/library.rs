@@ -1361,6 +1361,7 @@ pub fn game_menu_actions<'a>(game: &'a Game) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::testkit;
     use cosmic::widget::menu::Action as _;
     use gamehandler_core::models::SORT_MODES;
 
@@ -1929,41 +1930,6 @@ mod tests {
         assert_eq!(CLEAR_FILTERS, "Clear filters");
     }
 
-    /// Every string the page actually draws, by walking the built widget tree.
-    ///
-    /// Copied in shape from `view::settings`'s `drawn_strings`, and here for the
-    /// reason `BUG-07` is a finding at all: no test in this file had ever built
-    /// [`view`], so a control could leave the page — it did — without a single
-    /// assertion noticing. Constant-level tests cannot see *where* a widget is.
-    fn drawn_strings(mut element: Element<'_, Message>) -> Vec<String> {
-        use cosmic::iced::advanced::widget::{Operation, Tree};
-        use cosmic::iced::advanced::{Layout, layout::Limits};
-        use cosmic::iced::{Font, Pixels, Rectangle, Size};
-
-        #[derive(Default)]
-        struct Texts(Vec<String>);
-        impl Operation for Texts {
-            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-                operate(self);
-            }
-            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
-                self.0.push(text.to_string());
-            }
-        }
-
-        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
-        let mut tree = Tree::new(element.as_widget());
-        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let node = element
-            .as_widget_mut()
-            .layout(&mut tree, &renderer, &limits);
-        let mut texts = Texts::default();
-        element
-            .as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
-        texts.0
-    }
-
     /// The page, built the way the shell builds it.
     ///
     /// The cache is fresh and the geometry is the zero one. Zero is the
@@ -2002,7 +1968,7 @@ mod tests {
         covers: &CoverCache,
         runners: &RunnerManager,
     ) -> Vec<String> {
-        drawn_strings(page_element(library, view_mode, scroll, covers, runners))
+        testkit::drawn_strings(page_element(library, view_mode, scroll, covers, runners))
     }
 
     /// The page as an `Element`, built the way the shell builds it.

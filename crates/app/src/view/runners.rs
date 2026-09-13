@@ -1215,6 +1215,7 @@ fn push_toast(state: &mut State, line: String) -> Task<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::testkit;
     use gamehandler_core::runners::proton::ResponseHead;
     use gamehandler_core::runners::{RunnerManager, WineRunner};
     use std::cell::RefCell;
@@ -1397,42 +1398,8 @@ mod tests {
         }
     }
 
-    /// Every string the page actually draws, by walking the built widget tree.
-    ///
-    /// Same shape as `view::library`'s and `view::settings`'s. `BUG-09` is a
-    /// *missing control*, and a control's absence is only visible in the built
-    /// tree — a constant or a pure-function test cannot see it.
-    fn drawn_strings(mut element: Element<'_, Message>) -> Vec<String> {
-        use cosmic::iced::advanced::widget::{Operation, Tree};
-        use cosmic::iced::advanced::{Layout, layout::Limits};
-        use cosmic::iced::{Font, Pixels, Rectangle, Size};
-
-        #[derive(Default)]
-        struct Texts(Vec<String>);
-        impl Operation for Texts {
-            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-                operate(self);
-            }
-            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
-                self.0.push(text.to_string());
-            }
-        }
-
-        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
-        let mut tree = Tree::new(element.as_widget());
-        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let node = element
-            .as_widget_mut()
-            .layout(&mut tree, &renderer, &limits);
-        let mut texts = Texts::default();
-        element
-            .as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
-        texts.0
-    }
-
     fn page_strings(family: &str, status: &ReleasesStatus, releases: &[ReleaseRow]) -> Vec<String> {
-        drawn_strings(view(RunnersView {
+        testkit::drawn_strings(view(RunnersView {
             installed: &[],
             selected_family: family,
             status,

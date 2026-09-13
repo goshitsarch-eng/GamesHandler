@@ -676,6 +676,7 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::testkit;
 
     /// The keys the table offers, in order.
     fn table_keys() -> Vec<&'static str> {
@@ -1079,53 +1080,11 @@ mod tests {
         );
     }
 
-    /// The strings **this page**, as actually built, hands the operation
-    /// traversal.
-    ///
-    /// A deliberate second copy of `main.rs`'s `drawn_strings` in the test module
-    /// beside the claim it serves, and not a shared helper: the point of the two
-    /// tests below is to measure *this* page rather than a hand-built widget, and
-    /// `main.rs`'s copy is private to its own test module — which T-27 is
-    /// forbidden from editing. If a third caller ever appears, the right move is
-    /// a shared `#[cfg(test)]` helper, not a third copy.
-    ///
-    /// The renderer is `iced_tiny_skia`, pure software, so this needs no display
-    /// and draws nothing; it is asked only to lay the tree out.
-    fn drawn_strings(element: cosmic::Element<'_, Message>) -> Vec<String> {
-        use cosmic::iced::advanced::widget::{Operation, Tree};
-        use cosmic::iced::advanced::{Layout, layout::Limits};
-        use cosmic::iced::{Font, Pixels, Rectangle, Size};
-
-        #[derive(Default)]
-        struct Texts(Vec<String>);
-        impl Operation for Texts {
-            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-                operate(self);
-            }
-            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
-                self.0.push(text.to_string());
-            }
-        }
-
-        let mut element = element;
-        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
-        let mut tree = Tree::new(element.as_widget());
-        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let node = element
-            .as_widget_mut()
-            .layout(&mut tree, &renderer, &limits);
-        let mut texts = Texts::default();
-        element
-            .as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
-        texts.0
-    }
-
     /// This page, built the way the shell builds it.
     fn page_strings() -> Vec<String> {
         let settings = Settings::default();
         let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
-        drawn_strings(view(SettingsPage {
+        testkit::drawn_strings(view(SettingsPage {
             settings: &settings,
             runners: &runners,
         }))

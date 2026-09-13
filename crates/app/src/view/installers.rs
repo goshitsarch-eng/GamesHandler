@@ -764,6 +764,7 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::testkit;
 
     use gamehandler_core::installers::{APPS, LAUNCHERS};
     use gamehandler_core::models::Library;
@@ -2007,7 +2008,7 @@ mod tests {
             busy: false,
             progress: None,
         };
-        let drawn = drawn_strings(view(page));
+        let drawn = testkit::drawn_strings(view(page));
 
         assert!(
             drawn.iter().any(|text| text == EMPTY_TEXT),
@@ -2036,49 +2037,6 @@ mod tests {
             "no card is drawn for an empty catalog, so no Install button is \
              either; drawn: {drawn:?}"
         );
-    }
-
-    /// The strings **this page**, as actually built, hands the operation
-    /// traversal.
-    ///
-    /// A deliberate second copy of the helper in `crates/app/src/main.rs`'s test
-    /// module and in `view/settings.rs`/`view/credits.rs`, beside the claim it
-    /// serves rather than shared with them: those are private to their own test
-    /// modules, so a shared helper would mean promoting a test-only item into
-    /// the crate. If a fifth caller ever appears, that promotion is the right
-    /// move and this is where it should be reconsidered.
-    ///
-    /// The renderer is `iced_tiny_skia`, pure software, so this needs no display
-    /// and draws nothing; it is asked only to lay the tree out.
-    fn drawn_strings(mut element: Element<'_, Message>) -> Vec<String> {
-        use cosmic::iced::advanced::widget::{Operation, Tree};
-        use cosmic::iced::advanced::{Layout, layout::Limits};
-        use cosmic::iced::{Font, Pixels, Rectangle, Size};
-
-        #[derive(Default)]
-        struct Texts(Vec<String>);
-        impl Operation for Texts {
-            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-                operate(self);
-            }
-            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
-                self.0.push(text.to_string());
-            }
-        }
-
-        // `layout` and `operate` take the renderer by shared reference; passing
-        // it by `&mut` is `clippy::unnecessary_mut_passed`.
-        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
-        let mut tree = Tree::new(element.as_widget());
-        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let node = element
-            .as_widget_mut()
-            .layout(&mut tree, &renderer, &limits);
-        let mut texts = Texts::default();
-        element
-            .as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
-        texts.0
     }
 
     /// **The search field leaves the category selector the width it has when

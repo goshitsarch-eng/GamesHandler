@@ -1324,117 +1324,32 @@ pub(crate) fn cover_fixture(stem: &str, bytes: &[u8]) -> String {
 /// widgets would be two answers to the same question, which is why the game
 /// form's `UX-11` tests call these rather than growing a collector of their own
 /// (see [`crate::view::form`]).
+///
+/// What is left here is a re-export: the walk itself is
+/// [`crate::view::testkit`]'s since `ARCH-14`, where six copies of it lived
+/// before. This module kept its own `Seen`, `Collect`, `renderer` and
+/// `traversal` until then.
 #[cfg(test)]
 pub(crate) mod harness {
-    use super::*;
-    use cosmic::iced::advanced::Layout;
-    use cosmic::iced::advanced::layout::Limits;
-    use cosmic::iced::advanced::widget::Operation;
-    use cosmic::iced::advanced::widget::Tree;
-    use cosmic::iced::advanced::widget::operation::Focusable;
-    use cosmic::iced::{Font, Pixels, Rectangle, Size};
-    use cosmic::widget::Id;
+    pub(crate) use crate::view::testkit::{Seen, ids, renderer, texts};
 
-    /// One thing the framework reports about the widget tree.
-    #[derive(Debug, Clone)]
-    pub(crate) struct Seen {
-        pub(crate) id: Option<Id>,
-        pub(crate) bounds: Rectangle,
-        pub(crate) text: Option<String>,
-    }
+    /// Lay an element out as one line and report what the framework knows.
+    pub(crate) use crate::view::testkit::traversal;
 
-    /// Collects what a traversal reports. `traverse` calls `operate(self)` so
-    /// the widgets keep descending — the contract `Operation` documents.
-    #[derive(Default)]
-    pub(crate) struct Collect(pub(crate) Vec<Seen>);
-
-    impl Operation for Collect {
-        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-            operate(self);
-        }
-
-        fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
-            self.0.push(Seen {
-                id: id.cloned(),
-                bounds,
-                text: None,
-            });
-        }
-
-        fn text(&mut self, _id: Option<&Id>, bounds: Rectangle, text: &str) {
-            self.0.push(Seen {
-                id: None,
-                bounds,
-                text: Some(text.to_string()),
-            });
-        }
-
-        /// Where a `cosmic::widget::button` reports its [`Id`].
-        ///
-        /// Not in [`Self::container`]: the button's `operate` calls
-        /// `operation.container(None, layout.bounds())` — always `None` — and
-        /// then `operation.focusable(Some(&self.id), …)`
-        /// (`libcosmic src/widget/button/widget.rs:345` and `:359`). So a test
-        /// that read only `container` would find a button's id nowhere and
-        /// conclude the control had none, which is the "check that cannot see
-        /// the thing it checks" shape. Recorded here rather than asserted
-        /// against a button built in the test, so the id is read off the same
-        /// traversal that reads the rest of the tree.
-        fn focusable(&mut self, id: Option<&Id>, bounds: Rectangle, _state: &mut dyn Focusable) {
-            self.0.push(Seen {
-                id: id.cloned(),
-                bounds,
-                text: None,
-            });
-        }
-    }
-
-    /// A real renderer, for measuring text.
-    ///
-    /// `iced_tiny_skia` is a pure-software backend, so this needs no display
-    /// and draws nothing — `layout` wants it only to ask the font stack how
-    /// wide a string is.
-    pub(crate) fn renderer() -> cosmic::Renderer {
-        cosmic::Renderer::new(Font::default(), Pixels(16.0))
-    }
-
-    /// Lay out a real element and traverse it, and report what the framework
-    /// was told.
-    ///
-    /// `pub(crate)` for the game form's suite, which draws the same preview
-    /// widgets through a page of its own (`UX-11`) — the ids those widgets carry
-    /// are the only place their composition is visible, so a form test that read
-    /// its own tree would be reading a different traversal of the same code.
-    pub(crate) fn traversal<M: Clone + 'static>(el: &mut Element<'_, M>) -> Vec<Seen> {
-        let renderer = renderer();
-        let mut tree = Tree::new(el.as_widget());
-        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        // `Widget::layout` and `Widget::operate` both take the renderer by
-        // shared reference — a widget measures text through it and does not
-        // draw — so neither needs a `&mut` here and clippy says so.
-        let node = el.as_widget_mut().layout(&mut tree, &renderer, &limits);
-        let mut collect = Collect::default();
-        el.as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut collect);
-        collect.0
-    }
-
-    /// The ids the traversal reported, in the order it reported them.
-    pub(crate) fn ids(seen: &[Seen]) -> Vec<Id> {
-        seen.iter().filter_map(|seen| seen.id.clone()).collect()
-    }
-
-    /// The strings the traversal was handed, in order.
-    pub(crate) fn texts(seen: &[Seen]) -> Vec<&str> {
-        seen.iter()
-            .filter_map(|seen| seen.text.as_deref())
-            .collect()
+    /// The same, at a real width — see
+    /// [`crate::view::testkit::traversal_at_width`].
+    pub(crate) fn traversal_at_width<M: Clone + 'static>(
+        el: &mut cosmic::Element<'_, M>,
+        width: f32,
+    ) -> Vec<Seen> {
+        crate::view::testkit::traversal_at_width(el, width)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::harness::{Collect, Seen, ids, renderer, texts, traversal};
+    use super::harness::traversal_at_width;
+    use super::harness::{Seen, ids, renderer, texts, traversal};
     use super::*;
     use cosmic::iced::advanced::Layout;
     use cosmic::iced::advanced::layout::{Limits, Node};
@@ -1960,24 +1875,6 @@ mod tests {
             "a double click on the row must publish the caller's message \
              exactly once"
         );
-    }
-
-    /// `traversal` at a bounded width, which is the only way a wrap is visible.
-    ///
-    /// [`traversal`] passes `f32::INFINITY` as the limit, so nothing in it can
-    /// wrap: a name long enough to need two lines lays out as one long line and
-    /// every assertion about wrapping silently passes. This is the same helper
-    /// with a real width, and it exists because that difference is exactly the
-    /// difference between a test that can see #96 and one that cannot.
-    fn traversal_at_width<M: Clone + 'static>(el: &mut Element<'_, M>, width: f32) -> Vec<Seen> {
-        let renderer = renderer();
-        let mut tree = Tree::new(el.as_widget());
-        let limits = Limits::new(Size::ZERO, Size::new(width, f32::INFINITY));
-        let node = el.as_widget_mut().layout(&mut tree, &renderer, &limits);
-        let mut collect = Collect::default();
-        el.as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut collect);
-        collect.0
     }
 
     /// The boxes a card's column holds, in order: the cover, the name and

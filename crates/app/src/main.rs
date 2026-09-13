@@ -7454,7 +7454,7 @@ mod tests {
             0,
             "this fixture is the empty library"
         );
-        let drawn = drawn_strings(shell.view_body());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_body());
 
         assert!(
             drawn
@@ -7497,7 +7497,7 @@ mod tests {
             .unwrap();
         shell.state.search_text = "no such game".to_string();
 
-        let drawn = drawn_strings(shell.view_body());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_body());
         assert!(
             drawn
                 .iter()
@@ -7637,7 +7637,7 @@ mod tests {
         // `show_page` writes, both of which are written before the task is
         // built. Driving it would reach the network.
         let _ = shell.show_page(Page::Settings);
-        let drawn = drawn_strings(shell.view_body());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_body());
 
         for expected in [
             // The four section headings.
@@ -7681,7 +7681,7 @@ mod tests {
         // `show_page` writes, both of which are written before the task is
         // built. Driving it would reach the network.
         let _ = shell.show_page(Page::Plugins);
-        let drawn = drawn_strings(shell.view_body());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_body());
 
         assert!(
             drawn
@@ -7742,7 +7742,7 @@ mod tests {
     fn the_installers_page_draws_the_catalog_and_not_the_placeholder() {
         let mut shell = Shell::new();
         let _ = shell.show_page(Page::Installers);
-        let drawn = drawn_strings(shell.view_body());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_body());
 
         assert_eq!(
             shell.state.installer_catalog.len(),
@@ -7865,7 +7865,7 @@ mod tests {
     fn the_credits_page_draws_the_reference_and_not_the_placeholder() {
         let mut shell = Shell::new();
         let _ = shell.show_page(Page::Credits);
-        let drawn = drawn_strings(shell.view_body());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_body());
 
         for expected in [
             crate::view::credits::LEAD_HEADING,
@@ -7944,7 +7944,7 @@ mod tests {
     #[test]
     fn the_form_is_a_layer_over_the_page_it_replaces() {
         let shell = shell_with_form_open(true, false);
-        let layer = drawn_strings(shell.view_with_overlays());
+        let layer = crate::view::testkit::drawn_strings(shell.view_with_overlays());
 
         for expected in [
             crate::view::form::TITLE_ADD,
@@ -7974,14 +7974,14 @@ mod tests {
         let mut closed = shell_with_form_open(true, false);
         closed.state.game_form = None;
         assert_eq!(
-            drawn_strings(shell.view_body()),
-            drawn_strings(closed.view_body()),
+            crate::view::testkit::drawn_strings(shell.view_body()),
+            crate::view::testkit::drawn_strings(closed.view_body()),
             "`view_body` draws differently depending on whether a layer is open, so \
              every page test above now depends on the form"
         );
 
         // Nothing open: the same call is the page, with no form in it.
-        let fallthrough = drawn_strings(closed.view_with_overlays());
+        let fallthrough = crate::view::testkit::drawn_strings(closed.view_with_overlays());
         assert!(
             fallthrough
                 .iter()
@@ -8004,7 +8004,7 @@ mod tests {
     #[test]
     fn the_edit_form_draws_its_own_title_and_action() {
         let shell = shell_with_form_open(false, false);
-        let drawn = drawn_strings(shell.view_with_overlays());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_with_overlays());
 
         for expected in [
             crate::view::form::TITLE_EDIT,
@@ -8043,7 +8043,9 @@ mod tests {
                 exe: String::new(),
             },
         );
-        let drawn = drawn_strings(shell_with_form_open(true, false).view_with_overlays());
+        let drawn = crate::view::testkit::drawn_strings(
+            shell_with_form_open(true, false).view_with_overlays(),
+        );
         let button_on_screen = drawn
             .iter()
             .any(|text| text == crate::view::form::FIND_COVER);
@@ -9205,7 +9207,9 @@ mod tests {
     /// Linux half asserts on the row's label rather than on the runner's name.
     #[test]
     fn the_runner_row_is_hidden_exactly_when_it_cannot_be_disabled() {
-        let windows = drawn_strings(shell_with_form_open(true, false).view_with_overlays());
+        let windows = crate::view::testkit::drawn_strings(
+            shell_with_form_open(true, false).view_with_overlays(),
+        );
         assert!(
             windows
                 .iter()
@@ -9213,7 +9217,9 @@ mod tests {
             "a Windows game has a runner to choose; drawn: {windows:?}"
         );
 
-        let linux = drawn_strings(shell_with_form_open(true, true).view_with_overlays());
+        let linux = crate::view::testkit::drawn_strings(
+            shell_with_form_open(true, true).view_with_overlays(),
+        );
         assert_eq!(
             linux
                 .iter()
@@ -9270,7 +9276,9 @@ mod tests {
             !subtitle.is_empty(),
             "the row picked names no subtitle, so this measures nothing"
         );
-        let drawn = drawn_strings::<Message>(toggler(true).label(subtitle.to_string()).into());
+        let drawn = crate::view::testkit::drawn_strings::<Message>(
+            toggler(true).label(subtitle.to_string()).into(),
+        );
         assert!(
             drawn.is_empty(),
             "if this now lists {subtitle:?}, `Toggler` gained a child text widget \
@@ -10123,7 +10131,7 @@ mod tests {
             name: "GE-Proton9-5".to_string(),
         });
         let pending = shell.state.confirm_remove_runner.clone().unwrap();
-        let drawn = drawn_strings(shell.view_with_overlays());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_with_overlays());
 
         for expected in [pending.title(), "Cancel".to_string(), "Remove".to_string()] {
             assert!(
@@ -10161,7 +10169,7 @@ mod tests {
         // module's own constant rather than a literal, so a copy change fails
         // in one place rather than here.
         let closed = Shell::new();
-        let fallthrough = drawn_strings(closed.view_with_overlays());
+        let fallthrough = crate::view::testkit::drawn_strings(closed.view_with_overlays());
         assert!(
             !fallthrough.iter().any(|text| text == &pending.title()),
             "no pending removal, so no dialog title; drawn: {fallthrough:?}"
@@ -10190,7 +10198,7 @@ mod tests {
         });
         let pending = shell.state.confirm_remove_runner.clone().unwrap();
 
-        let drawn = drawn_strings(shell.view_with_overlays());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_with_overlays());
 
         assert!(
             drawn
@@ -10344,7 +10352,7 @@ mod tests {
         shell.state.library = library;
 
         let _ = shell.update(Message::ConfirmDeleteGame("g1".to_string()));
-        let drawn = drawn_strings(shell.view_with_overlays());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_with_overlays());
 
         assert!(
             drawn
@@ -10371,7 +10379,7 @@ mod tests {
 
         // Nothing pending: the same call is the page, with no dialog in it.
         shell.state.confirm_delete = None;
-        let fallthrough = drawn_strings(shell.view_with_overlays());
+        let fallthrough = crate::view::testkit::drawn_strings(shell.view_with_overlays());
         assert!(
             !fallthrough
                 .iter()
@@ -10403,7 +10411,7 @@ mod tests {
         shell.state.library = library;
         shell.state.page = Page::Library;
 
-        let without = drawn_strings(shell.view_with_overlays());
+        let without = crate::view::testkit::drawn_strings(shell.view_with_overlays());
         assert!(
             !without.iter().any(|text| text == "Remove from library"),
             "no layer is open, so no game's actions are drawn; drawn: {without:?}"
@@ -10424,7 +10432,7 @@ mod tests {
             "opening the layer must ask the runtime to move the focus into it, \
              or the keyboard user's next Tab walks the page first"
         );
-        let drawn = drawn_strings(shell.view_with_overlays());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_with_overlays());
 
         let mut expected = vec![
             "Remove from library".to_string(),
@@ -10455,7 +10463,7 @@ mod tests {
         // list is that game's actions, and there are none for a game that is
         // not there.
         shell.state.game_menu = Some("missing".to_string());
-        let vanished = drawn_strings(shell.view_with_overlays());
+        let vanished = crate::view::testkit::drawn_strings(shell.view_with_overlays());
         assert!(
             !vanished.iter().any(|text| text == "Remove from library"),
             "a layer for an absent game must draw nothing; drawn: {vanished:?}"
@@ -10472,7 +10480,7 @@ mod tests {
         shell.state.library = library;
         shell.state.confirm_delete = Some("missing".to_string());
 
-        let drawn = drawn_strings(shell.view_with_overlays());
+        let drawn = crate::view::testkit::drawn_strings(shell.view_with_overlays());
 
         assert!(
             drawn
@@ -11051,7 +11059,7 @@ mod tests {
             // `show_page` writes, both of which are written before the task is
             // built. Driving it would reach the network.
             let _ = shell.show_page(page);
-            let drawn = drawn_strings(shell.view_body());
+            let drawn = crate::view::testkit::drawn_strings(shell.view_body());
 
             let says_pending = drawn
                 .iter()
@@ -11077,42 +11085,6 @@ mod tests {
                 ),
             }
         }
-    }
-
-    /// The strings a real element hands the operation traversal.
-    ///
-    /// The same mechanism `crate::view::widgets`'s tests use, and for the same
-    /// reason: iced exposes no downcast, so the text a widget draws is reachable
-    /// only through `Widget::operate`.
-    fn drawn_strings<M: Clone + 'static>(mut element: cosmic::Element<'_, M>) -> Vec<String> {
-        use cosmic::iced::advanced::widget::{Operation, Tree};
-        use cosmic::iced::advanced::{Layout, layout::Limits};
-        use cosmic::iced::{Font, Pixels, Rectangle, Size};
-
-        #[derive(Default)]
-        struct Texts(Vec<String>);
-        impl Operation for Texts {
-            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-                operate(self);
-            }
-            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
-                self.0.push(text.to_string());
-            }
-        }
-
-        // `layout` and `operate` take the renderer by shared reference; passing
-        // it by `&mut` is `clippy::unnecessary_mut_passed`.
-        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
-        let mut tree = Tree::new(element.as_widget());
-        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let node = element
-            .as_widget_mut()
-            .layout(&mut tree, &renderer, &limits);
-        let mut texts = Texts::default();
-        element
-            .as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
-        texts.0
     }
 
     /// The strings a real element hands the operation traversal, **each with the

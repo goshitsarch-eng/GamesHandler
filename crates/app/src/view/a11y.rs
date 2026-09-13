@@ -1295,13 +1295,14 @@ impl<'a, Message: Clone + 'a> From<LiveNotice<'a, Message>> for Element<'a, Mess
 /// building the widget, running a real `Widget::operate`, reading a real
 /// `Widget::a11y_nodes`.
 ///
-/// `settings.rs:1000-1001` states this repo's rule for exactly that situation,
-/// (measured against the working tree this file ships in, not against `HEAD`:
-/// the accessibility work is what moved that comment down 99 lines, so a reader
-/// checking it against `HEAD` will find it at `:901`),
-/// written about its own copy of the drawn-strings walker: *"If a third caller
-/// ever appears, the right move is a shared `#[cfg(test)]` helper, not a third
-/// copy."* The page tests are the third caller. A second copy of the focus
+/// The rule for that situation is the one `ARCH-14` settled, and this module is
+/// the case it was settled for: `settings.rs` used to carry the note *"If a
+/// third caller ever appears, the right move is a shared `#[cfg(test)]` helper,
+/// not a third copy"* beside its own copy of the drawn-strings walker, and by
+/// the time the note was read back there were six copies. They are
+/// [`crate::view::testkit`]'s now, and the note is gone with them — so this
+/// comment no longer quotes a line that exists, which is the smaller version of
+/// the same fault it describes. A second copy of the focus
 /// walker would also be a second place for the `focus_next` chain loop
 /// ([`tab_to`]) and the `A11yTree` shape ([`published`]) to be got wrong, and a
 /// copy that got them wrong would fail *silently* — it would report an empty
@@ -1319,14 +1320,13 @@ pub(crate) mod harness {
     use super::*;
     use cosmic::iced::advanced::widget::operation;
     use cosmic::iced::advanced::widget::operation::Focusable;
-    use cosmic::iced::{Font, Pixels};
 
-    /// A real renderer. `iced_tiny_skia` is pure software, so this needs no
-    /// display and draws nothing — `layout` wants it only to ask the font stack
-    /// how wide a string is.
-    pub(crate) fn renderer() -> cosmic::Renderer {
-        cosmic::Renderer::new(Font::default(), Pixels(16.0))
-    }
+    /// A real renderer — the shared one, see
+    /// [`crate::view::testkit::renderer`]. It was a second copy of that
+    /// two-line function until `ARCH-14`; nothing about this module's
+    /// accessibility testing needs a different font stack from any other
+    /// module's.
+    pub(crate) use crate::view::testkit::renderer;
 
     /// A built element: its tree, and the layout the framework computed for it.
     pub(crate) fn built<M: Clone + 'static>(el: &mut Element<'_, M>) -> (Tree, layout::Node) {

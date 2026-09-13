@@ -19,6 +19,17 @@
 //! | **Pure layout** — widget builders generic over `M` | [`a11y`], [`badge`], [`widgets`] | no | no |
 //! | **Pure decisions** — data in, data out | [`cover`], [`cover_cache`], [`meta`], [`metrics`] | no | no |
 //! | **Page modules** — bound to this app's state and messages | [`credits`], [`form`], [`installers`], [`library`], [`plugins`], [`runners`], [`settings`] | yes | yes |
+//! | **Test support** — compiled only under `cfg(test)` | [`testkit`] | no | no |
+//!
+//! The *test support* row is not a layer so much as the absence of one: [`testkit`]
+//! is `#[cfg(test)]`, so it is not in the binary at all, and it is listed here
+//! because the test below reads this table as the complete classification of
+//! every declared module — a module in none of the rows is a module whose
+//! contract nobody wrote down, which is what that test exists to catch. It
+//! holds no app types: it lays an element out and reports what the framework
+//! says about the tree, which is why it may read no `State` and emit no
+//! `Message` and why it can be shared by a page module and a layout module
+//! alike (`ARCH-14`).
 //!
 //! The page modules are the imperative shell for their screen: they own an
 //! `update`, they take `&State` or `&mut State`, and [`plugins`] runs a real
@@ -96,6 +107,8 @@ pub mod metrics;
 pub mod plugins;
 pub mod runners;
 pub mod settings;
+#[cfg(test)]
+pub mod testkit;
 pub mod widgets;
 
 #[cfg(test)]
@@ -184,6 +197,8 @@ mod tests {
     /// that the docs do not describe fails a test rather than a review.
     const PURE_LAYOUT: &[&str] = &["a11y", "badge", "widgets"];
     const PURE_DECISIONS: &[&str] = &["cover", "cover_cache", "meta", "metrics"];
+    /// `#[cfg(test)]`, so not in the binary — see the docs table above.
+    const TEST_SUPPORT: &[&str] = &["testkit"];
     const PAGE_MODULES: &[&str] = &[
         "credits",
         "form",
@@ -215,6 +230,7 @@ mod tests {
             .iter()
             .chain(PURE_DECISIONS)
             .chain(PAGE_MODULES)
+            .chain(TEST_SUPPORT)
             .map(|name| (*name).to_string())
             .collect();
         let unclassified: Vec<&String> = declared.difference(&classified).collect();

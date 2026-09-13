@@ -385,6 +385,7 @@ pub fn view(_page: CreditsPage) -> Element<'static, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::testkit;
     use std::path::Path;
 
     /// A file from the repository root, read at test time.
@@ -752,7 +753,7 @@ mod tests {
         );
 
         // And the page draws exactly that many buttons.
-        let drawn = drawn_strings(view(CreditsPage));
+        let drawn = testkit::drawn_strings(view(CreditsPage));
         let drawn_visits = drawn.iter().filter(|text| *text == VISIT_LABEL).count();
         let expected_visits = credits
             .iter()
@@ -783,7 +784,7 @@ mod tests {
             ),
             other => panic!("the footer's press must be `OpenUrl`, got {other:?}"),
         }
-        let drawn = drawn_strings(view(CreditsPage));
+        let drawn = testkit::drawn_strings(view(CreditsPage));
         assert_eq!(
             drawn.iter().filter(|text| *text == GITHUB_LABEL).count(),
             1,
@@ -814,7 +815,7 @@ mod tests {
     /// `the_static_copy_is_drawn_too`.
     #[test]
     fn the_page_draws_every_section_and_every_credit() {
-        let drawn = drawn_strings(view(CreditsPage));
+        let drawn = testkit::drawn_strings(view(CreditsPage));
 
         for section in credit_sections() {
             assert!(
@@ -885,7 +886,7 @@ mod tests {
     /// drawing data the reference does not have.
     #[test]
     fn the_static_copy_is_drawn_too() {
-        let drawn = drawn_strings(view(CreditsPage));
+        let drawn = testkit::drawn_strings(view(CreditsPage));
         for (what, literal) in [
             ("the lead heading", LEAD_HEADING),
             ("the maker line", MAKER_LINE),
@@ -907,41 +908,5 @@ mod tests {
         }
         assert!(drawn.iter().any(|text| text == &version_line()));
         assert!(drawn.iter().any(|text| text == &footer_line()));
-    }
-
-    /// The strings a real element hands the operation traversal.
-    ///
-    /// The same mechanism `crate::view::widgets`'s tests and `main.rs`'s
-    /// `drawn_strings` use: `iced` exposes no downcast, so the text a widget
-    /// draws is reachable only through `Widget::operate`.
-    fn drawn_strings(mut element: Element<'static, Message>) -> Vec<String> {
-        use cosmic::iced::advanced::widget::{Operation, Tree};
-        use cosmic::iced::advanced::{Layout, layout::Limits};
-        use cosmic::iced::{Font, Pixels, Rectangle, Size};
-
-        #[derive(Default)]
-        struct Texts(Vec<String>);
-        impl Operation for Texts {
-            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-                operate(self);
-            }
-            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
-                self.0.push(text.to_string());
-            }
-        }
-
-        // `layout` and `operate` take the renderer by shared reference; passing
-        // it by `&mut` is `clippy::unnecessary_mut_passed`.
-        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
-        let mut tree = Tree::new(element.as_widget());
-        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let node = element
-            .as_widget_mut()
-            .layout(&mut tree, &renderer, &limits);
-        let mut texts = Texts::default();
-        element
-            .as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
-        texts.0
     }
 }

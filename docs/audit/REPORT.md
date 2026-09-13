@@ -60,12 +60,12 @@ and the section *What remains, honestly* says which is which.
 | Category | Role | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 46 | 32 | 2 | 14 |
-| `ARCH-xx` | Architecture, code quality | 25 | 16 | 1 | 9 |
+| `ARCH-xx` | Architecture, code quality | 25 | 17 | 1 | 8 |
 | `UX-xx` | libcosmic / COSMIC UX | 29 | 16 | 1 | 13 |
 | `PERF-xx` | Performance, resource | 8 | 6 | 0 | 2 |
 | `SEC-xx` | Security, robustness | 11 | 7 | 0 | 4 |
 | `PKG-xx` | Packaging, platform, QA | 11 | 7 | 0 | 4 |
-| **Total** | | **130** | **84** | **4** | **46** |
+| **Total** | | **130** | **85** | **4** | **45** |
 
 The `Found` column is defects; the four refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
@@ -78,9 +78,9 @@ By severity:
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 52 | 43 | 0 | 9 |
+| P2 | 52 | 44 | 0 | 8 |
 | P3 | 49 | 12 | 0 | 37 |
-| **Total** | **130** | **84** | **0** | **46** |
+| **Total** | **130** | **85** | **0** | **45** |
 
 `Not a defect` is not a euphemism for "wontfix": all four rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`, `BUG-15`,
