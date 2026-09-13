@@ -480,26 +480,6 @@ pub fn markdown() -> String {
 mod tests {
     use super::*;
     use crate::runners::families::RUNNER_FAMILIES;
-    use std::path::{Path, PathBuf};
-
-    /// A file at the repository root, read at test time.
-    ///
-    /// `CARGO_MANIFEST_DIR` is `crates/core`, so the repository root is two
-    /// levels up. Reading the reference off disk rather than comparing the port
-    /// against itself is the point: a copy of a constant cannot disagree with
-    /// the constant it was copied from.
-    fn repo_file(relative: &str) -> String {
-        let path: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join(relative);
-        std::fs::read_to_string(&path).unwrap_or_else(|error| {
-            panic!(
-                "{} is the oracle for this module and must be readable: {error}",
-                path.display()
-            )
-        })
-    }
 
     /// Every project whose code actually runs when a game launches must be
     /// credited. Transcribed from `tests/test_credits.py`'s `REQUIRED`.
@@ -533,7 +513,7 @@ mod tests {
         // A stronger assertion than a block-wise containment check: an edit to
         // any role, license, name or punctuation in this module shifts the text
         // and the test names the first differing byte.
-        let readme = repo_file("README.md");
+        let readme = crate::oracle_support::repo_file("README.md");
         let ours = markdown();
         assert!(
             readme.contains(&ours),
@@ -583,7 +563,7 @@ mod tests {
         // match. The counts are read out of the Python source rather than
         // restated as literals, so "5 sections / 25 entries" is derived from
         // the reference instead of from this test's author.
-        let source = repo_file("gamehandler/credits.py");
+        let source = crate::oracle_support::repo_file("gamehandler/credits.py");
         let section_count = source.matches("CreditSection(").count();
         let credit_count = source.matches("Credit(").count();
         assert_eq!(
@@ -813,7 +793,7 @@ mod tests {
     #[test]
     fn the_rationale_is_in_the_readme_too() {
         // `test_credits.py::test_readme_explains_why_it_is_one_app`.
-        let readme = repo_file("README.md");
+        let readme = crate::oracle_support::repo_file("README.md");
         assert!(readme.contains("Why one app instead of assembling the stack yourself"));
         for (heading, _) in WHY_ALL_IN_ONE {
             assert!(

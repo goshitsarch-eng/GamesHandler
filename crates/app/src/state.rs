@@ -1261,34 +1261,6 @@ mod tests {
 
     // ---- The add/edit form -------------------------------------------------
 
-    /// The checkout's copy of a file the reference lives in.
-    ///
-    /// Read at test time rather than pasted, so the assertion is against the
-    /// reference's current text and not against a snapshot of it taken when the
-    /// test was written. The three-marker probe is `pending_pages.rs`'s: a
-    /// `target/` directory shared between two checkouts hands cargo a binary
-    /// compiled in one and run in the other, and a test that reads files would
-    /// then assert against the wrong tree — which passes, silently.
-    fn read_repo_file(relative: &str) -> String {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(2)
-            .expect("crates/app sits two levels below the repository root")
-            .to_path_buf();
-        for marker in ["Cargo.toml", "build-aux", "data"] {
-            assert!(
-                root.join(marker).exists(),
-                "this test was compiled in {}, which is not the GameHandler checkout: \
-                 {marker} is not there. A `target/` directory shared between checkouts hands \
-                 cargo a test binary built in the other one.",
-                root.display()
-            );
-        }
-        let path = root.join(relative);
-        std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
-    }
-
     /// One method's source text, from `def name(` to the next method.
     ///
     /// Indentation, not brace counting: the next `def` or `@Slot` at the class's
@@ -1358,7 +1330,7 @@ mod tests {
     /// Listing them means a third exception has to be added on purpose.
     #[test]
     fn the_form_field_keys_are_the_ones_get_game_and_save_game_use() {
-        let bridge = read_repo_file("gamehandler/bridge.py");
+        let bridge = gamehandler_core::oracle_support::repo_file("gamehandler/bridge.py");
 
         let mut ours: Vec<String> = FormField::ALL
             .iter()
@@ -1551,7 +1523,7 @@ mod tests {
             "and the stored name is the stripped one"
         );
 
-        let bridge = read_repo_file("gamehandler/bridge.py");
+        let bridge = gamehandler_core::oracle_support::repo_file("gamehandler/bridge.py");
         let save = python_method(&bridge, "saveGame");
         assert!(
             save.contains(&format!("\"{NAME_REQUIRED}\"")),
@@ -1612,7 +1584,7 @@ mod tests {
         assert_eq!(game.category, "Uncategorized");
         assert_eq!(game.virtual_desktop_size, "1920x1080");
 
-        let bridge = read_repo_file("gamehandler/bridge.py");
+        let bridge = gamehandler_core::oracle_support::repo_file("gamehandler/bridge.py");
         let save = python_method(&bridge, "saveGame");
         assert!(
             save.contains("or \"1920x1080\""),

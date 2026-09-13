@@ -87,6 +87,56 @@ pub fn join_adjacent_literals(source: &str) -> String {
     out
 }
 
+/// A file from the repository root, read at test time (`ARCH-15`).
+///
+/// The reference implementation is in the tree — `gamehandler/*.py`, the QML,
+/// `data/` — and a test that asserts the port matches it has to read it. This
+/// is that read, once.
+///
+/// **It was four copies with three derivations.** `env!("CARGO_MANIFEST_DIR")`
+/// is `crates/core` or `crates/app` depending on which crate is compiling, so
+/// each copy had to climb two levels and each climbed differently:
+/// `.join("..").join("..")` in `core::plugins` and `core::credits`,
+/// `.ancestors().nth(2)` in `app::view::credits`, and a bare
+/// `join("../../…")` chain at six further sites. The four also carried four
+/// different panic messages, so a missing file produced four different
+/// explanations of the same problem.
+///
+/// The cost of that is not tidiness. These reads are the *oracle* for tests
+/// about the reference: a restructure that moved one file would break some
+/// tests with a panic and leave others passing, because the derivations do not
+/// all resolve to the same place. A partial failure that looks like a data
+/// problem is the worst of both, and it is what ARCH-15 is about.
+///
+/// Resolution is relative to this crate's `CARGO_MANIFEST_DIR`, so callers
+/// pass a path from the repository root — `"gamehandler/plugins.py"`,
+/// `"data/com.goshapps.GameHandler.metainfo.xml"` — and never compute the
+/// climb themselves.
+///
+/// # Panics
+///
+/// If the file cannot be read. That is deliberate and it is the one category
+/// this project allows to panic (category A): a test asserting against the
+/// reference is meaningless if the reference is missing, and a silent empty
+/// string would make every such assertion pass. The message names the resolved
+/// path, so the failure says where it looked rather than only that it failed.
+pub fn repo_file(relative: &str) -> String {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("crates/core sits two levels below the repository root");
+    let path = root.join(relative);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "the reference file {} is unreadable: {error}. Every test that reads \
+             it is asserting against the reference rather than against a copy of \
+             the port's own constants, so this file missing is not a data \
+             problem — it is the oracle being absent.",
+            path.display()
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::join_adjacent_literals;

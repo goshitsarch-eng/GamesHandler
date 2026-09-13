@@ -5196,15 +5196,17 @@ mod tests {
     /// follow it.
     #[test]
     fn the_grace_period_is_the_references() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../gamehandler/runners.py");
-        let source = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("{} is unreadable: {error}", path.display()));
+        let source = gamehandler_core::oracle_support::repo_file("gamehandler/runners.py");
         let line = source
             .lines()
             .find(|line| line.starts_with("LAUNCH_GRACE_SECONDS"))
             .unwrap_or_else(|| {
-                panic!("{} no longer declares LAUNCH_GRACE_SECONDS", path.display())
+                panic!(
+                    "gamehandler/runners.py no longer declares LAUNCH_GRACE_SECONDS; \
+                     it is the reference this constant was transcribed from, so its \
+                     absence means this test has no oracle left and should be deleted \
+                     rather than repointed"
+                )
             });
         let value = line
             .split('=')
@@ -5212,10 +5214,8 @@ mod tests {
             .and_then(|value| value.trim().trim_end_matches(';').parse::<f64>().ok())
             .unwrap_or_else(|| panic!("`{line}` is not a float assignment"));
         assert_eq!(
-            LAUNCH_GRACE_SECONDS,
-            value,
-            "the port's grace period has drifted from `{}`",
-            path.display()
+            LAUNCH_GRACE_SECONDS, value,
+            "the port's grace period has drifted from `gamehandler/runners.py`"
         );
         assert_eq!(
             launch_grace(),
@@ -11236,17 +11236,7 @@ mod tests {
     /// records.
     #[test]
     fn the_shells_labels_are_the_reference_drawers_labels_in_order() {
-        let main_qml =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../gamehandler/qml/Main.qml");
-        let text = std::fs::read_to_string(&main_qml).unwrap_or_else(|err| {
-            panic!(
-                "{} should be readable: {err}\n\
-                 It is the reference this shell was ported from, and the port's \
-                 own tests read it. If it has been moved, this check needs a new \
-                 path — and so does every citation in docs/migration/.",
-                main_qml.display()
-            )
-        });
+        let text = gamehandler_core::oracle_support::repo_file("gamehandler/qml/Main.qml");
 
         // Slice to the drawer's `actions: [...]` block first. The file has other
         // `text:` properties — the drawer's own content area at `:111`, the
@@ -11815,14 +11805,11 @@ mod tests {
     /// what fails when it does.
     #[test]
     fn every_reference_notify_has_a_port_voice() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../");
-        let bridge =
-            std::fs::read_to_string(root.join("gamehandler/bridge.py")).unwrap_or_else(|err| {
-                panic!(
-                    "bridge.py should be readable: it is the reference this shell was ported \
-                     from: {err}"
-                )
-            });
+        // `root` stays for `read_crates`, which walks the *source tree* rather
+        // than reading one reference file; the `bridge.py` read goes through the
+        // shared helper like every other reference read (`ARCH-15`).
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let bridge = gamehandler_core::oracle_support::repo_file("gamehandler/bridge.py");
         let calls = notify_calls(&bridge);
         assert!(
             calls.iter().all(|call| call.len() < 500),
@@ -11909,20 +11896,8 @@ mod tests {
     /// means "the floor is the reference's and the builder still asks for it".
     #[test]
     fn the_window_floor_is_the_references_and_the_builder_asks_for_it() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-
         // ---- half one: the number is the reference's -----------------------
-        let main_qml = root.join("gamehandler/qml/Main.qml");
-        let text = std::fs::read_to_string(&main_qml).unwrap_or_else(|err| {
-            panic!(
-                "{} should be readable: {err}\n\
-                 It is the reference this shell was ported from, and this test \
-                 reads the floor out of it. If it has been moved, this check \
-                 needs a new path — and so does every citation in \
-                 docs/migration/.",
-                main_qml.display()
-            )
-        });
+        let text = gamehandler_core::oracle_support::repo_file("gamehandler/qml/Main.qml");
         let qml_value = |key: &str| -> f32 {
             let line = text
                 .lines()
@@ -12041,17 +12016,7 @@ mod tests {
     /// drawer, in order, and requires them to be the six this shell uses.
     #[test]
     fn the_shells_icons_are_the_reference_drawers_icons_in_order() {
-        let main_qml =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../gamehandler/qml/Main.qml");
-        let text = std::fs::read_to_string(&main_qml).unwrap_or_else(|err| {
-            panic!(
-                "{} should be readable: {err}\n\
-                 It is the reference this shell was ported from, and the port's \
-                 own tests read it. If it has been moved, this check needs a new \
-                 path — and so does every citation in docs/migration/.",
-                main_qml.display()
-            )
-        });
+        let text = gamehandler_core::oracle_support::repo_file("gamehandler/qml/Main.qml");
 
         let names: Vec<&str> = text
             .lines()

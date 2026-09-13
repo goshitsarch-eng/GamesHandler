@@ -519,7 +519,6 @@ pub fn plugins_intro(env: &dyn PluginEnv) -> String {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-    use std::path::Path as StdPath;
 
     /// A whole host, faked: `PATH` results, filesystem answers and the uid.
     ///
@@ -598,21 +597,6 @@ mod tests {
         }
     }
 
-    /// A file from the repository root, read at test time.
-    ///
-    /// `CARGO_MANIFEST_DIR` is `crates/core`, so the root is two levels up.
-    /// Reading the reference off disk is the point: a constant compared against
-    /// a copy of itself cannot disagree with itself, which is how a mistyped
-    /// string survives a suite.
-    fn repo_file(relative: &str) -> String {
-        let path = StdPath::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join(relative);
-        std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("{} must be readable: {error}", path.display()))
-    }
-
     // ------------------------------------------------------------ catalogue
 
     #[test]
@@ -621,7 +605,7 @@ mod tests {
         // `plugins.py` as the literal the reference writes, so a mistyped name,
         // binary, description or package — including the curly apostrophe in
         // Winetricks' `used_for` — fails here rather than on the page.
-        let source = repo_file("gamehandler/plugins.py");
+        let source = crate::oracle_support::repo_file("gamehandler/plugins.py");
         for plugin in plugins() {
             for (field, value) in [
                 ("id", plugin.id),
@@ -654,7 +638,7 @@ mod tests {
         // own: an entry omitted from both this table and the check would still
         // pass. The count comes from the Python source, so "five helpers" is
         // derived from the reference rather than asserted by fiat.
-        let source = repo_file("gamehandler/plugins.py");
+        let source = crate::oracle_support::repo_file("gamehandler/plugins.py");
         assert_eq!(plugins().len(), source.matches("Plugin(").count());
         assert_eq!(
             plugins().iter().map(|plugin| plugin.id).collect::<Vec<_>>(),
@@ -1088,8 +1072,9 @@ mod tests {
     fn the_row_subtitles_are_the_references_wording() {
         // Each state is compared against the text `bridge.py` actually
         // hardcodes, sliced out of the joined source rather than retyped.
-        let bridge =
-            crate::oracle_support::join_adjacent_literals(&repo_file("gamehandler/bridge.py"));
+        let bridge = crate::oracle_support::join_adjacent_literals(
+            &crate::oracle_support::repo_file("gamehandler/bridge.py"),
+        );
         let mangohud = plugin_by_id("mangohud").unwrap();
 
         let sandboxed = FakePluginEnv::new().with_var("FLATPAK_ID", "x");
@@ -1149,8 +1134,9 @@ mod tests {
 
     #[test]
     fn the_intro_is_the_references_wording() {
-        let bridge =
-            crate::oracle_support::join_adjacent_literals(&repo_file("gamehandler/bridge.py"));
+        let bridge = crate::oracle_support::join_adjacent_literals(
+            &crate::oracle_support::repo_file("gamehandler/bridge.py"),
+        );
 
         // The sandbox sentence is entirely literal in the reference — no
         // interpolation at all — so this comparison is exact in both

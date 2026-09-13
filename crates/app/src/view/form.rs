@@ -1051,17 +1051,21 @@ mod tests {
     ///
     /// Every string and every `enabled:` flag below is pinned against this file,
     /// so a port that drifts from the reference fails here rather than looking
-    /// self-consistent. The path is derived from `CARGO_MANIFEST_DIR` for the
-    /// reason `main.rs`'s tests derive theirs: a hardcoded absolute path passes on
-    /// one machine.
+    /// self-consistent. The read goes through
+    /// [`gamehandler_core::oracle_support::repo_file`] like every other
+    /// reference read in the workspace (`ARCH-15`), so the climb to the
+    /// repository root is written once instead of once per crate.
+    ///
+    /// This doc used to say the path was "derived from `CARGO_MANIFEST_DIR` for
+    /// the reason `main.rs`'s tests derive theirs" — which was false twice over.
+    /// `main.rs`'s tests used a bare `join("../..")` rather than this function's
+    /// `.parent().and_then(...)` chain, so the precedent named was not a
+    /// precedent; and there were four `.parent()`-style derivations in the tree
+    /// by then, so the reason given was the reason each of them gave. `ARCH-15`
+    /// records it because a citation that reads as deliberate is exactly what
+    /// keeps a divergence from being looked at.
     fn qml() -> String {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|crates| crates.parent())
-            .expect("crates/app sits in a repository")
-            .join("gamehandler/qml/GameFormPage.qml");
-        std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("{} is unreadable: {error}", path.display()))
+        gamehandler_core::oracle_support::repo_file("gamehandler/qml/GameFormPage.qml")
     }
 
     /// The text from the `{` at `open` to the `}` that closes it.

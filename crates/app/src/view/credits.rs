@@ -386,25 +386,9 @@ pub fn view(_page: CreditsPage) -> Element<'static, Message> {
 mod tests {
     use super::*;
     use crate::view::testkit;
-    use std::path::Path;
-
-    /// A file from the repository root, read at test time.
-    ///
-    /// `CARGO_MANIFEST_DIR` is `crates/app`, so the root is two levels up.
-    /// Reading the reference off disk is the point: a constant compared against
-    /// a copy of itself cannot disagree with itself.
-    fn repo_file(relative: &str) -> String {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(2)
-            .expect("crates/app sits two levels below the repository root")
-            .join(relative);
-        std::fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()))
-    }
 
     fn qml() -> String {
-        repo_file("gamehandler/qml/CreditsPage.qml")
+        gamehandler_core::oracle_support::repo_file("gamehandler/qml/CreditsPage.qml")
     }
 
     /// **The page presents every credit the reference declares.**
@@ -430,7 +414,7 @@ mod tests {
     /// `main.rs`; see the module note.
     #[test]
     fn the_page_presents_every_credit_the_reference_declares() {
-        let reference = repo_file("gamehandler/credits.py");
+        let reference = gamehandler_core::oracle_support::repo_file("gamehandler/credits.py");
         let declared_sections = reference.matches("CreditSection(").count();
         let declared_credits = reference.matches("Credit(").count();
 
@@ -599,7 +583,8 @@ mod tests {
         );
         assert!(qml().contains(&format!("\"{PAGE_TITLE}\"")));
         assert!(
-            repo_file("gamehandler/qml/Main.qml").contains(&format!("\"{PAGE_TITLE}\"")),
+            gamehandler_core::oracle_support::repo_file("gamehandler/qml/Main.qml")
+                .contains(&format!("\"{PAGE_TITLE}\"")),
             "Main.qml no longer names the drawer row {PAGE_TITLE:?}"
         );
     }
@@ -653,7 +638,10 @@ mod tests {
              apart; the page draws the manifest's"
         );
         assert!(
-            repo_file("data/com.goshapps.GameHandler.metainfo.xml").contains(qml_url),
+            gamehandler_core::oracle_support::repo_file(
+                "data/com.goshapps.GameHandler.metainfo.xml"
+            )
+            .contains(qml_url),
             "the metainfo file no longer carries the homepage"
         );
     }

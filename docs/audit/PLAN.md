@@ -63,7 +63,7 @@ those rows contain `Status:`:
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
 | `BUGS.md` | 48 | 34 | 32 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
-| `ARCHITECTURE.md` | 26 | 18 | 17 `FIXED`, 1 `WITHDRAWN` |
+| `ARCHITECTURE.md` | 26 | 19 | 18 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 19 | 16 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 8 | 7 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 9 | 7 `FIXED`, 2 `PARTIAL` |
@@ -134,19 +134,19 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 52 | 44 | 0 | 8 |
+| P2 | 52 | 45 | 0 | 7 |
 | P3 | 49 | 12 | 0 | 37 |
-| **Total** | **130** | **85** | **0** | **45** |
+| **Total** | **130** | **86** | **0** | **44** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 17 | 0 | 8 |
+| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 18 | 0 | 7 |
 | `BUG-xx` | `BUGS.md` | 46 | 32 | 0 | 14 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 7 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 16 | 0 | 13 |
-| **Total** | | **130** | **85** | **0** | **45** |
+| **Total** | | **130** | **86** | **0** | **44** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -250,7 +250,7 @@ across families, not within them.
 | `ARCH-12` | Two god-objects: a 968-line dispatcher and a 33-field state struct | S5 | — | Structural: verify with `cargo test` green plus a per-page count of `Shell::update` arms after the split. No behavioural test can see it. | OPEN |
 | `ARCH-13` | A hand-rolled Python lexer used as a test oracle is duplicated byte-for-byte between the two crates | S5 | — | `91cdfa6` — one lexer in `core::oracle_support` behind a `test-support` feature; four tests, and `cargo tree --no-dev-dependencies` is what keeps it out of a release binary.| FIXED |
 | `ARCH-14` | A comment says a shared helper becomes warranted when a third copy appears; the third copy already exists | S5 | — | Extract the third copy into the shared helper its own comment asks for; verify with a grep that no local copy remains. | FIXED |
-| `ARCH-15` | The repo-root test helper is copied four times with three different derivations, and one copy's doc cites a precedent that does not use its derivation | S5 | — | One helper in one place; verify with a grep for the four derivations and `cargo test` green. | OPEN |
+| `ARCH-15` | The repo-root test helper is copied four times with three different derivations, and one copy's doc cites a precedent that does not use its derivation | S5 | — | One helper in one place; verify with a grep for the four derivations and `cargo test` green. | FIXED |
 | `ARCH-16` | A comment embeds a grep transcript as its own proof, and the transcript's line numbers no longer land | S5 | — | Re-derive the transcript against the current tree, or replace it with a citation that does not age; verify the cited lines contain what the paragraph says. | FIXED `0c92f9e` |
 | `ARCH-17` | Three copies of the card surface, two of which hardcode the radius that a comment says is what keeps them in sync | S5 | — | `5a03977` — one definition in `widgets.rs` (`pub(super)`), both pages import it; no hardcoded radius remains. `only_one_page_defines_the_card_surface` reads all three modules and fails on a fourth copy (mutation-checked).| FIXED |
 | `ARCH-18` | Six comments across four files cite the settings-validation fallback at line numbers that do not contain it, and the citations are ambiguous in a workspace with two settings.rs files | S5 | — | Re-point each of the six citations at the line that holds the fallback and disambiguate the two `settings.rs` files by path; verify each citation lands. | FIXED `0c92f9e` |

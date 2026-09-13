@@ -759,16 +759,7 @@ mod tests {
     /// specification and it is in the tree.
     #[test]
     fn the_toggles_are_the_reference_pages_toggles_in_order() {
-        let qml = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../gamehandler/qml/SettingsPage.qml");
-        let text = std::fs::read_to_string(&qml).unwrap_or_else(|err| {
-            panic!(
-                "{} should be readable: {err}\n\
-                 It is the reference this page was ported from. If it has been \
-                 moved, this check needs a new path.",
-                qml.display()
-            )
-        });
+        let text = settings_qml();
 
         let rows = text
             .split_once("readonly property var defaultRows: [")
@@ -799,10 +790,7 @@ mod tests {
     /// dropped, shows up here.
     #[test]
     fn the_shortcut_rows_are_the_reference_pages_rows() {
-        let qml = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../gamehandler/qml/SettingsPage.qml");
-        let text = std::fs::read_to_string(&qml)
-            .expect("SettingsPage.qml is the reference and should be readable");
+        let text = settings_qml();
 
         let rows: Vec<&str> = text
             .lines()
@@ -1093,16 +1081,7 @@ mod tests {
     /// `SettingsPage.qml`, as text — the independent source three of the tests
     /// below read their expectations out of.
     fn settings_qml() -> String {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../gamehandler/qml/SettingsPage.qml");
-        std::fs::read_to_string(&path).unwrap_or_else(|err| {
-            panic!(
-                "{} should be readable: {err}\n\
-                 It is the reference this page was ported from. If it has been \
-                 moved, this check needs a new path.",
-                path.display()
-            )
-        })
+        gamehandler_core::oracle_support::repo_file("gamehandler/qml/SettingsPage.qml")
     }
 
     /// The reference's `defaultRows` as `(key, label, subtitle)` triples.

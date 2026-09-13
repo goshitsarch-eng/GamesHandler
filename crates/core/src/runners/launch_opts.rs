@@ -2581,18 +2581,10 @@ A=\"quoted; with semicolon\"
     /// shows up as a failure instead of as nothing at all.
     #[test]
     fn the_dll_override_literals_are_the_reference_s_and_not_a_copy_of_ourselves() {
-        let source =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../gamehandler/runners.py");
-        let text = std::fs::read_to_string(&source).unwrap_or_else(|err| {
-            panic!(
-                "{} should be readable: {err}\n\
-                 It is the reference these constants were transcribed from, and \
-                 the port's own tests read it. If it has been moved, this check \
-                 needs a new path — and so does every citation in \
-                 docs/migration/.",
-                source.display()
-            )
-        });
+        // The panic on an unreadable reference lives in `repo_file` now, with
+        // the same reasoning: it is the oracle, so its absence is not a data
+        // problem (`ARCH-15`).
+        let text = crate::oracle_support::repo_file("gamehandler/runners.py");
 
         // `merge_dll_overrides(env, "<literal>")`, in source order.
         let merged: Vec<&str> = text

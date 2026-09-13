@@ -383,21 +383,7 @@ pub fn view<'a>(page: PluginsPage<'a>) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
-
-    /// A file from the repository root, read at test time.
-    ///
-    /// `CARGO_MANIFEST_DIR` is `crates/app`, so the root is two levels up.
-    /// Reading the reference off disk is the point: a constant compared against
-    /// a copy of itself cannot disagree with itself.
-    fn repo_file(relative: &str) -> String {
-        let path: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join(relative);
-        std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("{} must be readable: {error}", path.display()))
-    }
+    use std::path::PathBuf;
 
     #[test]
     fn the_button_is_the_qmls_three_labels_and_only_missing_acts() {
@@ -405,7 +391,7 @@ mod tests {
         // spelled a label differently, or that enabled the button for
         // `unavailable` — which would offer the user a command the page has
         // already decided it cannot run — fails here.
-        let qml = repo_file("gamehandler/qml/PluginsPage.qml");
+        let qml = gamehandler_core::oracle_support::repo_file("gamehandler/qml/PluginsPage.qml");
         for (state, label) in [
             (PluginState::Installed, "Installed"),
             (PluginState::Missing, "Install"),
@@ -429,7 +415,7 @@ mod tests {
     #[test]
     fn the_heading_is_the_qmls() {
         assert!(
-            repo_file("gamehandler/qml/PluginsPage.qml")
+            gamehandler_core::oracle_support::repo_file("gamehandler/qml/PluginsPage.qml")
                 .contains(&format!("\"{SECTION_HOST_PLUGINS}\"")),
             "the page heading is no longer the QML's"
         );
@@ -511,9 +497,9 @@ mod tests {
         // reference builds each of these from `plugin.name`, so the name is
         // substituted here with a value that cannot appear in the source and
         // the surrounding text is checked against the reference's own literal.
-        let bridge = gamehandler_core::oracle_support::join_adjacent_literals(&repo_file(
-            "gamehandler/bridge.py",
-        ));
+        let bridge = gamehandler_core::oracle_support::join_adjacent_literals(
+            &gamehandler_core::oracle_support::repo_file("gamehandler/bridge.py"),
+        );
 
         let installing = installing_message("MangoHud");
         assert_eq!(installing, "Installing MangoHud…");
