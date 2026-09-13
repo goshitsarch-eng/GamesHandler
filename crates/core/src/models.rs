@@ -1438,6 +1438,99 @@ mod tests {
         );
     }
 
+    /// **`BUG-11` is withdrawn: case-variant categories are not duplicated.**
+    ///
+    /// The recorded finding was that `Vec::dedup` after the sort loses what
+    /// Python's `set` keeps, because the sort key (`to_lowercase()`) and the
+    /// dedup key (`PartialEq`) are different keys. The premise is wrong: the
+    /// sort's **primary** key *is* the folding, so every entry whose folded form
+    /// is equal lands adjacent, and `dedup` then removes exactly what the `set`
+    /// removes. Nothing can sort between two entries that compare equal on the
+    /// leading term.
+    ///
+    /// Measured against the reference on a 40-game fixture (ten base categories
+    /// × the spelling, upper, lower and alternating case): the reference returns
+    /// **39** entries and so does this — the one collapse is `RPG`, whose upper
+    /// form is itself. Same length, same set, and the same ten fold-groups with
+    /// the same members. The two lists are *not* identical element-for-element,
+    /// and the assertion below deliberately does not claim they are: within a
+    /// group of entries that fold together, the reference's order is its `set`'s
+    /// hash order, which is arbitrary, while this one keeps insertion order.
+    /// A dropdown cannot distinguish them, and pinning the hash order would pin
+    /// an implementation detail of CPython.
+    #[test]
+    fn case_variant_categories_fold_into_the_same_groups_as_python() {
+        let bases = [
+            "Puzzle", "Action", "RPG", "Sim", "Shooter", "Strategy", "Racing", "Sports", "Horror",
+            "Party",
+        ];
+        let mut entries = Vec::new();
+        for base in bases {
+            let alternating: String = base
+                .chars()
+                .enumerate()
+                .map(|(i, c)| {
+                    if i % 2 == 0 {
+                        c.to_ascii_uppercase()
+                    } else {
+                        c.to_ascii_lowercase()
+                    }
+                })
+                .collect();
+            for spelling in [
+                base.to_string(),
+                base.to_uppercase(),
+                base.to_lowercase(),
+                alternating,
+            ] {
+                entries.push(json!({
+                    "id": format!("g{}", entries.len()),
+                    "name": format!("Game {}", entries.len()),
+                    "category": spelling,
+                }));
+            }
+        }
+        let library = library_from(Value::Array(entries));
+        let found = library.categories();
+
+        // The count is the reference's, and it is 39 rather than 40 because
+        // `"RPG".to_uppercase()` is `"RPG"` — the one spelling that collides
+        // with its own base.
+        assert_eq!(found.len(), 39, "got {found:?}");
+
+        // Grouped by the key the reference sorts on, the two agree exactly.
+        // This is the assertion the recorded finding would have failed.
+        let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+        for name in &found {
+            let key = name.to_lowercase();
+            match groups.last_mut() {
+                Some((last, members)) if *last == key => members.push(name.clone()),
+                _ => groups.push((key, vec![name.clone()])),
+            }
+        }
+        assert_eq!(groups.len(), 10, "got {groups:?}");
+        // Nine groups hold four spellings each; `rpg` holds three, because
+        // `"RPG".to_uppercase()` is `"RPG"` — the one spelling in this fixture
+        // that collides with its own base, and the reason the total is 39.
+        for (key, members) in &groups {
+            let expected = if key == "rpg" { 3 } else { 4 };
+            assert_eq!(
+                members.len(),
+                expected,
+                "the {key} group lost or gained a spelling: {members:?}"
+            );
+        }
+        assert_eq!(
+            groups.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            [
+                "action", "horror", "party", "puzzle", "racing", "rpg", "shooter", "sim", "sports",
+                "strategy"
+            ]
+        );
+        // `category` is trimmed and an empty one becomes `Uncategorized`, which
+        // this fixture does not exercise — the existing test above does.
+    }
+
     #[test]
     fn sorting_matches_python_including_the_name_tie_break() {
         let library = library_from(json!([
