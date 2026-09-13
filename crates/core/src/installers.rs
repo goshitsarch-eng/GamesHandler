@@ -1501,13 +1501,47 @@ const SIGNATURE_TIMEOUT: Duration = Duration::from_secs(90);
 ///
 /// # The two independent conditions
 ///
-/// The output must contain `Signature verification: ok` **and** the
-/// case-folded output must contain one of the recipe's publisher strings. The
-/// publisher test is a substring test against the whole output, not against a
-/// parsed `Subject:` field — which is what makes `CN=GOG  sp. z o.o,O=GOG  sp.
-/// z o.o` (two spaces, a comma, in that order) the string the catalog has to
-/// carry. A publisher check that split the subject line would accept the two
-/// halves in any order and would not need that exact string.
+/// The output must contain `Signature verification: ok` **and** one of the
+/// recipe's publisher strings must appear in the value of a `Subject:` field.
+///
+/// # Why the publisher test names the field it reads (SEC-03)
+///
+/// The reference tests the publisher against the *whole* merged output
+/// (`installers.py:594-595`: `any(publisher.casefold() in folded ...)` where
+/// `folded = output.casefold()`), and the merged output carries fields the
+/// **signer** chooses, not the certificate: `osslsigncode` 2.14 prints
+/// `Text description:` and `URL description:` out of the signature's
+/// authenticated attributes, and `-n`/`-u` set them at signing time. Measured
+/// against the bundled 2.14 binary, a self-signed payload signed with
+/// `-n "Valve Corp."` produced an output containing `Text description: Valve
+/// Corp.` under a `Subject:` of `CN=Totally Unrelated Signer,O=Evil Example
+/// Ltd`, so the reference's predicate accepted a certificate that has nothing
+/// to do with Valve. Reading the field and nothing else is the same shape
+/// [`validate_download_origin`] uses, and for the same reason.
+///
+/// **This is a deliberate divergence from the reference**, on the brief's
+/// decision order: `installers.py:594-595` folds the output and searches all of
+/// it, and a port that reproduced that would reproduce the hole. The message
+/// the user sees is unchanged, so no P-item is affected.
+///
+/// What that does **not** change is the shape of the catalog strings. The
+/// comparison is still a case-folded substring test, now against the `Subject:`
+/// value rather than against the whole output — and `osslsigncode` prints a
+/// distinguished name in reverse order with no space after each comma
+/// (`C=US,O=Valve Corp.,CN=Valve Corp.`), which is why
+/// `CN=GOG  sp. z o.o,O=GOG  sp. z o.o` is the string the catalog has to carry
+/// and why "tidying" its double space or its field order stops matching a
+/// signature that is genuinely GOG's.
+///
+/// # The trust anchor is `osslsigncode`'s, not this function's
+///
+/// Nine of the ten recipes set no `microsoft_trust_root`, so no `-CAfile` is
+/// passed and the chain is checked against the host's store. That is not the
+/// hole the paragraph above closes: measured with the same binary, a
+/// self-signed payload **without** `-CAfile` exits 1, prints `Error:
+/// self-signed certificate` and `Signature verification: failed`, and never
+/// prints the success line this function requires. A certificate the signer
+/// minted for itself therefore fails before the publisher test is reached.
 pub fn verify_installer_authenticity(
     installer: &Installer,
     path: &Path,
@@ -1556,17 +1590,40 @@ pub fn verify_installer_authenticity(
             tail,
         });
     }
-    let folded = text.to_lowercase();
-    if !installer
-        .publishers
-        .iter()
-        .any(|publisher| folded.contains(&publisher.to_lowercase()))
-    {
+    // Every `Subject:` the verifier printed, and nothing else it printed. See
+    // the doc comment: the point of naming the field is that the rest of the
+    // output carries `Text description:`/`URL description:`, which the signer
+    // chooses.
+    let subjects = subject_values(&text);
+    if !installer.publishers.iter().any(|publisher| {
+        let publisher = publisher.to_lowercase();
+        subjects.iter().any(|subject| subject.contains(&publisher))
+    }) {
         return Err(InstallerError::PublisherUnapproved {
             name: installer.name.to_string(),
         });
     }
     Ok(())
+}
+
+/// The case-folded value of every `Subject:` line in a verifier's output.
+///
+/// `osslsigncode` 2.14 prints a certificate's subject as `\t\tSubject: <dn>`
+/// (`X509_NAME_print_ex` with `XN_FLAG_RFC2253`, so the opening line has no
+/// slash, unlike `/O=…/CN=…`), and it prints one for the signer, again under
+/// each signed timestamp's own signer, and again for every chain certificate
+/// including the ones **it** names from its trust store. All of them are
+/// genuine subjects of genuine certificates, so matching any of them is the
+/// property the publisher test is trying to establish.
+///
+/// The value is taken from the *first* `Subject:` on the line and to the end of
+/// it. A line with two colons therefore contributes everything after the first
+/// one, which can only make a match stricter than taking the whole line.
+fn subject_values(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix("Subject:"))
+        .map(|value| value.trim().to_lowercase())
+        .collect()
 }
 
 /// What running a child produced.
@@ -4290,6 +4347,94 @@ mod tests {
             0,
         );
         assert!(verify_installer_authenticity(steam, &path, &verifier_env(&padded)).is_ok());
+    }
+
+    /// **SEC-03.** The publisher must be the certificate's, not the signer's.
+    ///
+    /// The fixture below reproduces, field for field, the output the bundled
+    /// `osslsigncode` 2.14 actually printed when a payload was signed with a
+    /// self-signed certificate whose subject is `O=Evil Example Ltd,CN=Totally
+    /// Unrelated Signer` and `-n "Valve Corp."`: the recipe's approved
+    /// publisher appears only in `Text description:`, an authenticated
+    /// attribute **the signer chose at signing time**, while every `Subject:`
+    /// line names a certificate Valve has nothing to do with. The reference's
+    /// whole-output substring test (`installers.py:594-595`) accepts that; so
+    /// did this port before the `Subject:`-scoped test replaced it.
+    ///
+    /// The three arms isolate one variable each. The control arm differs from
+    /// the attack arm in nothing but the *value* of `Text description:` — same
+    /// exit status, same success line, same subjects — so a port that refused
+    /// every output carrying a `Text description:` line would fail it, and a
+    /// port that scoped the test to `Subject:` but broke the accepted syntax
+    /// would fail the third.
+    #[test]
+    fn the_publisher_must_be_the_certificates_not_a_field_the_signer_chose() {
+        let scratch = Scratch::new("sec03-description");
+        let steam = installer_by_id("steam").unwrap();
+        let path = touch(&scratch.path().join("SteamSetup.exe"));
+        // Printed by `osslsigncode verify`, trimmed to the lines that matter:
+        // the signer's own subject, the `Text description:` attribute beneath
+        // it, and the chain certificate the tool reprints below. (The headings
+        // around them are omitted because the fake is a shell script and
+        // `Signer's certificate:` carries an apostrophe that would close its
+        // quoting.)
+        let measured = |description: &str| {
+            format!(
+                "Signature Index: 0  (Primary Signature)\n\
+                 \t\tSubject: CN=Totally Unrelated Signer,O=Evil Example Ltd\n\
+                 \t\tIssuer : CN=Totally Unrelated Signer,O=Evil Example Ltd\n\
+                 Authenticated attributes:\n\
+                 \tText description: {description}\n\
+                 \tMessage digest: EB9375AEDB7BC4E6CCF12645DC65BA23A4883FC22E0D27FC80ED2504922F938F\n\
+                 Signature verification: ok\n\
+                 Number of verified signatures: 1\n\
+                 Signing certificate chain verified using:\n\
+                 \t\tSubject: CN=Totally Unrelated Signer,O=Evil Example Ltd\n"
+            )
+        };
+
+        // The attack: an approved publisher the certificate does not have.
+        let attack = fake_osslsigncode(
+            scratch.path(),
+            &scratch.path().join("argv-description"),
+            &measured("Valve Corp."),
+            0,
+        );
+        let error =
+            verify_installer_authenticity(steam, &path, &verifier_env(&attack)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Steam is not signed by an approved publisher"
+        );
+
+        // The control: the same output with an unrelated description, still
+        // refused — so the arm above is not passing for the wrong reason.
+        let control = fake_osslsigncode(
+            scratch.path(),
+            &scratch.path().join("argv-control"),
+            &measured("Totally Unrelated Installer"),
+            0,
+        );
+        let error =
+            verify_installer_authenticity(steam, &path, &verifier_env(&control)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Steam is not signed by an approved publisher"
+        );
+
+        // And a genuine Valve signature — described as something else — is
+        // still accepted: the field the signer controls is not read in either
+        // direction. RFC2253 order, no space after the comma, which is the
+        // form 2.14 prints.
+        let genuine = fake_osslsigncode(
+            scratch.path(),
+            &scratch.path().join("argv-genuine"),
+            "Signature verification: ok\n\
+             \t\tSubject: C=US,O=Valve Corp.,CN=Valve Corp.\n\
+             \tText description: Totally Unrelated Installer\n",
+            0,
+        );
+        verify_installer_authenticity(steam, &path, &verifier_env(&genuine)).unwrap();
     }
 
     /// The success line is required as well as the exit status, and the failure

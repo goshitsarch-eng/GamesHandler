@@ -204,6 +204,17 @@ pub trait HttpClient {
 
 /// GET `url` and collect the whole body into a `String`, erroring on invalid
 /// UTF-8. The shape both `fetch_available`-style callers want.
+///
+/// # The leading sentence is Python's; the offset after it is not (`ARCH-09`)
+///
+/// The message keeps `"Unexpected GitHub releases response"` as its first
+/// words, because that sentence is what the reference renders and what the
+/// ported tests assert on. What the reference never had and this port needs is
+/// the *position*: `DecodeError`'s own report says how many bytes were
+/// well-formed before the first bad one, and that is the difference between a
+/// truncated transfer and a wrong content type. Without it, "the network said
+/// no" and "the server sent HTML" produce the same sentence and the same fix
+/// is attempted for both.
 pub fn get_text(
     client: &dyn HttpClient,
     url: &str,
@@ -215,9 +226,12 @@ pub fn get_text(
         body.extend_from_slice(chunk);
         Ok(())
     })?;
-    String::from_utf8(body).map_err(|_| RunnerError::Http {
+    String::from_utf8(body).map_err(|error| RunnerError::Http {
         // Divergence 4: Python raises an uncaught `UnicodeDecodeError`.
-        message: "Unexpected GitHub releases response".to_string(),
+        message: format!(
+            "Unexpected GitHub releases response: body is not valid UTF-8 at byte {}",
+            error.utf8_error().valid_up_to()
+        ),
     })
 }
 
@@ -555,6 +569,17 @@ fn release_headers() -> Vec<(&'static str, &'static str)> {
 /// GitHub error object (`{"message": "Not Found"}`) is valid JSON and would
 /// otherwise parse to zero releases, which the UI would render as "this family
 /// has no builds" instead of surfacing the failure.
+///
+/// # The decode's line and column (`ARCH-09`)
+///
+/// `serde_json`'s error already says *where* the document stopped being JSON,
+/// and the reference throws that away (`json.loads` raises a `JSONDecodeError`
+/// whose own `str()` carries the position, and `runners.py:831-833` narrows it
+/// to a fixed sentence with no `from exc`). Discarding it costs a diagnosis:
+/// a payload truncated at byte 4096 and a payload whose schema GitHub changed
+/// produce the same sentence, and only the first of the two is worth retrying —
+/// the audit's own framing. The leading sentence is kept verbatim because it is
+/// the reference's and the ported tests assert on it.
 pub fn fetch_available(
     client: &dyn HttpClient,
     family: Option<&str>,
@@ -565,8 +590,11 @@ pub fn fetch_available(
     let headers = release_headers();
     let text = get_text(client, &resolved.releases_url(), &headers, timeout)?;
 
-    let data: Value = serde_json::from_str(&text).map_err(|_| RunnerError::Http {
-        message: "Unexpected GitHub releases response".to_string(),
+    let data: Value = serde_json::from_str(&text).map_err(|error| RunnerError::Http {
+        // `serde_json::Error::Display` is `"<reason> at line L column C"` —
+        // the position is in the rendered message, not a field this has to
+        // reassemble. Both numbers are in the payload's own coordinates.
+        message: format!("Unexpected GitHub releases response: {error}"),
     })?;
     let Value::Array(releases) = data else {
         return Err(RunnerError::Http {
@@ -2042,15 +2070,79 @@ mod tests {
     /// Divergence 4: Python's `resp.read().decode("utf-8")` raises an uncaught
     /// `UnicodeDecodeError`, so the caller sees a traceback. The port returns a
     /// message. Same class as the DXVK-marker divergence in `launch_opts`.
+    ///
+    /// **ARCH-09.** The sentence the reference renders is kept as the message's
+    /// first words, and the position the reference threw away is appended. Both
+    /// halves are asserted, because either alone leaves the defect in place: a
+    /// port that kept only the sentence cannot tell a truncated transfer from a
+    /// changed content type, and a port that replaced the sentence breaks the
+    /// wording the ported tests assert on.
     #[test]
     fn an_undecodable_body_is_an_error_rather_than_a_decode_panic() {
-        let client = FakeClient::bytes(&[0xff, 0xfe, 0x00, 0x01, 0x80]);
+        // The first two bytes are valid UTF-8, so the reader got as far as byte
+        // two before it met the bad one. The offset is the assertion that
+        // matters: it is what a `String`-flattened error cannot carry.
+        let client = FakeClient::bytes(b"ab\xff\xfe\x00\x01\x80");
+        let error = fetch_available(&client, None, 15, Duration::from_secs(30)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Unexpected GitHub releases response: body is not valid UTF-8 at byte 2"
+        );
+        // The leading sentence is still the reference's, so a caller (and the
+        // Python-derived tests) that matches on it still matches.
+        assert!(
+            error
+                .to_string()
+                .starts_with("Unexpected GitHub releases response"),
+            "{error}"
+        );
+    }
+
+    /// **ARCH-09.** A JSON decode reports *where* the document stopped being
+    /// JSON, which is the difference between a truncated response (retry) and a
+    /// changed GitHub schema (fix the parser).
+    ///
+    /// The three arms pin the position rather than merely its presence: the
+    /// valid prefix before the failure is a different length in each, so a port
+    /// that appended a constant, or the length of the whole body, fails at
+    /// least one. The fourth arm is the control — `{"message": "Not Found"}` is
+    /// valid JSON and fails the *array* check, whose message is the reference's
+    /// bare sentence — so the position is not being produced for every
+    /// rejection.
+    #[test]
+    fn a_json_decode_reports_where_the_payload_stopped_being_json() {
+        // The three positions below are `serde_json`'s, read off the rendered
+        // messages rather than guessed; each was confirmed by running the arm.
+        for (body, line, column) in [
+            // An object that never closes: `EOF while parsing a value`, past
+            // the last byte.
+            ("{\"a\": ", 1, 6),
+            // A syntax error on the *second* line, so the line number is not
+            // vacuously 1 — this is the arm a port that printed `line 1` for
+            // everything would fail.
+            ("[1, 2,\n3, ]", 2, 4),
+            // A payload truncated mid-token after a long valid prefix, which
+            // is the shape a cut-off transfer has.
+            ("[{\"tag\": \"GE-Proton9-1\"}, {\"tag\": ", 1, 34),
+        ] {
+            let client = FakeClient::body(body);
+            let error = fetch_available(&client, None, 15, Duration::from_secs(30)).unwrap_err();
+            let rendered = error.to_string();
+            assert!(
+                rendered.starts_with("Unexpected GitHub releases response: "),
+                "{body}: {rendered}"
+            );
+            assert!(
+                rendered.contains(&format!("at line {line} column {column}")),
+                "{body}: expected line {line} column {column}, got {rendered}"
+            );
+        }
+
+        // The control: a valid JSON object that is not an array reaches the
+        // array check, and that refusal carries no position at all.
+        let client = FakeClient::body(r#"{"message": "Not Found"}"#);
         let error = fetch_available(&client, None, 15, Duration::from_secs(30)).unwrap_err();
         assert_eq!(error.to_string(), "Unexpected GitHub releases response");
-        // Malformed *text* (valid UTF-8, invalid JSON) is the same error, so
-        // the two failure modes are not told apart by the caller.
-        let client = FakeClient::body("not json at all");
-        assert!(fetch_available(&client, None, 15, Duration::from_secs(30)).is_err());
     }
 
     #[test]

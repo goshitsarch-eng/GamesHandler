@@ -30,7 +30,9 @@
 //! [`install_command`]: gamehandler_core::plugins::install_command
 //! [`privileged_command`]: gamehandler_core::plugins::privileged_command
 //! [`format_command`]: gamehandler_core::plugins::format_command
+//! [`InstallError`]: gamehandler_core::plugins::InstallError
 
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use cosmic::Element;
@@ -141,9 +143,62 @@ pub fn not_installed_message(name: &str) -> String {
     format!("{name} did not install. The command is shown on the Plugins page.")
 }
 
+/// Why an install produced no result (`ARCH-10`).
+///
+/// This is the app layer's counterpart to [`InstallError`], and the reason it
+/// exists is that the layer used to carry a `String`: [`run_install`] called
+/// `.to_string()` on the core error one frame after `core` produced it, so the
+/// plugin page's whole error surface was text and nothing above it could ever
+/// branch on *which* failure it was holding.
+///
+/// The two arms are genuinely different events. [`Self::Command`] means no
+/// command was built, which is a statement about this host — the sandbox
+/// forbids it, or no package is known — and the user's next step is a manual
+/// one. [`Self::Run`] means a command was built and run and did not come back
+/// clean, which is a statement about the command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstallRunError {
+    /// The command could not be built. A wrapped core error, not its text.
+    Command(plugins::InstallError),
+    /// The command was built but did not exit 0, or could not be spawned.
+    /// Carries the rendering the reference's `str(exc)` produces, which for a
+    /// timeout is [`timeout_message`]'s own sentence.
+    Run(String),
+}
+
+impl From<plugins::InstallError> for InstallRunError {
+    fn from(error: plugins::InstallError) -> Self {
+        Self::Command(error)
+    }
+}
+
+impl fmt::Display for InstallRunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // Both arms render exactly what they rendered when this was a
+            // `String`, so no user-visible text changes here: `InstallError`'s
+            // `Display` is the reference's `RuntimeError` message
+            // (`plugins.py:172-186`), which `test_plugins.py` asserts on.
+            Self::Command(error) => write!(f, "{error}"),
+            Self::Run(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for InstallRunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Command(error) => Some(error),
+            // Rendered from a `std::process::Error` or `Instant`, neither of
+            // which is kept — the reference keeps only `str(exc)` too.
+            Self::Run(_) => None,
+        }
+    }
+}
+
 /// The message when the command could not be run at all (`bridge.py:1024`),
 /// which is `_async`'s `fail` path (`bridge.py:156-161`).
-pub fn install_failed_message(name: &str, error: &str) -> String {
+pub fn install_failed_message(name: &str, error: &InstallRunError) -> String {
     format!("Could not install {name}: {error}")
 }
 
@@ -246,10 +301,19 @@ pub fn run_to_completion(argv: &[String], timeout: Duration) -> Result<bool, Str
 /// Takes the environment so the command and the post-check agree about which
 /// host they are describing — `is_installed` re-asks `which` here rather than
 /// trusting the exit code, which is the reference's own arrangement.
-pub fn run_install(plugin: &Plugin, env: &dyn PluginEnv) -> Result<bool, String> {
-    let argv = plugins::install_command(plugin, None, env).map_err(|error| error.to_string())?;
+///
+/// The error is [`InstallRunError`] rather than a `String` (`ARCH-10`). The
+/// `?` on `install_command` used to be `.map_err(|error| error.to_string())?`,
+/// which threw away [`InstallError`] — a core enum with a variant per reason —
+/// one frame after `core` built it, leaving this page unable to tell "the
+/// sandbox forbids this" from "this host has no package for it" except by
+/// reading the text back. `From<InstallError>` makes the `?` keep it.
+///
+/// [`InstallError`]: gamehandler_core::plugins::InstallError
+pub fn run_install(plugin: &Plugin, env: &dyn PluginEnv) -> Result<bool, InstallRunError> {
+    let argv = plugins::install_command(plugin, None, env)?;
     let argv = plugins::privileged_command(&argv, env);
-    let exit_ok = run_to_completion(&argv, INSTALL_TIMEOUT)?;
+    let exit_ok = run_to_completion(&argv, INSTALL_TIMEOUT).map_err(InstallRunError::Run)?;
     Ok(install_succeeded(exit_ok, plugin.is_installed(env)))
 }
 
@@ -502,7 +566,7 @@ mod tests {
         );
 
         assert_eq!(
-            install_failed_message("MangoHud", "timed out"),
+            install_failed_message("MangoHud", &InstallRunError::Run("timed out".to_string())),
             "Could not install MangoHud: timed out"
         );
         assert!(bridge.contains("Could not install {plugin.name}: {message}"));
@@ -736,5 +800,60 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// **Boundary: `core`'s `InstallError` survives to the UI message**
+    /// (`ARCH-10`).
+    ///
+    /// The two assertions are the whole test and the pair is the point. The
+    /// first is that what [`run_install`] hands back is still the core enum —
+    /// `InstallRunError::Command(InstallError::Flatpak)`, **matched by
+    /// variant**, not read back out of a sentence. The second is that the page
+    /// renders that enum unchanged, so keeping the type did not alter what a
+    /// user reads.
+    ///
+    /// This is the boundary that used to be a `String`. `run_install` called
+    /// `.map_err(|error| error.to_string())` one frame below `core`, so
+    /// everything above it — the handler, and
+    /// [`Message::PluginInstallFinished`]'s payload — could only ever hold
+    /// text, and `plugins::InstallError`'s variants were unreachable from this
+    /// crate.
+    ///
+    /// [`Message::PluginInstallFinished`]: crate::Message::PluginInstallFinished
+    #[test]
+    fn a_core_install_error_reaches_the_message_as_its_own_variant() {
+        // `/.flatpak-info` is one of the two things `in_flatpak` reads, and it
+        // is the shortest route to a refusal that does not depend on which
+        // package managers this machine happens to have — the same fixture
+        // `core`'s `flatpak_never_offers_host_package_commands` uses for the
+        // enum this test is about.
+        let env = ScriptedPluginEnv {
+            which: Vec::new(),
+            files: vec!["/.flatpak-info"],
+        };
+        let plugin = plugins::plugin_by_id("mangohud").expect("mangohud is in the catalogue");
+
+        let error =
+            run_install(plugin, &env).expect_err("an install inside the sandbox has no argv");
+
+        assert_eq!(
+            error,
+            InstallRunError::Command(plugins::InstallError::Flatpak),
+            "the core enum has to arrive as itself and not as its text"
+        );
+        // Rendered through the core enum rather than written out here, because
+        // the property is the pass-through: a page that added a prefix or
+        // dropped a clause would fail this, and `InstallError`'s own exact
+        // wording is pinned in `core` (and by
+        // `test_plugins.py::test_flatpak_never_offers_host_package_commands`
+        // above it).
+        assert_eq!(
+            install_failed_message("MangoHud", &error),
+            format!(
+                "Could not install MangoHud: {}",
+                plugins::InstallError::Flatpak
+            ),
+            "the page must render the core error unchanged"
+        );
     }
 }
