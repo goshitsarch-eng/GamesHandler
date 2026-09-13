@@ -121,6 +121,17 @@ pub const CATEGORY_PLACEHOLDER: &str = gamehandler_core::models::UNCATEGORIZED;
 pub const NO_COVER: &str = "No cover yet";
 pub const FIND_COVER: &str = "Find cover";
 
+/// The two browse buttons' hover hints, which are also their accessible names —
+/// UX-12.
+///
+/// The strings are the reference's own `QQC2.ToolTip.text` on those buttons
+/// (`GameFormPage.qml:103` for the executable, `:161` for the cover), not
+/// sentences invented here. One string serves both roles at each call site: a
+/// hint that differs from the name is two things to keep in step, and the
+/// toolkit cannot carry both from one builder (see [`a11y::tooltipped_button`]).
+pub const BROWSE_EXE_HINT: &str = "Browse for an executable";
+pub const BROWSE_COVER_HINT: &str = "Choose a custom cover image";
+
 /// The Prefix row's placeholder (`:189`).
 pub const PREFIX_PLACEHOLDER: &str = "Leave empty for an isolated prefix per game";
 
@@ -176,11 +187,28 @@ pub struct TextRow {
     pub placeholder: &'static str,
     /// The QML's `enabled: !form.isLinux` on that row.
     pub windows_only: bool,
-    /// The message the row's browse button sends, when the row has one. Only
-    /// the executable row does (F4): the reference's only other `FileDialog`
-    /// is the cover picker's, and the cover row is hand-built rather than a
-    /// [`TextRow`].
-    pub browse_press: Option<crate::Message>,
+    /// The row's browse button, when it has one. Only the executable row does
+    /// (F4): the reference's only other `FileDialog` is the cover picker's, and
+    /// the cover row is hand-built rather than a [`TextRow`].
+    pub browse: Option<BrowseButton>,
+}
+
+/// A row's browse button: the reference's `document-open` `ToolButton`.
+///
+/// The message and the hint are one value rather than two fields, because a row
+/// that carried one without the other would build a button that either does
+/// nothing or says nothing — and the hint is a sentence about *this* row's
+/// subject ("Browse for an executable"), so a second browse row that inherited
+/// it silently is exactly the failure two independent `Option` fields would
+/// allow.
+#[derive(Clone)]
+pub struct BrowseButton {
+    /// What the button sends, and what an assistive technology's activation
+    /// sends: one binding, so the two paths cannot disagree.
+    pub press: crate::Message,
+    /// Its hover hint (`QQC2.ToolTip.text`, `GameFormPage.qml:103`), which is
+    /// also its accessible name. UX-12.
+    pub hint: &'static str,
 }
 
 /// The reference's text rows that are *not* gated on a second condition, in the
@@ -200,7 +228,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Name:",
         placeholder: "",
         windows_only: false,
-        browse_press: None,
+        browse: None,
     },
     TextRow {
         field: FormField::ExePath,
@@ -208,7 +236,10 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Executable:",
         placeholder: "",
         windows_only: false,
-        browse_press: Some(crate::Message::PickExeFile),
+        browse: Some(BrowseButton {
+            press: crate::Message::PickExeFile,
+            hint: BROWSE_EXE_HINT,
+        }),
     },
     TextRow {
         field: FormField::Arguments,
@@ -216,7 +247,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Launch arguments:",
         placeholder: "",
         windows_only: false,
-        browse_press: None,
+        browse: None,
     },
     TextRow {
         field: FormField::WorkingDirectory,
@@ -224,7 +255,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Working directory:",
         placeholder: "",
         windows_only: false,
-        browse_press: None,
+        browse: None,
     },
     TextRow {
         field: FormField::PrefixPath,
@@ -232,7 +263,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Wine prefix (optional):",
         placeholder: PREFIX_PLACEHOLDER,
         windows_only: true,
-        browse_press: None,
+        browse: None,
     },
     TextRow {
         field: FormField::AdditionalApp,
@@ -240,7 +271,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
         label: "Additional application:",
         placeholder: ADDITIONAL_APP_PLACEHOLDER,
         windows_only: false,
-        browse_press: None,
+        browse: None,
     },
 ];
 
@@ -251,7 +282,7 @@ pub const ENVIRONMENT_ROW: TextRow = TextRow {
     label: "Environment variables:",
     placeholder: ENVIRONMENT_PLACEHOLDER,
     windows_only: false,
-    browse_press: None,
+    browse: None,
 };
 
 /// The desktop-size row (`:306-312`). See [`TEXT_ROWS`] for why it is separate.
@@ -261,7 +292,7 @@ pub const DESKTOP_SIZE_ROW: TextRow = TextRow {
     label: "Desktop size:",
     placeholder: DESKTOP_SIZE_PLACEHOLDER,
     windows_only: true,
-    browse_press: None,
+    browse: None,
 };
 
 /// One switch of the reference's `FormLayout`.
@@ -653,11 +684,24 @@ fn text_control<'a>(row: &TextRow, form: &'a GameForm, live: bool) -> Element<'a
     // laid-out element, which the credits page measured and abandoned; the
     // press value itself is a constant, so a press-fn would pin nothing a
     // copy of the constant does not.
+    //
+    // **UX-12: it is now a named node and a hover hint, and the name comes from
+    // outside the tooltip.** `browse.hint` is one string serving both, and
+    // `a11y::tooltipped_button` is why the button is still announced at all: the
+    // toolkit's own `.tooltip(..)` wraps the button in `iced`'s `Tooltip`,
+    // which implements no `a11y_nodes`, so the name the builder sets never
+    // reaches assistive technology. The wrapper publishes it from outside.
     let input: Element<'a, Message> = a11y::input(input, row.label, form.field(field)).into();
-    match row.browse_press.clone() {
-        Some(press) => Row::new()
+    match row.browse.clone() {
+        Some(browse) => Row::new()
             .push(input)
-            .push(button::icon(crate::icons::handle(crate::icons::Icon::Open)).on_press(press))
+            .push(a11y::tooltipped_button(
+                button::icon(crate::icons::handle(crate::icons::Icon::Open))
+                    .tooltip(browse.hint)
+                    .on_press(browse.press.clone()),
+                browse.hint,
+                Some(browse.press),
+            ))
             .spacing(6)
             .width(Length::Fill)
             .into(),
@@ -834,11 +878,16 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
                 }),
             )
             // The custom-cover browse `ToolButton` (`:159-164`, F8): same
-            // read-not-tested edge as the exe row's — see `text_control`.
-            .push(
+            // read-not-tested edge as the exe row's — see `text_control` — and
+            // the same UX-12 treatment: one string for the hint and the name,
+            // published from outside the tooltip that would otherwise erase it.
+            .push(a11y::tooltipped_button(
                 button::icon(crate::icons::handle(crate::icons::Icon::Open))
+                    .tooltip(BROWSE_COVER_HINT)
                     .on_press(Message::PickCoverFile),
-            )
+                BROWSE_COVER_HINT,
+                Some(Message::PickCoverFile),
+            ))
             .width(Length::Fill)
             .into()
         }));
@@ -1653,6 +1702,207 @@ mod tests {
         );
     }
 
+    /// **The two browse buttons are named, and by different names** — UX-12 on
+    /// this page.
+    ///
+    /// # Why this is not the test above, run again
+    ///
+    /// The wrapped-controls test asserts the controls this module *builds a
+    /// wrapper for* — the toggles, the dropdowns, the text fields — and its
+    /// expected list does not mention the buttons at all, for the reason its own
+    /// doc gives: libcosmic's button reports itself and names itself from its
+    /// label, so the port never had to name one. These two are the exception the
+    /// label path cannot cover: they have no label, and the reference gives them
+    /// a `QQC2.ToolTip.text` instead.
+    ///
+    /// # What it measures
+    ///
+    /// Each hint drawn by the reference (`GameFormPage.qml:103`, `:161`) must
+    /// appear **exactly once** as a `Role::Button` node on the built page. Zero
+    /// is the pre-fix state — measured, not assumed: before the tooltip was
+    /// added these buttons published a node labelled `Some("")`, and *after*
+    /// `.tooltip(..)` alone they publish **no node at all**, because `iced`'s
+    /// `Tooltip` implements no `a11y_nodes` and its default empty tree replaces
+    /// the button's. Two would mean the node is published twice, which is what
+    /// `a11y::tooltipped_button` would do if it were ever applied to a button the
+    /// toolkit had not wrapped.
+    ///
+    /// The two names are asserted **different** because they are the whole
+    /// point on this page: the same `document-open` glyph sits on two rows and
+    /// does two different things.
+    #[test]
+    fn the_two_browse_buttons_publish_a_name_and_the_names_differ() {
+        use super::a11y::harness;
+        use iced_accessibility::accesskit::Role;
+
+        assert_ne!(
+            BROWSE_EXE_HINT, BROWSE_COVER_HINT,
+            "one string for both buttons would name them alike, and the glyph \
+             they share is exactly what the name has to disambiguate"
+        );
+
+        let form = form_with_distinct_values();
+        let library = library("form-browse-names", &[]);
+        let runners = runners();
+        let mut element = page(&form, &library, &runners);
+        let nodes = harness::published(&mut element);
+
+        for hint in [BROWSE_EXE_HINT, BROWSE_COVER_HINT] {
+            let found = nodes
+                .iter()
+                .filter(|node| node.role == Role::Button && node.label.as_deref() == Some(hint))
+                .count();
+            assert_eq!(
+                found, 1,
+                "the browse button hinting {hint:?} must publish exactly one \
+                 Button node carrying that name. Zero means nothing announces \
+                 it — a bare `button::icon` names itself `\"\"`, and one wrapped \
+                 in the toolkit's own `tooltip` publishes no node at all; two \
+                 means one button is announced twice. Nodes: {:?}",
+                nodes
+                    .iter()
+                    .map(|node| (&node.role, node.label.as_deref()))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// **A hover on a browse button draws its hint** — the other half of UX-12.
+    ///
+    /// # What this proves, and what it does not
+    ///
+    /// It proves a hint is drawn, where it is drawn from, and that it is a
+    /// *hover*: the pointer is placed over the button through a real
+    /// `Widget::update` and the overlay is read off the same element, then the
+    /// same read is taken with the pointer away from it. `iced`'s `Tooltip`
+    /// opens only for a cursor it can see over its own bounds
+    /// (`iced/widget/src/tooltip.rs:216-260`), so a check that never placed the
+    /// pointer would measure an overlay that is absent in both the fixed and
+    /// the broken build — the repository's own defect class.
+    ///
+    /// What it does **not** prove is the *string* the overlay draws. iced's
+    /// `Tooltip::operate` traverses its content and never its tooltip
+    /// (`iced/widget/src/tooltip.rs:372-383`), and the `Overlay` it returns
+    /// implements no `operate` at all (`:433-586`), so no operation reaches the
+    /// sentence: the text is not readable from a built element by any means this
+    /// repository has. The sentence is pinned by the name assertion above
+    /// instead — one binding feeds both — and the overlay is pinned here, so
+    /// removing either half fails a test.
+    #[test]
+    fn a_browse_button_draws_its_hint_when_the_pointer_is_over_it() {
+        use super::a11y::harness;
+        use cosmic::iced::advanced::Layout;
+        use cosmic::iced::{Event as CoreEvent, Point, Size, Vector, mouse};
+
+        let row = TEXT_ROWS
+            .iter()
+            .find(|row| row.browse.is_some())
+            .expect("the reference puts a browse button on the executable row");
+        let window = Size::new(600.0, 120.0);
+
+        let form = form_with_distinct_values();
+        let mut element: Element<'_, Message> = text_control(row, &form, true);
+        let (mut tree, node, nodes) = harness::laid_out_tree(&mut element, window);
+        let button = nodes
+            .iter()
+            .find(|node| node.label.as_deref() == Some(BROWSE_EXE_HINT))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the row's browse button publishes no node named \
+                     {BROWSE_EXE_HINT:?}, so there is no rectangle to hover. \
+                     Nodes: {:?}",
+                    nodes
+                        .iter()
+                        .map(|node| (&node.role, node.label.as_deref()))
+                        .collect::<Vec<_>>()
+                )
+            });
+        let bounds = button
+            .bounds
+            .expect("a laid-out control records the rectangle it was given");
+        let button_rect = cosmic::iced::Rectangle::new(
+            Point::new(bounds.x0 as f32, bounds.y0 as f32),
+            Size::new(
+                (bounds.x1 - bounds.x0) as f32,
+                (bounds.y1 - bounds.y0) as f32,
+            ),
+        );
+        let centre = Point::new(
+            (bounds.x0 + bounds.x1) as f32 / 2.0,
+            (bounds.y0 + bounds.y1) as f32 / 2.0,
+        );
+
+        let viewport = cosmic::iced::Rectangle::new(Point::ORIGIN, window);
+        let mut messages: Vec<Message> = Vec::new();
+
+        // Away from the button first: the row's own left-hand text field, one
+        // pixel inside the row, which is far from the icon at its right.
+        harness::dispatch_over(
+            &mut element,
+            &mut tree,
+            &node,
+            &CoreEvent::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(1.0, centre.y),
+            }),
+            Point::new(1.0, centre.y),
+            &mut messages,
+        );
+        assert!(
+            element
+                .as_widget_mut()
+                .overlay(
+                    &mut tree,
+                    Layout::new(&node),
+                    &harness::renderer(),
+                    &viewport,
+                    Vector::ZERO,
+                )
+                .is_none(),
+            "a pointer over the row but not over the button must not open the \
+             hint, or this measurement is of something else"
+        );
+
+        harness::dispatch_over(
+            &mut element,
+            &mut tree,
+            &node,
+            &CoreEvent::Mouse(mouse::Event::CursorMoved { position: centre }),
+            centre,
+            &mut messages,
+        );
+        let mut overlay = element
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &harness::renderer(),
+                &viewport,
+                Vector::ZERO,
+            )
+            .unwrap_or_else(|| {
+                panic!(
+                    "a pointer over the browse button at {centre:?} (its \
+                     rectangle is {bounds:?}) opened no hint. The button is \
+                     built with the toolkit's `.tooltip(..)`, which wraps it in \
+                     `iced::widget::Tooltip`; without that call nothing is drawn \
+                     on hover and this is the assertion that says so"
+                )
+            });
+        let hint_bounds = overlay
+            .as_overlay_mut()
+            .layout(&harness::renderer(), window)
+            .bounds();
+        assert!(
+            hint_bounds.width > 0.0 && hint_bounds.height > 0.0,
+            "the hint opened with no area to draw in: {hint_bounds:?}"
+        );
+        assert_ne!(
+            hint_bounds, button_rect,
+            "the hint must be its own box beside the button, not the button's \
+             own rectangle read back"
+        );
+    }
+
     /// The block finders find the widget they were asked for.
     ///
     /// The brace counter is a heuristic, so it is checked against the two shapes
@@ -1725,6 +1975,8 @@ mod tests {
             LABEL_RUNNER,
             NO_COVER,
             FIND_COVER,
+            BROWSE_EXE_HINT,
+            BROWSE_COVER_HINT,
             PREFIX_PLACEHOLDER,
             DESKTOP_SIZE_PLACEHOLDER,
             ADDITIONAL_APP_PLACEHOLDER,

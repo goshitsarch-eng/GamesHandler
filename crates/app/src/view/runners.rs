@@ -590,10 +590,13 @@ fn installed_card(row: &InstalledRow) -> Element<'_, Message> {
         // `installers.rs`'s `install_press` (the same decision on the other
         // page, where the guard is at least a value). This line is checked by
         // reading it.
-        line = line.push(
+        line = line.push(a11y::tooltipped_button(
             button::icon(crate::icons::handle(crate::icons::Icon::Delete))
+                .tooltip(remove_hint(&row.name))
                 .on_press(remove_press(row)),
-        );
+            remove_hint(&row.name),
+            Some(remove_press(row)),
+        ));
     }
 
     card(line.into())
@@ -797,6 +800,23 @@ fn remove_press(row: &InstalledRow) -> Message {
         runner_id: row.runner_id.clone(),
         name: row.name.clone(),
     }
+}
+
+/// The delete button's hover hint — and, from the same string, its accessible
+/// name. UX-12.
+///
+/// The sentence is the reference's own `QQC2.ToolTip.text` on that button,
+/// `"Remove " + installedCard.modelData.name` (`RunnersPage.qml:79`), so it is
+/// the row's display name and not its runner id. The audit's suggested name for
+/// this button was `"Uninstall {name}"`; the reference's own word is used
+/// instead, and used for **both** roles, because a hint and a name that differ
+/// are two strings to keep in step for no reader's benefit.
+///
+/// A `String` rather than a borrow of one: the tooltip builder takes a
+/// `Cow<'a, str>` that lives as long as the element, so a hint borrowed from a
+/// temporary would not outlive the builder call.
+fn remove_hint(name: &str) -> String {
+    format!("Remove {name}")
 }
 
 /// The Runners page's half of the dispatcher.
@@ -3076,6 +3096,152 @@ mod tests {
             "and stop at it on the other side: rightmost node at x = {right}, \
              expected {}",
             420.0 - gutter
+        );
+    }
+
+    /// A removable row for the two UX-12 tests below.
+    fn removable_row() -> InstalledRow {
+        InstalledRow {
+            runner_id: "GE-Proton9-1".to_string(),
+            name: "Proton-GE 9-1".to_string(),
+            detail: "Installed".to_string(),
+            available: true,
+            removable: true,
+        }
+    }
+
+    /// **The delete button is named after the row it deletes** — UX-12 on this
+    /// page.
+    ///
+    /// # Why the name has to carry the row
+    ///
+    /// The glyph is a bare `edit-delete` beside an `Install`, and the row's
+    /// heading is the only thing that says which runner it belongs to — an
+    /// announcement of "button" next to another "button" is the ambiguity the
+    /// audit row names. So the assertion is on the whole sentence the reference
+    /// puts in the tooltip (`RunnersPage.qml:79`), which is the row's *display
+    /// name*: a name built from `row.runner_id` instead would announce
+    /// `Remove GE-Proton9-1` and pass a test that only checked for the word
+    /// "Remove", which is why the exact string is compared.
+    ///
+    /// # What is measured, and what the count of one rules out
+    ///
+    /// The row must publish exactly one `Role::Button` carrying that sentence.
+    /// Zero is the pre-fix state, and it has two shapes here: a bare
+    /// `button::icon` publishes one node labelled `Some("")`, and the same
+    /// builder with `.tooltip(..)` added publishes **no node at all**, because
+    /// `iced`'s `Tooltip` implements no `a11y_nodes`. Two would mean the node
+    /// was published twice — `a11y::tooltipped_button` applied to a button that was
+    /// not wrapped in a tooltip.
+    #[test]
+    fn the_uninstall_button_is_named_for_the_row_it_removes() {
+        use super::a11y::harness;
+        use iced_accessibility::accesskit::Role;
+
+        let row = removable_row();
+        let hint = remove_hint(&row.name);
+        let mut element = installed_card(&row);
+        let nodes = harness::published(&mut element);
+
+        // The premise: the name is a sentence, not a word, and it is not the
+        // runner id — otherwise the two assertions below would be satisfied by
+        // an announcement that does not disambiguate anything.
+        assert_ne!(row.name, row.runner_id, "the fixture must distinguish them");
+        assert_eq!(hint, format!("Remove {}", row.name));
+
+        let found = nodes
+            .iter()
+            .filter(|node| node.role == Role::Button && node.label.as_deref() == Some(&hint))
+            .count();
+        assert_eq!(
+            found, 1,
+            "the delete button must publish exactly one Button node named \
+             {hint:?}. Nodes: {:?}",
+            nodes
+                .iter()
+                .map(|node| (&node.role, node.label.as_deref()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// **A hover on the delete button draws its hint**, and the hint is drawn
+    /// from the button — UX-12's second half on this page.
+    ///
+    /// The pointer is placed through a real `Widget::update` and the overlay is
+    /// read off the same element: `iced`'s `Tooltip` opens only for a cursor it
+    /// can see over its own bounds, so a check that never placed the pointer
+    /// would read "no overlay" from both the fixed and the broken build. What it
+    /// cannot check is the sentence itself — no operation reaches an iced
+    /// tooltip's text (`iced/widget/src/tooltip.rs:372-383`, and its `Overlay`
+    /// implements no `operate`) — and that is what the name assertion above
+    /// pins, from the one binding that feeds both.
+    #[test]
+    fn the_uninstall_button_draws_its_hint_when_the_pointer_is_over_it() {
+        use super::a11y::harness;
+        use cosmic::iced::advanced::Layout;
+        use cosmic::iced::{Event as CoreEvent, Point, Size, Vector, mouse};
+
+        let row = removable_row();
+        let hint = remove_hint(&row.name);
+        let window = Size::new(600.0, 200.0);
+
+        let mut element = installed_card(&row);
+        let (mut tree, node, nodes) = harness::laid_out_tree(&mut element, window);
+        let button = nodes
+            .iter()
+            .find(|node| node.label.as_deref() == Some(&hint))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the delete button publishes no node named {hint:?}, so \
+                     there is no rectangle to hover. Nodes: {:?}",
+                    nodes
+                        .iter()
+                        .map(|node| (&node.role, node.label.as_deref()))
+                        .collect::<Vec<_>>()
+                )
+            });
+        let bounds = button
+            .bounds
+            .expect("a laid-out control records the rectangle it was given");
+        let centre = Point::new(
+            (bounds.x0 + bounds.x1) as f32 / 2.0,
+            (bounds.y0 + bounds.y1) as f32 / 2.0,
+        );
+
+        let viewport = cosmic::iced::Rectangle::new(Point::ORIGIN, window);
+        let mut messages: Vec<Message> = Vec::new();
+        harness::dispatch_over(
+            &mut element,
+            &mut tree,
+            &node,
+            &CoreEvent::Mouse(mouse::Event::CursorMoved { position: centre }),
+            centre,
+            &mut messages,
+        );
+
+        let mut overlay = element
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &harness::renderer(),
+                &viewport,
+                Vector::ZERO,
+            )
+            .unwrap_or_else(|| {
+                panic!(
+                    "a pointer over the delete button at {centre:?} (its \
+                     rectangle is {bounds:?}) opened no hint; the button is \
+                     built with the toolkit's `.tooltip(..)`"
+                )
+            });
+        let hint_bounds = overlay
+            .as_overlay_mut()
+            .layout(&harness::renderer(), window)
+            .bounds();
+        assert!(
+            hint_bounds.width > 0.0 && hint_bounds.height > 0.0,
+            "the hint opened with no area to draw in: {hint_bounds:?}"
         );
     }
 }

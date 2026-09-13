@@ -637,13 +637,18 @@ fn installer_card<'a>(row: &'a InstallerRow, busy: bool, runner_id: &str) -> Ele
         .align_y(Alignment::Center);
 
     let install = {
-        let button = button::standard("Install")
+        // One binding for the label and the accessible name: the toolkit's text
+        // button names itself from this string when nothing takes the name away,
+        // and the wrapper below is what publishes it now that a tooltip does.
+        let label = "Install";
+        let button = button::standard(label)
             .leading_icon(crate::icons::handle(crate::icons::Icon::Install));
         // `enabled: !backend.busy` — a disabled button rather than a refused
         // press, which is what P-59's "second refused" looks like in the
         // reference. `on_press_maybe(None)` is how libcosmic spells it, and
         // [`install_press`] is where the decision lives so a test can hold it.
-        let button = button.on_press_maybe(install_press(row, runner_id, busy));
+        let press = install_press(row, runner_id, busy);
+        let button = button.on_press_maybe(press.clone());
         // `QQC2.ToolTip.text` on that same button (`InstallersPage.qml:126`).
         // [`install_tooltip`] carried the sentence with no caller until T-38,
         // which is a tested function that reads as coverage; the wrap is
@@ -651,18 +656,32 @@ fn installer_card<'a>(row: &'a InstallerRow, busy: bool, runner_id: &str) -> Ele
         // method and this free function is the only tooltip the toolkit
         // exposes. `Position::Bottom` is QQC2's own default placement.
         //
-        // **This call site cannot be asserted, and that is measured.** iced's
-        // `Tooltip::operate` traverses `self.content` and nothing else
-        // (`iced_widget/src/tooltip.rs:372-383`), so the page's
-        // `drawn_strings` returns the button's "Install" and never the
-        // sentence — probed, and the probe failed. It is the same wall as
-        // [`install_press`]'s call site one level up: `Operator` cannot read
-        // what a wrapped widget carries. What *is* covered is the sentence
-        // itself, in `install_tooltip`'s own test.
-        cosmic::widget::tooltip(
-            button,
-            text::caption(install_tooltip(&row.name)),
-            cosmic::widget::tooltip::Position::Bottom,
+        // **The tooltip's sentence cannot be asserted, and that is measured.**
+        // iced's `Tooltip::operate` traverses `self.content` and nothing else
+        // (`iced_widget/src/tooltip.rs:372-383`), so the page's `drawn_strings`
+        // returns the button's "Install" and never the sentence — probed, and
+        // the probe failed. It is the same wall as [`install_press`]'s call site
+        // one level up: `Operator` cannot read what a wrapped widget carries.
+        // What *is* covered is the sentence itself, in [`install_tooltip`]'s own
+        // test.
+        //
+        // **What the tooltip also did, and this wrapper undoes: it took the
+        // button's name.** `button::standard` auto-names itself from its label
+        // (`src/widget/button/text.rs:146-153`), and the tooltip wraps it in
+        // `iced::widget::Tooltip`, which implements no `a11y_nodes` — so the
+        // node and its name went with it. Measured on this very card before the
+        // fix: `published` returned the name, category and subtitle paragraphs
+        // and **no `Button` node at all**. [`a11y::tooltipped_button`] publishes
+        // it from outside the tooltip, with `press` as the activation so an
+        // assistive technology's click sends what the pointer sends.
+        a11y::tooltipped_button(
+            cosmic::widget::tooltip(
+                button,
+                text::caption(install_tooltip(&row.name)),
+                cosmic::widget::tooltip::Position::Bottom,
+            ),
+            label,
+            press,
         )
     };
 
@@ -763,6 +782,7 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use gamehandler_core::installers::{APPS, LAUNCHERS};
     use gamehandler_core::models::Library;
     use gamehandler_core::runners::RunnerManager;
@@ -1182,6 +1202,64 @@ mod tests {
             install_tooltip("Steam"),
             "Download and run the official Steam installer"
         );
+    }
+
+    /// **The Install button is announced by name, and the tooltip is what took
+    /// that away** — UX-12's defect class, measured on the card that had it.
+    ///
+    /// # What was measured, and when
+    ///
+    /// `button::standard` names itself from its label
+    /// (`src/widget/button/text.rs:146-153`), so this button announced "Install"
+    /// for as long as it had no tooltip. `installer_card`'s tooltip wraps it in
+    /// `iced::widget::Tooltip`, which implements no `a11y_nodes`, and the
+    /// probe run while this test was written returned, for the built card,
+    /// exactly `(Paragraph, "Steam")`, `(Paragraph, "Launchers")`,
+    /// `(Paragraph, "a description")` — **no `Button` node at all**. So this is
+    /// not a missing affordance that was never built; it is one a later change
+    /// removed, and the assertion below is what fails if it is removed again.
+    ///
+    /// # The two halves, and why the disabled half is here too
+    ///
+    /// An installer card that is not busy must publish one `Role::Button` named
+    /// "Install". A **busy** one must publish the same name and must *not*
+    /// advertise `Action::Click`: `install_press` returns `None` while either
+    /// long job runs, and the wrapper is handed that same value, so the one
+    /// control this page deliberately disables cannot be re-opened through an
+    /// assistive technology. Both halves are asserted, because a wrapper handed
+    /// a message unconditionally would pass the first and fail the second.
+    #[test]
+    fn the_install_button_is_named_with_and_without_a_press_to_send() {
+        use super::a11y::harness;
+        use iced_accessibility::accesskit::Role;
+
+        let row = row("steam", "Steam");
+
+        for (busy, clickable) in [(false, true), (true, false)] {
+            let mut element = installer_card(&row, busy, "");
+            let nodes = harness::published(&mut element);
+            let install: Vec<&_> = nodes
+                .iter()
+                .filter(|node| node.role == Role::Button && node.label.as_deref() == Some("Install"))
+                .collect();
+            assert_eq!(
+                install.len(),
+                1,
+                "the Install button must publish exactly one Button node named \
+                 \"Install\" (busy = {busy}). Nodes: {:?}",
+                nodes
+                    .iter()
+                    .map(|node| (&node.role, node.label.as_deref()))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                install[0].click, clickable,
+                "busy = {busy}: an installer card that is not busy must offer \
+                 Action::Click, and a busy one must not — `install_press` is the \
+                 same value the toolkit's `on_press_maybe` is handed, and the \
+                 two paths must agree about whether the button does anything"
+            );
+        }
     }
 
     // ---- installing --------------------------------------------------------

@@ -324,6 +324,91 @@ impl<'a, Message: Clone + 'a> Accessible<'a, Message> {
     }
 }
 
+/// A button that says what it does — to a pointer and to a screen reader —
+/// for a button the toolkit has wrapped in a tooltip.
+///
+/// # The sites
+///
+/// Four, and the four callers of the toolkit's tooltip in this app:
+///
+/// | Site | The control |
+/// |---|---|
+/// | [`crate::view::form`]'s `text_control` | the executable row's `document-open` icon button |
+/// | [`crate::view::form`]'s cover row | the cover row's `document-open` icon button |
+/// | [`crate::view::runners`]'s `installed_card` | the row's `edit-delete` icon button |
+/// | [`crate::view::installers`]'s `installer_card` | the Install text button (`InstallersPage.qml:126`) |
+///
+/// The last one is a **regression this wrapper closes** rather than a gap it
+/// fills: `button::standard` auto-names itself from its label
+/// (`src/widget/button/text.rs:146-153`), so that button announced "Install"
+/// until its tooltip was added, at which point it announced nothing at all.
+/// Measured on the built card: `installer_card` publishes the name paragraph,
+/// the category paragraph and the subtitle paragraph, and no `Button` node.
+///
+/// # Why the two halves cannot both come from the builder
+///
+/// `cosmic::widget::button::IconButton` carries a `name` (the a11y label) *and*
+/// a `tooltip`, and both are worth having, but the builder makes them mutually
+/// exclusive. It applies the tooltip by wrapping the finished button in `iced`'s
+/// `Tooltip` (`src/widget/button/icon.rs:187-201`), and that wrapper implements
+/// no `a11y_nodes` — so the trait's default, empty tree replaces the button's
+/// node and the name never reaches assistive technology.
+///
+/// Measured rather than reasoned, because the failure is silent in both
+/// directions: a `button::icon(..).name(..)` publishes one node with the name,
+/// the same builder with `.tooltip(..)` added publishes **no node at all**, and
+/// a bare `button::icon(..)` publishes one node whose label is the empty string
+/// (`builder.name`'s default). The `text` button has the same wall from the
+/// other side: it auto-names from its label (`src/widget/button/text.rs:146-153`)
+/// and a tooltip takes that name away again.
+///
+/// So a site that wants both publishes the name from **outside** the tooltip,
+/// which is what this does. The hint the tooltip draws and the name the node
+/// carries are the caller's business to keep in one binding; the app's call
+/// sites pass one string to both.
+///
+/// # It is not a general-purpose wrapper
+///
+/// It is correct for exactly one shape — a control the toolkit has wrapped in a
+/// `Tooltip` — because such a control publishes nothing for the child tree
+/// [`Accessible::a11y_nodes`] appends to duplicate. Applied to a bare `Button`
+/// it would publish **two** nodes for one control, the child carrying the
+/// toolkit's own name, and a screen reader would meet one button twice.
+///
+/// # Why this adds no Tab stop
+///
+/// `own_focus` is left **off**. The toolkit's button already reports itself
+/// focusable (`src/widget/button/widget.rs:349-357`) and already activates on
+/// Enter while focused (`:862-874`), so a wrapper that reported focus as well
+/// would put one button in the ring twice — the defect
+/// `a_text_input_is_one_tab_stop_and_not_two` pins for the text input. What the
+/// wrapper adds is the node, the `Action::Click` that goes with it, and the
+/// activation an assistive technology's request publishes.
+///
+/// `press` is the same message the wrapped button's own `on_press` carries, so
+/// the keyboard and an assistive technology send what the pointer sends — and
+/// it is an `Option` for [`toggler`]'s reason: `installers.rs` disables the
+/// Install button while a download is running by handing the toolkit
+/// `on_press_maybe(None)`, and a wrapper that carried a message anyway would
+/// re-open, for a screen reader, the one control that page deliberately closes.
+/// `None` removes the node's `Action::Click` and leaves the key uncaptured, so
+/// the button is announced and cannot be activated — which is what a disabled
+/// button is.
+#[must_use]
+pub fn tooltipped_button<'a, Message: Clone + 'a>(
+    inner: impl Into<Element<'a, Message>>,
+    label: impl Into<String>,
+    press: Option<Message>,
+) -> Accessible<'a, Message> {
+    let wrapper = Accessible::wrap(inner, Role::Button, label.into());
+    let mut wrapper = match press {
+        Some(press) => wrapper.on_activate(press),
+        None => wrapper,
+    };
+    wrapper.own_focus = false;
+    wrapper
+}
+
 /// A [`cosmic::widget::Toggler`] a keyboard and a screen reader can both use.
 ///
 /// `is_toggled` is the same value handed to the toolkit's `toggler`, and
@@ -1027,6 +1112,21 @@ pub(crate) mod harness {
         el: &mut Element<'_, M>,
         window: Size,
     ) -> Vec<NodeFacts> {
+        laid_out_tree(el, window).2
+    }
+
+    /// [`laid_out`] with the tree and the layout it computed handed back.
+    ///
+    /// The nodes are the same ones [`laid_out`] returns; the other two are for a
+    /// caller that has to go on **driving the element it just measured** —
+    /// [`dispatch_over`] needs the tree the layout was computed against, and an
+    /// element rebuilt for the event would be a second widget whose state is not
+    /// the one under test.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn laid_out_tree<M: Clone + 'static>(
+        el: &mut Element<'_, M>,
+        window: Size,
+    ) -> (Tree, layout::Node, Vec<NodeFacts>) {
         let renderer = renderer();
         let mut tree = Tree::new(el.as_widget());
         let node = el.as_widget_mut().layout(
@@ -1037,11 +1137,13 @@ pub(crate) mod harness {
         let a11y = el
             .as_widget()
             .a11y_nodes(Layout::new(&node), &tree, mouse::Cursor::Unavailable);
-        a11y.root()
+        let nodes = a11y
+            .root()
             .iter()
             .chain(a11y.children().iter())
             .map(facts)
-            .collect()
+            .collect();
+        (tree, node, nodes)
     }
 
     /// The id a built control is addressed by: the one its **node** carries.
@@ -1156,6 +1258,46 @@ pub(crate) mod harness {
         event: &Event,
         messages: &mut Vec<M>,
     ) -> Dispatched<M> {
+        dispatch_with(el, tree, node, event, mouse::Cursor::Unavailable, messages)
+    }
+
+    /// [`dispatch`] with the pointer placed somewhere — for an event a widget
+    /// only acts on when it can see the cursor.
+    ///
+    /// `dispatch` hands every widget `Cursor::Unavailable`, which is right for a
+    /// key and wrong for a hover: `iced`'s `Tooltip` opens from
+    /// `cursor.position_over(layout.bounds())` and treats a cursor it cannot see
+    /// as "not over the content" (`iced/widget/src/tooltip.rs:208-260`), so a
+    /// hover measured through `dispatch` can never fire. A tooltip asserted that
+    /// way would be the repository's own defect class — a check that cannot fail
+    /// — and it fails in the direction that looks like a pass: the overlay is
+    /// absent either way.
+    pub(crate) fn dispatch_over<M: Clone + 'static>(
+        el: &mut Element<'_, M>,
+        tree: &mut Tree,
+        node: &layout::Node,
+        event: &Event,
+        position: cosmic::iced::Point,
+        messages: &mut Vec<M>,
+    ) -> Dispatched<M> {
+        dispatch_with(
+            el,
+            tree,
+            node,
+            event,
+            mouse::Cursor::Available(position),
+            messages,
+        )
+    }
+
+    fn dispatch_with<M: Clone + 'static>(
+        el: &mut Element<'_, M>,
+        tree: &mut Tree,
+        node: &layout::Node,
+        event: &Event,
+        cursor: mouse::Cursor,
+        messages: &mut Vec<M>,
+    ) -> Dispatched<M> {
         let renderer = renderer();
         let layout = Layout::new(node);
         let viewport = Rectangle::new(cosmic::iced::Point::ORIGIN, Size::new(4096.0, 4096.0));
@@ -1166,7 +1308,7 @@ pub(crate) mod harness {
             tree,
             event,
             layout,
-            mouse::Cursor::Unavailable,
+            cursor,
             &renderer,
             &mut clipboard,
             &mut shell,

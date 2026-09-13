@@ -8533,11 +8533,17 @@ mod tests {
     /// dialog's (F4). The button-to-message edge itself is read, not tested
     /// (see `text_control`); this pins the table half — which row holds which
     /// press — so a press that moved rows fails here.
+    ///
+    /// The hint is asserted here too, and it is the other half of UX-12: the
+    /// press and the hint live on one value ([`crate::view::form::BrowseButton`]),
+    /// so a table that moved the press without the sentence would fail the
+    /// second assertion rather than build a button named after another row's
+    /// subject.
     #[test]
     fn only_the_exe_row_carries_a_browse_press() {
         let pressed: Vec<(&str, &crate::Message)> = crate::view::form::TEXT_ROWS
             .iter()
-            .filter_map(|row| row.browse_press.as_ref().map(|press| (row.id, press)))
+            .filter_map(|row| row.browse.as_ref().map(|browse| (row.id, &browse.press)))
             .collect();
 
         // `Message` is not `PartialEq`, so the pair is matched rather than
@@ -8545,6 +8551,16 @@ mod tests {
         assert!(
             matches!(pressed.as_slice(), [(id, crate::Message::PickExeFile)] if *id == "exeField"),
             "exactly the exe row must carry exactly the exe dialog's press: {pressed:?}"
+        );
+
+        let hints: Vec<(&str, &str)> = crate::view::form::TEXT_ROWS
+            .iter()
+            .filter_map(|row| row.browse.as_ref().map(|browse| (row.id, browse.hint)))
+            .collect();
+        assert_eq!(
+            hints,
+            [("exeField", crate::view::form::BROWSE_EXE_HINT)],
+            "the exe row's browse button must hint the executable, and only it"
         );
     }
 
