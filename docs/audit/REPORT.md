@@ -39,8 +39,9 @@ By severity:
 
 `Not a defect` is not a euphemism for "wontfix": both rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`,
-`BUG-15`). Two of the four P2 rows counted as `Remaining` above are `PARTIAL`,
-not untouched.
+`BUG-15`). Two of the rows counted as `Remaining` above are `PARTIAL` rather
+than untouched — `BUG-12` and `BUG-47` — and each row names the half that is
+still missing.
 
 ## What this audit found that matters
 
