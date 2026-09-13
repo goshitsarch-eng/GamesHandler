@@ -97,7 +97,7 @@ pub const GUTTER: u16 = 18;
 /// The label-and-control row the Settings page and the game form both draw
 /// (`UX-20`).
 ///
-/// **This calls [`cosmic::widget::settings::item_row`] rather than
+/// **This calls [`cosmic::widget::settings::item_row()`] rather than
 /// reimplementing it.** The row it replaces was hand-written twice —
 /// `view::settings`'s `row` and `view::form`'s `field_row`, with byte-identical
 /// bodies — and the rationale recorded against replacing it argued about
@@ -110,7 +110,7 @@ pub const GUTTER: u16 = 18;
 /// typography, and keeps the label a real `Text` child, which is the property
 /// `view::settings`'s
 /// `the_close_on_launch_label_is_drawn_and_its_explanation_is_not_observable`
-/// measures against — [`cosmic::widget::settings::item`] would have used the
+/// measures against — [`cosmic::widget::settings::item()`] would have used the
 /// plain `text()` preset instead, which is why the helper is used at
 /// `item_row`'s level rather than through `item`.
 ///
@@ -143,7 +143,7 @@ pub fn settings_row<'a, M: 'static>(
 /// The section heading the Settings page and the game form both draw (`UX-20`).
 ///
 /// De-duplicated from two byte-identical private copies, but **deliberately not
-/// replaced with [`cosmic::widget::settings::section`]**, which is the other
+/// replaced with [`cosmic::widget::settings::section()`]**, which is the other
 /// half of `UX-20`'s recommendation. Two measured reasons, and the second is the
 /// one that decides it:
 ///

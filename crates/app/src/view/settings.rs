@@ -235,7 +235,7 @@ pub const SECTION_SHORTCUTS: &str = "Keyboard shortcuts";
 /// The three selector rows' form labels, `SettingsPage.qml:41`, `:55`, `:79`.
 ///
 /// Declared rather than written inline at each call site because each one is
-/// used **twice** on the row it belongs to: once as the text [`row`] draws
+/// used **twice** on the row it belongs to: once as the text [`settings_row`] draws
 /// beside the control, and once as the accessible name
 /// [`a11y::dropdown`] publishes for it. A screen reader should announce the
 /// label the user can see, and two literals at two call sites are two strings
@@ -252,7 +252,7 @@ pub const LABEL_DEFAULT_RUNNER: &str = "Default runner:";
 /// `FormData.label` and its `text` — and they are drawn in two different ways,
 /// which matters for what can check them:
 ///
-/// * [`CLOSE_ON_LAUNCH_LABEL`] goes to [`row`], so it becomes a `text::body`
+/// * [`CLOSE_ON_LAUNCH_LABEL`] goes to [`settings_row`], so it becomes a `text::body`
 ///   child and **is** visible to a render-level assertion;
 /// * [`CLOSE_ON_LAUNCH_EXPLANATION`] goes to the `Toggler`'s own label, which is
 ///   painted with a direct `text::draw` and is visible to no tree walk.
