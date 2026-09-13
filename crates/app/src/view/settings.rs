@@ -115,6 +115,25 @@ pub const DEFAULT_TOGGLES: [(&str, &str, &str); 13] = [
 /// implemented or named in [`IMPLEMENTED_SHORTCUTS`]' complement, and
 /// `the_page_does_not_claim_a_shortcut_the_shell_does_not_implement` is what
 /// holds the two together.
+/// The sentence the page prints under the shortcut table.
+///
+/// It exists because three of the four accelerators **do not fire while a text
+/// field has focus** (`BUG-12`), which is where a user reaching for one is most
+/// often standing — an Add-game form with the name half-typed, or the library
+/// search. The divergence is measured and recorded at
+/// `crates/app/src/shortcuts.rs:86-102`; a focused `text_input` swallows these
+/// keys despite not binding them, so Qt's `Qt.ApplicationShortcut` semantics —
+/// active whenever any window of the application is active, whatever holds
+/// focus — are not reproduced.
+///
+/// The page a user visits *to learn the shortcuts* was the wrong place to stay
+/// silent about that, and this constant is the row's own recommended first
+/// remedy: print the caveat rather than leave the list reading as
+/// unconditional. The second remedy — the guard asserting the caveat is
+/// **rendered** rather than that a word appears in `main.rs` — is
+/// `the_shortcut_caveat_is_drawn_with_the_rows_it_qualifies`.
+pub const SHORTCUT_FOCUS_CAVEAT: &str = "These work anywhere in the window except while you are typing in a field — leave the field first if a key does nothing.";
+
 pub const SHORTCUTS: [(&str, &str); 4] = [
     ("Ctrl+N:", "Add a game"),
     ("Ctrl+F:", "Search the library"),
@@ -164,6 +183,17 @@ pub const SHORTCUTS: [(&str, &str); 4] = [
 /// * That a key press actually arrives is a claim about a running window.
 ///   Nothing here is observable without one, so it is T-19's to walk in the
 ///   Flatpak — the same bound P-68's own acceptance criteria name.
+///
+/// **What "implemented" means here is narrower than it reads, and the page now
+/// says so.** Membership means the shell answers the key *when it reaches the
+/// shell's subscription* — not that it reaches it from wherever the user is
+/// standing. Three of the four do not arrive while a text field has focus
+/// (`BUG-12`), which is a limitation of this list rather than of the
+/// accelerators: the list is keyed on the *accelerator*, and the condition is
+/// about focus, so neither this list nor [`UNWIRED_SHORTCUTS`] can express it.
+/// Rather than leave the page printing a list that reads as unconditional,
+/// [`SHORTCUT_FOCUS_CAVEAT`] is rendered under the rows and
+/// `the_shortcut_caveat_is_drawn_with_the_rows_it_qualifies` holds it there.
 pub const IMPLEMENTED_SHORTCUTS: [&str; 4] = ["Ctrl+N:", "Ctrl+F:", "Ctrl+,:", "Ctrl+Q:"];
 
 /// Every row [`SHORTCUTS`] prints that [`IMPLEMENTED_SHORTCUTS`] does not.
@@ -527,6 +557,9 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
     for (keys, what) in SHORTCUTS {
         body = body.push(row(keys, text::body(what).into()));
     }
+    // Directly under the rows it qualifies, so it is read as part of them
+    // rather than as a general note about the page.
+    body = body.push(text::caption(SHORTCUT_FOCUS_CAVEAT));
 
     container(scrollable(body)).padding(18).into()
 }
@@ -737,6 +770,109 @@ mod tests {
             "every row the Settings page prints must be either implemented or \
              recorded as unwired. A row in neither is a claim the port cannot \
              back (P-68)"
+        );
+    }
+
+    /// **The caveat about focus is drawn, with the rows it qualifies.**
+    ///
+    /// `BUG-12`: three of the four accelerators do not fire while a text field
+    /// has focus, and this page — the one a user visits *to learn the
+    /// shortcuts* — printed the four rows with no mention of it. The row's own
+    /// recommended remedy was to render the caveat rather than leave the list
+    /// reading as unconditional, and then to make the guard assert the caveat is
+    /// **rendered** rather than that some word appears in `main.rs`.
+    ///
+    /// This asserts three things, and the middle one is why it walks the built
+    /// tree instead of checking a constant:
+    ///
+    /// 1. the caveat's text is among the strings the page actually draws;
+    /// 2. it is drawn **after the last shortcut row**, so it reads as a note on
+    ///    those rows rather than as a general remark about the page — a caveat
+    ///    rendered above the section header, or on a different page, would
+    ///    satisfy (1) alone;
+    /// 3. no shortcut row is drawn *after* it, which is the same claim from the
+    ///    other side.
+    ///
+    /// The constant is compared against the *drawn* string rather than the
+    /// assertion being written on the literal, so a page that stopped rendering
+    /// it fails here even though the constant still exists.
+    #[test]
+    fn the_shortcut_caveat_is_drawn_with_the_rows_it_qualifies() {
+        let drawn = page_strings();
+
+        let caveat_at = drawn
+            .iter()
+            .position(|text| text == SHORTCUT_FOCUS_CAVEAT)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the Settings page draws four shortcuts and no caveat about \
+                     focus. Three of them do not fire while a text field has \
+                     focus (BUG-12), and this is the page a user reads to learn \
+                     them; drawn: {drawn:?}"
+                )
+            });
+
+        // The description column of each row, which is what `SHORTCUTS` holds.
+        let last_row = SHORTCUTS
+            .iter()
+            .filter_map(|(_, what)| drawn.iter().position(|text| text == what))
+            .max()
+            .expect("the shortcut rows must be drawn at all, or this test is vacuous");
+        assert!(
+            caveat_at > last_row,
+            "the caveat is drawn before the rows it qualifies (row at {last_row}, \
+             caveat at {caveat_at}), so it does not read as a note on them; \
+             drawn: {drawn:?}"
+        );
+        assert!(
+            !drawn[last_row + 1..caveat_at]
+                .iter()
+                .any(|text| SHORTCUTS.iter().any(|(_, what)| what == text)),
+            "a shortcut row is drawn between the last one and the caveat"
+        );
+    }
+
+    /// **The old guard read `main.rs` for a word; this one reads the page for
+    /// the property.**
+    ///
+    /// The predecessor to the caveat test asserted
+    /// `main.rs.contains("fn subscription") && …contains("keyboard")` — a
+    /// source-text check standing in for a behaviour check, over a divergence
+    /// that is conditional on focus rather than on existence. `BUG-12`'s note is
+    /// that the guard "cannot" catch a mismatch, because a word appearing in a
+    /// file is not a key being delivered.
+    ///
+    /// What replaces it is not a stronger grep. The focus divergence is recorded
+    /// in exactly one place — [`SHORTCUT_FOCUS_CAVEAT`]'s doc, citing
+    /// `crates/app/src/shortcuts.rs:86-102` — and the thing worth guarding is
+    /// that the page **renders** it, which
+    /// `the_shortcut_caveat_is_drawn_with_the_rows_it_qualifies` does by walking
+    /// the built tree. This test holds the remaining half: that the divergence
+    /// has not been silently dropped from `IMPLEMENTED_SHORTCUTS`' own doc, so a
+    /// reader of the constant cannot come away thinking the four are
+    /// unconditional.
+    ///
+    /// It reads the source because the property *is* about the documentation,
+    /// which has no runtime representation — the one case where a source read is
+    /// the honest instrument rather than a substitute for one.
+    #[test]
+    fn the_focus_divergence_is_recorded_where_a_reader_of_the_list_will_find_it() {
+        let source = include_str!("settings.rs");
+        let doc = source
+            .split("pub const IMPLEMENTED_SHORTCUTS")
+            .next()
+            .expect("the constant must exist");
+        // The last doc block before the constant, which is the one a reader of
+        // it sees.
+        let doc = doc
+            .rsplit("/// Every row [`SHORTCUTS`] prints")
+            .next()
+            .unwrap_or(doc);
+        assert!(
+            doc.contains("BUG-12") || doc.contains("focus"),
+            "`IMPLEMENTED_SHORTCUTS`' doc no longer records that three of the \
+             four do not fire while a text field has focus. A reader of the list \
+             takes it as unconditional, which is the defect BUG-12 describes"
         );
     }
 
