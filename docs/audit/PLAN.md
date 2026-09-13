@@ -66,7 +66,7 @@ those rows contain `Status:`:
 | `ARCHITECTURE.md` | 26 | 14 | 14 `FIXED` |
 | `COSMIC-UX.md` | 30 | 14 | 12 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 7 `FIXED` |
-| `PACKAGING.md` | 10 | 6 | 5 `FIXED`, 1 `PARTIAL` |
+| `PACKAGING.md` | 10 | 8 | 6 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
 `BUGS.md`'s 20 tail-less rows are its nineteen open `P3` rows plus the withdrawn
@@ -129,18 +129,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 51 | 36 | 0 | 15 |
-| P3 | 50 | 5 | 0 | 45 |
-| **Total** | **130** | **70** | **0** | **60** |
+| P3 | 50 | 6 | 0 | 44 |
+| **Total** | **130** | **71** | **0** | **59** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 26 | 14 | 0 | 12 |
 | `BUG-xx` | `BUGS.md` | 46 | 26 | 0 | 20 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
-| `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
+| `PKG-xx` | `PACKAGING.md` | 10 | 6 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 12 | 0 | 17 |
-| **Total** | | **130** | **70** | **0** | **60** |
+| **Total** | | **130** | **71** | **0** | **59** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -312,9 +312,9 @@ across families, not within them.
 | `BUG-45` | python_repr's string branch is not repr() and duplicates — incorrectly — the python_str_repr twelve lines above it | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `PERF-07` | The 27 threads are all demand-spawned runtime workers; none polls, and two of them exit on their own | S3 | — | Recorded as not-a-finding unless a poller is found; verify by re-running the thread-naming probe over a 60 s idle run. | OPEN |
 | `PERF-08` | Minor RSS drift that is not attributable to a leak on the evidence gathered | S3 | — | Re-measure with the window held at one size; verify RSS is flat across forced redraws at a constant size. | OPEN |
-| `PKG-06` | The metainfo has no screenshots and no keywords | S6 | — | Add a screenshot and keywords to the metainfo; verify with `appstreamcli validate --pedantic`. | OPEN |
+| `PKG-06` | The metainfo has no screenshots and no keywords | S6 | — | Add a screenshot and keywords to the metainfo; verify with `appstreamcli validate --pedantic`. | PARTIAL |
 | `PKG-07` | The AppStream validator is not clean under --pedantic: it prints a warning while exiting 0, and the validator the project's own meson test names could not be run at all | S6 | — | Resolve the warning under `--pedantic` and run the meson test the project names; verify both exit clean. | OPEN |
-| `PKG-08` | A comment in data/meson.build asserts a packaging regression that does not exist, and its cited evidence is falsified by the manifest | S6 | — | Correct or delete the comment; verify the cited evidence against the manifest. | OPEN |
+| `PKG-08` | A comment in data/meson.build asserts a packaging regression that does not exist, and its cited evidence is falsified by the manifest | S6 | — | Correct or delete the comment; verify the cited evidence against the manifest. | FIXED |
 | `PKG-09` | flatpak-contents and cargo-sources both shell out to a bare python3 for their comparison helpers, independently of the interpreter chosen to run the generator | S6 | — | Use the same interpreter the generator was run with; verify by running both stages under a PATH without a bare `python3`. | OPEN |
 | `SEC-05` | The Proton runner archive is downloaded from a URL taken verbatim out of the releases JSON, with no scheme and no origin check — unlike the installer download path, which applies both | S4 | — | Apply the same scheme and origin check the installer path applies; verify with a releases payload naming a `file:` and an off-origin URL. | PARTIAL `8106f1e` — `validate_runner_download_url` requires `https` through the same `url_parts` the installer allowlist uses, called from `install_with` before anything is staged, and the new `RunnerError::UntrustedOrigin { url }` carries what it refused. Four mutations fire on four distinct named tests, the fourth being the positive control that the request goes to the URL that was checked. The host-pin half of the suggested fix was **dropped after measurement, not skipped**: every asset of the live Proton-GE listing is on `github.com` and each redirects once to `release-assets.githubusercontent.com`, so no host allowlist is writable, and `RunnerFamily` has no `allowed_hosts` field to port. The redirect target is judged by nothing, and that residue is recorded on the specialist row. |
 | `SEC-06` | RunnerManager::get joins a games.json-sourced runner_id onto the runners directory without validating it, where three other sites validate the same kind of string | S4 | — | Validate the `runner_id` the way the three other sites do; verify with a `games.json` carrying `../../etc`. | FIXED |

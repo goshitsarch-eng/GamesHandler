@@ -39,6 +39,21 @@
   <categories>
     <category>Game</category>
   </categories>
+  <!-- PKG-06. The desktop file has carried `Keywords=` since it was written
+       (`data/com.goshapps.GameHandler.desktop:10`) and the metainfo carried
+       none, so the two disagreed about how the app is described. These are that
+       list, lowered because AppStream requires lowercase keywords, plus the two
+       words a software-centre search would plausibly use for this app and that
+       the desktop list does not have. -->
+  <keywords>
+    <keyword>wine</keyword>
+    <keyword>proton</keyword>
+    <keyword>windows</keyword>
+    <keyword>games</keyword>
+    <keyword>emulation</keyword>
+    <keyword>game launcher</keyword>
+    <keyword>game manager</keyword>
+  </keywords>
   <launchable type="desktop-id">com.goshapps.GameHandler.desktop</launchable>
   <provides>
     <binary>gamehandler</binary>

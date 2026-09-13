@@ -54,6 +54,56 @@ class PackagingTests(unittest.TestCase):
         )
         self.assertIn("<project_license>GPL-3.0-or-later</project_license>", metainfo)
 
+    def test_metainfo_keywords_cover_the_desktop_entrys(self):
+        """PKG-06: the two files must not disagree about how the app is described.
+
+        The desktop entry carried `Keywords=` from the start and the metainfo
+        carried none, which is two descriptions of one application. AppStream
+        requires lowercase keywords, so the comparison is on the desktop list
+        lowered -- the metainfo is allowed to add words, never to lose one the
+        desktop entry advertises.
+        """
+        desktop = (ROOT / "data" / f"{APP_ID_EXPECTED}.desktop").read_text()
+        metainfo = (ROOT / "data" / f"{APP_ID_EXPECTED}.metainfo.xml").read_text()
+
+        line = next(
+            (l for l in desktop.splitlines() if l.startswith("Keywords=")), None
+        )
+        self.assertIsNotNone(line, "the desktop entry must carry Keywords=")
+        desktop_keywords = {
+            word.lower() for word in line.split("=", 1)[1].split(";") if word
+        }
+
+        block = re.search(r"<keywords>(.*?)</keywords>", metainfo, re.S)
+        self.assertIsNotNone(
+            block,
+            "the metainfo must carry a <keywords> block: a software centre "
+            "matches its search against it, and the desktop entry's list is "
+            "not what AppStream reads",
+        )
+        metainfo_keywords = {
+            word.strip() for word in re.findall(r"<keyword>(.*?)</keyword>", block.group(1))
+        }
+
+        self.assertTrue(
+            metainfo_keywords,
+            "<keywords> must not be empty, or the block exists and says nothing",
+        )
+        # AppStream's own rule, checked here rather than left to the validator,
+        # which is not run by this suite.
+        for word in metainfo_keywords:
+            self.assertEqual(
+                word,
+                word.lower(),
+                f"AppStream requires lowercase keywords; {word!r} is not",
+            )
+        self.assertEqual(
+            desktop_keywords - metainfo_keywords,
+            set(),
+            "every keyword the desktop entry advertises must appear in the "
+            "metainfo, or the two files disagree about how the app is described",
+        )
+
     def test_flatpak_has_reviewed_launcher_permissions_and_multilib(self):
         manifest_path = ROOT / "build-aux" / "flatpak" / f"{APP_ID_EXPECTED}.json"
         manifest = json.loads(manifest_path.read_text())

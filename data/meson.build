@@ -5,22 +5,22 @@
 #
 # The Rust application (0.8.0) does NOT use Meson. Its Flatpak manifest installs
 # the same three files straight from this directory with `install -Dm0644`
-# (build-aux/flatpak/com.goshapps.GameHandler.json:91-93), and
+# (build-aux/flatpak/com.goshapps.GameHandler.json:94-96), and
 # scripts/verify.sh's desktop-metainfo stage validates them with
 # desktop-file-validate and appstreamcli — so the files below are the single
 # source for both builds and must stay in step.
 #
-# One difference to be aware of when the Python tree is eventually retired: the
-# LICENSE install below has no counterpart in the Rust manifest, which installs
-# only the osslsigncode and DXVK licence texts (verified: `grep LICENSE` over
-# build-aux/flatpak/com.goshapps.GameHandler.json finds no source that is the
-# application's own COPYING, and no `"LICENSE"` path at all). This is a live
-# regression, not a hypothetical: before T-16 the Flatpak built this module with
-# `"buildsystem": "meson"` (`b73e492`), so the install_data below put the GPL
-# text at /app/share/licenses/com.goshapps.GameHandler/LICENSE. The Rust manifest
-# builds the binary with cargo and never runs it. Removing this file without
-# adding an equivalent line to the manifest would drop the application's own
-# licence from the Flatpak. Reported to the packaging owner.
+# The LICENSE install below **does** have a counterpart in the Rust manifest:
+# `install -Dm0644 LICENSE ${FLATPAK_DEST}/share/licenses/com.goshapps.GameHandler/LICENSE`
+# (build-aux/flatpak/com.goshapps.GameHandler.json:101). That line was added in
+# `8abac0b` (PKG-01) alongside the osslsigncode and DXVK licence texts, so the
+# regression this comment used to assert is closed, and PKG-08's own evidence
+# (`grep LICENSE` over the manifest finding no application COPYING and no
+# `"LICENSE"` path) described the pre-fix manifest. The consequence for the day
+# the Python tree is retired is therefore only this: removing *this* file must
+# not be taken to remove the licence from the Flatpak, because the manifest line
+# is what puts it there now. `PKG-08` in docs/audit/PACKAGING.md carries the
+# full measurement.
 app_id = 'com.goshapps.GameHandler'
 
 install_data(
