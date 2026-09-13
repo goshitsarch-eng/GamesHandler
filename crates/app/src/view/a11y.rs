@@ -103,6 +103,43 @@
 //!   cannot then be navigated or dismissed from the keyboard would be worse than
 //!   not opening it. This is recorded rather than hidden; see [`dropdown`].
 //!
+//! # `UX-18` is closed by the node, and deliberately not by `TextInput::label()`
+//!
+//! `UX-18` is the fourth finding here and the app-side one: **no `text_input` in
+//! the app is given `.label()` or `.helper_text()`**, so the caption beside a
+//! field is a sibling `text` widget that names the field to a sighted user and
+//! to nothing else. What closes it is what closes `UX-03` — the wrapper's node
+//! carries that caption as its `label` — and the row's other half, the visual
+//! convention, is **refuted rather than deferred**. Adding `.label(caption)` at
+//! the sites the row names would draw every one of those captions **twice**:
+//!
+//! * the toolkit's own label is drawn *inside* the widget, in a layout node
+//!   allocated above the box (`src/widget/text_input/input.rs:2606-2614` and
+//!   `:2716-2732`, which reserve a child and paint it at the box's position
+//!   offset by its height) — so it is not a peer of the thing that already draws
+//!   it, it is a second copy of it;
+//! * and something already draws it at all four sites. `view/form.rs`'s
+//!   `field_row` puts `text::body(row.label)` beside the control
+//!   (`:602-609`), which is what the reference's `Kirigami.FormData.label`
+//!   (`gamehandler/qml/GameFormPage.qml:83`, `:111`, `:117`) does — beside the
+//!   field, not above it; the category field is captioned by `LABEL_CATEGORY`
+//!   and the two search boxes by the placeholder they already paint.
+//!
+//! So at each of the four the string would appear a second time, and one of
+//! them (`view/form.rs`'s category field) a third. That is a visible regression
+//! in exchange for an accessible name this module has already published by
+//! another route. `TextInput::label` is also not load-bearing for
+//! accessibility *in this stack*, which is the half the row assumed. The direct
+//! measurement: `grep -c 'fn a11y_nodes' src/widget/text_input/input.rs` is
+//! **0** — the widget has no `a11y_nodes` at all, so `label` is a string it
+//! paints and never publishes. The wider measurement agrees and is why this is
+//! not a one-widget accident: libcosmic's whole `src/` holds **five**
+//! occurrences of `accesskit`, all inside `src/widget/button/widget.rs` and
+//! `src/widget/wayland/tooltip/widget.rs`. The row's own verification — "verify the field's
+//! accessible name" — is what the tests assert, and [`input`]'s doc records the
+//! one test that had to be repaired before it could: it took its caption and its
+//! placeholder from one string, so it could not tell them apart.
+//!
 //! # Why the accessible name is also the widget's id
 //!
 //! [`stable_id`] hands out one `Id` per name, allocated on first use. A
@@ -1394,18 +1431,51 @@ mod tests {
     /// [`a_text_input_is_one_tab_stop_and_not_two`] for why that count is one.
     /// Both are asserted so that a wrapper which dropped the inner widget's own
     /// report (by not forwarding `operate`) cannot pass.
+    ///
+    /// Being **named** is a different property from being reachable, and
+    /// [`a_text_input_is_one_tab_stop_and_not_two`] asks only the second.
+    ///
+    /// # Why the placeholder and the label are different strings here
+    ///
+    /// They were the same string (`"Name"` for both) until `UX-18`, and that
+    /// made this test unable to inspect what it claims. `UX-18`'s finding is
+    /// that the app gives no `text_input` a `.label()` and that every visible
+    /// caption is an unassociated sibling `text` widget, so the caption names
+    /// the field to a sighted user and to nothing else; what closes it is this
+    /// module's wrapper publishing a `Role::TextInput` node whose `label` is
+    /// that caption. With the placeholder and the caption identical, a wrapper
+    /// that forwarded the *placeholder* instead of the caption passes this test
+    /// unchanged — the assertion would have been satisfied by a mechanism other
+    /// than the one it exists to check, which is this audit's most common defect
+    /// shape and was found here in a test written to close it.
+    ///
+    /// The assertion reads `published(...)[0].label`, the name an assistive
+    /// technology actually reads off the node, rather than the string this
+    /// module was handed. Reading the latter would have been the proxy again.
     #[test]
     fn a_text_input_publishes_its_label_and_value() {
         let mut el: Element<'static, Msg> = input(
-            cosmic::widget::text_input("Name", "Half-Life"),
-            "Name",
+            // Deliberately not the caption below.
+            cosmic::widget::text_input("Half-Life", "Half-Life"),
+            "Game name",
             "Half-Life",
         )
         .into();
         let nodes = published(&mut el);
         assert_eq!(nodes.len(), 1, "{nodes:#?}");
-        assert_eq!(nodes[0].role, Role::TextInput);
-        assert_eq!(nodes[0].label.as_deref(), Some("Name"));
+        assert_eq!(
+            nodes[0].role,
+            Role::TextInput,
+            "a screen reader only offers typing on a text input node"
+        );
+        assert_eq!(
+            nodes[0].label.as_deref(),
+            Some("Game name"),
+            "the node must carry the field's caption. `None`, an empty string, \
+             or the placeholder here all mean the caption beside the box is a \
+             sibling `text` widget that names the field to a sighted user only, \
+             which is UX-18"
+        );
         assert_eq!(
             nodes[0].value.as_deref(),
             Some("Half-Life"),

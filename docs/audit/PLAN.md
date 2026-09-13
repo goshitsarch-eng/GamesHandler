@@ -64,7 +64,7 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 27 | 24 `FIXED`, 2 `PARTIAL`, 1 `CLOSED` |
 | `ARCHITECTURE.md` | 25 | 10 | 10 `FIXED` |
-| `COSMIC-UX.md` | 30 | 5 | 5 `FIXED` |
+| `COSMIC-UX.md` | 30 | 6 | 6 `FIXED` |
 | `SECURITY.md` | 10 | 4 | 4 `FIXED` |
 | `PACKAGING.md` | 10 | 6 | 5 `FIXED`, 1 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 4 | 4 `FIXED` |
@@ -125,9 +125,9 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 23 | 23 | 0 | 0 |
-| P2 | 52 | 23 | 0 | 29 |
+| P2 | 52 | 24 | 0 | 28 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **129** | **52** | **0** | **77** |
+| **Total** | **129** | **53** | **0** | **76** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -136,8 +136,8 @@ advocate reviews every row before it is called done and owns no row.
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 4 | 0 | 4 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
 | `SEC-xx` | `SECURITY.md` | 10 | 4 | 0 | 6 |
-| `UX-xx` | `COSMIC-UX.md` | 30 | 5 | 0 | 25 |
-| **Total** | | **129** | **52** | **0** | **77** |
+| `UX-xx` | `COSMIC-UX.md` | 30 | 6 | 0 | 24 |
+| **Total** | | **129** | **53** | **0** | **76** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -271,7 +271,7 @@ across families, not within them.
 | `UX-15` | A cover-fetch failure surfaces as a bare, unprefixed error string with no game name and no indication that a cover lookup is what failed — e.g | S2 | — | Prefix the message with the game and the operation; verify the drawn toast string for a forced failure. | OPEN |
 | `UX-16` | Per-game context menus have no keyboard route | S2 | — | Add a keyboard route to the context menu (Menu key / Shift+F10) or duplicate its actions into the focused tile; verify by driving the key. | OPEN |
 | `UX-17` | Plate initials are drawn white-on-accent at roughly 3:1, below the 4.5:1 required at the size they are drawn | S2 | — | Raise the initials' contrast to 4.5:1 at the drawn size; verify the computed ratio against the darkest gradient stop. | OPEN |
-| `UX-18` | No text_input in the app is ever given .label() or .helper_text(), and the visible labels are unassociated sibling text widgets in a Row, so they identify a field to a sighted user and to nothing else | S2 | — | Give each `text_input` a label or helper text; verify the field's accessible name. | OPEN |
+| `UX-18` | No text_input in the app is ever given .label() or .helper_text(), and the visible labels are unassociated sibling text widgets in a Row, so they identify a field to a sighted user and to nothing else | S2 | — | Give each `text_input` a label or helper text; verify the field's accessible name. **Half done, half refuted, and the refuted half is the one the row proposed.** The verification half holds and is what closes the finding: `crates/app/src/view/a11y.rs::input`/`input_with_id` publish a `Role::TextInput` node whose `label` is the field's caption and whose `value` is its contents, read off the real page by `form.rs`'s `every_wrapped_control_on_the_real_form_is_a_tab_stop_and_a_named_node`. The `.label(...)` half is **refused on measurement**: the toolkit paints its label *inside* the widget in a layout child above the box (`.../a401af8/src/widget/text_input/input.rs:2606-2614`, `:2716-2732`), and a caption is already drawn at all four sites — `field_row`'s `text::body(row.label)` beside the control (`view/form.rs:602-609`, the reference's own beside-the-field arrangement at `gamehandler/qml/GameFormPage.qml:83`, `:111`, `:117`), `LABEL_CATEGORY` for the category field, and the search boxes' placeholders — so `.label(...)` would draw each string twice and the category field's three times. `TextInput::label` is also not what carries accessibility here: libcosmic's `src/` holds five `accesskit` occurrences, all in `button/widget.rs` and `wayland/tooltip/widget.rs`, so no node exists for a labelled input in this stack either way. **The defect that was actually here was in the test asserting the row**: `a_text_input_publishes_its_label_and_value` took `"Name"` for both placeholder and caption, so a wrapper forwarding the placeholder passed it — the audit's own recurring shape, inside a test written to close this row. Repaired to `text_input("Half-Life", "Half-Life")` against the caption `"Game name"`; mutation-proved by replacing the wrapper's caption with `String::new()`, which fails `left: Some("")`, `right: Some("Game name")`. | FIXED |
 | `UX-19` | Card surfaces are hand-built three times as a local card_style closure, and two of the three hardcode the radius their own comment says is kept in sync | S2 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `UX-20` | libcosmic's purpose-built settings widgets are used nowhere in the app | S2 | — | Adopt `settings::section`/`item`/`item_row`, or record why the hand-built rows are kept; verify by reading the settings view. | OPEN |
 ### P3 — 49
