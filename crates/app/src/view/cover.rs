@@ -427,6 +427,14 @@ mod tests {
     /// `""` is the interesting one: it is 3, not 0, because Python hashes the
     /// empty string rather than short-circuiting — so the *first* shade is not
     /// where nameless games land.
+    ///
+    /// This test subsumes `the_plate_shade_defers_to_core`, which compared
+    /// `accent_of` against `accent_index` — the one-line delegation's own
+    /// callee — and so could only fail if the delegation itself were edited:
+    /// a tautology, deleted under BUG-30. Its intended catch, "`accent_of`
+    /// grows a transformation", is caught here for every transformation that
+    /// changes an answer, and a transformation that changes no answer is not a
+    /// defect.
     #[test]
     fn the_plate_shade_is_pythons_hash_bucket() {
         for (seed, expected) in [
@@ -439,22 +447,6 @@ mod tests {
             ("\u{1f600}", 0),
         ] {
             assert_eq!(accent_of(seed), expected, "for {seed:?}");
-        }
-    }
-
-    /// The view's index is core's index, with no local reinterpretation.
-    ///
-    /// A tautology today, and kept anyway: it fails if `accent_of` ever grows a
-    /// transformation of its own — a modulo against this module's own count, a
-    /// clamp, a fallback — which is exactly how the two would drift apart a
-    /// second time.
-    #[test]
-    fn the_plate_shade_defers_to_core() {
-        for seed in ["", "Half-Life", "game-a", "\u{1f600}"] {
-            assert_eq!(
-                accent_of(seed),
-                gamehandler_core::covers::accent_index(seed)
-            );
         }
     }
 

@@ -111,12 +111,46 @@ mod tests {
         );
     }
 
-    /// The paddings are the reference's `gridUnit` fractions, and they are
-    /// derived rather than transcribed so a change to `GRID_UNIT` moves them.
+    /// The padding the renderer is handed is the reference's `gridUnit`
+    /// fractions — measured on the laid-out badge, not on the constants.
+    ///
+    /// The previous version asserted `BADGE_PADDING_X == GRID_UNIT / 2.0` — a
+    /// constant against its own definition, which cannot fail unless the
+    /// delegation it is made of is edited: a tautology (BUG-30). What a user
+    /// can see is the rendered pill, so that is what is measured: the pill's
+    /// laid-out size minus the caption's laid-out size is the padding, and
+    /// the constants enter the expectation only as the fractions the module
+    /// documents — `GRID_UNIT` is the reference's value, so a constant edited
+    /// away from the derivation fails, and a `badge()` that stops applying
+    /// them fails harder.
     #[test]
-    fn the_padding_is_the_reference_s_grid_unit_fractions() {
-        assert_eq!(BADGE_PADDING_X, metrics::GRID_UNIT / 2.0);
-        assert_eq!(BADGE_PADDING_Y, metrics::GRID_UNIT / 8.0);
+    fn the_rendered_padding_is_the_grid_unit_fractions() {
+        let mut el = badge::<()>("x");
+        let seen = crate::view::testkit::traversal(&mut el);
+        // The container reports itself first, then the caption inside it; a
+        // container `Seen` is one with no text.
+        let pill = seen
+            .iter()
+            .find(|node| node.text.is_none())
+            .expect("the pill's container reports itself to the traversal");
+        let caption = seen
+            .iter()
+            .find(|node| node.text.as_deref() == Some("x"))
+            .expect("the caption is inside the pill");
+        let padding_x = (pill.bounds.width - caption.bounds.width) / 2.0;
+        let padding_y = (pill.bounds.height - caption.bounds.height) / 2.0;
+        assert!(
+            (padding_x - metrics::GRID_UNIT / 2.0).abs() < 0.01,
+            "the laid-out horizontal padding is {padding_x}, not gridUnit/2 \
+             ({}) — the pill's size minus its caption's is the padding the \
+             renderer was handed",
+            metrics::GRID_UNIT / 2.0
+        );
+        assert!(
+            (padding_y - metrics::GRID_UNIT / 8.0).abs() < 0.01,
+            "the laid-out vertical padding is {padding_y}, not gridUnit/8 ({})",
+            metrics::GRID_UNIT / 8.0
+        );
     }
 
     /// The style the renderer is handed carries the pill's radius, its surface
