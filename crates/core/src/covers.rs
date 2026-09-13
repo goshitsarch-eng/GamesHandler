@@ -11,7 +11,7 @@
 //! network and is always the right artwork for the thing it was taken from.
 //!
 //! The network half takes the injected HTTP client of D-26
-//! ([`HttpClient`](crate::runners::proton::HttpClient)): this crate has no
+//! ([`HttpClient`]): this crate has no
 //! networking dependency and must not acquire one, so every function that
 //! touches the network takes `client: &dyn HttpClient` and the binary injects
 //! `ureq`. Everything here is blocking ([`crate`] docs), reporting nothing

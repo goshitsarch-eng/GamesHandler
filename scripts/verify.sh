@@ -838,7 +838,14 @@ stage_clippy() {
 # doc comment, and this project has already filed that shape twice.
 # ---------------------------------------------------------------------------
 stage_doc() {
-    RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" \
+    # `redundant_explicit_links` joined the deny list with PKG-11's follow-up.
+    # Two links in the tree wrote `[`X`](the::path::to::X)` when the bare `[`X`]`
+    # already resolves to it, which is harmless to the rendered page and exactly
+    # why it went unnoticed — the same reason the four *broken* links did. A lint
+    # that only fails on links rustdoc cannot follow leaves the near-miss form
+    # free to accumulate, and a file full of them is a file where the one real
+    # broken link is invisible.
+    RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links -D rustdoc::redundant_explicit_links" \
         cargo doc --workspace --no-deps
 }
 

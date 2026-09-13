@@ -138,7 +138,7 @@ pub enum ReleasesStatus {
 
 /// Artwork found for a game, re-exported from its canonical home.
 ///
-/// [`CoverHit`](gamehandler_core::covers::CoverHit) is the port of
+/// [`CoverHit`] is the port of
 /// `covers.CoverHit` (`covers.py:257-269`): the five fields `coverFetched`
 /// puts in a map (`bridge.py:575-581`) are a compatibility surface, so the
 /// shape — with [`from_steam`](gamehandler_core::covers::CoverHit::from_steam)

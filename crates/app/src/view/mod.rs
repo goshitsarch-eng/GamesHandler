@@ -19,9 +19,9 @@
 //! | **Pure layout** — widget builders generic over `M` | [`a11y`], [`badge`], [`widgets`] | no | no |
 //! | **Pure decisions** — data in, data out | [`cover`], [`cover_cache`], [`meta`], [`metrics`] | no | no |
 //! | **Page modules** — bound to this app's state and messages | [`credits`], [`form`], [`installers`], [`library`], [`plugins`], [`runners`], [`settings`] | yes | yes |
-//! | **Test support** — compiled only under `cfg(test)` | [`testkit`] | no | no |
+//! | **Test support** — compiled only under `cfg(test)` | `testkit` | no | no |
 //!
-//! The *test support* row is not a layer so much as the absence of one: [`testkit`]
+//! The *test support* row is not a layer so much as the absence of one: `testkit`
 //! is `#[cfg(test)]`, so it is not in the binary at all, and it is listed here
 //! because the test below reads this table as the complete classification of
 //! every declared module — a module in none of the rows is a module whose
