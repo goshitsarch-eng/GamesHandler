@@ -660,11 +660,41 @@ impl<'a, Message: Clone + 'a>
         );
     }
 
+    /// **Not `Some(self.id)` — and this is the whole of the P0 fixed here.**
+    ///
+    /// The id in this slot is the *tree's* identity, and iced hands it to
+    /// `Tree::diff` as well as to `set_id`. Reporting a `Custom` id from here
+    /// puts the tree into the named-state branch of `Tree::diff`
+    /// (`iced/core/src/widget/tree.rs:170-202`); the branch keys `NAMED` by the
+    /// `Custom` string *alone* (`Internal::Custom`'s `Hash` and `PartialEq` are
+    /// both the name — `iced/accessibility/src/id.rs:160-171`), and this wrapper
+    /// reported the same name its own inner input wears, because `input_with_id`
+    /// gives both halves one id. So the wrapper's arm consumed the single entry
+    /// for that key and swapped a stripped root in; the input's own arm, run
+    /// moments later by the `diff_children` below, found the already-empty
+    /// `or_else` branch and left the input *stateless while its tag still
+    /// claimed* `text_input::State`; and the input's `diff` downcast that
+    /// (`tree.rs:505`, "Downcast on stateless state"). The GUI died on its
+    /// second frame. Reproduced in
+    /// `a_named_wrapper_survives_the_runtimes_named_state_handoff`.
+    ///
+    /// The toolkit's own `Named` widget draws this line in this exact place. It
+    /// keeps the user's id in a field and reports [`None`] from `Widget::id`
+    /// (`src/widget/named.rs:105-119`), which is why a `Named` wrapper never hit
+    /// the crash — and why the id it wraps stays reachable by
+    /// `operation::focus(id)` anyway: focusing by name matches on the `Custom`
+    /// *string* through `IdEq`
+    /// (`iced/core/src/widget/operation/focusable.rs:39-51`,
+    /// `iced/accessibility/src/id.rs:188-205`), not on this slot. That is the
+    /// path `Ctrl+F` takes (`main.rs`'s `focus_library_search`), and it is why
+    /// the input — which does need its id in the tree — keeps it.
     fn id(&self) -> Option<Id> {
-        Some(self.id.clone())
+        None
     }
 
     fn set_id(&mut self, id: Id) {
+        // Unreachable through the tree for the reason above, and left as the
+        // plain setter so the field stays honest if it ever is called.
         self.id = id;
     }
 
@@ -941,9 +971,30 @@ pub(crate) mod harness {
             .collect()
     }
 
-    /// The id a built element reports for itself.
-    pub(crate) fn element_id<M: Clone + 'static>(el: &Element<'_, M>) -> Option<Id> {
-        el.as_widget().id()
+    /// The id a built control is addressed by: the one its **node** carries.
+    ///
+    /// # Why this reads the node and not `Widget::id()`
+    ///
+    /// It read `Widget::id()` until the P0 on [`Accessible::id`] was fixed, and
+    /// the substitution is worth recording because the old form was a proxy that
+    /// only happened to agree.
+    ///
+    /// `Widget::id()` is the id the framework stores in the widget *tree*, and
+    /// the wrapper no longer reports one — for the reason documented on
+    /// [`Accessible::id`], which is that a `Custom` id in that slot sends the
+    /// tree through `Tree::diff`'s named-state branch and crashes the GUI. What
+    /// the four tests below actually need is the id the control *answers to*:
+    /// the one an accesskit `ActionRequest` is matched against
+    /// (`Accessible::on_a11y_action`), the one `operation::focus(id)` reaches
+    /// it by, and the one assistive technology reads off the node. That id
+    /// survives the fix unchanged, and it is the one this helper now returns, so
+    /// the tests assert the property they were written for rather than the
+    /// storage location it used to coincide with.
+    pub(crate) fn element_id<M: Clone + 'static>(el: &mut Element<'_, M>) -> Option<Id> {
+        match published(el).into_iter().next()?.id {
+            iced_accessibility::A11yId::Widget(id) => Some(id),
+            iced_accessibility::A11yId::Window(_) => None,
+        }
     }
 
     /// One node a page publishes that **no focus report carries**, filtered to
@@ -1173,7 +1224,7 @@ mod tests {
     #[test]
     fn a_toggler_is_focusable_and_publishes_a_switch() {
         let mut el = toggled_widget(true);
-        let id = element_id(&el).expect("the wrapper reports an id of its own");
+        let id = element_id(&mut el).expect("the wrapper reports an id of its own");
 
         assert_eq!(
             focusables(&mut el),
@@ -1423,7 +1474,7 @@ mod tests {
         // the tab stop. Both halves together are what say the count above is a
         // property of the input and not of the traversal.
         let mut el = toggled_widget(true);
-        let id = element_id(&el);
+        let id = element_id(&mut el);
         assert_eq!(focusables(&mut el), vec![id]);
     }
 
@@ -1535,6 +1586,85 @@ mod tests {
         }
     }
 
+    /// **The startup crash, as a test.**
+    ///
+    /// The application rebuilt this wrapper on the second frame and died with
+    /// `Downcast on stateless state`, so this is the regression test for a P0
+    /// that shipped in `8f7269e` and took the whole GUI down before it drew
+    /// anything. It reproduces the runtime's own frame-to-frame sequence rather
+    /// than a widget's, because that sequence is the thing that was wrong
+    /// (`iced/runtime/src/user_interface.rs:106-121`):
+    ///
+    /// 1. the previous frame's tree hands its named subtrees to the thread-local
+    ///    `NAMED` map, emptying each one's `state` in the process;
+    /// 2. the map is cleared, so nothing can retrieve them;
+    /// 3. the new frame's widget tree is diffed against the stripped tree.
+    ///
+    /// The wrapper reported an id that was stable *across* frames — the recorded
+    /// text field reports `Id::new("gamehandler.library.search")` every frame —
+    /// where iced's own state-stealing branch requires an id that is
+    /// `Id::unique()`. `Id::unique()` is exactly what "this id names *this*
+    /// widget in *this* frame, and nothing else" means, and a constant string is
+    /// the opposite of that. On the second frame the id matched, the branch chose
+    /// the `or_else` arm, and the arm swapped a `State::None` into a tree whose
+    /// tag still claimed the input's state type; the input's `diff` then
+    /// downcast it (`iced/core/src/widget/tree.rs:505`).
+    ///
+    /// The fix is the framework's precondition rather than a patch over it: the
+    /// wrapper does not report an id at all. Ids on the wrappers were never
+    /// needed for UX-01/UX-02 — the Tab ring is driven by `operate`, which hands
+    /// the name to `operation.focusable` directly — and the toolkit's own
+    /// `Named` widget removes its id from the public tree for the same reason.
+    #[test]
+    fn a_named_wrapper_survives_the_runtimes_named_state_handoff() {
+        let renderer = renderer();
+        let limits = layout::Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let build = || -> Element<'static, Msg> {
+            input_with_id(
+                cosmic::widget::text_input("Search games…", "half-life"),
+                "Search games…",
+                "half-life",
+                "gamehandler.test.handoff".into(),
+            )
+            .into()
+        };
+
+        // Frame one: laid out, so the input's state is in the tree.
+        let mut first = build();
+        let mut tree = Tree::new(first.as_widget());
+        let _ = first.as_widget_mut().layout(&mut tree, &renderer, &limits);
+
+        // The runtime's sequence, verbatim and in its order — take, diff, then
+        // clear (`iced/runtime/src/user_interface.rs:106`, `:111`, `:119`).
+        //
+        // **The order is the whole test and my first version had it wrong.** The
+        // first draft cleared the map before diffing, because a map that is
+        // empty when the diff runs looks like the hostile case. It is not: the
+        // bug is that the *lookup* empties the tree, and with the map cleared
+        // first there is no lookup and no bug — the draft passed against the
+        // broken wrapper, on its own mis-ordering, while `probe_02` on the real
+        // sequence panicked. That is this audit's recurring defect in the test
+        // written to catch it, so the sequence is spelled out against the
+        // framework's line numbers rather than remembered.
+        tree::NAMED.with(|named| {
+            *named.borrow_mut() = tree.take_all_named();
+        });
+
+        // Frame two, against the stripped tree, while the map still holds what
+        // frame one handed over.
+        let mut second = build();
+        tree.diff(second.as_widget_mut());
+        let _ = second.as_widget_mut().layout(&mut tree, &renderer, &limits);
+
+        tree::NAMED.with(|named| named.borrow_mut().clear());
+
+        // And the control still works: one Tab stop, published under the name.
+        assert_eq!(
+            focusables(&mut second),
+            vec![Some("gamehandler.test.handoff".into())]
+        );
+    }
+
     ///
     /// UX-01 in full, as far as it can be closed from here — and the test is
     /// built to say which part that is. The traversal reports the wrapper, the
@@ -1567,7 +1697,7 @@ mod tests {
         )
         .into();
 
-        let id = element_id(&el).expect("the wrapper reports an id of its own");
+        let id = element_id(&mut el).expect("the wrapper reports an id of its own");
         assert_eq!(focusables(&mut el), vec![Some(id.clone())]);
 
         let nodes = published(&mut el);
@@ -1626,7 +1756,7 @@ mod tests {
     #[test]
     fn an_accesskit_click_activates_only_its_own_node() {
         let mut el = toggled_widget(true);
-        let id = element_id(&el).expect("an id");
+        let id = element_id(&mut el).expect("an id");
         let (mut tree, node) = built(&mut el);
 
         let request = |target: &Id| {
@@ -1671,8 +1801,8 @@ mod tests {
         assert_eq!(stable_id("Name"), stable_id("Name"));
         assert_ne!(stable_id("Name"), stable_id("Runner"));
 
-        let first = element_id(&toggled_widget(true));
-        let second = element_id(&toggled_widget(false));
+        let first = element_id(&mut toggled_widget(true));
+        let second = element_id(&mut toggled_widget(false));
         assert_eq!(
             first, second,
             "two frames of the same control must report the same id, or \

@@ -12,7 +12,7 @@ the disagreement is recorded in `DECISIONS.md` D-59 rather than smoothed away.
 The `Fixed` column counts `FIXED` only; the two `PARTIAL` rows are counted in
 `Remaining`, because a half-fixed finding is not closed.
 
-**This report tracks a moving tree, and it has already moved four times.** It
+**This report tracks a moving tree, and it has already moved five times.** It
 was first written at `6187ff2` with 28 fixed. Three ARCH findings were then
 closed (`ARCH-05`, `ARCH-16`, `ARCH-18`), and `PKG-01`, `PKG-02`, `PKG-04` and
 `PKG-05` followed. `PERF-01`, `PERF-02` and `PERF-03` are the most recent, in
@@ -27,7 +27,7 @@ level up — and the fourth move is the proof of it: `88578db` marked `SEC-04`
 tables, so this file inherited a count that was three rows stale. That is now a
 `plan-counts` stage in `scripts/verify.sh` rather than an intention.
 
-**This is not a final report.** 80 of 128 defects are still open, most of them
+**This is not a final report.** 80 of 129 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -35,28 +35,28 @@ and the section *What remains, honestly* says which is which.
 
 | Category | Role | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|---|
-| `BUG-xx` | Bugs, reliability, feature completeness | 45 | 23 | 2 | 22 |
+| `BUG-xx` | Bugs, reliability, feature completeness | 46 | 24 | 2 | 22 |
 | `ARCH-xx` | Architecture, code quality | 25 | 8 | 0 | 17 |
 | `UX-xx` | libcosmic / COSMIC UX | 30 | 5 | 0 | 25 |
 | `PERF-xx` | Performance, resource | 8 | 3 | 0 | 5 |
 | `SEC-xx` | Security, robustness | 10 | 4 | 0 | 6 |
 | `PKG-xx` | Packaging, platform, QA | 10 | 5 | 0 | 5 |
-| **Total** | | **128** | **48** | **2** | **80** |
+| **Total** | | **129** | **49** | **2** | **80** |
 
 The `Found` column is defects; the two refuted rows are counted in `Not a defect`
-and in no other column, which is why `BUGS.md` holds 46 id-bearing rows plus the
-withdrawn `BUG-11`, and this table says 45 defects. Those two rows used to be counted in both, which is what made the two totals
+and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
+them refuted, and this table says 46 defects. Those two rows used to be counted in both, which is what made the two totals
 disagree with each other and made a refuted row read as repaired work.
 
 By severity:
 
 | Severity | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|
-| P0 | 4 | 4 | 0 | 0 |
+| P0 | 5 | 5 | 0 | 0 |
 | P1 | 23 | 23 | 0 | 0 |
 | P2 | 52 | 20 | 0 | 32 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **128** | **48** | **0** | **80** |
+| **Total** | **129** | **49** | **0** | **80** |
 
 `Not a defect` is not a euphemism for "wontfix": both rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`,
@@ -82,6 +82,15 @@ ones to read first:
   the download and extraction, because the archive symlink check computed each
   link's parent against the wrong root. Measured: 1,818 of 2,068 symlinks in a
   real Proton tree rejected, where Python rejects 0.
+* **`BUG-48` (P0).** The accessibility wrapper added for `UX-01`–`UX-03` reported
+  a `Custom` id through `Widget::id`, and the wrapper and its own inner text
+  input wore *the same* one — which iced's named-state branch keys its map by, so
+  the wrapper consumed the single entry and left the input stateless while its
+  tag still claimed state. The GUI died on its second frame with `Downcast on
+  stateless state` and never drew one. It was introduced during this audit
+  (`8f7269e`), caught by `scripts/verify.sh`'s own `smoke-test` stage, and fixed
+  by reporting `None` from `Widget::id` exactly as the toolkit's `Named` widget
+  does.
 * **`SEC-01` (P1).** The Flatpak granted `--device=all` — the raw NVMe disk,
   `/dev/mem`, `/dev/kvm`, and every input device, inside the sandbox where
   third-party game binaries run. Narrowed to the three classes a launched game
@@ -169,13 +178,13 @@ flagging — and both now have those controls pinned in tests.
 |---|---|
 | `BASELINE.md` | The pre-audit baseline, and the withdrawn fabricated observation |
 | `FEATURES.md` | The feature matrix: what is advertised and whether it exists |
-| `BUGS.md` | 47 ids on correctness, reliability and completeness — 45 defects, 2 refuted, 1 withdrawn |
+| `BUGS.md` | 48 ids on correctness, reliability and completeness — 46 defects, 2 refuted |
 | `COSMIC-UX.md` | 30 findings on libcosmic and COSMIC conformance |
 | `PERFORMANCE.md` | 8 findings on CPU, memory and frame cost |
 | `SECURITY.md` | 10 findings on the sandbox, process launching and the dependency graph |
 | `ARCHITECTURE.md` | 25 findings on structure, contracts and code quality |
 | `PACKAGING.md` | 10 findings on the Flatpak, the desktop entry and the gate |
-| `PLAN.md` | All 130 rows: owner, dependencies, verification, status — 128 defects and the 2 refuted ones |
+| `PLAN.md` | All 131 rows: owner, dependencies, verification, status — 129 defects and the 2 refuted ones |
 | `DECISIONS.md` | The seven decisions this audit made (`D-57`–`D-63`) |
 
 Each document's scope section states whether it is still read-only. That

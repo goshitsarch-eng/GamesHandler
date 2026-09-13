@@ -62,7 +62,7 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 47 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `CLOSED` |
+| `BUGS.md` | 48 | 27 | 24 `FIXED`, 2 `PARTIAL`, 1 `CLOSED` |
 | `ARCHITECTURE.md` | 25 | 8 | 8 `FIXED` |
 | `COSMIC-UX.md` | 30 | 5 | 5 `FIXED` |
 | `SECURITY.md` | 10 | 4 | 4 `FIXED` |
@@ -123,28 +123,28 @@ advocate reviews every row before it is called done and owns no row.
 
 | Severity | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|
-| P0 | 4 | 4 | 0 | 0 |
+| P0 | 5 | 5 | 0 | 0 |
 | P1 | 23 | 23 | 0 | 0 |
 | P2 | 52 | 20 | 0 | 32 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **128** | **48** | **0** | **80** |
+| **Total** | **129** | **49** | **0** | **80** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 8 | 0 | 17 |
-| `BUG-xx` | `BUGS.md` | 45 | 23 | 0 | 22 |
+| `BUG-xx` | `BUGS.md` | 46 | 24 | 0 | 22 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 3 | 0 | 5 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
 | `SEC-xx` | `SECURITY.md` | 10 | 4 | 0 | 6 |
 | `UX-xx` | `COSMIC-UX.md` | 30 | 5 | 0 | 25 |
-| **Total** | | **128** | **48** | **0** | **80** |
+| **Total** | | **129** | **49** | **0** | **80** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
 beside them. The two refuted rows (`BUG-11`, `BUG-15`) sit in their own `### Not a
-defect` section and in no severity bucket, which is why the family table counts 45
-`BUG-xx` rows against the 46 `BUGS.md` holds — the 47th id, `BUG-11`, is the
-withdrawn one that sits in that section. `Remaining` counts `PARTIAL` as
+defect` section and in no severity bucket, which is why the family table counts 46
+`BUG-xx` rows against the 48 `BUGS.md` holds — the two it leaves out are the
+refuted pair, `BUG-11` and `BUG-15`, which sit in that section. `Remaining` counts `PARTIAL` as
 remaining, because a half-fixed finding is not closed; `Fixed` therefore excludes
 them and the two `PARTIAL` rows appear in `Remaining` until they are finished.
 
@@ -180,7 +180,7 @@ One table, sorted by severity then ID rather than by family, because the work or
 is the brief's priority order — security and data loss first — and that order reads
 across families, not within them.
 
-### P0 — 4
+### P0 — 5
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
@@ -188,6 +188,7 @@ across families, not within them.
 | `BUG-01` | A games.json the app cannot parse is reported and treated as an empty library, and the next write makes the loss permanent | S1 | — | Live: a truncated `games.json` under `GAMEHANDLER_CONFIG_HOME` — `--list` exits 1 naming the file and leaves it byte-identical afterwards; plus the `LoadStatus` unit tests. | FIXED `26d56d3` |
 | `BUG-02` | A games.json that the reference Python app writes cannot be read by the port at all: serde_json rejects a lone UTF-16 surrogate in a \uXXXX escape, CPython's json.loads accepts it | S1 | — | A fixture the real CPython 3.14.7 wrote with a lone `\uD83D` escape: pre-fix `serde_json` rejects it, post-fix parses it. | FIXED `67b022e` |
 | `BUG-35` | Every runner install of a real Proton build is refused after the archive has been downloaded and extracted, because the symlink check computes each link's parent directory relative to the *current scan directory* instead of the candidate root. walk_links(root) recurses as walk_links(&path), so root is always the directory being scanned and path is always its direct child — path.strip_prefix(root) yields the bare file name and .parent() is always "". The escape test is then normpath("" + "/" + target), i.e. normpath(target), so any target whose first component is .. is judged to escape, however far inside the tree it lands. Wine builds are full of exactly those. *Sub-audit (agents a4a7776ae5fb4959f); claimed figure re-measured by me.* | S1 | — | Pre-fix: a real Proton tree is refused wholesale (measured: 1,818 of 2,068 symlinks rejected; Python refuses 0). Post-fix: the archive symlink tests plus that tree re-run. | FIXED `0622f93` |
+| `BUG-48` | The GUI died on its second frame with `Downcast on stateless state`: the accessibility wrapper reported a `Custom` id through `Widget::id`, and the wrapper and its own inner input wore the same one, so iced's named-state branch consumed the single entry and left the input stateless with a tag that still claimed state | S1 | — | `a_named_wrapper_survives_the_runtimes_named_state_handoff` replays the runtime's take/diff/clear sequence; verified by restoring the pre-fix `id()` and watching it fail with the original panic, and end to end by running the release binary under `weston`. | FIXED |
 
 ### P1 — 23
 
