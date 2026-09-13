@@ -643,6 +643,16 @@ acquire_flatpak_lock() {
         echo "  this run. Install util-linux (flock) to remove the caveat."
         return 0
     fi
+    # The `|| return 1` here is load-bearing and stays, and that is measured
+    # rather than defensive: redirections are performed before the command runs,
+    # so a lock file the shell cannot open means `exec` is never called and the
+    # fd variable is never assigned. Without the guard the function runs on and
+    # the caller sees 0 — measured, `f() { local FD=""; exec {FD}>>/nonexistent/x;
+    # return 0; }; f` exits 0 with `FD` empty — which is `acquire_flatpak_lock`
+    # reporting a lock it does not hold, the one outcome it exists to prevent.
+    # (It held before this pass; it is noted because the failure is invisible on
+    # exactly the runs this harness cares about — `set -uo pipefail`, no `-e`,
+    # #53.) With the guard, the same probe reports rc=1.
     exec {FLATPAK_LOCK_FD}>>"$FLATPAK_LOCK" || return 1
     # Non-blocking first, purely so that contention can be *reported*. These
     # stages take minutes, so a silent wait is indistinguishable from a hang.
@@ -1952,7 +1962,15 @@ stage_flatpak_contents() {
             rc=1
         fi
     done
-    return "$rc"
+
+    # A failure above is a failure whatever else could not run, so it is tested
+    # first — the same order the manifest half uses above. Then the execution
+    # half's own prerequisite. 99, not 98: flatpak-builder cannot run without
+    # flatpak, so an absent flatpak is never a consequence of --skip-flatpak,
+    # and a run that ends here did not verify that the binary runs.
+    [ "$rc" -eq 0 ] || return 1
+    [ "$exec_missing" -eq 0 ] || return 99
+    return 0
 }
 
 # ---------------------------------------------------------------------------
