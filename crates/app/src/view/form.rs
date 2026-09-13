@@ -1028,7 +1028,9 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
             .spacing(12),
     );
 
-    container(scrollable(body)).padding(super::gutter()).into()
+    container(scrollable(super::bounded_body(body)))
+        .padding(super::gutter())
+        .into()
 }
 
 #[cfg(test)]

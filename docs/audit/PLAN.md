@@ -64,7 +64,7 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 47 | 45 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 26 | 20 `FIXED`, 3 `PARTIAL`, 2 `WITHDRAWN`, 1 `OPEN` |
+| `COSMIC-UX.md` | 30 | 27 | 21 `FIXED`, 3 `PARTIAL`, 2 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
@@ -136,8 +136,8 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 39 | 0 | 10 |
-| **Total** | **130** | **114** | **0** | **16** |
+| P3 | 49 | 40 | 0 | 9 |
+| **Total** | **130** | **115** | **0** | **15** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -146,8 +146,8 @@ advocate reviews every row before it is called done and owns no row.
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
-| `UX-xx` | `COSMIC-UX.md` | 29 | 22 | 0 | 7 |
-| **Total** | | **130** | **114** | **0** | **16** |
+| `UX-xx` | `COSMIC-UX.md` | 29 | 23 | 0 | 6 |
+| **Total** | | **130** | **115** | **0** | **15** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -342,7 +342,7 @@ across families, not within them.
 | `UX-22` | Two heading levels do the same job | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** The earlier note's own premise was stale: Credits is `title3`, not `title4`, so the real split was reference-attested headings (all `level: 3` in the QML — Runners, Installers, Credits, **Plugins**, plus the form's in-body page title) vs `settings_section` (title4), which serves only the two pages where the reference draws `isSection` separators and no text heading at all. The fix is therefore: every heading the reference draws is `title3` — `plugins.rs`'s `SECTION_HOST_PLUGINS` and the two `EMPTY_TEXT` placeholder titles (Installers, Plugins) moved up to match Library's pair — while `settings_section` stays `title4` as the port's documented separator-label device, one rung below attested headings by design (its doc now states the rule). Mutation-checked: dropping either moved site back to `title4` fails its page test (30 px vs 36 px, the two levels' real heights). | FIXED |
 | `UX-23` | Page padding is a hardcoded 18 and the theme's spacing tokens are never consulted | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** `view::GUTTER: u16 = 18` is deleted and `view::gutter()` returns `cosmic::theme::spacing().space_s`; all seven pages pad by it. UX-10's constant only *mechanically* partly satisfied this row — it held the literal, so it named the number without consulting the theme, and it had two users while five pages still wrote `.padding(18)`, which is why the row was genuinely OPEN. `18` is not a token at any density; `space_s` (16) is nearest, off by 2, and the page moves 18 → 16 (2 px per side, 4 px wider content) as the price of the token, stated rather than asserted to look better. Mutation-checked: `gutter()` back to `18` fails both page edge tests (`leftmost node at x = 18, expected 16`), reverting `view/library.rs` to `.padding(18)` fails the new guard (`["library"]`), and dropping the padding in `view/plugins.rs` fails its positive half. Density responsiveness itself is untestable here — `theme::spacing()` reads a `pub(crate)` static with no public writer. | FIXED |
 | `UX-24` | The app's only widget id is the library search box, so only that one field can ever be focused programmatically, and no dialog sets an initial focus | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | PARTIAL |
-| `UX-25` | No page bounds its content width, so at 2560 px and above the settings rows become "label … far-away control" pairs and the credits prose runs to an unreadably long measure | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `UX-25` | No page bounds its content width, so at 2560 px and above the settings rows become "label … far-away control" pairs and the credits prose runs to an unreadably long measure | S2 | — | **Status: FIXED.** `view::MAX_CONTENT_WIDTH = 1100.0` + `view::bounded_body` (inner `max_width`, outer `center_x(Fill)` — the bound and the centring are two jobs) wrap the six content pages' bodies inside their scrollable. Library deliberately excluded — its grid's column count *is* the window width; bounding diverges from the reference's filling GridView. `the_content_pages_bound_and_centre_their_body_and_the_grid_does_not`: measured (Credits at 2560 — bound + centring each asserted) + scanned (six pages call it, library must not). Mutation: unwrapping Credits → 2512 px span, fails. | FIXED |
 | `UX-26` | Long names and subtitles are hard-cut mid-glyph with no ellipsis marker, where the reference elides | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-27` | There is no indeterminate or loading indicator, and a running install cannot be cancelled from the UI | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-28` | The Plugins page has no empty-state branch, unlike the other three list pages | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |

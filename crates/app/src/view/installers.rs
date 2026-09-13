@@ -624,7 +624,7 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
     // `Core::is_condensed_update`'s 648 px — flush against the hamburger.
     // Measured before the change, at a 420 px window: this page's leftmost drawn
     // string sat at x=0 while the Library's sat at x=18.
-    container(cosmic::widget::scrollable(body))
+    container(cosmic::widget::scrollable(super::bounded_body(body)))
         .padding(gutter())
         .into()
 }

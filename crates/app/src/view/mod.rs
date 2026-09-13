@@ -131,6 +131,44 @@ pub fn gutter() -> u16 {
     cosmic::theme::spacing().space_s
 }
 
+/// The widest a page's content column is allowed to grow, in logical pixels —
+/// UX-25.
+///
+/// Past this width a settings row stops reading as a pair ("label … far-away
+/// control") and prose runs to a measure nobody can read, which is the failure
+/// the row names at 2560 px. The number is the row's own: the reference bounds
+/// nothing (its rows are `Layout.fillWidth` on the same stretch), so there is
+/// no QML value to port and any figure here is a port decision — 1100 is wide
+/// enough that the installer and runner cards keep their shape and narrow
+/// enough that the failure mode is gone.
+///
+/// The Library page is deliberately not wrapped: its grid's column count *is*
+/// the window width, so bounding it would take columns away on a wide display
+/// — a divergence from the reference's `GridView`, which fills. Its list rows
+/// stretch in both implementations.
+pub const MAX_CONTENT_WIDTH: f32 = 1100.0;
+
+/// `body`, centred and capped at [`MAX_CONTENT_WIDTH`].
+///
+/// The cap needs two containers because they are different jobs: the inner one
+/// is the thing that is bounded (its `max_width` is what the scrollable's
+/// viewport cannot grow past), and the outer one is the thing that is wide —
+/// `center_x(Fill)` takes the viewport's width and centres the bounded box
+/// inside it. A single `container(body).max_width(..)` alone resolves to the
+/// bound but stays left-aligned, which reads as a bug at exactly the window
+/// sizes the bound exists for.
+///
+/// Applied inside the page's scrollable — `scrollable(bounded_body(body))` —
+/// so the scrollbars and the viewport still see the real content height while
+/// the column itself stays narrow.
+pub fn bounded_body<'a, M: 'static>(
+    body: impl Into<cosmic::Element<'a, M>>,
+) -> cosmic::Element<'a, M> {
+    cosmic::widget::container(cosmic::widget::container(body).max_width(MAX_CONTENT_WIDTH))
+        .center_x(cosmic::iced::Length::Fill)
+        .into()
+}
+
 /// The `Id` the game-removal prompt's **Cancel** button carries, and the control
 /// the arm that opens it moves the keyboard to — UX-24.
 ///
@@ -705,6 +743,99 @@ mod tests {
             "read only {} files from the view tree; the assertions above would \
              pass vacuously",
             sources.len()
+        );
+    }
+
+    /// **The six content pages bound and centre their body column; the
+    /// Library does not** — UX-25.
+    ///
+    /// Two halves, the same split the gutter guard above uses. The measured
+    /// half lays the Credits page out at a 2560 px window — the row's own
+    /// figure — and requires the drawn text to sit inside a centred
+    /// [`MAX_CONTENT_WIDTH`] column: a page that dropped the bound fails the
+    /// width half, and one that kept the bound but lost the centring fails
+    /// the edge half (left-aligned bounded content starts at the gutter,
+    /// 16 px, not ~730). Credits is the instrument because its page takes no
+    /// state — any of the six would measure the same wrapper.
+    ///
+    /// The scan half is the weaker instrument, stated as such: it requires the
+    /// *call* in each page's source, which is what a reverted edit looks like
+    /// — a page that calls `bounded_body` and then lays its body out wrongly
+    /// is a failure this test cannot see and the measured half is for.
+    /// `library` is excluded on purpose: its grid's column count is the window
+    /// width, and bounding it would diverge from the reference's `GridView`,
+    /// which fills — see [`MAX_CONTENT_WIDTH`]'s doc.
+    #[test]
+    fn the_content_pages_bound_and_centre_their_body_and_the_grid_does_not() {
+        // Measured: Credits at the row's own 2560 px.
+        let mut page: cosmic::Element<'_, crate::Message> =
+            super::credits::view(super::credits::CreditsPage);
+        let seen = super::testkit::traversal_at_width(&mut page, 2560.0);
+        let (left, right) = seen.iter().filter(|node| node.text.is_some()).fold(
+            (f32::INFINITY, 0.0f32),
+            |(l, r), node| {
+                (
+                    l.min(node.bounds.x),
+                    r.max(node.bounds.x + node.bounds.width),
+                )
+            },
+        );
+        assert!(left.is_finite(), "the Credits page draws no text at all");
+        let cap = super::MAX_CONTENT_WIDTH;
+        assert!(
+            right - left <= cap + 1.0,
+            "the content column spans {} px at a 2560 px window — the \
+             {cap} px bound is not applied",
+            right - left
+        );
+        assert!(
+            left > 100.0,
+            "the content column starts at x={left}: the bound is applied but \
+             the column is not centred in the viewport"
+        );
+
+        // Scanned: every content page routes its body through the wrapper.
+        let sources = sources();
+        for page in [
+            "credits",
+            "form",
+            "installers",
+            "plugins",
+            "runners",
+            "settings",
+        ] {
+            let text = sources
+                .iter()
+                .find(|(name, _)| name == page)
+                .map(|(_, text)| text.as_str())
+                .unwrap_or_else(|| panic!("`{page}` is not on disk"));
+            let code: String = text
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .collect::<Vec<&str>>()
+                .join("\n");
+            assert!(
+                code.contains("bounded_body(body)"),
+                "`view::{page}` no longer bounds its body column — \
+                 `scrollable(bounded_body(body))` is the call, and `MAX_CONTENT_WIDTH`'s \
+                 doc records why the Library is the one page that must not have it"
+            );
+        }
+        let library = sources
+            .iter()
+            .find(|(name, _)| name == "library")
+            .map(|(_, text)| text.as_str())
+            .expect("view::library is on disk");
+        let library_code: String = library
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<&str>>()
+            .join("\n");
+        assert!(
+            !library_code.contains("bounded_body("),
+            "the Library's grid must keep the window's width — bounding it \
+             takes columns away on a wide display, which the reference's \
+             GridView does not do"
         );
     }
 }

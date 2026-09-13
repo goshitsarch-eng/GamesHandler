@@ -678,7 +678,9 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
         body = body.push(settings_row(keys, text::body(what).into()));
     }
 
-    container(scrollable(body)).padding(super::gutter()).into()
+    container(scrollable(super::bounded_body(body)))
+        .padding(super::gutter())
+        .into()
 }
 
 #[cfg(test)]

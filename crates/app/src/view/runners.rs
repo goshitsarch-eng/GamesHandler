@@ -546,7 +546,7 @@ pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
     // pages that were missing it cannot drift to a third value — measured at a
     // 420 px window, this page's leftmost drawn string sat at x=0 where the
     // Library's sat at x=18, and `max_right` reached 420, the window edge.
-    container(cosmic::widget::scrollable(body))
+    container(cosmic::widget::scrollable(super::bounded_body(body)))
         .padding(super::gutter())
         .into()
 }
