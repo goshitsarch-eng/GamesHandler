@@ -1731,6 +1731,43 @@ impl Shell {
         }
     }
 
+    /// Escape cancels whichever confirmation is open, and reports whether
+    /// there was one (UX-07).
+    ///
+    /// # Why this is on `Shell` and not the body of `App::on_escape`
+    ///
+    /// The same reason [`Shell::focus_library_search`] is: `App` cannot be built
+    /// off a display, so a dismissal written there would be unreachable from a
+    /// test. Here the effect is a `State` write, which a test can read back.
+    ///
+    /// # What the return value is for, and what it does not reach
+    ///
+    /// It is the branch the finding names — "returning `Task::none()` when
+    /// neither is set" — made observable. A `Task` has no accessor (the same
+    /// gap [`Shell::focus_library_search`] records), so the `Task` half of that
+    /// sentence is not testable from here and the *decision* is what is: a
+    /// `bool` either dialog was open. Both of `App::on_escape`'s arms return
+    /// `Task::none()` anyway — clearing two `Option` fields is not work a task
+    /// can do — so the flag is a record for the test rather than a branch the
+    /// caller takes.
+    ///
+    /// # Why the game form is not included
+    ///
+    /// [`Message::CloseDialog`] clears the form as well, and this deliberately
+    /// does not: the two dialogs are `Kirigami.PromptDialog`s, whose Qt default
+    /// `closePolicy` is `Popup.CloseOnEscape` (`LibraryPage.qml:346`,
+    /// `RunnersPage.qml:257` — neither sets it, so both take the default), while
+    /// the form is a pushed `Kirigami.Page` with no Escape binding anywhere in
+    /// the QML. Escape dismissing a destructive prompt and Escape silently
+    /// discarding a half-filled form are different promises, and only the first
+    /// is the reference's.
+    fn dismiss_dialogs(&mut self) -> bool {
+        let had = self.state.confirm_delete.is_some() || self.state.confirm_remove_runner.is_some();
+        self.state.confirm_delete = None;
+        self.state.confirm_remove_runner = None;
+        had
+    }
+
     /// The page the sidebar draws as selected.
     #[cfg(test)]
     fn sidebar_page(&self) -> Option<Page> {
@@ -4097,6 +4134,25 @@ impl cosmic::Application for App {
     /// being liberal in this one case.
     fn on_search(&mut self) -> cosmic::app::Task<Self::Message> {
         self.shell.focus_library_search()
+    }
+
+    /// Escape — UX-07, and the reason `App` implements this hook at all.
+    ///
+    /// libcosmic dispatches the key here (`src/app/cosmic.rs:849`, the
+    /// `keyboard_nav::Action::Escape` arm of the framework's Tab/Escape
+    /// subscription), and the default it replaces returns `Task::none()` without
+    /// looking at anything (`src/app/mod.rs:436-439`) — so before this, Escape
+    /// on an open "Remove …?" prompt did nothing whatsoever. The delegation is
+    /// [`Shell::dismiss_dialogs`], which records why it is a `Shell` method and
+    /// which state it clears.
+    ///
+    /// `Task::none()` is returned rather than anything else because clearing the
+    /// two pending fields *is* the whole effect: no focus, window or I/O
+    /// operation is involved, and the next frame draws the page with no dialog
+    /// over it.
+    fn on_escape(&mut self) -> cosmic::app::Task<Self::Message> {
+        self.shell.dismiss_dialogs();
+        cosmic::task::none()
     }
 
     /// Handle one message.
@@ -9109,6 +9165,148 @@ mod tests {
             "the press at {cancel:?} — the centre of the dialog's own Cancel \
              button — published {messages:?} rather than `CloseDialog`, so the \
              scrim is in front of the dialog as well as behind it"
+        );
+    }
+
+    /// **Escape cancels whichever confirmation is open, and leaves the form
+    /// alone (UX-07).**
+    ///
+    /// The state half of the finding: `Message::CloseDialog` clears three things
+    /// and Escape clears the two dialogs, which is the reference's own split
+    /// (`Kirigami.PromptDialog`'s default `closePolicy` is `CloseOnEscape`;
+    /// the form is a pushed `Page` with no Escape binding in the QML).
+    /// [`Shell::dismiss_dialogs`] is that decision as a `Shell` method, so it can
+    /// be measured here rather than only in a running application.
+    ///
+    /// The return value is asserted because it is the finding's own branch —
+    /// "`Task::none()` when neither is set" — made observable: a `Task` has no
+    /// accessor, so the *decision* behind it is what a test can read.
+    ///
+    /// The wiring — that `App::on_escape` is what calls this — is a separate
+    /// test, [`the_escape_hook_is_wired_to_the_dismissal`], because `App` cannot
+    /// be built off a display.
+    #[test]
+    fn escape_dismisses_a_pending_confirmation() {
+        let mut shell = Shell::new();
+        assert!(
+            !shell.dismiss_dialogs(),
+            "nothing was pending, so Escape must report that it dismissed nothing"
+        );
+
+        // Each of the two dialogs on its own, so dropping either half of the
+        // method is visible in the other's check.
+        shell.state.confirm_delete = Some("a-game".to_string());
+        assert!(
+            shell.dismiss_dialogs(),
+            "a pending game delete is open, so Escape dismissed something"
+        );
+        assert!(
+            shell.state.confirm_delete.is_none(),
+            "Escape must clear the pending game delete"
+        );
+
+        shell.state.confirm_remove_runner = Some(crate::state::PendingRunnerRemoval {
+            runner_id: "GE-Proton9-5".to_string(),
+            name: "GE-Proton9-5".to_string(),
+        });
+        assert!(
+            shell.dismiss_dialogs(),
+            "a pending runner removal is open, so Escape dismissed something"
+        );
+        assert!(
+            shell.state.confirm_remove_runner.is_none(),
+            "Escape must clear the pending runner removal"
+        );
+
+        // Both at once — the ordering backstop in `view_with_overlays` says this
+        // state is reachable, so neither field may be left behind.
+        shell.state.confirm_delete = Some("a-game".to_string());
+        shell.state.confirm_remove_runner = Some(crate::state::PendingRunnerRemoval {
+            runner_id: "GE-Proton9-5".to_string(),
+            name: "GE-Proton9-5".to_string(),
+        });
+        assert!(shell.dismiss_dialogs());
+        assert!(
+            shell.state.confirm_delete.is_none() && shell.state.confirm_remove_runner.is_none(),
+            "both were open, so both must go: delete {:?}, runner {:?}",
+            shell.state.confirm_delete,
+            shell.state.confirm_remove_runner
+        );
+
+        // And the form is deliberately *not* part of this. `CloseDialog` clears
+        // it; Escape must not, or a half-filled form would be discarded by a key
+        // the reference binds only to its prompts.
+        let mut with_form = shell_with_work_to_do();
+        assert!(
+            with_form.state.game_form.is_some(),
+            "this control needs an open form to be a control at all"
+        );
+        let _ = with_form.dismiss_dialogs();
+        assert!(
+            with_form.state.game_form.is_some(),
+            "Escape is the prompts' key, not the form's: the form must survive it"
+        );
+    }
+
+    /// **Escape reaches [`Shell::dismiss_dialogs`] at all (UX-07).**
+    ///
+    /// The finding is that `App` never implemented `on_escape`, so the framework
+    /// took its default — `Task::none()` without looking at anything
+    /// (`libcosmic src/app/mod.rs:436-439`) — and Escape on an open prompt did
+    /// nothing. The test above proves the dismissal works; it would pass just as
+    /// well with the hook still missing, because `App` needs a window and no test
+    /// can call it. So this half is read out of the source, exactly as
+    /// [`the_window_floor_is_the_references_and_the_builder_asks_for_it`] reads
+    /// the settings construction out of this same file.
+    ///
+    /// It is a weaker instrument than a call, and it is the strongest one
+    /// available: a `Task` has no accessor, so the wiring cannot be observed any
+    /// other way. What it grades is that the hook exists and delegates.
+    #[test]
+    fn the_escape_hook_is_wired_to_the_dismissal() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
+        )
+        .expect("this file must be readable");
+        // The non-test half: this test's own body names the string, so searching
+        // the whole file would find a match in the search itself.
+        let tests_at = source
+            .find("\nmod tests {")
+            .expect("this file has a test module; the split below depends on it");
+        let production = &source[..tests_at];
+
+        let hooks = production.matches("fn on_escape(&mut self)").count();
+        assert_eq!(
+            hooks, 1,
+            "this file implements `on_escape` {hooks} times; libcosmic calls it \
+             once per Escape and this test grades the one, rather than assuming \
+             there is one"
+        );
+        let start = production
+            .find("fn on_escape(&mut self)")
+            .expect("counted above");
+        // The body runs to the closing brace at the function's own indent, with
+        // the comments dropped first: the doc comment above the function names
+        // `dismiss_dialogs` too, and a search that kept the prose would pass on a
+        // hook whose body does nothing.
+        let body: String = production[start..]
+            .lines()
+            .take_while(|line| line.trim() != "}")
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            body.contains("dismiss_dialogs"),
+            "`App::on_escape` does not call `Shell::dismiss_dialogs`, so Escape is \
+             back to libcosmic's default — `Task::none()` and no look at anything \
+             (`libcosmic src/app/mod.rs:436-439`) — and neither prompt closes on \
+             it. That is UX-07 exactly. The body: {body:?}"
+        );
+        assert!(
+            body.contains("cosmic::task::none()"),
+            "`on_escape` returns nothing at all, so the extraction above found a \
+             signature rather than a body and the check before this one is about \
+             an empty string: {body:?}"
         );
     }
 
