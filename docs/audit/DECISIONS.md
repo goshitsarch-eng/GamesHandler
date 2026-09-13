@@ -75,8 +75,10 @@ concluded it was broken. The next reader arrives at the same `Vec::dedup` after
 a sort, has the same suspicion, and re-derives the whole refutation from
 scratch — or, worse, "fixes" it.
 
-Four findings were withdrawn in this audit, and *how* they were wrong is the
-argument for keeping them:
+Five claims were withdrawn in this audit, and *how* they were wrong is the
+argument for keeping them. The table counts withdrawn *claims*, which is why it is
+longer than `PLAN.md`'s `### Not a defect` section — two of the five were raised in
+`BASELINE.md` and `migration/REPORT.md` rather than as numbered findings:
 
 | Withdrawn | Where | Why it was wrong |
 |---|---|---|
@@ -84,9 +86,11 @@ argument for keeping them:
 | `BUG-11`, case-variant categories | `BUGS.md:83` | An assumed translation. The sort's primary term *is* the fold, so `dedup` removes what Python's `set` removes. |
 | "The Add Game form takes no keyboard focus" | `migration/REPORT.md:102`, `BASELINE.md:262` | The pixel count that "proved" it was confounded — an empty focused field also returns ~50 px of caret blink, so 0-of-1024000 did not mean what it was read to mean. |
 | `F-ADD`, filed P0: "Add/Save closes the form without saving" | `migration/REPORT.md:31` | Three probes "excluded three ways" all tested *delivery*, and delivery was never broken, so they excluded nothing. The cause was layout — the action row sits below the fold and the walk had no scroll verb. |
+| `UX-08`, dialogs clipped below 570 px | `COSMIC-UX.md:61` | **A wrong model of the framework, not a bad probe — and a recommended fix that was a no-op.** The row assumed a `Length::Fixed(570.0)` dialog is *clipped* by a narrower window; iced **clamps** a fixed length to the available space (`iced/core/src/layout/limits.rs:168`), and libcosmic already applies `Fixed(570.0)` as its own dialog default (`src/widget/dialog.rs:169`) — so the recommended `container(popup).max_width(570.0)` would have sat inert against the very line it was meant to bound. No dialog string is drawn beyond the window at any width from 1200 px down to the 420 px floor. |
 
-Three of the four were not carelessness; they were **probes that did not test
-what the finding claimed.** That is the same defect class as a test that passes
+Four of the five were not carelessness; three were **probes that did not test
+what the finding claimed**, and `UX-08` is a fourth shape — a *conclusion* drawn
+from a mental model of a dependency rather than from the dependency. That is the same defect class as a test that passes
 without inspecting what it asserts, one level up: an *investigation* that
 returns a verdict about something other than the question. Only the first row is
 an outright fabrication, and it is recorded in `BASELINE.md` in those words
