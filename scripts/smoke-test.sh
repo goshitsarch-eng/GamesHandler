@@ -60,6 +60,10 @@ usage: scripts/smoke-test.sh [options]
                       of auto-detecting one. The script waits for a socket to
                       appear before using it.
   --no-compositor     skip `gui-stays-up` even if a display is available.
+  --installed         test the installed app even though a build tree exists.
+                      Without this the build tree is the subject whenever there
+                      is one (PKG-01), and an unfinished tree is an error rather
+                      than a silent fall back to the installed app.
 
 Precedence for the display used by `gui-stays-up`: --compositor, then a
 headless compositor on PATH (weston, Xvfb), then the ambient
@@ -76,15 +80,21 @@ HOLD=8
 TERM_TIMEOUT=20
 COMPOSITOR_CMD=""
 ALLOW_COMPOSITOR=1
+FORCE_INSTALLED=0
+# Set when the caller named the command itself. That changes what "this tree
+# holds the binary" can mean — see the unfinished-tree guard below — and it is
+# why this is a variable rather than a comparison against the default string.
+APP_CMD_GIVEN=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --build-dir)     BUILD_DIR="${2:?--build-dir needs a value}"; shift 2 ;;
         --hold)          HOLD="${2:?--hold needs a value}"; shift 2 ;;
         --timeout)       TERM_TIMEOUT="${2:?--timeout needs a value}"; shift 2 ;;
-        --app-cmd)       APP_CMD_STR="${2:?--app-cmd needs a value}"; shift 2 ;;
+        --app-cmd)       APP_CMD_STR="${2:?--app-cmd needs a value}"; APP_CMD_GIVEN=1; shift 2 ;;
         --compositor)    COMPOSITOR_CMD="${2:?--compositor needs a value}"; shift 2 ;;
         --no-compositor) ALLOW_COMPOSITOR=0; shift ;;
+        --installed)     FORCE_INSTALLED=1; shift ;;
         -h|--help)       usage; exit 0 ;;
         *)               echo "smoke-test.sh: unknown option: $1" >&2; exit 2 ;;
     esac
@@ -142,34 +152,127 @@ trap cleanup EXIT
 
 # ------------------------------------------------------------------- runner
 #
-# Two ways to reach the app, in descending order of fidelity:
+# Two ways to reach the app:
 #
-#   installed  `flatpak run com.goshapps.GameHandler` — the real sandbox, built
-#              from the manifest's own finish-args. Used when the app is
-#              installed in the user installation.
 #   build-dir  `flatpak build <dir> <cmd>` — runs the artifacts flatpak-builder
 #              produced without installing anything. Sockets are *not*
 #              inherited from the manifest here (flatpak-build(1) assembles its
 #              sandbox from explicit flags instead), so the calls below pass
 #              the two the app needs: wayland and fallback-x11.
+#   installed  `flatpak run com.goshapps.GameHandler` — the real sandbox, built
+#              from the manifest's own finish-args.
 #
-# RUN_MODE is decided once, before any check.
+# Which one is the SUBJECT is the PKG-01 fix, and it is the build tree whenever
+# there is one. This used to be the other way round, resolved once at startup:
+#
+#     if flatpak info "$APP_ID" >/dev/null 2>&1; then RUN_MODE="installed"
+#     elif [ -d "$BUILD_DIR/files" ]; then RUN_MODE="build-dir"
+#
+# so on any machine with a GameHandler already installed — every developer
+# machine and every machine that has run `flatpak install`, by definition — the
+# checks below ran the INSTALLED binary. Each `ok` they printed was then a
+# statement about a build this script never executed, and the only stage in
+# verify.sh that runs the artefact at all was the one that could be pointed at
+# the wrong artefact. Measured on this machine, 2026-09-13, before the fix:
+#
+#   installed  ~/.local/share/flatpak/app/$APP_ID/x86_64/stable/db7b22fd…/files/bin/gamehandler
+#              sha256 468519308634657f923553f3085a9b9ded5bc70ba04d39723aaddeb66484df1f
+#   tree       build-flatpak/files/bin/gamehandler
+#              sha256 d87e5fc9ba71feaf333e30c9e5743f0123d3d7f49cf25e0c54875a91a2f69d92
+#
+# Different artefacts, and both print `GameHandler 0.8.0` for `--version`, so
+# the defect was invisible in every line of this script's own output.
+#
+# The subject is now chosen from what exists, in this order:
+#
+#   1. a build tree (`$BUILD_DIR/files`), when there is one — unless --installed
+#      says to test the installed app on purpose;
+#   2. the installed app, only when there is no build tree (or --installed);
+#   3. neither -> the error below, unchanged.
+#
+# An UNFINISHED tree is a hard error rather than a silent fall back (2). `[ -d
+# "$BUILD_DIR/files" ]` is true for a tree flatpak-builder died half way
+# through, and falling back there restates the original defect one step out: the
+# run would report a green result for the installed binary while a broken build
+# sat in front of it. Nothing is being tested in that state, so the script says
+# so and stops.
+#
+# The artefact's path and sha256 are printed below (SUBJECT) so that the result
+# can be attributed from the log alone. That is the cheap half of the fix and it
+# is the half that would have made the original defect visible: two artefacts of
+# the same size printing the same version are indistinguishable from their
+# output, and not from their hash.
 
+TREE_BIN="$BUILD_DIR/files${APP_CMD[0]#/app}"
+INSTALLED_LOC=""
 RUN_MODE=""
-if flatpak info "$APP_ID" >/dev/null 2>&1; then
+
+if [ "$FORCE_INSTALLED" -eq 0 ] && [ -d "$BUILD_DIR/files" ]; then
+    # The guard below is about the APPLICATION'S binary, so it applies to the
+    # default command and not to one the caller named. `--app-cmd /app/bin/7z`
+    # is the script's own documented failure-path hook, and in this tree that is
+    # a symlink to /app/bin/7zz — a path that exists inside the sandbox and not
+    # on the host, so `[ -f ]` on the host copy is false for a tree that is
+    # perfectly complete. Measured before this exception: the hook exited 1 with
+    # "build tree exists but holds no /app/bin/7z" before running a single check,
+    # which is the failure path the usage text says is proven by that hook. A
+    # stricter rule than the one it protects is not a fix.
+    if [ "$APP_CMD_GIVEN" -eq 1 ] || [ -f "$TREE_BIN" ]; then
+        RUN_MODE="build-dir"
+    else
+        say "smoke-test.sh: build tree exists but holds no $APP_CMD_STR."
+        say "  $BUILD_DIR/files is there, so this is a build tree — one that did"
+        say "  not finish, or a --build-dir pointing somewhere else."
+        say "  Testing the installed $APP_ID instead would report a result for a"
+        say "  binary this run never built (PKG-01), so this stops here."
+        say "  Finish the build (scripts/verify.sh, or flatpak-builder), point"
+        say "  --build-dir at the right tree, or pass --installed to test the"
+        say "  installed app on purpose."
+        exit 1
+    fi
+elif flatpak info "$APP_ID" >/dev/null 2>&1; then
     RUN_MODE="installed"
-elif [ -d "$BUILD_DIR/files" ]; then
-    RUN_MODE="build-dir"
+    INSTALLED_LOC="$(flatpak info --show-location "$APP_ID" 2>/dev/null)"
 fi
 
 if [ -z "$RUN_MODE" ]; then
     say "smoke-test.sh: no way to run the app."
-    say "  'flatpak info $APP_ID' found no installed app, and the build dir"
-    say "  '$BUILD_DIR' does not exist."
+    if [ "$FORCE_INSTALLED" -eq 1 ]; then
+        say "  --installed was given, and 'flatpak info $APP_ID' found no"
+        say "  installed app to run."
+    else
+        say "  'flatpak info $APP_ID' found no installed app, and the build dir"
+        say "  '$BUILD_DIR' does not exist."
+    fi
     say "  Run flatpak-builder first (scripts/verify.sh stage 'flatpak-build'),"
     say "  or install the built repo with 'flatpak install --user flatpak-repo $APP_ID'."
     exit 1
 fi
+
+# The file the checks below will actually execute, as a host path, so that the
+# subject can be hashed and named. `flatpak build <dir> <cmd>` executes `<dir>`
+# + the command with its `/app` prefix replaced by `/files` — measured, not
+# assumed: `flatpak build build-flatpak /app/bin/gamehandler --version` prints
+# the version and that file is build-flatpak/files/bin/gamehandler (29470184
+# bytes). `flatpak run` executes the deployed copy under the installation
+# `flatpak info` reports, which is the installation `flatpak run` will pick.
+#
+# Empty when the command is not an /app path (an --app-cmd naming something
+# else), because then the file that runs is not this application's binary and
+# printing a hash here would be a claim about the wrong file. The banner below
+# also refuses to hash when --app-cmd was given at all, for the same reason and
+# one more: the host copy may be a symlink into the sandbox (bin/7z ->
+# /app/bin/7zz), so a host `[ -f ]` on it says nothing about the command.
+EXEC_SUBJECT=""
+case "${APP_CMD[0]}" in
+    /app/*)
+        if [ "$RUN_MODE" = "build-dir" ]; then
+            EXEC_SUBJECT="$TREE_BIN"
+        elif [ -n "$INSTALLED_LOC" ]; then
+            EXEC_SUBJECT="$INSTALLED_LOC/files${APP_CMD[0]#/app}"
+        fi
+        ;;
+esac
 
 # Run the app once and return its exit status.
 #
@@ -229,6 +332,21 @@ PANIC_RE="panicked at|fatal runtime error|RUST_BACKTRACE=1"
 
 say "smoke-test.sh: mode=$RUN_MODE app=${APP_CMD[*]} hold=${HOLD}s"
 [ "$RUN_MODE" = "build-dir" ] && say "               build dir: $BUILD_DIR"
+# Which artefact the result belongs to, said once and with its hash. Everything
+# below is a claim about this file and no other — see the runner note above.
+if [ "$APP_CMD_GIVEN" -eq 1 ]; then
+    say "               subject:   ${APP_CMD[*]} (--app-cmd, run inside $RUN_MODE;"
+    say "                          not this application's binary, so it is not"
+    say "                          hashed or attributed to the build here)"
+elif [ -n "$EXEC_SUBJECT" ] && [ -f "$EXEC_SUBJECT" ]; then
+    say "               subject:   ${EXEC_SUBJECT#"$ROOT"/} sha256=$(sha256sum "$EXEC_SUBJECT" | cut -d' ' -f1)"
+elif [ -n "$EXEC_SUBJECT" ]; then
+    say "               subject:   $EXEC_SUBJECT — NOT PRESENT, so a check that"
+    say "                          needs it will fail rather than silently pass"
+else
+    say "               subject:   ${APP_CMD[0]} is not an /app path, so the file"
+    say "                          that runs is not this application's binary"
+fi
 say ""
 
 # ------------------------------------------------------- check: cli-version
