@@ -170,6 +170,33 @@ def partial_rows(plan: str) -> list[str]:
     return ids
 
 
+def open_by_band(rows) -> dict[str, list[tuple[str, int]]]:
+    """The `Remaining` rows per severity band, split by family, largest first.
+
+    Exists because the *third* hand-maintained table in this audit — the `Band |
+    Count | What it is` table in `REPORT.md`'s *What remains, honestly* — was the
+    last one still reading its numbers off the rows by eye, and it drifted
+    exactly as the two generated tables did before it: it said 46 open rows where
+    the rows held 39, and `P2 | 9` where the rows held 6. Its neighbours in the
+    same report had already been derived for that reason. The prose beside each
+    count is kept — it says *what* the band is, which is not arithmetic — and
+    only the count and the family split are generated.
+
+    A band with no open rows renders as `0` with no breakdown, so the `P0`/`P1`
+    rows keep the shape they had when they were closed by hand.
+    """
+    counts: dict[str, dict[str, int]] = {level: {} for level in SEVERITIES}
+    for severity, family, status in rows:
+        if severity is None or settled(status):
+            continue
+        counts[severity][family] = counts[severity].get(family, 0) + 1
+
+    out: dict[str, list[tuple[str, int]]] = {}
+    for level, by_family in counts.items():
+        out[level] = sorted(by_family.items(), key=lambda pair: (-pair[1], pair[0]))
+    return out
+
+
 def parse(plan: str):
     """`(severity, family, status)` per row, plus the section headers seen."""
     section = None
@@ -336,6 +363,115 @@ def report_tables(rows):
     severity.append(f"| **Total** | **{total_found}** | **{total_fixed}** | **0** | "
                     f"**{total_found - total_fixed}** |")
     return category, severity
+
+
+def report_bands(rows) -> list[tuple[str, str]]:
+    """`(old, new)` for `REPORT.md`'s `Band | Count | What it is` rows.
+
+    The `What it is` cell is the one part of that table this script does not
+    own: it explains what each band *means*, which is prose rather than
+    arithmetic, and it is preserved by reading the current file rather than
+    regenerated. What *is* derived is the count and the family breakdown, which
+    are the two things that were wrong (`46` where the rows held 39; `P2 | 9`
+    where they held 6).
+
+    Returns pairs rather than finished lines — unlike the two tables above — for
+    the reason this function exists: those are located by a header line that is
+    itself generated, and these rows have no such header, so the only way to
+    find them is to walk the section and pair each row with its own rewrite.
+    """
+    bands = open_by_band(rows)
+    report = REPORT.read_text(encoding="utf-8").splitlines()
+    try:
+        start = report.index("## What remains, honestly")
+    except ValueError:
+        return []
+    pairs: list[tuple[str, str]] = []
+    # `start + 1`: the header line itself is `## …`, so beginning the walk at it
+    # breaks out of the loop before a single row is read — which is what the
+    # first version of this function did, and it reported no problems on a file
+    # whose band table it had just been written to catch.
+    for line in report[start + 1:]:
+        if line.startswith("## "):
+            break
+        match = re.match(r"^\|\s*(P[0-3])\s*\|", line)
+        if not match:
+            continue
+        level = match.group(1)
+        # Everything after the second cell is the hand-written sentence.
+        prose = line.split("|", 3)[3]
+        # Strip a split written by an earlier run, so this is idempotent. Without
+        # it the function appends a fresh split in front of the previous one and
+        # every `--write` grows the cell — harmless-looking, and it made
+        # `--check` fail immediately after a `--write` that reported success.
+        # Anchored on the `N `FAM`` shape, so the hand-written `**Closed.**`
+        # opening of the `P0` and `P1` rows is never eaten.
+        prose = re.sub(r"^\s*(?:\d+\s+`[A-Z]+`(?:,\s*)?)+\.\s*", "", prose, count=1)
+        found = bands[level]
+        count = sum(number for _, number in found)
+        if count == 0:
+            rebuilt = f"| {level} | 0 |{prose}"
+        else:
+            split = ", ".join(f"{number} `{family}`" for family, number in found)
+            rebuilt = f"| {level} | {count} | {split}. {prose}"
+        if rebuilt != line:
+            pairs.append((line, rebuilt))
+    return pairs
+
+
+def report_counts_sentence(rows) -> list[tuple[str, str]]:
+    """`(old, new)` for the two sentences carrying the open/fixed totals.
+
+    Both are the same hand-maintained number as the tables around them, and both
+    had drifted: the section lead read `46 of 130 defects are still open` when
+    the rows held 39, and the sentence introducing the band table read `Where
+    the 46 rows are:` for the same 39. Each is located by a regex over its own
+    wording rather than by line number, and only the arithmetic is generated —
+    the sentences themselves are left as written.
+    """
+    open_rows = sum(1 for severity, _, status in rows
+                    if severity is not None and not settled(status))
+    total = sum(1 for severity, _, _ in rows if severity is not None)
+    partials = sum(1 for _, _, status in rows if status.startswith("PARTIAL"))
+    words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six",
+             7: "Seven", 8: "Eight", 9: "Nine", 10: "Ten"}
+    spelled = words.get(partials, str(partials))
+    patterns = [
+        (r"\*\*This is not a final report\.\*\* \d+ of (\d+) defects are still open",
+         f"**This is not a final report.** {open_rows} of {total} defects are "
+         f"still open"),
+        (r"Where the \d+ (?:open )?rows are:",
+         f"Where the {open_rows} open rows are:"),
+        # The `PARTIAL` count, which appears twice — once in the sentence about
+        # the `Fixed` column and once opening the paragraph that names them. Both
+        # read `six` while the rows held seven.
+        (r"the \w+ `PARTIAL` rows are counted in",
+         f"the {spelled.lower()} `PARTIAL` rows are counted in"),
+        (r"\*\*\w+ of the rows counted as `Remaining` above are `PARTIAL`",
+         f"**{spelled} of the rows counted as `Remaining` above are `PARTIAL`"),
+        (r"the \w+ `PARTIAL` rows, which `scripts/plan-counts\.py` prints",
+         f"the {spelled.lower()} `PARTIAL` rows, which `scripts/plan-counts.py` "
+         f"prints"),
+    ]
+    report = REPORT.read_text(encoding="utf-8")
+    pairs = []
+    for pattern, replacement in patterns:
+        # Pair whole *lines*, because `regenerate` substitutes line for line and
+        # refuses a pair it cannot find exactly once. The first version of this
+        # returned the matched substring, which is a prefix of a longer markdown
+        # line (`… still open, most of them because …`), so `regenerate` found
+        # zero lines equal to it and aborted the write after printing the
+        # substitution it had decided on — a `--write` that reported work and
+        # performed none.
+        for line in report.splitlines():
+            match = re.search(pattern, line)
+            if not match:
+                continue
+            rebuilt = line[:match.start()] + replacement + line[match.end():]
+            if rebuilt != line:
+                pairs.append((line, rebuilt))
+            break
+    return pairs
 
 
 def document_statuses() -> dict[str, str]:
@@ -601,6 +737,12 @@ def main() -> int:
                 for line in pairs:
                     print(f"REPORT.md: {line[0][:60]!r} -> {line[1][:60]!r}")
                 print(f"REPORT.md: {regenerate(REPORT, pairs)} line(s) rewritten")
+            band_pairs = report_bands(rows) + report_counts_sentence(rows)
+            if band_pairs:
+                for line in band_pairs:
+                    print(f"REPORT.md: {line[0][:60]!r} -> {line[1][:60]!r}")
+                print(f"REPORT.md: {regenerate(REPORT, band_pairs)} band line(s) "
+                      f"rewritten")
         return 0
 
     plan = PLAN.read_text(encoding="utf-8")
@@ -630,6 +772,11 @@ def main() -> int:
             if line.startswith("|") and line not in report:
                 problems.append(
                     f"REPORT.md table line not present verbatim: {line}")
+        for old, new in report_bands(rows) + report_counts_sentence(rows):
+            problems.append(
+                f"REPORT.md derived prose is stale — reads {old[:70]!r} where the "
+                f"plan's rows give {new[:70]!r}. The count and the family split "
+                f"are derived; run with `--write`")
     partials = partial_rows(plan)
     print(f"PARTIAL: {len(partials)} ({', '.join(partials)})")
 

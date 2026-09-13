@@ -62,17 +62,18 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 34 | 32 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
-| `ARCHITECTURE.md` | 26 | 19 | 18 `FIXED`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 20 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
+| `BUGS.md` | 48 | 35 | 33 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
+| `ARCHITECTURE.md` | 26 | 20 | 18 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
+| `COSMIC-UX.md` | 30 | 21 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 10 | 9 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
-`BUGS.md`'s 14 tail-less rows are its thirteen open `P3` rows plus the withdrawn
+`BUGS.md`'s 13 tail-less rows are its twelve open `P3` rows plus the withdrawn
 `BUG-11`, which carries no severity because it is not a defect. That sentence read
-"20 … nineteen" until an earlier revision and "15 … fourteen" until this one, and
-was wrong both times in the same way: the row count was measurable from the table
+"20 … nineteen" until an earlier revision, "15 … fourteen" until the one after it,
+and "14 … thirteen" until this one, and was wrong every time in the same way: the
+row count was measurable from the table
 above it, and the sentence explaining the number agreed with the number instead of
 with the rows. It read "15 … fourteen" because two rows that carried no tail when
 it was written have since gained one — which is the drift this paragraph is about,
@@ -135,18 +136,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 15 | 0 | 34 |
-| **Total** | **130** | **90** | **0** | **40** |
+| P3 | 49 | 16 | 0 | 33 |
+| **Total** | **130** | **91** | **0** | **39** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 18 | 0 | 7 |
-| `BUG-xx` | `BUGS.md` | 46 | 32 | 0 | 14 |
+| `BUG-xx` | `BUGS.md` | 46 | 33 | 0 | 13 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 9 | 0 | 2 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 17 | 0 | 12 |
-| **Total** | | **130** | **90** | **0** | **40** |
+| **Total** | | **130** | **91** | **0** | **39** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -247,7 +248,7 @@ across families, not within them.
 | `ARCH-09` | Errors lose their context at several boundaries, and one of them makes a local write failure indistinguishable from a legitimate "not found" | S5 | — | A regression test per boundary asserting the error names the operation and the path, and that a destination-side failure is not reported as "not found". Amend the citations that landed and re-test the third boundary. **Status: FIXED `937ef5b`** (the other two boundaries by `d602716`, `BUG-13`/`BUG-14`). `proton.rs`'s `get_text` now names the byte offset on a `from_utf8` failure and `fetch_available` carries the `serde_json` parse position instead of the bare sentence; both are mutation-proved with measured arms. The row's two citations did land — the file records that, because they are only the second of three checked that held. | FIXED |
 | `ARCH-10` | The error taxonomy is strong inside core and collapses at two boundaries | S5 | — | A test per boundary asserting the `core` error enum survives to the UI message rather than being flattened to `String`. **Status: FIXED `937ef5b`.** `json::PersistenceError` with a variant per failing step (create / write temporary / replace / serialize) plus `WouldDiscardUnreadable`, returned by `models` and `settings`, so `ARCH-01`'s two kinds of failure are distinguishable by type rather than by an `io::ErrorKind` no caller read. The app boundary is closed with it: `view::plugins::InstallRunError` replaces `Result<bool, String>` and `plugins::InstallError` survives as its own variant. Six regression tests, from `every_write_step_that_can_fail_maps_to_its_own_variant` to `a_core_install_error_reaches_the_message_as_its_own_variant`. | FIXED |
 | `ARCH-11` | Module organisation: the four large files are large because of their test modules, and the production halves have concrete seams that no one has cut | S5 | — | Structural: verify with `cargo test` green plus the seam actually used by both callers. No behavioural test can see a moved definition. | OPEN |
-| `ARCH-12` | Two god-objects: a 968-line dispatcher and a 33-field state struct | S5 | — | Structural: verify with `cargo test` green plus a per-page count of `Shell::update` arms after the split. No behavioural test can see it. | OPEN |
+| `ARCH-12` | Two god-objects: a 968-line dispatcher and a 33-field state struct | S5 | — | Structural: verify with `cargo test` green plus a per-page count of `Shell::update` arms after the split. No behavioural test can see it. **Status: PARTIAL.** The dispatcher half landed in `3b6ee5a`: `save_game_form`, `cover_fetch_finished`, `cover_file_chosen` and `run_prefix_tool` are free functions over `&mut State`, and the arms are one line each. Re-measured: `Shell::update` is 965 lines / 59 arms (the row says 968 / 61). The `State` grouping half is **not done**, with its cost measured rather than assumed: `State` has 38 `pub` fields, not 33, and `main.rs` holds 367 `.state.<field>` sites — of which the row's own seven named fields are only 39. The three most-referenced (`toasts` 53, `settings` 49, `library` 42) are shell-wide and not groupable, so the real total is over 200 call sites for a purely mechanical rewrite ranked 8th of 9 in the brief's priority order. | PARTIAL |
 | `ARCH-13` | A hand-rolled Python lexer used as a test oracle is duplicated byte-for-byte between the two crates | S5 | — | `91cdfa6` — one lexer in `core::oracle_support` behind a `test-support` feature; four tests, and `cargo tree --no-dev-dependencies` is what keeps it out of a release binary.| FIXED |
 | `ARCH-14` | A comment says a shared helper becomes warranted when a third copy appears; the third copy already exists | S5 | — | Extract the third copy into the shared helper its own comment asks for; verify with a grep that no local copy remains. | FIXED |
 | `ARCH-15` | The repo-root test helper is copied four times with three different derivations, and one copy's doc cites a precedent that does not use its derivation | S5 | — | One helper in one place; verify with a grep for the four derivations and `cargo test` green. | FIXED |
@@ -316,7 +317,7 @@ across families, not within them.
 | `BUG-26` | The archive's containment root falls back to an unresolved path: if canonicalize(destination) fails, the root stays unresolved while the member path goes through resolve_missing, which resolves as far as it can — so a resolved member is starts_with-compared against an unresolved root. Members are lexically stripped of .. first, so the reachable outcome is a *false rejection* rather than an accepted escape; I could not construct the accepting case and am not claiming one | S1 | — | `b3ad80b` — `containment_root` refuses (`DestinationUnresolvable`) instead of comparing against an unresolved root; both call sites use it. Mutation-checked both ways.| FIXED |
 | `BUG-27` | A typo in the Steam AppID field is silent: "abc" or "12 34" parses to 0, i.e | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-28` | Six worker-to-UI sends discard their message with let _ =, including the two that carry *why* a launch failed | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-29` | One production expect on a value a future page addition invalidates: activate_page runs on every nav-bar click and panics if a Page variant is absent from Page::ALL | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-29` | One production expect on a value a future page addition invalidates: activate_page runs on every nav-bar click and panics if a Page variant is absent from Page::ALL | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
 | `BUG-30` | Two tests in the suite are tautologies — they compare a value against the expression that defines it, so they can only fail if the delegation they are made of is edited | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `BUG-31` | Three scripts/verify.sh hygiene defects, all of which make a run look cleaner than it was | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **All three done, and the regression evidence is probes rather than Rust tests** — the subject is the gate script itself, so what is measured is the script's behaviour, which is the strongest evidence available for it. **(a)** the `flock`-absent branch returns 99 instead of 0, so the four `build-flatpak/` stages become *unrequested* skips and the run exits 3, rather than the old path that reported them `ok` from a tree it could not lock. `--skip-flatpak` and `--skip-smoke` mark only the stages they name as requested, so `desktop-metainfo` and `flatpak-contents` — which read `build-flatpak/` and which neither flag covers — stay unrequested skips under every flag combination. Probed in six configurations with a `PATH` directory symlinking every binary but `flock`: no flags → `req=[] unreq=[cargo-sources-fresh flatpak-build smoke-test desktop-metainfo flatpak-contents]`, exit 3; `--skip-flatpak` → `req=[flatpak-build smoke-test]`; `--skip-smoke` → `req=[smoke-test]`; both → `req=[flatpak-build smoke-test]`. **The first version of this fix failed its own probe** — it let `--skip-flatpak` bypass the refusal, and the probe then measured `ok desktop-metainfo` and `ok flatpak-contents` running with no lock held, which is the precise hazard the lock exists to prevent. **(b)** `git status` reads through `status_probe`, which tests the command's exit status instead of discarding stderr into an empty string; a failed first read exits 3 (probed outside any repository: `fatal: not a git repository`, `did not run (the tree's state could not be read)`, all sixteen stages listed), and a failed second read is a third state reported as "T-17 is unverified" rather than as `"" != ""` agreeing with the first. **(c)** `banner_check` gained two line-number comparisons: the file order of the `stage_*` definitions must equal STAGES' function column — mutation-proved by `cli -> stage_test` with `test -> stage_cli`, which exits 2 naming both lists — and each stage's function must be defined after its own banner and before the next, mutation-proved by moving a banner down one function. The old code's comment declared this case undetectable; it is undetectable by a sequence of *names*, which is all that version compared. **Checked rather than assumed:** no banner was misplaced in this tree, so (c) closes a hole rather than a live defect, and that is stated because this row's first draft claimed the code already checked it. | FIXED |
 | `BUG-32` | Two smaller unbounded checks | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
@@ -338,7 +339,7 @@ across families, not within them.
 | `SEC-08` | Three manifest permissions are justified only by the child process, with no direct launcher-code tie; the permissions that *do* tie to code are recorded here so the distinction is auditable | S4 | — | Record each permission's justification in the manifest beside it, or drop the ones with none; verify by reading the manifest against the code. **Status: FIXED.** `packaging.md` §3.1 is now a per-argument table with three kinds (launcher-code / child-process / *nothing in this tree*) and the falsification test for each. The row's six `file:line` anchors were **all wrong, at the commit that wrote them**, and were replaced with symbols that cannot drift. `--device=input` and `--device=usb` — which the row never named — have no anchor in `crates/` at all; measured with `--device=dri` alone, `gui-stays-up` still passes, so the launcher's window needs neither. `--device=dri` is recorded as **unsettled** because `--nodevice=all` re-adds it for any GL-extending app, and the green run therefore says nothing about it. | FIXED |
 | `SEC-09` | Two of the app's process spawns inherit the launcher's entire environment, and they are the two security-relevant ones: the package-manager install and the Authenticode verifier | S4 | — | Clear the environment at the two spawn sites and pass back only what the child needs; verify by dumping the child's environment. | FIXED |
 | `UX-21` | Grid cells are fixed at 200×300 with a fixed column count, so at narrow widths the library grid runs off the right edge and the cards there cannot be reached | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `UX-22` | Two heading levels do the same job | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `UX-22` | Two heading levels do the same job | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: OPEN** — located precisely, not changed. Section headings are `title4` on Settings/Plugins/Credits/form (via the pinned `settings_section` helper) and `title3` on Runners (4) and Installers (1). Not changed: on those two pages `title3` is the top rung of a three-level hierarchy (`title3` section → `title4` item → 14 px list heading), so reconciling upward collapses two rungs — and the change is purely visual, verifiable only by looking at the pages, which this environment has no display for. The row now carries the decision and its cost instead of a call-site count. | OPEN |
 | `UX-23` | Page padding is a hardcoded 18 and the theme's spacing tokens are never consulted | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-24` | The app's only widget id is the library search box, so only that one field can ever be focused programmatically, and no dialog sets an initial focus | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-25` | No page bounds its content width, so at 2560 px and above the settings rows become "label … far-away control" pairs and the credits prose runs to an unreadably long measure | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
