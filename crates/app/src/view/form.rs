@@ -65,6 +65,8 @@ use gamehandler_core::runners::RunnerManager;
 use crate::Message;
 use crate::state::{FormField, GameForm};
 
+use super::a11y;
+
 // ---------------------------------------------------------------------------
 // The reference's own words. Every one of these is a string
 // `GameFormPage.qml` draws, and each is pinned against that file in the tests
@@ -626,15 +628,23 @@ fn section<'a>(heading: &'a str) -> Element<'a, Message> {
 /// takes rather than invents a second way to draw an inert field. It is bounded:
 /// the strings are still legible, which is the property the reference's disabled
 /// state has too.
+///
+/// The accessible name is [`TextRow::label`] and the value is the field's current
+/// text (UX-03), both read off the row the same way the placeholder and the
+/// initial value are. [`a11y::input`] adds the node and **not** a second focus
+/// report — the input already makes one (`libcosmic
+/// src/widget/text_input/input.rs:853`), and the pair would be two Tab stops for
+/// one field — so the Tab order over this form is unchanged by this call.
 fn text_control<'a>(row: &TextRow, form: &'a GameForm, live: bool) -> Element<'a, Message> {
     let field = row.field;
     let input = text_input(row.placeholder, form.field(field)).width(Length::Fill);
+    // `on_input` and the wrapper are both applied to the `TextInput` value and
+    // only then converted, because `a11y::input` wraps the toolkit's own widget
+    // — not an `Element`, which would have already erased its type.
     let input = if live {
-        input
-            .on_input(move |value| field_message(field, value))
-            .into()
+        input.on_input(move |value| field_message(field, value))
     } else {
-        input.into()
+        input
     };
     // The reference's browse `ToolButton` (`document-open`, F4): an icon
     // button with no text, which is why its edge — that this button sends
@@ -643,6 +653,7 @@ fn text_control<'a>(row: &TextRow, form: &'a GameForm, live: bool) -> Element<'a
     // laid-out element, which the credits page measured and abandoned; the
     // press value itself is a constant, so a press-fn would pin nothing a
     // copy of the constant does not.
+    let input: Element<'a, Message> = a11y::input(input, row.label, form.field(field)).into();
     match row.browse_press.clone() {
         Some(press) => Row::new()
             .push(input)
@@ -655,19 +666,41 @@ fn text_control<'a>(row: &TextRow, form: &'a GameForm, live: bool) -> Element<'a
 }
 
 /// One switch.
+///
+/// The accessible name is the row's subtitle — the string the switch paints —
+/// and the activation is the row's own [`toggle_message`] for the flipped state,
+/// which is what its `on_toggle` closure publishes off the same function (UX-02).
+/// The name is prefixed with the row's toggle *name* rather than used bare: the
+/// name is also the widget's id (`a11y::stable_id`), and two rows sharing a
+/// subtitle would share an accessibility node, which is possible here because
+/// subtitles are prose rather than identifiers.
+///
+/// `live` gates **both** paths, and it did not always. The pointer's
+/// `on_toggle` was dropped on an inert row while the wrapper's activation was
+/// applied unconditionally, so the eleven rows the reference disables on Linux
+/// could still be flipped with Enter — a regression the wrapper introduced,
+/// caught by a red-team pass rather than by a test, because no test asked
+/// whether an inert row's node still advertised `Action::Click`. `live` is now
+/// passed down rather than consulted once.
 fn toggle_control<'a>(row: &'a ToggleRow, form: &'a GameForm, live: bool) -> Element<'a, Message> {
     // `label` takes `impl Into<Option<String>>`, not `Into<Cow<str>>` — the one
     // place in this file where a `&str` does not go straight in.
-    let switch = toggler(toggle_value(form, row))
+    let checked = toggle_value(form, row);
+    let switch = toggler(checked)
         .label(Some(row.subtitle.to_string()))
         .width(Length::Fill);
-    if live {
-        switch
-            .on_toggle(move |value| toggle_message(row, value))
-            .into()
+    let switch = if live {
+        switch.on_toggle(move |value| toggle_message(row, value))
     } else {
-        switch.into()
-    }
+        switch
+    };
+    a11y::toggler(
+        switch,
+        format!("{}: {}", row.name, row.subtitle),
+        checked,
+        live.then(|| toggle_message(row, !checked)),
+    )
+    .into()
 }
 
 /// Whether a row with `windows_only` is editable on this form.
@@ -705,10 +738,20 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
     }
     body = body.push(field_row(
         LABEL_TYPE,
-        dropdown(
-            KIND_OPTIONS.to_vec(),
-            Some(kind_index(form.is_linux)),
-            kind_selection,
+        a11y::dropdown(
+            dropdown(
+                KIND_OPTIONS.to_vec(),
+                Some(kind_index(form.is_linux)),
+                kind_selection,
+            ),
+            LABEL_TYPE,
+            KIND_OPTIONS
+                .get(kind_index(form.is_linux))
+                .map(|l| l.to_string()),
+            |delta| {
+                let next = kind_index(form.is_linux).checked_add_signed(delta as isize)?;
+                (next < KIND_OPTIONS.len()).then(|| kind_selection(next))
+            },
         )
         .into(),
     ));
@@ -719,18 +762,49 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
     // still be typed. The reference has one widget that is both; these are the
     // two controls that make up the same behaviour, and the text field is the one
     // that holds the value.
+    //
+    // **The two controls are named differently on purpose**, and this row is the
+    // one place in the form where that needs saying: `field_row` draws a single
+    // [`LABEL_CATEGORY`] for the pair, and the accessible name is also the
+    // widget's id (`a11y::stable_id`), so naming both controls after that one
+    // label would give them one node between them. The combo takes the form
+    // label; the text field takes its own placeholder, which is the string a
+    // pointer user reads inside the empty field (`models::UNCATEGORIZED`) and is
+    // a real string rather than one invented to disambiguate.
     let category_row = {
         let owned = categories.clone();
         let shown = category_index(&categories, form.field(FormField::Category));
         Row::new()
-            .push(dropdown(owned.clone(), shown, move |index| {
-                category_selection(&owned, index)
-            }))
-            .push(
-                text_input(CATEGORY_PLACEHOLDER, form.field(FormField::Category))
-                    .on_input(|value| field_message(FormField::Category, value))
-                    .width(Length::Fill),
-            )
+            .push({
+                let combo: Element<'a, Message> = a11y::dropdown(
+                    dropdown(owned.clone(), shown, move |index| {
+                        category_selection(&owned, index)
+                    }),
+                    LABEL_CATEGORY,
+                    shown.and_then(|index| categories.get(index).cloned()),
+                    {
+                        let owned = categories.clone();
+                        let count = categories.len();
+                        move |delta| {
+                            let next = shown?.checked_add_signed(delta as isize)?;
+                            (next < count).then(|| category_selection(&owned, next))
+                        }
+                    },
+                )
+                .into();
+                combo
+            })
+            .push({
+                let field: Element<'a, Message> = a11y::input(
+                    text_input(CATEGORY_PLACEHOLDER, form.field(FormField::Category))
+                        .on_input(|value| field_message(FormField::Category, value))
+                        .width(Length::Fill),
+                    CATEGORY_PLACEHOLDER,
+                    form.field(FormField::Category),
+                )
+                .into();
+                field
+            })
             .spacing(6)
             .width(Length::Fill)
     };
@@ -782,11 +856,27 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
         let owned = choices.clone();
         let labels = crate::view::settings::runner_labels(&choices);
         let shown = runner_index(&choices, form.field(FormField::Runner));
+        let count = labels.len();
         body = body.push(field_row(
             LABEL_RUNNER,
-            dropdown(labels, Some(shown), move |index| {
-                runner_selection(&owned, index)
-            })
+            a11y::dropdown(
+                dropdown(labels.clone(), Some(shown), move |index| {
+                    runner_selection(&owned, index)
+                }),
+                LABEL_RUNNER,
+                labels.get(shown).cloned(),
+                {
+                    let owned = choices.clone();
+                    // `shown` rather than a `?` off the stored id: this
+                    // selector's fallback is index 0 for an id it does not
+                    // know (see [`runner_index`]), so the neighbour of what is
+                    // displayed is `shown ± 1`, not "no selection".
+                    move |delta| {
+                        let next = shown.checked_add_signed(delta as isize)?;
+                        (next < count).then(|| runner_selection(&owned, next))
+                    }
+                },
+            )
             .into(),
         ));
     }
@@ -1008,6 +1098,559 @@ mod tests {
         let mut form = GameForm::new_template(&Settings::default(), "form-game".to_string());
         form.name = "Celeste".to_string();
         form
+    }
+
+    /// A form whose every field holds a string of its own.
+    ///
+    /// [`form`] is a template, so all but one of its text fields are empty — and
+    /// an empty string is also what a node whose `value` was never wired up
+    /// publishes, so a form full of blanks would let the value assertions in
+    /// `every_wrapped_control_on_the_real_form_is_a_tab_stop_and_a_named_node`
+    /// pass over a page that tells a screen reader nothing. Distinct strings
+    /// remove that coincidence: a node carrying a constant, a row's placeholder,
+    /// or its neighbour's text fails, and fails by name.
+    fn form_with_distinct_values() -> GameForm {
+        let mut form = form();
+        for (index, field) in FormField::ALL.iter().enumerate() {
+            form.set_field(*field, format!("field-{index}"));
+        }
+        // The category is the one field put back to a string the combo can
+        // actually show, and it is not a convenience: the category row is the
+        // one row whose field is *also* a combo option, and `Category:`'s node
+        // value is the option the combo has selected. Left as `field-N` the
+        // combo has no selection at all — the reference leaves the text in the
+        // editable field and the list unselected — so the node publishes no
+        // value, and asserting it would compare `None` with `None`. Distinctness
+        // is unaffected: a category name is not shaped like `field-N`, and the
+        // text-field loop's premise assertion checks it.
+        form.set_field(
+            FormField::Category,
+            DEFAULT_CATEGORIES[DEFAULT_CATEGORIES.len() - 1].to_string(),
+        );
+        form
+    }
+
+    /// The runners the form's selector offers.
+    fn runners() -> RunnerManager {
+        RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv)
+    }
+
+    /// This form, built the way the shell builds it.
+    fn page<'a>(
+        form: &'a GameForm,
+        library: &'a Library,
+        runners: &'a RunnerManager,
+    ) -> Element<'a, Message> {
+        view(GameFormView {
+            form,
+            library,
+            runners,
+        })
+    }
+
+    /// **Every control this form wraps is a Tab stop, and the category row's two
+    /// controls are two** — UX-01, UX-02 and UX-03 on the real form.
+    ///
+    /// # Why this form's assertion is per-control and not a count
+    ///
+    /// The Settings page's equivalent test asserts an exact number of Tab stops,
+    /// because every control on that page is one this port built and wrapped. It
+    /// cannot be done that way here: this form also carries five buttons — Cancel,
+    /// Save, Find cover and the two browse icons — and libcosmic's own button
+    /// reports a focusable state (`src/widget/button/widget.rs:358-359`), so they
+    /// are Tab stops this module neither built nor wrapped and whose ids it has no
+    /// name for. A count would therefore be a number that moves whenever the
+    /// toolkit's button changes, and the arithmetic in its failure message would
+    /// be a claim about the toolkit rather than about this page.
+    ///
+    /// So each *wrapped* control is asserted individually, by the name it
+    /// publishes. That is the assertion that goes red when a call site in [`view`]
+    /// is reverted to the bare toolkit widget: a bare
+    /// `cosmic::widget::toggler`/`dropdown` reports no focusable state and
+    /// publishes no node at all (`view/a11y.rs`'s
+    /// `the_toolkit_controls_the_app_used_to_build_are_invisible` measures that
+    /// directly), so its name disappears from both lists and the row below fails
+    /// on it by name.
+    ///
+    /// # The category row is the reason this test is not redundant
+    ///
+    /// `LABEL_CATEGORY` is drawn once by `field_row` for a row that contains
+    /// **two** controls, and the accessible name is also the widget's id
+    /// (`a11y::stable_id`) — so naming both of them `LABEL_CATEGORY` would give
+    /// the pair one node between them, and the text field would be unreachable by
+    /// name. The view avoids that by naming the text field after its placeholder,
+    /// a comment says so, and this is the measurement that holds the comment
+    /// true. The `distinct` assertions below are that measurement: the pair must
+    /// produce two nodes with two different ids, and each of the two names must
+    /// be a Tab stop in its own right.
+    ///
+    /// # What a name and a role do not say
+    ///
+    /// A node that exists, announces the right role and carries the right name
+    /// says nothing about what a reader is told the control *holds*. Every
+    /// assertion above would pass for a form whose every field published the same
+    /// constant, or its own placeholder, or its neighbour's text. So the value
+    /// half below reads each `TextInput` node's `value` back against the field it
+    /// is drawn from, through `GameForm::field`, on a fixture that gives every
+    /// field a distinct string.
+    ///
+    /// The value is also where UX-03 is *only* visible: an `input` wrapper whose
+    /// `value` argument was dropped is a node a screen reader reads as an empty
+    /// text field over a form full of text.
+    ///
+    /// # The id invariant, which is a property of the whole page
+    ///
+    /// The category pair's `in_ring` assertions below cover the one row where two
+    /// controls compete for a name. The same invariant has to hold for *every*
+    /// node the page publishes, including the ones the toolkit built: a node
+    /// published under an id no focus report carries is a control assistive
+    /// technology can read and a keyboard cannot reach, and the reverse is a Tab
+    /// stop that announces nothing. `harness::unreachable_controls` is that
+    /// assertion, and the last block is it.
+    ///
+    /// Both halves are read from **one** element. A second build would mint fresh
+    /// `Id::unique()`s for the toolkit's own widgets — the five buttons and the
+    /// scrollable — and the invariant would read those as unreachable when they
+    /// are perfectly reachable. `harness::unreachable_controls`' doc says so at
+    /// length; this is the call site that has to obey it.
+    ///
+    /// Every row the reference disables stays disabled to the keyboard.
+    ///
+    /// This is the test for a defect the accessibility wrapper **introduced**
+    /// rather than one it failed to fix, which is why it is written from the
+    /// inert side. `row_enabled` is false for a `windows_only` row on a Linux
+    /// game, and `toggle_control` expresses that by dropping the toolkit's
+    /// `on_toggle`: the pointer cannot flip it. The wrapper's activation was
+    /// applied unconditionally, so Enter and Space could — eleven rows the
+    /// reference forbids, editable by anyone using a keyboard, and the node
+    /// advertised `Action::Click` while it did. A red-team pass found it by
+    /// driving every inert row; no existing test asked the question, because
+    /// every one of them asserted what an *operable* control does.
+    ///
+    /// # How the ring is walked, and why the message is the thing read
+    ///
+    /// The form is built **once** and `harness::tab_to` is called repeatedly, so
+    /// the framework's own `focus_next` carries the focus one stop further each
+    /// time — the whole ring, in the order a keyboard user meets it, including
+    /// the dropdowns and the text inputs and the five toolkit buttons this page
+    /// also draws. Enter is dispatched at every stop.
+    ///
+    /// Nothing here has to work out *which* widget is focused at a given stop:
+    /// `FormToggleChanged` carries the row's own `name` (see
+    /// [`toggle_message`]), so a published message names the row that produced
+    /// it. That is what makes the assertion readable — it fails naming a row
+    /// like `wayland`, not an opaque id.
+    ///
+    /// # The control half
+    ///
+    /// The same walk over a **Windows** form, where `row_enabled` is true for
+    /// every row and the reference leaves them all editable. One of them must
+    /// publish, or a wrapper that never activates anything would pass the Linux
+    /// half above by doing nothing at all. The Windows half also names which row
+    /// published, so the failure says whether the keyboard arm is dead or merely
+    /// missing the row under test.
+    #[test]
+    fn a_row_the_reference_disables_cannot_be_flipped_from_the_keyboard() {
+        use super::a11y::harness;
+        use cosmic::iced::keyboard::Key;
+        use cosmic::iced::keyboard::key::Named;
+
+        let library = library("form-inert", &["Action"]);
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+
+        /// Every row name Enter published a `FormToggleChanged` for, walking the
+        /// whole Tab ring of `form`.
+        fn names_enter_flips(
+            form: &GameForm,
+            library: &Library,
+            runners: &RunnerManager,
+        ) -> Vec<String> {
+            let mut element = page(form, library, runners);
+            // The ring, counted on a build of this same element. Only the length
+            // is used: a *toolkit* widget's id differs between two builds — that
+            // is the premise of `view/a11y.rs` — so an id read here would be a
+            // different widget's, but the number of stops is not affected.
+            let stops = harness::focusables(&mut element).len();
+            assert!(
+                stops > 0,
+                "the form reports no Tab stop at all, so this walk would measure \
+                 nothing"
+            );
+            let (mut tree, node) = harness::built(&mut element);
+
+            let mut published = Vec::new();
+            // `focus_next` wraps, so walking a few past the ring's length is
+            // harmless and covers the case where the count above is a stop long
+            // or short.
+            for _ in 0..stops + 2 {
+                harness::tab_to(&mut element, &mut tree, &node);
+                let mut messages = Vec::new();
+                let out = harness::dispatch(
+                    &mut element,
+                    &mut tree,
+                    &node,
+                    &harness::pressed(Key::Named(Named::Enter)),
+                    &mut messages,
+                );
+                for message in messages.iter().chain(out.messages.iter()) {
+                    if let Message::FormToggleChanged { name, .. } = message {
+                        published.push(name.clone());
+                    }
+                }
+            }
+            published
+        }
+
+        // ---- the inert rows on a Linux form ---------------------------------
+        let mut linux = form();
+        // Linux, so every `windows_only` row is inert. Asserted rather than
+        // assumed: on a Windows form all of them are live and this half would
+        // pass having checked nothing.
+        linux.is_linux = true;
+        let inert: Vec<&str> = LAUNCH_TOGGLES
+            .iter()
+            .chain(COMPAT_TOGGLES.iter())
+            .filter(|row| !row_enabled(row.windows_only, linux.is_linux))
+            .map(|row| row.name)
+            .collect();
+        assert!(
+            inert.len() >= 8,
+            "the fixture found only {} inert rows, so this test would not exercise \
+             the case it exists for; the table or `row_enabled` has changed shape",
+            inert.len()
+        );
+
+        let flipped = names_enter_flips(&linux, &library, &runners);
+        let reachable: Vec<&String> = flipped
+            .iter()
+            .filter(|name| inert.contains(&name.as_str()))
+            .collect();
+        assert!(
+            reachable.is_empty(),
+            "these rows are disabled on a Linux game — the reference writes \
+             `enabled: !form.isLinux` — but Enter on them published \
+             `FormToggleChanged`: {reachable:?}. The pointer cannot flip them and \
+             neither may the keyboard: a control the user can see as inert and \
+             change anyway is worse than one they cannot reach. Names Enter did \
+             flip: {flipped:?}"
+        );
+
+        // ---- the control: the same rows, live ---------------------------------
+        let mut windows = form();
+        windows.is_linux = false;
+        assert!(
+            inert.iter().all(|name| LAUNCH_TOGGLES
+                .iter()
+                .chain(COMPAT_TOGGLES.iter())
+                .any(|row| row.name == *name && row_enabled(row.windows_only, false))),
+            "the rows this test calls inert must be live on a Windows form, or the \
+             two halves are not the same rows and the control below proves nothing"
+        );
+        let flipped = names_enter_flips(&windows, &library, &runners);
+        assert!(
+            !flipped.is_empty(),
+            "on a Windows form every row is live, so Enter must flip at least one \
+             of them. Nothing was flipped, which means the wrapper's keyboard arm \
+             is dead rather than the rows being gated — and this is the half that \
+             keeps the assertion above from passing on a wrapper that cannot \
+             activate anything at all"
+        );
+    }
+
+    #[test]
+    fn every_wrapped_control_on_the_real_form_is_a_tab_stop_and_a_named_node() {
+        use super::a11y::harness;
+        use cosmic::iced::core::id::IdEq;
+        use iced_accessibility::accesskit::Role;
+
+        let form = form_with_distinct_values();
+        let library = library("form-controls", &[]);
+        let runners = runners();
+        let mut element = page(&form, &library, &runners);
+
+        // Every name this form is expected to publish, with the role it must
+        // announce as. The toggles are the two tables this module draws; the
+        // rest are the hand-built rows, which is why they are written out.
+        let mut expected: Vec<(String, Role)> = Vec::new();
+        for row in TEXT_ROWS
+            .iter()
+            .chain([&DESKTOP_SIZE_ROW, &ENVIRONMENT_ROW])
+        {
+            expected.push((row.label.to_string(), Role::TextInput));
+        }
+        expected.push((LABEL_TYPE.to_string(), Role::ComboBox));
+        expected.push((LABEL_CATEGORY.to_string(), Role::ComboBox));
+        expected.push((CATEGORY_PLACEHOLDER.to_string(), Role::TextInput));
+        expected.push((LABEL_RUNNER.to_string(), Role::ComboBox));
+        for row in LAUNCH_TOGGLES.iter().chain(COMPAT_TOGGLES.iter()) {
+            expected.push((format!("{}: {}", row.name, row.subtitle), Role::Switch));
+        }
+
+        // ---- the Tab ring ---------------------------------------------------
+        let stops = harness::focusables(&mut element);
+        let ids: Vec<cosmic::widget::Id> = stops
+            .iter()
+            .map(|stop| {
+                stop.clone().unwrap_or_else(|| {
+                    panic!(
+                        "a control is focusable but reports no id, so Tab can \
+                         reach it and nothing can address it: {stops:?}"
+                    )
+                })
+            })
+            .collect();
+        for (index, id) in ids.iter().enumerate() {
+            assert!(
+                !ids[..index].iter().any(|earlier| IdEq::eq(earlier, id)),
+                "two controls report the same id {id:?}, so a screen reader sees \
+                 one control where the user sees two. The id comes from the \
+                 accessible name (`a11y::stable_id`), so this is two rows sharing \
+                 a name: {ids:?}"
+            );
+        }
+
+        // ---- the nodes ------------------------------------------------------
+        let nodes = harness::published(&mut element);
+        let named = |label: &str, role: Role| {
+            nodes
+                .iter()
+                .filter(|node| node.label.as_deref() == Some(label) && node.role == role)
+                .count()
+        };
+
+        for (name, role) in &expected {
+            assert_eq!(
+                named(name, *role),
+                1,
+                "the control named {name:?} must publish exactly one node \
+                 announcing as {role:?}. Zero means it is built from the bare \
+                 toolkit widget, which publishes nothing at all; two means a node \
+                 is published twice. Nodes: {:?}",
+                nodes
+                    .iter()
+                    .map(|node| (&node.role, node.label.as_deref()))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        // ---- the values, which the names above do not imply ------------------
+        //
+        // Each text field this form draws, paired with the field it is drawn
+        // from.
+        //
+        // **This comment used to say the combos were asserted "on the three
+        // pages that own combos".** They were not asserted anywhere: this page
+        // owns three combos of its own — Type, Category and Runner — and all
+        // three published a `value` that no test read back, which is a claim
+        // about another page's test standing in for a check that did not exist.
+        // They are asserted below, here, where they are drawn.
+        let mut value_expected: Vec<(&str, FormField)> = TEXT_ROWS
+            .iter()
+            .chain([&DESKTOP_SIZE_ROW, &ENVIRONMENT_ROW])
+            .map(|row| (row.label, row.field))
+            .collect();
+        value_expected.push((CATEGORY_PLACEHOLDER, FormField::Category));
+
+        // The premise of the loop below, asserted rather than assumed: two fields
+        // holding the same text would let a node carrying the wrong row's value
+        // pass. `form()` sets the name *before* `form_with_distinct_values`
+        // overwrites it, so this is also what holds the fixture's own promise
+        // honest if either changes.
+        let mut held: Vec<&str> = value_expected
+            .iter()
+            .map(|(_, field)| form.field(*field))
+            .collect();
+        held.sort_unstable();
+        let distinct = {
+            let mut copy = held.clone();
+            copy.dedup();
+            copy.len()
+        };
+        assert_eq!(
+            distinct,
+            held.len(),
+            "the fixture must give every field a text of its own, or the value \
+             assertions below cannot tell one row's node from another's: {held:?}"
+        );
+
+        for (label, field) in &value_expected {
+            let node = nodes
+                .iter()
+                .find(|node| node.role == Role::TextInput && node.label.as_deref() == Some(*label))
+                .unwrap_or_else(|| panic!("the {label:?} node is asserted above"));
+            assert_eq!(
+                node.value.as_deref(),
+                Some(form.field(*field)),
+                "the {label:?} field publishes the value {:?}, but the form holds \
+                 {:?} for {field:?}. This is the assertion a `value` argument \
+                 dropped from the `a11y::input` call site — or replaced by a \
+                 constant, or by the row's placeholder — fails; a node whose name \
+                 and role are right and whose text is wrong tells a screen-reader \
+                 user they are about to save something other than what they are. \
+                 Every text node this form publishes: {:?}",
+                node.value,
+                form.field(*field),
+                nodes
+                    .iter()
+                    .filter(|node| node.role == Role::TextInput)
+                    .map(|node| (node.label.as_deref(), node.value.as_deref()))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        // ---- the three combo values, which the text-field loop cannot reach --
+        //
+        // The loop above reads `Role::TextInput` nodes only, so every combo this
+        // form draws was unread: a `a11y::dropdown` call site that passed `None`,
+        // a constant, or another list's entry for `selected` would keep every
+        // assertion above green while telling a screen-reader user the field
+        // holds an option it does not hold. That is `COSMIC-UX.md`'s UX-01 half
+        // — the control is in the ring and announces as a combo — with the
+        // *content* missing, which is the failure a reader of the node cannot
+        // see and the user of it can.
+        //
+        // Each expected string is read off the same reader the call site uses
+        // (`kind_index`, `category_index`, `runner_index` plus the list that
+        // reader indexes into), so what this asserts is that the node and the
+        // widget agree rather than that a constant was copied here correctly.
+        // The fixture guarantees all three resolve — see
+        // [`form_with_distinct_values`] for the category's case.
+        // `shows` is asserted for the same reason: an index that resolves to
+        // nothing would make both sides `None` and the comparison would pass
+        // over the very defect it exists for.
+        let choices = runners.choices();
+        let runner_labels = crate::view::settings::runner_labels(&choices);
+        let category_options = form_categories(&library);
+        assert!(
+            category_options.len() > 1,
+            "the category combo needs more than one option for its value to              distinguish an index from a constant; the library has {}",
+            category_options.len()
+        );
+
+        let mut combo_expected: Vec<(&str, Option<String>)> = vec![
+            (
+                LABEL_TYPE,
+                KIND_OPTIONS
+                    .get(kind_index(form.is_linux))
+                    .map(|label| label.to_string()),
+            ),
+            (
+                LABEL_CATEGORY,
+                category_index(&category_options, form.field(FormField::Category))
+                    .and_then(|index| category_options.get(index).cloned()),
+            ),
+        ];
+        // The runner row is drawn on the same condition the view uses, so the
+        // expectation follows the view rather than assuming the fixture's
+        // platform. On a Linux game with [`RUNNER_ROW_HIDDEN_FOR_LINUX`] the row
+        // is not drawn and must not be expected — an assertion for a control
+        // that is not there would be a test of the fixture.
+        if !form.is_linux || !RUNNER_ROW_HIDDEN_FOR_LINUX {
+            let shown = runner_index(&choices, form.field(FormField::Runner));
+            combo_expected.push((LABEL_RUNNER, runner_labels.get(shown).cloned()));
+        }
+
+        for (label, expected) in &combo_expected {
+            assert!(
+                expected.is_some(),
+                "the {label:?} combo resolves to no option on this fixture, so the \
+                 value assertion below would compare `None` with `None` and pass \
+                 having checked nothing. Form: kind {:?}, category {:?}, runner \
+                 {:?}",
+                kind_index(form.is_linux),
+                form.field(FormField::Category),
+                form.field(FormField::Runner)
+            );
+        }
+        let combo = |label: &str| {
+            nodes
+                .iter()
+                .find(|node| node.role == Role::ComboBox && node.label.as_deref() == Some(label))
+                .unwrap_or_else(|| panic!("the {label:?} combo node is asserted above"))
+        };
+        for (label, expected) in &combo_expected {
+            assert_eq!(
+                combo(label).value.as_deref(),
+                expected.as_deref(),
+                "the {label:?} combo publishes the value {:?}, but the option it is \
+                 showing is {expected:?}. A node whose name and role are right and \
+                 whose value is wrong tells a screen-reader user the game will be \
+                 saved with a setting it will not be saved with. Every combo node \
+                 this form publishes: {:?}",
+                combo(label).value,
+                nodes
+                    .iter()
+                    .filter(|node| node.role == Role::ComboBox)
+                    .map(|node| (node.label.as_deref(), node.value.as_deref()))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        // ---- the category pair, which is the one row with two controls -------
+        //
+        // Both names are in `expected` above, so both nodes and both roles are
+        // already asserted; what is added here is that they are two *different*
+        // controls. Same node twice, or two nodes sharing an id, both pass the
+        // loop above and both lose a control.
+        //
+        // `A11yId` and `Id` are the same types — iced re-exports
+        // `iced_accessibility::id` (`iced/core/src/lib.rs:68`), which is why
+        // `A11yNode::new` takes a widget `Id` at all — so the widget's id and the
+        // node's id are compared with the one `IdEq` that knows a `Unique` and a
+        // `Custom` id can still name the same node
+        // (`iced/accessibility/src/id.rs:188-205`), which is also the relation
+        // accesskit itself resolves by number.
+        let node_id = |role: Role, label: &str| {
+            nodes
+                .iter()
+                .find(|node| node.role == role && node.label.as_deref() == Some(label))
+                .map(|node| node.id.clone())
+                .unwrap_or_else(|| panic!("the {label:?} node is asserted above"))
+        };
+        let in_ring = |id: &iced_accessibility::A11yId| {
+            stops
+                .iter()
+                .flatten()
+                .any(|stop| IdEq::eq(&iced_accessibility::A11yId::from(stop.clone()), id))
+        };
+
+        let combo = node_id(Role::ComboBox, LABEL_CATEGORY);
+        let field = node_id(Role::TextInput, CATEGORY_PLACEHOLDER);
+        assert!(
+            !IdEq::eq(&combo, &field),
+            "the category row's combo and text field share the node id {combo:?}, \
+             so one of them is unreachable: the row draws a single \
+             {LABEL_CATEGORY:?} label for the pair and the accessible name is also \
+             the id, so this is exactly what naming both controls after that one \
+             label would produce. They must differ — see the note in `view`"
+        );
+        assert!(
+            in_ring(&combo) && in_ring(&field),
+            "both of the category row's controls must be Tab stops *under their own \
+             node ids* — a control whose node id no focus report carries is one \
+             assistive technology can see and cannot reach, and the reverse is a \
+             Tab stop that announces nothing. Combo {combo:?} in ring: {}; field \
+             {field:?} in ring: {}; ids reported: {ids:?}",
+            in_ring(&combo),
+            in_ring(&field),
+        );
+
+        // ---- every node this page publishes is a Tab stop --------------------
+        //
+        // The generalisation of the pair assertion above to the whole page,
+        // toolkit-built nodes included. A node under an id no focus report
+        // carries is a control a screen reader can read and a keyboard cannot
+        // reach, and the reverse is a Tab stop that announces nothing; both are
+        // the defect class `view/a11y.rs` exists for. Which roles count as
+        // controls is `unreachable_controls`' business and its doc gives the
+        // reason.
+        let unreachable = harness::unreachable_controls(&mut element);
+        assert!(
+            unreachable.is_empty(),
+            "these controls are published as nodes whose ids no focus report \
+             carries, so a screen reader can read them and a keyboard cannot \
+             reach them: {unreachable:?}. Reported ids: {ids:?}"
+        );
     }
 
     /// The block finders find the widget they were asked for.

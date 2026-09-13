@@ -43,6 +43,28 @@ ureq = { version = "3", features = ["platform-verifier"] }
 # that turns the answer into a path (`Url::to_file_path`). Already in the
 # lockfile as ashpd's dependency, so this adds no new source to vendor.
 url = "2"
+
+# `crate::view::a11y` has to *name* the type `Widget::a11y_nodes` returns, and
+# libcosmic does not re-export it: `A11yTree` comes from `iced_accessibility`,
+# and `grep -rn 'pub use iced_accessibility' .` run at the pinned checkout's
+# root returns exactly one line, `iced/core/src/lib.rs:68`, which re-exports
+# `pub use iced_accessibility::id;` — the `Id` type only, not the tree.
+# `iced` is re-exported (`src/lib.rs:151`) but its public surface never mentions
+# `iced_accessibility`, so without this line an `a11y_nodes` override cannot be
+# written in this crate at all (E0433, probed on all four plausible paths).
+#
+# This is not a second copy of anything: `iced_accessibility` is a *member* of
+# the same libcosmic git repository as the `libcosmic` dependency above, so at
+# one rev both resolve to the identical checkout path and cargo unifies them.
+# `cargo tree -p gamehandler -i iced_accessibility` reports a single node
+# (`iced_accessibility v0.1.0 (…/libcosmic-41009aea1d72760b/a401af8/iced/accessibility)`)
+# and the only `Cargo.lock` change is the one line adding it to the
+# `gamehandler` dependency list — no new package entry.
+#
+# It carries no feature of its own; the `a11y` feature on `libcosmic` above is
+# what turns on `Widget::a11y_nodes` and `Event::A11y` in iced itself.
+iced_accessibility = { git = "https://github.com/pop-os/libcosmic.git", rev = "a401af8b1c54a8abd393b8c5b7c8809402f83850" }
+
 # The cover cache decodes covers itself, so that what it decodes is bounded
 # (PERF-02). `crate::view::cover_cache`'s module docs carry the argument and the
 # measurement; this line is the minimum that argument needs.

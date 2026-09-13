@@ -85,6 +85,7 @@ use cosmic::iced::futures::StreamExt;
 use crate::Message;
 use crate::state::{ReleasesStatus, State};
 
+use super::a11y;
 use super::badge::badge;
 
 /// The toolbar's re-fetch action. `RunnersPage.qml:21-26`.
@@ -92,6 +93,18 @@ use super::badge::badge;
 /// The reference's `Kirigami.Action { text: "Refresh" }`. Its own constant
 /// because the page draws it in one place and the label is asserted there.
 pub const REFRESH: &str = "Refresh";
+
+/// The family selector's accessible name.
+///
+/// The reference's `Kirigami.FormData.label: "Family:"` on the combo
+/// (`RunnersPage.qml:116`), minus the colon this port's own `text::body` line
+/// carries: the colon is punctuation for a printed row, and a screen reader
+/// announcing "Family: colon" is what the reference's `FormData.label` does not
+/// do there either. `view/form.rs` and `view/settings.rs` name their controls
+/// after the string they draw, colon and all, because those pages draw a *form*
+/// label; this row is a heading rather than a form label, so the two differ on
+/// purpose. Before UX-01 this control was announced as nothing at all.
+pub const FAMILY_LABEL: &str = "Family";
 
 // ---------------------------------------------------------------------------
 // The decisions, as data
@@ -440,11 +453,28 @@ pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
     body = body.push(
         Row::new()
             .push(text::body("Family:"))
-            .push(cosmic::widget::dropdown(names, selected, move |index| {
-                Message::FetchReleases {
-                    family: families()[index].id.to_string(),
-                }
-            }))
+            .push(a11y::dropdown(
+                cosmic::widget::dropdown(names.clone(), selected, move |index| {
+                    Message::FetchReleases {
+                        family: families()[index].id.to_string(),
+                    }
+                }),
+                FAMILY_LABEL,
+                // The family's own name, off the same index the selector was
+                // given — `family_index` is `None` for an id no family has, and
+                // the step below is `None` there too.
+                selected.and_then(|index| names.get(index).cloned()),
+                move |delta| {
+                    let next = selected?.checked_add_signed(delta as isize)?;
+                    // The **family id**, through `families()`, not the label and
+                    // not the index: the message the pointer's `on_selected`
+                    // above carries is `families()[index].id`, and the two paths
+                    // must name the same family.
+                    families().get(next).map(|family| Message::FetchReleases {
+                        family: family.id.to_string(),
+                    })
+                },
+            ))
             // The page's `actions:` block (`RunnersPage.qml:21-26`), which was
             // not ported. It exists for exactly one state — a fetch that failed
             // — where the error is on screen with nothing to press, and the
@@ -1153,6 +1183,180 @@ mod tests {
 
     fn released(tag: &str, name: &str, size: i64) -> ReleaseInfo {
         ReleaseInfo::new(tag, name, "https://example.invalid/a.tar.gz", size)
+    }
+
+    /// **The family selector is a Tab stop, announces as a combo box, and shows
+    /// the family it is actually listing** — UX-01 on the page where the family
+    /// is the only control that can be changed without a pointer.
+    ///
+    /// # Why the value and not just the label
+    ///
+    /// The label and the role are what say the control is announced; they say
+    /// nothing about whether what it announces is right. This selector's value
+    /// comes from `family_index(page.selected_family)`, which is the same index
+    /// the toolkit is handed as `selected` — the value the *pointer* would move
+    /// from. A call site that passed the constant `families()[0].name` would
+    /// announce the first family while the fetch dialog and the release list
+    /// belong to the second, and nothing else in this file would notice: the
+    /// dropdown's own `selected` index is not one of `Operation`'s arms, so no
+    /// traversal can read it (the same wall `installers::selected_category`
+    /// records). Measured: replacing the value with
+    /// `Some(families()[0].name.to_string())` fails this test with
+    /// `left: Some("Proton-GE"), right: Some("Proton-GE RTSP")` — the *second*
+    /// family's name, because index 1 is the family the fixture selects.
+    ///
+    /// # Why the step closure is asserted through the message and not read
+    ///
+    /// The step is the other half of UX-01 — a Tab stop you cannot change is not
+    /// a fix — and it is asserted through a real `Widget::update`: the framework
+    /// focuses the control through its own `focus_next` (libcosmic runs it for
+    /// Tab), then a real `ArrowDown` is dispatched and the message that comes out
+    /// is compared. The message must name the family by **id**, which is what the
+    /// pointer's `on_selected` sends; a step that sent the label, or the index,
+    /// would publish a `FetchReleases` the shell cannot resolve while looking
+    /// identical in the widget tree.
+    #[test]
+    fn the_family_selector_is_a_tab_stop_that_steps_to_the_family_it_names() {
+        use super::a11y::harness;
+        use cosmic::iced::core::id::IdEq;
+        use cosmic::iced::keyboard::{Key, key::Named};
+        use iced_accessibility::accesskit::Role;
+
+        let families = families();
+        let second = families
+            .get(1)
+            .expect("the reference lists more than one family");
+        // The default is `families()[0]`, so selecting index 1 is a selection the
+        // fixture had to *make* rather than one it fell into.
+        assert_ne!(
+            second.id,
+            default_family(),
+            "this test's whole point is a family that is not the default"
+        );
+
+        let mut element = view(RunnersView {
+            installed: &[],
+            selected_family: second.id,
+            status: &ReleasesStatus::Idle,
+            releases: &[],
+            progress: None,
+        });
+
+        let nodes = harness::published(&mut element);
+        let combo = nodes
+            .iter()
+            .find(|node| node.role == Role::ComboBox && node.label.as_deref() == Some(FAMILY_LABEL))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the family selector publishes no ComboBox node named \
+                     {FAMILY_LABEL:?}. A bare `cosmic::widget::Dropdown` reports \
+                     no focusable state and publishes no node at all \
+                     (`view/a11y.rs`'s \
+                     `the_toolkit_controls_the_app_used_to_build_are_invisible` \
+                     measures that directly). Nodes: {:?}",
+                    nodes
+                        .iter()
+                        .map(|node| (&node.role, node.label.as_deref(), node.value.as_deref()))
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(
+            combo.value.as_deref(),
+            Some(second.name),
+            "the selector must announce the family it is listing, not the first \
+             one and not the id. Nodes: {:?}",
+            nodes
+                .iter()
+                .map(|node| (&node.role, node.label.as_deref(), node.value.as_deref()))
+                .collect::<Vec<_>>()
+        );
+
+        // ---- the id identity, and the ring ----------------------------------
+        //
+        // One element, read twice: the toolkit's own widgets take `Id::unique()`
+        // at construction, so a focus report and a node from two different builds
+        // are not comparable (see `a11y::harness::unreachable_controls`).
+        let ids: Vec<cosmic::widget::Id> = harness::focusables(&mut element)
+            .into_iter()
+            .map(|stop| stop.unwrap_or_else(|| panic!("a focusable control reported no id")))
+            .collect();
+        assert!(
+            ids.iter()
+                .any(|stop| IdEq::eq(&iced_accessibility::A11yId::from(stop.clone()), &combo.id)),
+            "the selector is published as {:?}, which no focus report carries: \
+             assistive technology can see this control and cannot reach it. \
+             Reported ids: {ids:?}",
+            combo.id
+        );
+        // ---- no two controls share an id ------------------------------------
+        //
+        // The id is the accessible name (`a11y::stable_id`), so two wrappers built
+        // with the same name are one node to assistive technology: the second
+        // overwrites the first, the Tab ring reports the id twice, and a user
+        // reaches one control where the page draws two. `view/settings.rs` and
+        // `view/form.rs` have had this loop since the wrapper landed — the second
+        // copy is what made it worth writing here rather than leaving it to whichever
+        // pages remembered it.
+        let mut seen: Vec<cosmic::widget::Id> = Vec::new();
+        for id in &ids {
+            assert!(
+                !seen.contains(id),
+                "two controls on this page report the same id {id:?}. The id is \
+                 derived from the control's name (`a11y::stable_id`), so this is \
+                 two controls sharing a name: a screen reader would see one where \
+                 the user sees two, and one of the two would be unreachable by \
+                 name. Ids reported: {ids:?}"
+            );
+            seen.push(id.clone());
+        }
+
+        let unreachable = harness::unreachable_controls(&mut element);
+        assert!(
+            unreachable.is_empty(),
+            "these controls are published as nodes whose ids no focus report \
+             carries: {unreachable:?}. Reported ids: {ids:?}"
+        );
+
+        // ---- the keyboard step, on the real page ----------------------------
+        let mut element = view(RunnersView {
+            installed: &[],
+            selected_family: second.id,
+            status: &ReleasesStatus::Idle,
+            releases: &[],
+            progress: None,
+        });
+        let (mut tree, node) = harness::built(&mut element);
+        harness::tab_to(&mut element, &mut tree, &node);
+
+        let mut messages = Vec::new();
+        let out = harness::dispatch(
+            &mut element,
+            &mut tree,
+            &node,
+            &harness::pressed(Key::Named(Named::ArrowDown)),
+            &mut messages,
+        );
+
+        let next = families
+            .get(2)
+            .expect("the fixture family is not the last one");
+        assert!(
+            out.captured,
+            "the focused selector must capture the arrow it acted on; an \
+             uncaptured arrow is the one that scrolls the page instead"
+        );
+        match out.messages.as_slice() {
+            [Message::FetchReleases { family }] => assert_eq!(
+                family, &next.id,
+                "Down must ask for the *next* family by id — the same message the \
+                 pointer's `on_selected` sends. A message carrying the label, or \
+                 the index, names a family the shell cannot resolve"
+            ),
+            other => panic!(
+                "expected exactly one `FetchReleases`, got {other:?}. An empty \
+                 list means Tab did not reach the wrapped selector"
+            ),
+        }
     }
 
     /// Every string the page actually draws, by walking the built widget tree.

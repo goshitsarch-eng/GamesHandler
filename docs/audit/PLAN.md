@@ -101,10 +101,10 @@ advocate reviews every row before it is called done and owns no row.
 | Severity | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
-| P1 | 23 | 18 | 0 | 5 |
+| P1 | 23 | 21 | 0 | 2 |
 | P2 | 52 | 19 | 0 | 33 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **128** | **42** | **0** | **86** |
+| **Total** | **128** | **45** | **0** | **83** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -113,8 +113,8 @@ advocate reviews every row before it is called done and owns no row.
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 3 | 0 | 5 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
 | `SEC-xx` | `SECURITY.md` | 10 | 3 | 0 | 7 |
-| `UX-xx` | `COSMIC-UX.md` | 30 | 1 | 0 | 29 |
-| **Total** | | **128** | **42** | **0** | **86** |
+| `UX-xx` | `COSMIC-UX.md` | 30 | 4 | 0 | 26 |
+| **Total** | | **128** | **45** | **0** | **83** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -187,9 +187,9 @@ across families, not within them.
 | `PERF-03` | Nothing is virtualized: every game in the filtered library gets a built Element every frame | S3 | — | Virtualize the grid and row lists; verify the built-element count per frame against a 500-game fixture. | FIXED `be31a7b` |
 | `PKG-01` | The only check that executes the built artefact can execute a stale, previously installed build instead | S6 | — | Resolve which artefact `scripts/smoke-test.sh` executes after the build, or refuse to fall back when a tree build exists; verify by planting a stale installed build and observing the runner name it. | FIXED `8abac0b` |
 | `SEC-01` | --device=all has no justification in launcher code | S4 | — | Narrow to `--device=dri`, then run the controller hotplug test `docs/migration/packaging.md` Q-2 asks for and record that test as the grant's justification. | FIXED `e2c6476` |
-| `UX-01` | Dropdowns are in no keyboard focus ring and contribute no accessibility node | S2 | — | A test asserting the `Operation` from a built dropdown contains a focusable node. Upstream `Dropdown` has its `operate` hook commented out, so this needs a wrapper or a carried patch. | OPEN |
-| `UX-02` | Togglers are mouse-only | S2 | — | A test asserting a focused toggler responds to space/enter. Upstream `toggler` has **no** `operate` at all, so this needs a local widget or an upstream patch. | OPEN |
-| `UX-03` | Text inputs emit no accessibility node at all, so the entire add/edit-game form is invisible to a screen reader | S2 | — | A test asserting `a11y_nodes` is non-empty for a built `text_input`. Neither implementation defines it. | OPEN |
+| `UX-01` | Dropdowns are in no keyboard focus ring and contribute no accessibility node | S2 | — | A test asserting the `Operation` from a built dropdown contains a focusable node. Upstream `Dropdown` has its `operate` hook commented out, so this needs a wrapper or a carried patch. | FIXED (app half) — `view/a11y.rs::dropdown`, all 11 sites; the toolkit's popup stays unopenable from the keyboard and that residue is recorded in the module docs and `COSMIC-UX.md` |
+| `UX-02` | Togglers are mouse-only | S2 | — | A test asserting a focused toggler responds to space/enter. Upstream `toggler` has **no** `operate` at all, so this needs a local widget or an upstream patch. | FIXED — `view/a11y.rs::toggler`. The audit row's premise was also wrong: libcosmic does not use iced's toggler at all (`src/widget/toggler.rs:15` re-exports the *style* types), so the widget publishes no node whatever — see `COSMIC-UX.md` |
+| `UX-03` | Text inputs emit no accessibility node at all, so the entire add/edit-game form is invisible to a screen reader | S2 | — | A test asserting `a11y_nodes` is non-empty for a built `text_input`. Neither implementation defines it. | FIXED — `view/a11y.rs::input` / `input_with_id`, all 4 sites; the input was already focusable and already handled typing (`src/widget/text_input/input.rs:843-855`) |
 | `UX-04` | The application configures no minimum window size, so the window can be dragged to 1×1 and every page becomes unusable | S2 | — | Set the window minimum and assert it is at least what the narrowest page layout needs (`UX-08`, `UX-09`, `UX-21`). | OPEN |
 | `UX-05` | "Add Game" has no always-visible control | S2 | duplicate of `BUG-07` | As `BUG-07`; the toolbar button is the always-visible control. | FIXED with `BUG-07` |
 

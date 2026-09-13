@@ -92,11 +92,34 @@ use gamehandler_core::models::UNCATEGORIZED;
 use crate::Message;
 use crate::state::State;
 
+use super::a11y;
 use super::badge::badge;
 
 /// The filter value that means "do not filter", which the reference writes as
 /// a literal in two places (`installers.py:244`, `bridge.py:806`).
 pub const ALL_CATEGORIES: &str = "All";
+
+/// The search box's placeholder — `InstallersPage.qml:17`, verbatim.
+///
+/// Named rather than left inline because it is now both the placeholder the
+/// toolkit paints and the accessible name of the field (UX-03): a string that
+/// has to say the same thing in two places is a string that can drift into two.
+pub const SEARCH_PLACEHOLDER: &str = "Search installers…";
+
+/// The accessible names of the page's two selectors.
+///
+/// Neither is a string this port *draws*: the toolbar's category combo has no
+/// visible label at all (`InstallersPage.qml:21-24`), and the runner row's is a
+/// `Kirigami.FormData.label` (`:50`) that this port renders as a heading line
+/// instead of a form label. Both are the reference's own words for the control
+/// they name, which is what a screen reader needs and what a keyboard uses to
+/// find it; before UX-01 neither control was announced at all.
+///
+/// [`INSTALL_RUNNER_LABEL`] is one string in two places on purpose: it is both
+/// the heading [`view`] draws above the selector and the node's name, so the two
+/// cannot drift into "what the page says" and "what is announced".
+pub const CATEGORY_FILTER_LABEL: &str = "Filter by category";
+pub const INSTALL_RUNNER_LABEL: &str = "Runner for new installs:";
 
 /// One installer card, as the reference's `installers` property builds it
 /// (`bridge.py:813-828`).
@@ -154,12 +177,18 @@ pub fn installer_categories() -> Vec<String> {
 /// or to `.map(|_| 0)`, each fail
 /// `the_selected_filter_is_the_position_of_the_current_value`.
 ///
-/// The **call site** survives — in [`view`], replacing
-/// `selected_category(page.categories, page.category)` with `Some(0)` leaves the
-/// whole suite green. A `Dropdown`'s selected index is not one of `Operation`'s
-/// arms, the same wall `install_press`'s call site hits, so no test can read
-/// which option a built dropdown is showing. Recorded rather than papered over:
-/// that wiring is checked by reading [`view`], not by a test that cannot see it.
+/// **The call site is now covered too, and this paragraph used to say it could
+/// not be.** It read: *"A `Dropdown`'s selected index is not one of
+/// `Operation`'s arms … so no test can read which option a built dropdown is
+/// showing."* That is still true of the *toolkit* — `Operation` has no arm that
+/// reports a dropdown's index, and `Dropdown::operate`'s body is commented out
+/// (`libcosmic src/widget/dropdown/widget.rs:336-338`) — but it stopped being true
+/// of this page when UX-01 wrapped the control in `a11y::dropdown`: the selected
+/// value is now published as the `ComboBox` node's value, and
+/// `every_control_on_the_real_installers_page_is_a_tab_stop_and_a_named_node`
+/// asserts it against the filter the page was handed. Measured: replacing the
+/// value at the call site with `Some(ALL_CATEGORIES.to_string())` fails that test
+/// with `left: Some("All"), right: Some("Apps")`.
 pub fn selected_category(categories: &[String], category: &str) -> Option<usize> {
     categories.iter().position(|item| item == category)
 }
@@ -474,17 +503,42 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
     let category_options = page.categories.to_vec();
     let category_choices = category_options.clone();
 
+    // A second copy of the same list, for the keyboard step: the pointer's
+    // closure takes `category_choices` by move, and both closures have to map an
+    // index through the same `category_selection`.
+    let category_step_choices = category_options.clone();
     body = body.push(
         Row::new()
-            .push(
-                cosmic::widget::text_input("Search installers…", page.search.to_string())
+            .push(a11y::input(
+                cosmic::widget::text_input(SEARCH_PLACEHOLDER, page.search.to_string())
                     .on_input(Message::SetInstallerSearch)
                     .width(Length::Fixed(22.0 * 18.0)),
-            )
-            .push(cosmic::widget::dropdown(
-                category_options,
-                selected,
-                move |index| category_selection(&category_choices, index),
+                SEARCH_PLACEHOLDER,
+                page.search.to_string(),
+            ))
+            .push(a11y::dropdown(
+                cosmic::widget::dropdown(category_options, selected, move |index| {
+                    category_selection(&category_choices, index)
+                }),
+                CATEGORY_FILTER_LABEL,
+                // What the selector is showing, from the same
+                // [`selected_category`] that decided `selected` above — so
+                // the value announced and the value drawn cannot disagree.
+                // `None` where the stored filter is not an option, which is
+                // also what `selected` is there.
+                selected.and_then(|index| page.categories.get(index).cloned()),
+                {
+                    // The same list the pointer's `on_selected` was handed,
+                    // cloned once more rather than shared: the closure above
+                    // took `category_choices` and the two must map an index
+                    // the same way.
+                    let choices = category_step_choices;
+                    let count = page.categories.len();
+                    move |delta| {
+                        let next = selected?.checked_add_signed(delta as isize)?;
+                        (next < count).then(|| category_selection(&choices, next))
+                    }
+                },
             ))
             .push(Space::new().width(Length::Fill))
             .spacing(8)
@@ -500,17 +554,31 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
     }
 
     // ---- The runner a new install will use ---------------------------------
-    body = body.push(text::body("Runner for new installs:"));
+    //
+    // The heading and the selector's accessible name are the same constant, so
+    // the row reads the same to a sighted user and to a screen reader.
+    body = body.push(text::body(INSTALL_RUNNER_LABEL));
     let labels: Vec<String> = page
         .runners
         .iter()
         .map(|(_, label)| label.clone())
         .collect();
     let runner_choices = page.runners.to_vec();
-    body = body.push(cosmic::widget::dropdown(
-        labels,
-        runner_index(page.runners, page.runner_id),
-        move |index| install_runner_selection(&runner_choices, index),
+    let runner_shown = runner_index(page.runners, page.runner_id);
+    body = body.push(a11y::dropdown(
+        cosmic::widget::dropdown(labels, runner_shown, move |index| {
+            install_runner_selection(&runner_choices, index)
+        }),
+        INSTALL_RUNNER_LABEL,
+        runner_shown.and_then(|index| page.runners.get(index).map(|(_, label)| label.clone())),
+        {
+            let choices = page.runners.to_vec();
+            let count = page.runners.len();
+            move |delta| {
+                let next = runner_shown?.checked_add_signed(delta as isize)?;
+                (next < count).then(|| install_runner_selection(&choices, next))
+            }
+        },
     ));
     body = body.push(text::caption(RUNNER_NOTE));
 
@@ -685,6 +753,363 @@ mod tests {
             subtitle: "a description".to_string(),
             category: "Launchers".to_string(),
         }
+    }
+
+    /// The page with all three of its controls set to a **non-default** value.
+    ///
+    /// `"steam"` is not `""` and is not the seeded runner, and `"Apps"` is
+    /// neither [`ALL_CATEGORIES`] nor the sentinel `selected_category` falls back
+    /// to — so a builder that published a default instead of what it was handed
+    /// cannot pass the value assertions below by coincidence. The two runners are
+    /// this file's list, not a manager's, so the lookup is deterministic without
+    /// touching a filesystem.
+    fn a11y_page<'a>(
+        catalog: &'a [InstallerRow],
+        runners: &'a [(String, String)],
+        categories: &'a [String],
+    ) -> Element<'a, Message> {
+        a11y_page_showing(catalog, runners, categories, APPS)
+    }
+
+    /// The same page with the category filter set to `category`.
+    ///
+    /// Split out for the step walk, which needs the filter to have a neighbour on
+    /// **both** sides: [`installer_categories`] is `[ALL_CATEGORIES, …]`, so a
+    /// filter on the last entry has an arrow that is `None` by design and the walk
+    /// would measure one direction while claiming two.
+    fn a11y_page_showing<'a>(
+        catalog: &'a [InstallerRow],
+        runners: &'a [(String, String)],
+        categories: &'a [String],
+        category: &'a str,
+    ) -> Element<'a, Message> {
+        view(InstallersView {
+            catalog,
+            search: "steam",
+            category,
+            categories,
+            runners,
+            runner_id: "ge-proton",
+            busy: false,
+            progress: None,
+        })
+    }
+
+    /// Three runners, so the *middle* one has a neighbour on each side.
+    ///
+    /// That is what the step walk below needs: this page's runner selector cannot
+    /// be opened from the keyboard at the pinned rev (`Dropdown::operate`'s body
+    /// is commented out — `src/widget/dropdown/widget.rs:336-338`), so Up and Down
+    /// are the only pointer-free way it changes hands, and a fixture whose
+    /// selection sits at an end would have one arrow that is `None` by design and
+    /// would measure half of what the walk claims to.
+    fn a11y_runners() -> Vec<(String, String)> {
+        vec![
+            ("system".to_string(), "System Wine".to_string()),
+            ("ge-proton".to_string(), "GE-Proton9-5".to_string()),
+            ("proton-ge".to_string(), "Proton-GE 8-26".to_string()),
+        ]
+    }
+
+    /// **Every control on the real Installers page is a Tab stop, announces the
+    /// role it is, and publishes the state or value it is showing** — UX-01 and
+    /// UX-03 measured where the user meets them.
+    ///
+    /// # Why this is a page test and not another wrapper test
+    ///
+    /// `view/a11y.rs` proves the wrapper reports a focusable state, builds a node
+    /// and puts the node's id in the ring. Every one of those stays true if this
+    /// page goes back to the bare toolkit widgets, because a wrapper nobody calls
+    /// still works perfectly. This is the test that goes red then: reverting any
+    /// one of the three call sites in [`view`] takes that control's name out of
+    /// both lists and the lookups below fail on it by name.
+    ///
+    /// # Why the values are asserted and not just the names
+    ///
+    /// A node's label and its role are the two halves that say a control is
+    /// announced; neither says it is announced *correctly*. This page is where
+    /// the difference is sharpest, because the runner row's heading and the
+    /// selector's accessible name are deliberately one constant
+    /// ([`INSTALL_RUNNER_LABEL`]): a call site that passed a literal label but
+    /// the *wrong runner's* label as the value would satisfy every name and role
+    /// assertion and tell a screen-reader user that new installs will use a
+    /// runner they will not. Measured: replacing the runner value with the
+    /// constant `Some("System Wine".to_string())` fails the assertion below with
+    /// `left: Some("System Wine"), right: Some("GE-Proton9-5")`.
+    #[test]
+    fn every_control_on_the_real_installers_page_is_a_tab_stop_and_a_named_node() {
+        use super::a11y::harness;
+        use cosmic::iced::core::id::IdEq;
+        use iced_accessibility::accesskit::Role;
+
+        let catalog = vec![row("steam", "Steam"), row("battlenet", "Battle.net")];
+        let runners = a11y_runners();
+        let categories = installer_categories();
+        // **One** element, read twice: the toolkit's own widgets take
+        // `Id::unique()` at construction, so the focus reports and the nodes have
+        // to come out of the same build to be comparable — see
+        // `a11y::harness::unreachable_controls`.
+        let mut element = a11y_page(&catalog, &runners, &categories);
+
+        let stops = harness::focusables(&mut element);
+        let ids: Vec<cosmic::widget::Id> = stops
+            .iter()
+            .map(|stop| {
+                stop.clone().unwrap_or_else(|| {
+                    panic!(
+                        "a control is focusable but reports no id, so Tab can \
+                         reach it and nothing can address it: {stops:?}"
+                    )
+                })
+            })
+            .collect();
+        let nodes = harness::published(&mut element);
+        let listing = || {
+            nodes
+                .iter()
+                .map(|node| (&node.role, node.label.as_deref(), node.value.as_deref()))
+                .collect::<Vec<_>>()
+        };
+        let node = |role: Role, label: &str| {
+            nodes
+                .iter()
+                .find(|node| node.role == role && node.label.as_deref() == Some(label))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the {label:?} control publishes no {role:?} node. The \
+                         search box and the two selectors are this page's three \
+                         wrapped controls, and a bare \
+                         `cosmic::widget::dropdown` publishes nothing at all \
+                         (`view/a11y.rs`'s \
+                         `the_toolkit_controls_the_app_used_to_build_are_invisible` \
+                         measures that directly). Nodes: {:?}",
+                        listing()
+                    )
+                })
+        };
+
+        let search = node(Role::TextInput, SEARCH_PLACEHOLDER);
+        assert_eq!(
+            search.value.as_deref(),
+            Some("steam"),
+            "the search box must publish the query it is filtering by, not the \
+             placeholder and not a constant. Nodes: {:?}",
+            listing()
+        );
+
+        let category = node(Role::ComboBox, CATEGORY_FILTER_LABEL);
+        assert_eq!(
+            category.value.as_deref(),
+            Some(APPS),
+            "the category filter must announce the category it is showing — the \
+             value `selected_category` found for the stored filter, which is \
+             also the string its own `on_selected` would carry (see \
+             [`category_selection`]). Nodes: {:?}",
+            listing()
+        );
+
+        let runner = node(Role::ComboBox, INSTALL_RUNNER_LABEL);
+        assert_eq!(
+            runner.value.as_deref(),
+            Some("GE-Proton9-5"),
+            "the runner selector must announce the *label* of the runner it is \
+             showing, looked up by id — not the first entry and not the id. \
+             Nodes: {:?}",
+            listing()
+        );
+
+        // ---- no two controls share an id ------------------------------------
+        //
+        // The id is the accessible name (`a11y::stable_id`), so two wrappers built
+        // with the same name are one node to assistive technology: the second
+        // overwrites the first, the Tab ring reports the id twice, and a user
+        // reaches one control where the page draws two. `view/settings.rs` and
+        // `view/form.rs` have had this loop since the wrapper landed; this page did
+        // not, which made the invariant a property of the pages someone remembered
+        // rather than of the widget.
+        let mut seen: Vec<cosmic::widget::Id> = Vec::new();
+        for id in &ids {
+            assert!(
+                !seen.contains(id),
+                "two controls on this page report the same id {id:?}. The id is \
+                 derived from the control's name (`a11y::stable_id`), so this is \
+                 two controls sharing a name: a screen reader would see one where \
+                 the user sees two, and one of the two would be unreachable by \
+                 name. Ids reported: {ids:?}"
+            );
+            seen.push(id.clone());
+        }
+
+        // ---- the id identity, per control -----------------------------------
+        let in_ring = |id: &iced_accessibility::A11yId| {
+            ids.iter()
+                .any(|stop| IdEq::eq(&iced_accessibility::A11yId::from(stop.clone()), id))
+        };
+        for (what, node) in [
+            ("search box", &search),
+            ("category filter", &category),
+            ("runner selector", &runner),
+        ] {
+            assert!(
+                in_ring(&node.id),
+                "the {what} is published as {:?}, which no focus report carries: \
+                 assistive technology can see this control and cannot reach it. \
+                 Reported ids: {ids:?}",
+                node.id
+            );
+        }
+
+        // ---- the invariant over the whole page ------------------------------
+        let unreachable = harness::unreachable_controls(&mut element);
+        assert!(
+            unreachable.is_empty(),
+            "these controls are published as nodes whose ids no focus report \
+             carries, so a screen reader can read them and a keyboard cannot \
+             reach them: {unreachable:?}. Reported ids: {ids:?}"
+        );
+    }
+
+    /// **Both selectors on the real Installers page change hands from the
+    /// keyboard, to the value the pointer route would have chosen.**
+    ///
+    /// The same walk as `view/library.rs`'s
+    /// `tab_then_arrow_steps_every_selector_on_the_real_library_page`, for the
+    /// reason that test gives: there are eleven `checked_add_signed` step
+    /// closures in the view tree and the two page tests that read one are the
+    /// colour-scheme walk in `view/settings.rs` and this pair. The step *is* how
+    /// these controls change hands without a pointer — `Dropdown::operate`'s body
+    /// is commented out at the pinned rev
+    /// (`src/widget/dropdown/widget.rs:336-338`), so the popup cannot be opened
+    /// from the keyboard at all (see [`dropdown`](super::a11y::dropdown)) — which
+    /// makes a step publishing the wrong variant or a stringified index a control
+    /// that announces a selection it can never make.
+    ///
+    /// Both payloads are **ids**: [`runner_index`] compares against the id
+    /// (`"ge-proton"`), not the label (`"GE-Proton9-5"`), and
+    /// [`selected_category`] compares the category name. A step passing the
+    /// index would publish a runner id no build has, which
+    /// `seeded_install_runner`'s readers then discard.
+    ///
+    /// The expectations are read off the same two index functions and the same
+    /// lists the call sites were handed, so what is asserted is that the keyboard
+    /// route and the pointer route agree — not that a constant was copied here
+    /// correctly.
+    #[test]
+    fn tab_then_arrow_steps_every_selector_on_the_real_installers_page() {
+        use super::a11y::harness;
+        use cosmic::iced::keyboard::{Key, key::Named};
+
+        let catalog = vec![row("steam", "Steam"), row("battlenet", "Battle.net")];
+        let runners = a11y_runners();
+        let categories = installer_categories();
+
+        // The index the page shows, read the way the call site reads it, and
+        // asserted to have a neighbour on **both** sides: `a11y_page` sets the
+        // filter to the first entry and the runner to index 1, and an arrow that
+        // is `None` by design would make this test measure one direction while
+        // claiming two.
+        // `LAUNCHERS` rather than `APPS`: the list is `["All", "Launchers",
+        // "Apps"]`, so a filter on the last entry has no Down and this walk would
+        // measure one direction. The assertion below is what holds that true.
+        let mut element = a11y_page_showing(&catalog, &runners, &categories, LAUNCHERS);
+        let shown_category = selected_category(&categories, LAUNCHERS)
+            .expect("the fixture's category must be one of its own options");
+        assert!(
+            shown_category >= 1 && shown_category + 1 < categories.len(),
+            "the fixture must put its category filter in the *middle* of the list \
+             so both arrows are defined; it is at index {shown_category} of {}. \
+             Categories: {categories:?}",
+            categories.len()
+        );
+        let shown_runner = runner_index(&runners, "ge-proton")
+            .expect("the fixture's runner must be one of its own options");
+        assert!(
+            shown_runner >= 1 && shown_runner + 1 < runners.len(),
+            "likewise for the runner selector: index {shown_runner} of {}",
+            runners.len()
+        );
+
+        let stops = harness::focusables(&mut element).len();
+        assert!(
+            stops >= 3,
+            "the page reports {stops} Tab stops, so this walk cannot reach the \
+             three wrapped controls it exists for"
+        );
+        // One element, one tree: `tab_to` carries the focus forward *in* the
+        // tree, so stop N is the N-th control rather than the first one N times.
+        let (mut tree, node) = harness::built(&mut element);
+
+        let mut stepped: Vec<Message> = Vec::new();
+        for _ in 0..stops {
+            harness::tab_to(&mut element, &mut tree, &node);
+            for key in [Named::ArrowDown, Named::ArrowUp] {
+                let mut messages = Vec::new();
+                let _ = harness::dispatch(
+                    &mut element,
+                    &mut tree,
+                    &node,
+                    &harness::pressed(Key::Named(key)),
+                    &mut messages,
+                );
+                stepped.extend(messages);
+            }
+        }
+
+        // ---- the category filter, whose payload is a category --------------
+        let expected_categories: Vec<String> = [shown_category + 1, shown_category - 1]
+            .iter()
+            .map(|index| match category_selection(&categories, *index) {
+                Message::SetInstallerCategory(name) => name,
+                other => panic!("the category step's own mapping is not a category: {other:?}"),
+            })
+            .collect();
+        let stepped_categories: Vec<String> = stepped
+            .iter()
+            .filter_map(|message| match message {
+                Message::SetInstallerCategory(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            stepped_categories, expected_categories,
+            "the category filter must step to the neighbouring *category*, through \
+             the same [`category_selection`] the pointer route uses — Down to the \
+             next option, Up to the previous one. A step publishing the index is \
+             a filter matching no installer. Every message the arrow keys \
+             published: {stepped:?}"
+        );
+
+        // ---- the runner selector, whose payload is a runner *id* -----------
+        let expected_runners: Vec<String> = [shown_runner + 1, shown_runner - 1]
+            .iter()
+            .map(|index| runners[*index].0.clone())
+            .collect();
+        let stepped_runners: Vec<String> = stepped
+            .iter()
+            .filter_map(|message| match message {
+                Message::SetInstallRunner(runner_id) => Some(runner_id.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            stepped_runners, expected_runners,
+            "the runner selector must step to the neighbouring runner's **id** \
+             ([`runner_index`] compares ids, not the labels the control paints), \
+             through the same [`install_runner_selection`] the pointer route \
+             uses. A step publishing the label, or the index, names a build the \
+             app does not have. Every message the arrow keys published: \
+             {stepped:?}"
+        );
+
+        // ---- and nothing else moved -----------------------------------------
+        assert_eq!(
+            stepped.len(),
+            expected_categories.len() + expected_runners.len(),
+            "the arrow keys published {} messages, but a selector that steps \
+             publishes exactly one and nothing else on this page is steppable: \
+             {stepped:?}",
+            stepped.len()
+        );
     }
 
     // ---- card_subtitle ----------------------------------------------------

@@ -53,6 +53,7 @@ use gamehandler_core::runners::RunnerManager;
 use crate::Message;
 use crate::state::PrefixTool;
 
+use super::a11y;
 use super::cover_cache::CoverCache;
 use super::metrics;
 use super::widgets;
@@ -78,6 +79,21 @@ pub const SEARCH_PLACEHOLDER: &str = "Search games…";
 /// The spelling follows the ids in [`super::widgets`] — `gamehandler.<area>.<name>`
 /// — so an id in a log line says which part of the app it belongs to.
 pub const SEARCH_INPUT_ID: &str = "gamehandler.library.search";
+
+/// The accessible names of the toolbar's two selectors.
+///
+/// Neither is a string this port draws, and neither is invented here: they are
+/// the reference's own words for these two controls, which are a
+/// `QQC2.ToolTip.text` on each ComboBox (`LibraryPage.qml:41`, `:61`) — the QML
+/// equivalent of a label, and the only name either control has. Until UX-01
+/// wrapped them, neither was announced at all.
+///
+/// The sort selector's name is the tooltip as written rather than a rewording of
+/// it, because the same words already appear in this file's vocabulary for the
+/// control ([`sort_labels`], [`sort_index`]) and a second phrasing would be a
+/// second thing to keep in step.
+pub const CATEGORY_FILTER_LABEL: &str = "Filter by category";
+pub const SORT_FILTER_LABEL: &str = "Sort library";
 
 /// The sort options, `(key, label)`. `bridge.py:67-71`, verbatim.
 ///
@@ -640,26 +656,70 @@ pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
     };
     body = body.push(
         Row::new()
-            .push(
+            // `input_with_id`, not `input`: this field's widget id is
+            // [`SEARCH_INPUT_ID`], which `Ctrl+F` focuses by name
+            // (`Shell::focus_library_search`), so it cannot take the id its
+            // placeholder would derive — see that constant and
+            // `a11y::input_with_id`. The name is still the placeholder, which is
+            // what the field shows when it is empty.
+            .push(a11y::input_with_id(
                 text_input(SEARCH_PLACEHOLDER, page.search.to_string())
-                    .id(SEARCH_INPUT_ID.into())
                     .on_input(Message::SetSearchText)
                     .width(Length::Fill),
-            )
-            .push(cosmic::widget::dropdown(
-                categories.clone(),
-                category_index(&categories, page.category),
-                // The selector's index, mapped to the category it stands for —
-                // never the index itself. See [`category_selection`].
+                SEARCH_PLACEHOLDER,
+                page.search.to_string(),
+                SEARCH_INPUT_ID.into(),
+            ))
+            .push(a11y::dropdown(
+                cosmic::widget::dropdown(
+                    categories.clone(),
+                    category_index(&categories, page.category),
+                    // The selector's index, mapped to the category it stands for —
+                    // never the index itself. See [`category_selection`].
+                    {
+                        let options = categories.clone();
+                        move |index| category_selection(&options, index)
+                    },
+                ),
+                CATEGORY_FILTER_LABEL,
+                // What the selector is *showing*, which is also what
+                // `on_selected` would be handed next: `category_index` is
+                // `None` for a stored category that is not in the list, and
+                // the step below is `None` there too. See [`category_index`].
+                category_index(&categories, page.category)
+                    .and_then(|index| categories.get(index).cloned()),
                 {
                     let options = categories.clone();
-                    move |index| category_selection(&options, index)
+                    let count = categories.len();
+                    let shown = category_index(&categories, page.category);
+                    move |delta| {
+                        let next = shown?.checked_add_signed(delta as isize)?;
+                        (next < count).then(|| category_selection(&options, next))
+                    }
                 },
             ))
-            .push(cosmic::widget::dropdown(
-                sort_labels(),
-                sort_index(page.sort_mode),
-                |index| Message::SetSortMode(SORT_OPTIONS[index].0.to_string()),
+            .push(a11y::dropdown(
+                cosmic::widget::dropdown(sort_labels(), sort_index(page.sort_mode), |index| {
+                    Message::SetSortMode(SORT_OPTIONS[index].0.to_string())
+                }),
+                SORT_FILTER_LABEL,
+                sort_index(page.sort_mode).map(|index| SORT_OPTIONS[index].1.to_string()),
+                {
+                    let shown = sort_index(page.sort_mode);
+                    let count = SORT_OPTIONS.len();
+                    move |delta| {
+                        let next = shown?.checked_add_signed(delta as isize)?;
+                        // The **key**, not the index — the same mapping the
+                        // pointer's `on_selected` above makes. A step that
+                        // stringified the index would store `"1"`, which is
+                        // not in `SORT_OPTIONS`, and the loader would fold it
+                        // back to `"name"` on the next start
+                        // (`a_selection_carries_the_name_and_not_the_index`
+                        // is the same defect at the sibling selector).
+                        (next < count)
+                            .then(|| Message::SetSortMode(SORT_OPTIONS[next].0.to_string()))
+                    }
+                },
             ))
             .push(button::standard(view_toggle).on_press(Message::SetViewMode(
                 toggled_mode(page.view_mode).to_string(),
@@ -1592,6 +1652,428 @@ mod tests {
             .layout(&mut tree, &renderer, &limits);
         let _ = Layout::new(&node);
         node.size().height
+    }
+
+    /// A library with two categorised games, so the toolbar's two selectors have
+    /// more than one entry each (`category_options` prepends [`ALL_CATEGORIES`])
+    /// and the category filter can be set to something that is not the default.
+    fn categorised_library() -> Library {
+        let root = std::env::temp_dir().join(format!(
+            "gh-lib-a11y-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut library = Library::new_at(Some(root.join("games.json")), 0.0);
+        for (name, category) in [("Alpha", "Puzzle"), ("Beta", "Action")] {
+            let mut game = Game::new_named(name.to_string());
+            game.category = category.to_string();
+            library.add(game).expect("the temp library is writable");
+        }
+        library
+    }
+
+    /// The page with every one of its own inputs set to a **non-default** value.
+    ///
+    /// That is the point of the fixture rather than a convenience: the state
+    /// assertions below compare each published node against a value the page was
+    /// handed, and a page built from defaults would pass just as well against a
+    /// builder that published the defaults. `"alpha"` is not `""`, `"Puzzle"` is
+    /// not [`ALL_CATEGORIES`] and `"recent"` is not `"name"`.
+    fn a11y_page<'a>(
+        library: &'a Library,
+        covers: &'a CoverCache,
+        runners: &'a RunnerManager,
+    ) -> Element<'a, Message> {
+        a11y_page_showing(library, covers, runners, "Puzzle")
+    }
+
+    /// The same page with the category filter set to `category`.
+    ///
+    /// Split out for the step walk, which needs the filter somewhere in the
+    /// *middle* of its option list: [`category_options`] is `["All", …the
+    /// library's own…]`, so a filter on the first or last entry has an arrow
+    /// that is `None` by design and a walk from it would measure one direction.
+    fn a11y_page_showing<'a>(
+        library: &'a Library,
+        covers: &'a CoverCache,
+        runners: &'a RunnerManager,
+        category: &'a str,
+    ) -> Element<'a, Message> {
+        view(LibraryPage {
+            library,
+            search: "alpha",
+            category,
+            sort_mode: "recent",
+            view_mode: LIST,
+            runners,
+            now: 0.0,
+            covers,
+            scroll: ScrollGeometry::default(),
+        })
+    }
+
+    /// **Every control on the real Library page is a Tab stop, announces the role
+    /// it is, and publishes the state or value it is showing** — UX-01 and UX-03
+    /// measured where the user meets them.
+    ///
+    /// # Why this is a page test and not another wrapper test
+    ///
+    /// `view/a11y.rs` proves the wrapper reports a focusable state, builds a node
+    /// and puts the node's id in the ring. All of that stays true if this page
+    /// goes back to the bare `cosmic::widget::dropdown` / `text_input`, because a
+    /// wrapper nobody calls still works perfectly — so what this test is *for* is
+    /// the call sites. Reverting any one of the three in [`view`] takes its name
+    /// out of both lists and this fails on that name.
+    ///
+    /// # Why each control is asserted by name and not by a count
+    ///
+    /// The toolbar also carries libcosmic's own buttons — the view-mode toggle
+    /// and Add game — and those report a focusable state of their own
+    /// (`src/widget/button/widget.rs:358-359`), so a count over this page would
+    /// be a number that moves whenever the toolkit's button changes. The
+    /// Settings page can assert an exact count because every control on it is one
+    /// this port built; this page cannot, for the reason `view/form.rs`'s
+    /// equivalent gives at more length.
+    ///
+    /// # Why the values are asserted and not just the names
+    ///
+    /// A node's *label* and its *role* are the two halves that say a control is
+    /// announced; they say nothing about whether it is announced **correctly**.
+    /// A call site that passed a literal `"All"` as the category value, or
+    /// `SORT_OPTIONS[0].1` where the shown entry is index 1, would satisfy every
+    /// name and role assertion above and tell a screen-reader user that the
+    /// filter is showing something it is not. The value is the only field that
+    /// catches that, and this page is where the mutation was measured: replacing
+    /// the sort selector's `sort_index(page.sort_mode).map(…)` with the constant
+    /// `Some(SORT_OPTIONS[0].1.to_string())` fails the assertion below with
+    /// `left: Some("Name"), right: Some("Recently played")` and nothing else in
+    /// this module notices.
+    #[test]
+    fn every_control_on_the_real_library_page_is_a_tab_stop_and_a_named_node() {
+        use super::a11y::harness;
+        use cosmic::iced::core::id::IdEq;
+        use iced_accessibility::accesskit::Role;
+
+        let library = categorised_library();
+        let covers = CoverCache::new();
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+        // **One** element, read twice. The toolkit's own widgets take
+        // `Id::unique()` at construction, so the focus reports and the nodes have
+        // to come out of the same build to be comparable at all — see
+        // `a11y::harness::unreachable_controls`.
+        let mut element = a11y_page(&library, &covers, &runners);
+
+        // ---- the Tab ring ---------------------------------------------------
+        let stops = harness::focusables(&mut element);
+        let ids: Vec<cosmic::widget::Id> = stops
+            .iter()
+            .map(|stop| {
+                stop.clone().unwrap_or_else(|| {
+                    panic!(
+                        "a control is focusable but reports no id, so Tab can \
+                         reach it and nothing can address it: {stops:?}"
+                    )
+                })
+            })
+            .collect();
+
+        // ---- the nodes ------------------------------------------------------
+        let nodes = harness::published(&mut element);
+        let listing = || {
+            nodes
+                .iter()
+                .map(|node| (&node.role, node.label.as_deref(), node.value.as_deref()))
+                .collect::<Vec<_>>()
+        };
+        let node = |role: Role, label: &str| {
+            nodes
+                .iter()
+                .find(|node| node.role == role && node.label.as_deref() == Some(label))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the {label:?} control publishes no {role:?} node. The \
+                         toolbar's search box and two selectors are the three \
+                         controls this page wraps, and a bare \
+                         `cosmic::widget::dropdown` publishes nothing at all \
+                         (`view/a11y.rs`'s \
+                         `the_toolkit_controls_the_app_used_to_build_are_invisible` \
+                         measures that directly). Nodes: {:?}",
+                        listing()
+                    )
+                })
+        };
+
+        // The three wrapped controls, each with the role it must announce as and
+        // the value [`a11y_page`] handed the page.
+        let search = node(Role::TextInput, SEARCH_PLACEHOLDER);
+        assert_eq!(
+            search.value.as_deref(),
+            Some("alpha"),
+            "the search box must publish the text it is holding, not a default \
+             and not the placeholder. A constant here is the defect this \
+             assertion exists for: it announces an empty box while the user is \
+             reading a filtered list. Nodes: {:?}",
+            listing()
+        );
+
+        let category = node(Role::ComboBox, CATEGORY_FILTER_LABEL);
+        assert_eq!(
+            category.value.as_deref(),
+            Some("Puzzle"),
+            "the category filter must announce the category it is showing — the \
+             same string its own `on_selected` would carry for this index (see \
+             [`category_selection`]). Nodes: {:?}",
+            listing()
+        );
+
+        let sort = node(Role::ComboBox, SORT_FILTER_LABEL);
+        assert_eq!(
+            sort.value.as_deref(),
+            Some("Recently played"),
+            "the sort selector must announce the *label* of the entry it is \
+             showing (`sort_index` is 1 for \"recent\"), not the first entry and \
+             not the key. Nodes: {:?}",
+            listing()
+        );
+
+        // ---- no two controls share an id ------------------------------------
+        //
+        // The id is the accessible name (`a11y::stable_id`), so two wrappers built
+        // with the same name are one node to assistive technology: the second
+        // overwrites the first, the Tab ring reports the id twice, and a user
+        // reaches one control where the page draws two. `view/settings.rs` and
+        // `view/form.rs` have had this loop since the wrapper landed; this page did
+        // not, which made the invariant a property of the pages someone remembered
+        // rather than of the widget.
+        let mut seen: Vec<cosmic::widget::Id> = Vec::new();
+        for id in &ids {
+            assert!(
+                !seen.contains(id),
+                "two controls on this page report the same id {id:?}. The id is \
+                 derived from the control's name (`a11y::stable_id`), so this is \
+                 two controls sharing a name: a screen reader would see one where \
+                 the user sees two, and one of the two would be unreachable by \
+                 name. Ids reported: {ids:?}"
+            );
+            seen.push(id.clone());
+        }
+
+        // ---- the id identity, per control ----------------------------------
+        //
+        // A node and a focus report are two halves of one control, and each half
+        // can work while the two name different things — which is what `input`
+        // shipped with before the page test in `view/form.rs` caught it. The
+        // search box is the sharper case here: its id is the page's own constant
+        // (`SEARCH_INPUT_ID`), not one derived from its label, so the two halves
+        // agreeing is a property of `a11y::input_with_id` rather than of the
+        // name table.
+        let in_ring = |id: &iced_accessibility::A11yId| {
+            ids.iter()
+                .any(|stop| IdEq::eq(&iced_accessibility::A11yId::from(stop.clone()), id))
+        };
+        for (what, node) in [
+            ("search box", &search),
+            ("category filter", &category),
+            ("sort selector", &sort),
+        ] {
+            assert!(
+                in_ring(&node.id),
+                "the {what} is published as {:?}, which no focus report carries: \
+                 assistive technology can see this control and cannot reach it. \
+                 Reported ids: {ids:?}",
+                node.id
+            );
+        }
+
+        // The four step closures on this page — the two selectors' — are asserted
+        // in `tab_then_arrow_steps_every_selector_on_the_real_library_page`
+        // below, which needs a Tab walk of its own and so gets its own element.
+
+        // ---- the invariant over the whole page ------------------------------
+        //
+        // The per-control loop above says the three controls this page wraps are
+        // reachable. This says no *control of any of the three kinds* is
+        // published that the Tab ring has never heard of — including one this
+        // page did not build. `Switch`, `ComboBox` and `TextInput` are the three
+        // roles UX-01/UX-02/UX-03 are about and the toolkit publishes none of
+        // them, so a node with one of those roles is a control the app drew; the
+        // `Paragraph` nodes the drawn labels produce are not controls and are
+        // filtered out by `unreachable_controls`, which says why.
+        let unreachable = harness::unreachable_controls(&mut element);
+        assert!(
+            unreachable.is_empty(),
+            "these controls are published as nodes whose ids no focus report \
+             carries, so a screen reader can read them and a keyboard cannot \
+             reach them: {unreachable:?}. Reported ids: {ids:?}"
+        );
+    }
+
+    /// **Every selector on the real Library page changes hands from the
+    /// keyboard, to the value the pointer route would have chosen** — the
+    /// pointer-free half of UX-01.
+    ///
+    /// # Why the step closures need a test of their own
+    ///
+    /// There are eleven `checked_add_signed` step closures in the view tree and
+    /// two tests that read one: `view/settings.rs`'s colour-scheme walk and a
+    /// `view/a11y.rs` unit test over its own local fixture. The other nine are
+    /// reachable only by driving a built widget — so this one test walks the
+    /// whole ring of this page, dispatching a real key event at every stop
+    /// through the framework's own `focus_next` and `Widget::update`, and reads
+    /// the messages that come out.
+    ///
+    /// It matters here more than in most places because of how the selector
+    /// fails: `Dropdown::operate`'s body is commented out at the pinned rev
+    /// (`src/widget/dropdown/widget.rs:336-338`) so the popup cannot be opened
+    /// from the keyboard at all, which makes Up and Down the *only* way these
+    /// two controls ever change hands without a pointer (see `view/a11y.rs`'s
+    /// [`dropdown`](super::a11y::dropdown)). A step that published the wrong
+    /// variant, or a stringified index, would be a control that announces a
+    /// selection it can never make.
+    ///
+    /// # The two payloads, which are the two defects this file has already had
+    ///
+    /// The category filter's payload is a **category name**: `dropdown`'s
+    /// `on_selected` takes a `usize`
+    /// (`src/widget/dropdown/mod.rs:30`), so a closure that stringifies its
+    /// parameter publishes `\"1\"`, which is a valid `String`, so the page
+    /// draws and the filter matches nothing. [`category_selection`]'s own doc
+    /// records that this is the shape the file originally shipped with, and
+    /// that "no assertion in this file could see it, because the closure is
+    /// inside a builder and a builder needs a renderer". There is a renderer
+    /// here. The sort selector's payload is a **key**
+    /// ([`SORT_OPTIONS`]'s first field, `\"name\"`/`\"recent\"`/`\"added\"`),
+    /// and the loader folds an unrecognised value back to `\"name\"` on the next
+    /// start — so a stringified index there is a selection that silently does
+    /// nothing at all.
+    ///
+    /// Neither expectation is written as a constant: both are derived from the
+    /// same mapping functions the pointer path uses, through the option list the
+    /// page itself was handed, so what is asserted is that the two routes agree.
+    #[test]
+    fn tab_then_arrow_steps_every_selector_on_the_real_library_page() {
+        use super::a11y::harness;
+        use cosmic::iced::keyboard::{Key, key::Named};
+
+        let library = categorised_library();
+        let covers = CoverCache::new();
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+
+        // The options this page will build its category selector from, and the
+        // index it is showing — the same readers the call site uses.
+        let categories = category_options(&library.categories());
+        let shown = category_index(&categories, "Action").expect(
+            "the fixture's category must be one of its own options, or the step \
+             below would start from `None` and publish nothing",
+        );
+        assert!(
+            shown + 1 < categories.len() && shown >= 1,
+            "this fixture is picked so that Down and Up are *both* defined from \
+             the entry it shows; from index {shown} of {} one of them is an edge \
+             and publishes nothing, which would make this test measure half of \
+             what it says it does. Categories: {categories:?}",
+            categories.len()
+        );
+
+        let mut element = a11y_page_showing(&library, &covers, &runners, "Action");
+        let stops = harness::focusables(&mut element).len();
+        assert!(
+            stops >= 3,
+            "the page reports {stops} Tab stops, so this walk cannot reach the \
+             three wrapped controls it exists for"
+        );
+        // One element and one tree for the whole walk: `tab_to` carries the
+        // focus forward *in* that tree, which is what makes stop N the N-th
+        // control rather than the first one N times.
+        let (mut tree, node) = harness::built(&mut element);
+
+        let mut stepped: Vec<Message> = Vec::new();
+        for _ in 0..stops {
+            harness::tab_to(&mut element, &mut tree, &node);
+            for key in [Named::ArrowDown, Named::ArrowUp] {
+                let mut messages = Vec::new();
+                let _ = harness::dispatch(
+                    &mut element,
+                    &mut tree,
+                    &node,
+                    &harness::pressed(Key::Named(key)),
+                    &mut messages,
+                );
+                stepped.extend(messages);
+            }
+        }
+
+        // ---- the category filter, whose payload is a category --------------
+        let expected_categories: Vec<String> = [shown + 1, shown - 1]
+            .iter()
+            .map(|index| match category_selection(&categories, *index) {
+                Message::SetCategoryFilter(name) => name,
+                other => panic!("the category step's own mapping is not a filter: {other:?}"),
+            })
+            .collect();
+        let stepped_categories: Vec<String> = stepped
+            .iter()
+            .filter_map(|message| match message {
+                Message::SetCategoryFilter(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            stepped_categories, expected_categories,
+            "the category filter must step to the neighbouring *category*, through \
+             the same [`category_selection`] the pointer route uses — Down to the \
+             next option, Up to the previous one, and nothing at either end. A \
+             step publishing `SetCategoryFilter(\"1\")` is the stringified-index \
+             defect this module's doc records, and it appears here as a name that \
+             is not in the option list. Every message the arrow keys published: \
+             {stepped:?}"
+        );
+
+        // ---- the sort selector, whose payload is a key ----------------------
+        let sort_shown = sort_index("recent").expect("this fixture's mode is in the list");
+        assert!(
+            sort_shown + 1 < SORT_OPTIONS.len() && sort_shown >= 1,
+            "this fixture is picked so both arrows are defined from the sort entry \
+             it shows; it is at index {sort_shown} of {}",
+            SORT_OPTIONS.len()
+        );
+        let expected_sorts: Vec<String> = [sort_shown + 1, sort_shown - 1]
+            .iter()
+            .map(|index| SORT_OPTIONS[*index].0.to_string())
+            .collect();
+        let stepped_sorts: Vec<String> = stepped
+            .iter()
+            .filter_map(|message| match message {
+                Message::SetSortMode(mode) => Some(mode.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            stepped_sorts, expected_sorts,
+            "the sort selector must step to the neighbouring sort *mode* — \
+             [`SORT_OPTIONS`]'s key, which is what the model stores and what \
+             [`sort_index`] reads back. A stringified index is not in the list, \
+             so the loader folds it to `\"name\"` on the next start and the \
+             selection silently does nothing. Expected {expected_sorts:?} from \
+             index {sort_shown}; every message the arrow keys published: \
+             {stepped:?}"
+        );
+
+        // ---- and nothing else moved -----------------------------------------
+        //
+        // The walk pressed an arrow at every stop, including the two buttons and
+        // any control that is not a selector. A page where an arrow scrolled the
+        // list would still satisfy both assertions above, so this is what says
+        // the two messages counted are the whole of what the arrows did.
+        assert_eq!(
+            stepped.len(),
+            expected_categories.len() + expected_sorts.len(),
+            "the arrow keys published {} messages, but a selector that steps \
+             publishes exactly one and nothing else on this page is steppable: \
+             {stepped:?}",
+            stepped.len()
+        );
     }
 
     /// A library of `count` named games in a temp directory of its own.

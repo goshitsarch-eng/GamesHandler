@@ -30,6 +30,7 @@ use cosmic::widget::{Column, Row, container, scrollable, text, toggler};
 use gamehandler_core::runners::RunnerManager;
 use gamehandler_core::settings::{COLOR_SCHEMES, Settings, VIEW_MODES};
 
+use super::a11y;
 use crate::Message;
 
 /// The colour-scheme selector's `(key, label)` pairs, in `SettingsPage.qml:44-48`
@@ -217,6 +218,19 @@ pub const SECTION_APPEARANCE: &str = "Appearance";
 pub const SECTION_NEW_GAMES: &str = "New games";
 pub const SECTION_BEHAVIOR: &str = "Behavior";
 pub const SECTION_SHORTCUTS: &str = "Keyboard shortcuts";
+
+/// The three selector rows' form labels, `SettingsPage.qml:41`, `:55`, `:79`.
+///
+/// Declared rather than written inline at each call site because each one is
+/// used **twice** on the row it belongs to: once as the text [`row`] draws
+/// beside the control, and once as the accessible name
+/// [`a11y::dropdown`] publishes for it. A screen reader should announce the
+/// label the user can see, and two literals at two call sites are two strings
+/// that can drift — so the constant is what makes them the same string rather
+/// than merely equal ones.
+pub const LABEL_COLOR_SCHEME: &str = "Color scheme:";
+pub const LABEL_LAYOUT: &str = "Library layout:";
+pub const LABEL_DEFAULT_RUNNER: &str = "Default runner:";
 
 /// The close-on-launch switch's label and explanation,
 /// `SettingsPage.qml:120-125`.
@@ -470,6 +484,49 @@ fn section<'a>(heading: &'a str) -> Element<'a, Message> {
     text::title4(heading).into()
 }
 
+/// The row label and the selector it names, as a pair that cannot drift.
+///
+/// **The keyboard step and the accessible name both come from here, and that is
+/// the point.** [`a11y::dropdown`] needs (a) a name for the node it publishes —
+/// which is the visible form label, the same string `row` puts beside the
+/// control — and (b) a closure that turns Up/Down into the message the selector
+/// itself would publish for the neighbouring choice. Taking both from one call
+/// is what stops the two paths from disagreeing: a keyboard step that called a
+/// different selection function than the pointer's own `on_selected` closure is a
+/// control that behaves differently depending on how it is used, and nothing
+/// about the widget tree would say so.
+///
+/// The step is `None` at either end of the list and when the stored value matches
+/// no entry (see [`color_scheme_index`]): there is no neighbouring choice to move
+/// to, and `None` leaves the arrow uncaptured rather than swallowing it.
+///
+/// The name is also the widget's *id* (`a11y::stable_id`), so the three labels
+/// this is called with must differ. They are three distinct settings, so they do.
+fn selector<'a>(
+    label: &'a str,
+    selected: Option<usize>,
+    selections: Vec<String>,
+    selection: impl Fn(usize) -> Message + Send + Sync + Clone + 'static,
+) -> Element<'a, Message> {
+    let count = selections.len();
+    let shown = selected.and_then(|index| selections.get(index).cloned());
+    // The one function twice: `Clone` on the parameter is what lets the same
+    // value be both the toolkit's `on_selected` and the keyboard step, rather
+    // than one call site passing a named function and another a closure that
+    // quietly differs.
+    let pointer = selection.clone();
+    a11y::dropdown(
+        cosmic::widget::dropdown(selections, selected, pointer),
+        label,
+        shown,
+        move |delta| {
+            let next = selected?.checked_add_signed(delta as isize)?;
+            (next < count).then(|| selection(next))
+        },
+    )
+    .into()
+}
+
 pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
     let mut body = Column::new().spacing(12).width(Length::Fill);
 
@@ -477,37 +534,49 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
     body = body
         .push(section(SECTION_APPEARANCE))
         .push(row(
-            "Color scheme:",
-            cosmic::widget::dropdown(
-                color_scheme_labels(),
+            LABEL_COLOR_SCHEME,
+            selector(
+                LABEL_COLOR_SCHEME,
                 color_scheme_index(&page.settings.color_scheme),
+                color_scheme_labels(),
                 color_scheme_selection,
-            )
-            .into(),
+            ),
         ))
         .push(row(
-            "Library layout:",
-            cosmic::widget::dropdown(
-                view_mode_labels(),
+            LABEL_LAYOUT,
+            selector(
+                LABEL_LAYOUT,
                 view_mode_index(&page.settings.view_mode),
+                view_mode_labels(),
                 view_mode_selection,
-            )
-            .into(),
+            ),
         ));
 
     // ---- New games ---------------------------------------------------------
+    //
+    // The runner selector is the one whose step cannot be `selected ± 1` off the
+    // *stored* value, because its fallback is not "no selection": an id that is
+    // not in the list falls back to index 0 (see [`default_runner_index`]), so
+    // the step has to count from the index the control is actually showing.
     let choices = page.runners.choices();
+    let runner_labels = runner_labels(&choices);
+    let runner_shown = default_runner_index(&choices, &page.settings.default_runner);
     body = body.push(section(SECTION_NEW_GAMES)).push(row(
-        "Default runner:",
-        cosmic::widget::dropdown(
-            runner_labels(&choices),
-            Some(default_runner_index(
-                &choices,
-                &page.settings.default_runner,
-            )),
-            {
+        LABEL_DEFAULT_RUNNER,
+        a11y::dropdown(
+            cosmic::widget::dropdown(runner_labels.clone(), Some(runner_shown), {
                 let choices = choices.clone();
                 move |index| default_runner_selection(&choices, index)
+            }),
+            LABEL_DEFAULT_RUNNER,
+            runner_labels.get(runner_shown).cloned(),
+            {
+                let choices = choices.clone();
+                let count = runner_labels.len();
+                move |delta| {
+                    let next = runner_shown.checked_add_signed(delta as isize)?;
+                    (next < count).then(|| default_runner_selection(&choices, next))
+                }
             },
         )
         .into(),
@@ -519,12 +588,32 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
         // is the compiler's half of that: the table and the match are checked
         // against each other by `every_toggle_in_the_table_reads_and_writes`.
         let checked = toggle_value(page.settings, key).unwrap_or(false);
-        body = body.push(
+        let text = toggle_label(label, subtitle);
+        // Bound before `.into()`: an `Accessible` and an `Element` both convert
+        // into an `Element`, so the bare `into()` that pushes the other rows is
+        // ambiguous here.
+        let control: Element<'a, Message> = a11y::toggler(
             toggler(checked)
-                .label(toggle_label(label, subtitle))
+                .label(text.clone())
                 .on_toggle(move |value| toggle_selection(key, value))
                 .width(Length::Fill),
-        );
+            // The switch's accessible name is the same composed string it
+            // paints, so what a screen reader announces is what the label
+            // beside it says. `text` is cloned here rather than composed twice:
+            // two calls to `toggle_label` are two strings that can drift.
+            text,
+            checked,
+            // The keyboard path's message is the pointer path's for the flipped
+            // state, built from the same table and the same function the
+            // `on_toggle` above uses. `Some`, and not an `Option` chosen here:
+            // every row of this table is live on every platform — the
+            // `on_toggle` three lines up is applied unconditionally — so there
+            // is no inert case for this call site to express. `view::form` is
+            // the one that has them.
+            Some(toggle_selection(key, !checked)),
+        )
+        .into();
+        body = body.push(control);
     }
 
     // ---- Behavior ----------------------------------------------------------
@@ -547,11 +636,21 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
         .push(section(SECTION_BEHAVIOR))
         .push(row(
             CLOSE_ON_LAUNCH_LABEL,
-            toggler(page.settings.close_on_launch)
-                .label(CLOSE_ON_LAUNCH_EXPLANATION.to_string())
-                .on_toggle(Message::SetCloseOnLaunch)
-                .width(Length::Fill)
-                .into(),
+            a11y::toggler(
+                toggler(page.settings.close_on_launch)
+                    .label(CLOSE_ON_LAUNCH_EXPLANATION.to_string())
+                    .on_toggle(Message::SetCloseOnLaunch)
+                    .width(Length::Fill),
+                // The name is the form label, not the explanation: the label is
+                // what the user reads this control *as*, and it is the string
+                // `row` draws beside the switch. The explanation is the switch's
+                // own text and stays where the reference puts it.
+                CLOSE_ON_LAUNCH_LABEL,
+                page.settings.close_on_launch,
+                // Live unconditionally, like every switch on this page.
+                Some(Message::SetCloseOnLaunch(!page.settings.close_on_launch)),
+            )
+            .into(),
         ))
         .push(section(SECTION_SHORTCUTS));
 
@@ -1254,6 +1353,400 @@ mod tests {
             "the page drew nothing this traversal can see, so the absences above \
              prove nothing — this is the anti-vacuity half. Drawn: {drawn:?}"
         );
+    }
+
+    /// This page, built the way the shell builds it, with its tree and layout
+    /// kept so an operation and an event can be run against it.
+    ///
+    /// `page_strings` above builds and drops its element; a `Tree` is where the
+    /// framework keeps a widget's state, so a helper that dropped it would leave
+    /// the next event looking at an unfocused widget — see
+    /// [`super::a11y::harness::tab_to`].
+    fn page<'a>(
+        settings: &'a Settings,
+        runners: &'a RunnerManager,
+    ) -> cosmic::Element<'a, Message> {
+        view(SettingsPage { settings, runners })
+    }
+
+    /// **Every control on the real page is a Tab stop and publishes a named
+    /// node** — UX-01, UX-02 and UX-03, measured where the user meets them.
+    ///
+    /// # Why this is a page test and not another wrapper test
+    ///
+    /// `view/a11y.rs` proves that the wrapper reports a focusable state and
+    /// builds a node. That is a proof about the *wrapper*, and it says nothing
+    /// about whether this page uses it: restoring any call site in [`view`] to
+    /// the bare `cosmic::widget::toggler` / `cosmic::widget::dropdown` leaves
+    /// every one of those ten green, because a wrapper nobody calls still works
+    /// perfectly. This is the test that goes red then — and it is the same
+    /// division the page already draws against `main.rs`'s bare-`toggler()` pin
+    /// in `the_toggle_labels_reach_no_text_operation_on_the_real_page`: that one
+    /// bounds the widget, this one bounds the page.
+    ///
+    /// # What is counted
+    ///
+    /// Seventeen controls: the three selectors (colour scheme, layout, default
+    /// runner), the thirteen default toggles, and close-on-launch. The thirteen
+    /// comes from [`DEFAULT_TOGGLES`]`::len()`, so a fourteenth row moves the
+    /// expectation with the table and cannot silently pass. The four that are
+    /// not in the table are written down here, and that is deliberate: this is
+    /// where a *new* control that nobody wrapped would be caught.
+    ///
+    /// Every stop must report an id, and no two may report the same one. A `None`
+    /// is a control Tab can reach and nothing else can address; a repeat is two
+    /// controls the framework cannot tell apart. Both are reachable here because
+    /// the id is derived from the control's *name* (`a11y::stable_id`), so two
+    /// rows sharing a name collapse into one node silently.
+    ///
+    /// # Why the counts are the assertion and the names are not enough
+    ///
+    /// A page that wrapped every control and named them all `""` would still
+    /// produce seventeen controls' worth of nodes, so the count is what makes
+    /// "every control" true rather than "some node exists". The names are
+    /// asserted on top of it, each expected name under its expected role exactly
+    /// once: the name is the string the row beside the control draws, so this is
+    /// what says a screen reader announces the control the way the page labels
+    /// it. `count == 1` rather than `>= 1` is what makes a node published twice
+    /// — a real hazard, since `A11yTree` is flat and an intermediate widget that
+    /// both joined and forwarded its child would list it twice — a failure
+    /// rather than a pass.
+    ///
+    /// The nodes are read through `a11y_nodes`, which is the only entrance the
+    /// runtime uses (`iced/runtime/src/user_interface.rs:606-616`), and the whole
+    /// tree comes back because `A11yTree` is flat: `root` and `children` are both
+    /// `Vec<A11yNode>` (`iced/accessibility/src/a11y_tree.rs:5-10`), so this is
+    /// the page and not its first level.
+    #[test]
+    fn every_control_on_the_real_page_is_a_tab_stop_and_a_named_node() {
+        use super::a11y::harness;
+        use iced_accessibility::accesskit::Role;
+
+        let settings = Settings::default();
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+        // **One element, read twice.** The focus reports and the nodes have to
+        // come out of the same build for the identity assertion at the end to
+        // mean anything: the toolkit's own widgets take `Id::unique()` at
+        // construction (`src/widget/button/widget.rs:63`), so two builds of this
+        // page disagree about their ids — see `a11y::harness::unreachable_controls`.
+        let mut element = page(&settings, &runners);
+
+        // The `selected` assertions further down are only half a test unless the
+        // fixture carries both states: a page whose switches were all off would
+        // pass against a builder that published a constant `false`, and one whose
+        // were all on would pass against a constant `true`. Asserted rather than
+        // assumed, so a default that moves says so here instead of quietly
+        // weakening those assertions.
+        assert!(
+            DEFAULT_TOGGLES
+                .iter()
+                .any(|(key, _, _)| toggle_value(&settings, key) == Some(true))
+                && DEFAULT_TOGGLES
+                    .iter()
+                    .any(|(key, _, _)| toggle_value(&settings, key) == Some(false)),
+            "the thirteen defaults must include at least one switch of each state"
+        );
+
+        // ---- the Tab ring ---------------------------------------------------
+        let stops = harness::focusables(&mut element);
+        let expected = DEFAULT_TOGGLES.len() + 4;
+        assert_eq!(
+            stops.len(),
+            expected,
+            "the page has {expected} controls — {} default toggles, three \
+             appearance selectors, the default runner and close-on-launch — and \
+             every one of them must be a Tab stop. A short list means a control \
+             is built from the bare toolkit widget, which reports no focusable \
+             state at all (`view/a11y.rs`'s \
+             `the_toolkit_controls_the_app_used_to_build_are_invisible` measures \
+             that directly): {stops:?}",
+            DEFAULT_TOGGLES.len()
+        );
+
+        let mut ids: Vec<cosmic::widget::Id> = Vec::new();
+        for stop in &stops {
+            let id = stop.clone().unwrap_or_else(|| {
+                panic!(
+                    "a control is focusable but reports no id, so Tab can reach \
+                     it and nothing can address it: {stops:?}"
+                )
+            });
+            assert!(
+                !ids.contains(&id),
+                "two controls report the same id {id:?}. The id is derived from \
+                 the control's name (`a11y::stable_id`), so this is two rows \
+                 sharing a name: a screen reader would see one control where the \
+                 user sees two. Ids: {ids:?}"
+            );
+            ids.push(id);
+        }
+
+        // ---- the nodes ------------------------------------------------------
+        let nodes = harness::published(&mut element);
+        // A control is identified by its name **and** its role, not by its name
+        // alone. A row's form label is itself a node: `row()` draws it as a real
+        // `text::body` child, and iced's `text` widget publishes a `Paragraph`
+        // node carrying that string — visible in the collected `Nodes:` list on
+        // any failure below as a `(Paragraph, Some("Color scheme:"))` beside the
+        // `(ComboBox, Some("Color scheme:"))` that is the control. Counting by
+        // name alone would therefore find two nodes for every control with a
+        // form label and one for every control without one, which is a property
+        // of the row rather than of the control.
+        let named = |label: &str, role: Role| {
+            nodes
+                .iter()
+                .filter(|node| node.label.as_deref() == Some(label) && node.role == role)
+                .count()
+        };
+
+        // The four controls [`DEFAULT_TOGGLES`] does not name, with the role
+        // each must announce as.
+        for (label, role, what) in [
+            (LABEL_COLOR_SCHEME, Role::ComboBox, "colour-scheme selector"),
+            (LABEL_LAYOUT, Role::ComboBox, "layout selector"),
+            (
+                LABEL_DEFAULT_RUNNER,
+                Role::ComboBox,
+                "default-runner selector",
+            ),
+            (
+                CLOSE_ON_LAUNCH_LABEL,
+                Role::Switch,
+                "close-on-launch switch",
+            ),
+        ] {
+            assert_eq!(
+                named(label, role),
+                1,
+                "the {what} must publish exactly one node named {label:?} \
+                 announcing as {role:?}. Zero means the control is not wrapped, \
+                 or is wrapped but announcing as the wrong thing — a switch that \
+                 announces as a button is not a switch to a screen reader; two \
+                 means a node is published twice. Nodes: {:?}",
+                nodes
+                    .iter()
+                    .map(|node| (&node.role, node.label.as_deref()))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        // The thirteen table rows. These are the ones where a name-only count
+        // would be right by accident — a `Toggler`'s own text reaches no `Text`
+        // widget, which is what `the_toggle_labels_reach_no_text_operation_on_
+        // the_real_page` pins — so naming the role here is what makes the
+        // assertion about the control rather than about the row.
+        for (key, label, subtitle) in DEFAULT_TOGGLES {
+            let name = toggle_label(label, subtitle);
+            assert_eq!(
+                named(&name, Role::Switch),
+                1,
+                "{key}: the switch must publish exactly one node named {name:?} \
+                 — the same composed string it paints (`toggle_label`), so what \
+                 is announced is what the row says. Zero means this row is not \
+                 wrapped, two means a node is published twice"
+            );
+        }
+
+        // ---- the state each switch publishes ---------------------------------
+        //
+        // A name and a role say a switch is *announced*; neither says what it
+        // announces is true. A call site that passed a literal `true` for a
+        // setting the user has switched off keeps every assertion above green
+        // while telling a screen-reader user the opposite of what the page
+        // draws, and the failure is silent in both directions. `selected` is the
+        // field that carries the state (`view/a11y.rs`'s `a11y_nodes`), and this
+        // is the only place it is compared against the setting the page was
+        // handed.
+        //
+        // The expected value comes from `toggle_value` — the same reader the
+        // call site uses to build both the toggler and the node — so what this
+        // asserts is that the two agree, not that a constant has been copied
+        // here correctly. The fixture's mix of states is asserted above.
+        let switch = |name: &str| {
+            nodes
+                .iter()
+                .find(|node| node.role == Role::Switch && node.label.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("the {name:?} switch is asserted above"))
+        };
+
+        for (key, label, subtitle) in DEFAULT_TOGGLES {
+            assert_eq!(
+                switch(&toggle_label(label, subtitle)).selected,
+                toggle_value(&settings, key),
+                "{key}: the switch must publish the state the row draws, read off \
+                 the same `Settings` the toggler was built from. A constant here \
+                 — `checked(true)` or `checked(false)` — is what this catches"
+            );
+        }
+        assert_eq!(
+            switch(CLOSE_ON_LAUNCH_LABEL).selected,
+            Some(settings.close_on_launch),
+            "close-on-launch, likewise. This is also the one switch whose node is \
+             *not* named after the string its toggler paints \
+             (`CLOSE_ON_LAUNCH_LABEL` against `CLOSE_ON_LAUNCH_EXPLANATION`), so \
+             its state is the only field tying the node to the setting it shows"
+        );
+
+        // ---- the value each combo publishes --------------------------------
+        //
+        // A combo's `selected` is `None` on every node — the field carries a
+        // *switch*'s on/off, and a dropdown is not a switch — so the assertion
+        // above cannot reach these three controls at all, and nothing else does
+        // either: [`selector`] is where "which option is selected" becomes the
+        // node's `value`, and a call site that passed `None`, a constant, or the
+        // wrong list's entry would leave every assertion above green. A screen
+        // reader would then announce three combo boxes with no setting in them,
+        // which is worse than not announcing them: the user is told there is a
+        // control, reaches it, and is told nothing about what it holds.
+        //
+        // The expected string is read off the *same* readers the call sites use
+        // (`color_scheme_index`/`view_mode_index`/`default_runner_index` plus the
+        // list each was handed), so what this asserts is that the two agree
+        // rather than that a constant has been copied here correctly. The
+        // premise that each index actually resolves to a string is asserted too:
+        // an index past the end of its list would make the expected value `None`
+        // and the assertion would pass over the very defect it is for.
+        let choices = runners.choices();
+        let runner_options = runner_labels(&choices);
+        let runner_shown = default_runner_index(&choices, &settings.default_runner);
+        let combo_expected: Vec<(&str, Option<String>)> = vec![
+            (
+                LABEL_COLOR_SCHEME,
+                color_scheme_index(&settings.color_scheme)
+                    .and_then(|index| color_scheme_labels().get(index).cloned()),
+            ),
+            (
+                LABEL_LAYOUT,
+                view_mode_index(&settings.view_mode)
+                    .and_then(|index| view_mode_labels().get(index).cloned()),
+            ),
+            (
+                LABEL_DEFAULT_RUNNER,
+                runner_options.get(runner_shown).cloned(),
+            ),
+        ];
+        for (label, expected) in &combo_expected {
+            assert!(
+                expected.is_some(),
+                "the {label:?} selector resolves to no option on this fixture, so \
+                 the value assertion below would compare `None` with `None` and \
+                 pass having checked nothing. Fixture: colour scheme {:?}, view \
+                 mode {:?}, default runner {:?}",
+                settings.color_scheme,
+                settings.view_mode,
+                settings.default_runner
+            );
+        }
+        let combo = |label: &str| {
+            nodes
+                .iter()
+                .find(|node| node.role == Role::ComboBox && node.label.as_deref() == Some(label))
+                .unwrap_or_else(|| panic!("the {label:?} combo is asserted above"))
+        };
+        for (label, expected) in &combo_expected {
+            assert_eq!(
+                combo(label).value.as_deref(),
+                expected.as_deref(),
+                "the {label:?} selector publishes the value {:?}, but the option it \
+                 is showing is {expected:?}. This is the assertion a `selected` \
+                 argument dropped from the `a11y::dropdown` call site — or \
+                 replaced by a constant, or by another list's entry — fails: a \
+                 node whose name and role are right and whose value is wrong \
+                 tells a screen-reader user the setting is something it is not. \
+                 Every combo node this page publishes: {:?}",
+                combo(label).value,
+                nodes
+                    .iter()
+                    .filter(|node| node.role == Role::ComboBox)
+                    .map(|node| (node.label.as_deref(), node.value.as_deref()))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        // ---- every node id is an id the Tab ring reports ---------------------
+        //
+        // What the wrapper first shipped with was neither a missing node nor a
+        // missing tab stop: it was the two halves of one control naming
+        // *different* things — the field's node under one id and its focus
+        // report under another — which leaves assistive technology able to see
+        // the control and unable to reach it. Nothing above can catch that,
+        // because the count, the names, the roles and the states are all still
+        // right. `view/form.rs`'s page test is what found it there; this is the
+        // same assertion on this page, and the one control here it can bite is
+        // the close-on-launch switch, whose name is not the string it paints.
+        let unreachable = harness::unreachable_controls(&mut element);
+        assert!(
+            unreachable.is_empty(),
+            "these controls are published as nodes whose ids no focus report \
+             carries, so a screen reader can read them and a keyboard cannot \
+             reach them: {unreachable:?}. Reported ids: {ids:?}"
+        );
+    }
+
+    /// **Tab reaches the page's first control and Up steps it** — UX-01's
+    /// keyboard half, on the real page.
+    ///
+    /// `every_control_on_the_real_page_is_a_tab_stop_and_a_named_node` proves
+    /// the page is *in* the Tab ring. This proves the ring is wired to something
+    /// the user can act from: the framework's own `focus_next` operation
+    /// (libcosmic runs it for Tab — `src/app/cosmic.rs:842-849`) is driven
+    /// against the built page, then a real key event is dispatched through
+    /// `Widget::update` and the message that comes out is compared.
+    ///
+    /// # Why `ArrowUp` and not `ArrowDown`
+    ///
+    /// [`Settings::default`] is `"dark"`, the *last* of the three schemes, so
+    /// Down has no neighbouring choice and correctly publishes nothing (the step
+    /// is `None` at either end — see [`selector`]). Up moves to `"light"`, index
+    /// 1, and the message is checked for the **key** rather than the index, which
+    /// is the property `a_selection_carries_the_key_and_not_the_index` pins for
+    /// the pointer path. This asserts the keyboard path produces the identical
+    /// message, which is the whole reason both come from one call to [`selector`].
+    #[test]
+    fn tab_then_arrow_steps_the_colour_scheme_selector_on_the_real_page() {
+        use super::a11y::harness;
+        use cosmic::iced::keyboard::{Key, key::Named};
+
+        let settings = Settings::default();
+        assert_eq!(
+            color_scheme_index(&settings.color_scheme),
+            Some(2),
+            "this test's `ArrowUp` step is only well-defined from the last entry; \
+             if the default scheme moved, move the key with it"
+        );
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+
+        let mut element = page(&settings, &runners);
+        let (mut tree, node) = harness::built(&mut element);
+        harness::tab_to(&mut element, &mut tree, &node);
+
+        let mut messages = Vec::new();
+        let out = harness::dispatch(
+            &mut element,
+            &mut tree,
+            &node,
+            &harness::pressed(Key::Named(Named::ArrowUp)),
+            &mut messages,
+        );
+
+        assert!(
+            out.captured,
+            "the focused selector must capture the arrow it acted on. An \
+             uncaptured arrow is the one that scrolls the page instead"
+        );
+        match out.messages.as_slice() {
+            [Message::SetColorScheme(key)] => assert_eq!(
+                key, "light",
+                "the first Tab stop must be the colour-scheme selector — it is \
+                 the page's first control in tree order — and Up from \"dark\" \
+                 must select the neighbouring scheme by key"
+            ),
+            other => panic!(
+                "expected exactly one `SetColorScheme(\"light\")`, got {other:?}. \
+                 An empty list means Tab did not reach a wrapped control, or the \
+                 wrapper did not treat itself as focused"
+            ),
+        }
     }
 
     /// A selection reports the **key**, not the index it sat at.
