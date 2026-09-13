@@ -2084,7 +2084,7 @@ mod tests {
     /// [`SYSTEM_WINE`]: gamehandler_core::models::SYSTEM_WINE
     #[test]
     fn the_runner_selection_carries_the_id_and_not_the_label() {
-        // System Wine's real id and label, from `choices()` (`runners/mod.rs:1119-1124`).
+        // System Wine's real id and label, from `choices()` (`runners/mod.rs:1322-1327`).
         let choices = vec![
             (
                 gamehandler_core::models::SYSTEM_WINE.to_string(),
@@ -2707,7 +2707,7 @@ mod tests {
     /// third is the one the *repair's own reasoning* names and nothing enforced:
     /// the value has to be a runner **id**.
     ///
-    /// `RunnerManager::choices` (`core/src/runners/mod.rs:1119`) hands the
+    /// `RunnerManager::choices` (`core/src/runners/mod.rs:1322`) hands the
     /// selector `(id, label)` pairs, and for System Wine those differ —
     /// `("wine-system", "System Wine")`. So a callback that carries the *label*
     /// reaches the right message, with a value no runner answers to, on that one
@@ -2769,7 +2769,7 @@ mod tests {
                  the two mappings that know what the model holds. A callback that \
                  builds its own `Message` has the index, or the label, and there \
                  is nothing left that can tell: the model holds `(id, label)` \
-                 pairs (`core/src/runners/mod.rs:1119`), so a label reaches the \
+                 pairs (`core/src/runners/mod.rs:1322`), so a label reaches the \
                  right control with a value no runner answers to, and `get` \
                  (`:1087`) answers it with System Wine *silently*",
                 callback.trim()

@@ -27,7 +27,7 @@ level up — and the fourth move is the proof of it: `88578db` marked `SEC-04`
 tables, so this file inherited a count that was three rows stale. That is now a
 `plan-counts` stage in `scripts/verify.sh` rather than an intention.
 
-**This is not a final report.** 75 of 129 defects are still open, most of them
+**This is not a final report.** 65 of 129 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -36,14 +36,14 @@ and the section *What remains, honestly* says which is which.
 | Category | Role | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 46 | 25 | 2 | 21 |
-| `ARCH-xx` | Architecture, code quality | 25 | 10 | 0 | 15 |
-| `UX-xx` | libcosmic / COSMIC UX | 30 | 6 | 0 | 24 |
-| `PERF-xx` | Performance, resource | 8 | 4 | 0 | 4 |
-| `SEC-xx` | Security, robustness | 10 | 4 | 0 | 6 |
+| `ARCH-xx` | Architecture, code quality | 26 | 13 | 0 | 13 |
+| `UX-xx` | libcosmic / COSMIC UX | 29 | 10 | 1 | 19 |
+| `PERF-xx` | Performance, resource | 8 | 6 | 0 | 2 |
+| `SEC-xx` | Security, robustness | 10 | 5 | 0 | 5 |
 | `PKG-xx` | Packaging, platform, QA | 10 | 5 | 0 | 5 |
-| **Total** | | **129** | **54** | **2** | **75** |
+| **Total** | | **129** | **64** | **3** | **65** |
 
-The `Found` column is defects; the two refuted rows are counted in `Not a defect`
+The `Found` column is defects; the three refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
 them refuted, and this table says 46 defects. Those two rows used to be counted in both, which is what made the two totals
 disagree with each other and made a refuted row read as repaired work.
@@ -54,9 +54,9 @@ By severity:
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 23 | 23 | 0 | 0 |
-| P2 | 52 | 24 | 0 | 28 |
-| P3 | 49 | 2 | 0 | 47 |
-| **Total** | **129** | **54** | **0** | **75** |
+| P2 | 51 | 33 | 0 | 18 |
+| P3 | 50 | 3 | 0 | 47 |
+| **Total** | **129** | **64** | **0** | **65** |
 
 `Not a defect` is not a euphemism for "wontfix": both rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`,
@@ -118,13 +118,13 @@ is **met for P0 and P1** and **not met for P2**, where the reason is that the
 work is unfinished rather than impossible. Stating that plainly is the point of
 this section.
 
-Where the 75 rows are:
+Where the 65 rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All five fixed and each verified by restoring the pre-fix body and watching the new test fail. |
 | P1 | 0 | **Closed.** `UX-01`–`UX-03` were the four upstream-widget accessibility gaps plus `ARCH-02`; all five are fixed, and the three widget rows each record the residue that is upstream's rather than this port's. |
-| P2 | 28 | Actionable. The largest concentration is `UX` (14) and `ARCH` (8); the rest are 2 `PERF`, 2 `BUG`, 1 `SEC` and 1 `PKG`. |
+| P2 | 18 | Actionable. The largest concentration is `UX` (9) and `ARCH` (6); the rest are 2 `BUG` and 1 `PKG`. |
 | P3 | 47 | Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. The 19 open `BUG` rows are all here, along with 10 `UX`, 7 `ARCH`, 5 `SEC`, 4 `PKG` and 2 `PERF`. |
 
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
@@ -186,7 +186,7 @@ flagging — and both now have those controls pinned in tests.
 | `SECURITY.md` | 10 findings on the sandbox, process launching and the dependency graph |
 | `ARCHITECTURE.md` | 25 findings on structure, contracts and code quality |
 | `PACKAGING.md` | 10 findings on the Flatpak, the desktop entry and the gate |
-| `PLAN.md` | All 131 rows: owner, dependencies, verification, status — 129 defects and the 2 refuted ones |
+| `PLAN.md` | All 132 rows: owner, dependencies, verification, status — 129 defects and the 3 refuted ones |
 | `DECISIONS.md` | The seven decisions this audit made (`D-57`–`D-63`) |
 
 Each document's scope section states whether it is still read-only. That

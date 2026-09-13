@@ -272,7 +272,7 @@ pub fn view_mode_labels() -> Vec<String> {
 /// The default-runner selector's labels, from the manager's own `(id, label)`
 /// pairs.
 ///
-/// `RunnerManager::choices()` (`runners/mod.rs:1119`) is the reference's
+/// `RunnerManager::choices()` (`runners/mod.rs:1322`) is the reference's
 /// `runnerChoices`, and it already puts System Wine first — so the selector's
 /// labels come from core rather than being rebuilt here.
 pub fn runner_labels(choices: &[(String, String)]) -> Vec<String> {
