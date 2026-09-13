@@ -893,6 +893,13 @@ pub enum Message {
     /// `done()` (`bridge.py:547-549`).
     FormCoverFetchFinished {
         token: FormToken,
+        /// The name the lookup was started with, carried so a **failed** reply
+        /// can name the game (`UX-15`). The variant has no game id — the form
+        /// may be a template that has none yet — so the name is the only thing
+        /// available to prefix the error with, and it is taken from the request
+        /// rather than re-read from the form: the form can be edited between
+        /// the request and the reply.
+        name: String,
         result: Result<CoverHit, String>,
     },
 
@@ -2810,8 +2817,25 @@ impl Shell {
             // `mark_played`: the reference lets `done`'s exception escape to
             // the Qt loop, which is not a behaviour to reproduce.
             Message::CoverFetchFinished { game_id, result } => {
+                // `UX-15`: the bare string is `str(exc)` — the reference's own
+                // default `fail` (`bridge.py:161`) — and the port keeps the raw
+                // message, because that is what `NOTIFY_VOICES` pins. What it
+                // adds is the context the reference has in its *own* voice for
+                // every sibling failure (`bridge.py:444`'s save, `:474`'s add):
+                // which game, and that a cover lookup is what failed. The
+                // alternative — prefixing inside `_async`'s port, which is
+                // every `Err` arm — would rewrite 39 messages the oracle pins.
                 let Ok(hit) = result else {
-                    return self.state.toast_task(result.unwrap_err());
+                    return self.state.toast_task(format!(
+                        "Could not fetch a cover for “{named}”: {error}",
+                        named = self
+                            .state
+                            .library
+                            .get(&game_id)
+                            .map(|game| game.name.clone())
+                            .unwrap_or_else(|| game_id.clone()),
+                        error = result.unwrap_err()
+                    ));
                 };
                 let Some(mut game) = self.state.library.get(&game_id).cloned() else {
                     return cosmic::task::none();
@@ -2861,6 +2885,7 @@ impl Shell {
                     return self.state.toast_task("Enter a game name first".to_string());
                 }
                 let token = self.state.next_form_cover_token();
+                let looked_up = name.clone();
                 let exe = (!exe.trim().is_empty()).then(|| PathBuf::from(exe.trim()));
                 let looking = self
                     .state
@@ -2868,7 +2893,11 @@ impl Shell {
                 let fetch = cosmic::app::Task::perform(
                     async move {
                         let result = cover_lookup(&name, &game_id, exe.as_deref());
-                        Message::FormCoverFetchFinished { token, result }
+                        Message::FormCoverFetchFinished {
+                            token,
+                            name: looked_up,
+                            result,
+                        }
                     },
                     cosmic::Action::App,
                 );
@@ -2882,12 +2911,23 @@ impl Shell {
             // rather than per form. The notice fires whether or not a form is
             // still open, as the reference's `notify` does; the fields are
             // written only while one is.
-            Message::FormCoverFetchFinished { token, result } => {
+            Message::FormCoverFetchFinished {
+                token,
+                name,
+                result,
+            } => {
                 if token != self.state.form_cover_token {
                     return cosmic::task::none();
                 }
+                // The same prefix as the library reply above (`UX-15`), with the
+                // name carried on the message rather than re-read: there may be
+                // no form open at all, and the one that was open can have been
+                // edited since the request.
                 let Ok(hit) = result else {
-                    return self.state.toast_task(result.unwrap_err());
+                    return self.state.toast_task(format!(
+                        "Could not fetch a cover for “{name}”: {error}",
+                        error = result.unwrap_err()
+                    ));
                 };
                 // Same rewrite as `CoverFetchFinished` above, and the same
                 // reason for the `forget`: the file is written by the lookup at a
@@ -5964,6 +6004,7 @@ mod tests {
         // carried one.)
         Message::FormCoverFetchFinished { .. } => ("FormCoverFetchFinished", Message::FormCoverFetchFinished {
                             token: 0,
+                            name: "Hades".to_string(),
                             result: Err("lookup failed".to_string()),
                         }),
         Message::FetchReleases { .. } => ("FetchReleases", Message::FetchReleases {
@@ -8459,6 +8500,7 @@ mod tests {
             &mut shell,
             Message::FormCoverFetchFinished {
                 token: 1,
+                name: "Hades".to_string(),
                 result: Ok(hit),
             },
         );
@@ -8493,6 +8535,7 @@ mod tests {
             &mut shell,
             Message::FormCoverFetchFinished {
                 token: 0,
+                name: "Hades".to_string(),
                 result: Ok(hit),
             },
         );
@@ -8532,6 +8575,7 @@ mod tests {
             &mut shell,
             Message::FormCoverFetchFinished {
                 token: 0,
+                name: "Hades".to_string(),
                 result: Ok(hit),
             },
         );
@@ -8566,6 +8610,7 @@ mod tests {
             &mut shell,
             Message::FormCoverFetchFinished {
                 token: 0,
+                name: "Hades".to_string(),
                 result: Ok(blank),
             },
         );
@@ -8605,6 +8650,7 @@ mod tests {
             &mut shell,
             Message::FormCoverFetchFinished {
                 token: 0,
+                name: "Hades".to_string(),
                 result: Ok(hit),
             },
         );
@@ -8640,6 +8686,7 @@ mod tests {
             &mut shell,
             Message::FormCoverFetchFinished {
                 token: 0,
+                name: "Hades".to_string(),
                 result: Ok(hit),
             },
         );
@@ -8651,24 +8698,142 @@ mod tests {
         );
     }
 
-    /// A failed form lookup reports the raw message, like the library reply.
+    /// A failed form lookup names the game **and** keeps the raw message.
+    ///
+    /// Both halves are asserted, and the second is the one that keeps the port
+    /// honest about `UX-15`: the row is that the *context* was missing, not that
+    /// the message was unfit to show. `NOTIFY_VOICES` pins the reference's
+    /// default `fail` (`bridge.py:161`) as the raw `str(exc)`, so a fix that
+    /// replaced the message with a friendlier one would put the port and the
+    /// reference's own voice at odds while making this test pass.
     #[test]
-    fn a_failed_form_lookup_reports_the_raw_message() {
+    fn a_failed_form_lookup_names_the_game_and_keeps_the_message() {
         let mut shell = shell_with_work_to_do();
 
         let _ = observe(
             &mut shell,
             Message::FormCoverFetchFinished {
                 token: 0,
+                name: "Hades".to_string(),
                 result: Err("connection refused".to_string()),
             },
         );
 
+        let toasts = format!("{:?}", shell.state.toasts);
         assert!(
-            format!("{:?}", shell.state.toasts).contains("connection refused"),
-            "the failure must surface verbatim; toasts: {:?}",
-            shell.state.toasts
+            toasts.contains("connection refused"),
+            "the failure must still surface verbatim; toasts: {toasts}"
         );
+        assert!(
+            toasts.contains("Hades"),
+            "and it must say which game it was about — a bare `connection \
+             refused` is the whole of UX-15; toasts: {toasts}"
+        );
+        assert!(
+            toasts.contains("cover"),
+            "the user cannot tell a cover lookup failed as opposed to a save or \
+             a launch; toasts: {toasts}"
+        );
+    }
+
+    /// The name on a failed reply is the one the **request** carried.
+    ///
+    /// `UX-15`'s library half names the game by looking the id up again, which
+    /// is right there — the id is the key. The form has no id to look up, so
+    /// the name rides on the message. That makes the two halves diverge in a
+    /// way a reader would not guess from either alone, which is why it is
+    /// pinned: a reply for a form that has since been renamed must report the
+    /// name the lookup was for, not the one now in the box.
+    #[test]
+    fn a_failed_form_reply_names_the_game_the_request_was_for() {
+        let mut shell = shell_with_work_to_do();
+        let mut form = GameForm::new_template(&shell.state.settings, "coverless".to_string());
+        form.set_field(crate::state::FormField::Name, "Renamed Since".to_string());
+        let _ = observe(&mut shell, Message::OpenNewGameForm);
+        shell.state.game_form = Some(form);
+
+        let live_token = shell.state.form_cover_token;
+        let _ = observe(
+            &mut shell,
+            Message::FormCoverFetchFinished {
+                token: live_token,
+                name: "The Name Asked For".to_string(),
+                result: Err("connection refused".to_string()),
+            },
+        );
+
+        let toasts = format!("{:?}", shell.state.toasts);
+        assert!(
+            toasts.contains("The Name Asked For"),
+            "the reply must name the request's game; toasts: {toasts}"
+        );
+        assert!(
+            !toasts.contains("Renamed Since"),
+            "and must not re-read a form that has been edited since the lookup \
+             started — that would report a failure about a game nobody asked \
+             about; toasts: {toasts}"
+        );
+    }
+
+    /// `UX-15`'s library half: a failed cover fetch names the game.
+    ///
+    /// The id is the message's own, so this half does not need the name carried
+    /// — and that is the point of the assertion: with the game in the library,
+    /// the failure names it, and the assertion would still hold if the arm read
+    /// the name from anywhere else. The sibling test below is what stops that.
+    #[test]
+    fn a_failed_library_cover_fetch_names_the_game() {
+        let mut shell = shell_with_work_to_do();
+        let mut game = gamehandler_core::models::Game::new_named("Hades");
+        game.id = "cover-1".to_string();
+        shell.state.library.add(game).unwrap();
+
+        let _ = observe(
+            &mut shell,
+            Message::CoverFetchFinished {
+                game_id: "cover-1".to_string(),
+                result: Err("connection refused".to_string()),
+            },
+        );
+
+        let toasts = format!("{:?}", shell.state.toasts);
+        assert!(toasts.contains("connection refused"), "toasts: {toasts}");
+        assert!(
+            toasts.contains("Hades"),
+            "the failure must name the game; toasts: {toasts}"
+        );
+        assert!(
+            toasts.contains("cover"),
+            "and say that a cover lookup is what failed; toasts: {toasts}"
+        );
+    }
+
+    /// A failed fetch for an id the library does not hold still says something.
+    ///
+    /// The lookup re-checks the game before writing (`bridge.py:547-549`), so an
+    /// id can be missing here — deleted between the request and the reply. That
+    /// path must not panic on a `None` unwrap and must not produce an empty
+    /// prefix that reads as a formatting bug.
+    #[test]
+    fn a_failed_cover_fetch_for_an_unknown_game_still_reads() {
+        let mut shell = shell_with_work_to_do();
+
+        let _ = observe(
+            &mut shell,
+            Message::CoverFetchFinished {
+                game_id: "deleted-while-fetching".to_string(),
+                result: Err("connection refused".to_string()),
+            },
+        );
+
+        let toasts = format!("{:?}", shell.state.toasts);
+        assert!(
+            toasts.contains("deleted-while-fetching"),
+            "an id with no game must fall back to the id rather than an empty \
+             name: a toast reading `Could not fetch a cover for “”:` is a \
+             formatting bug the user sees; toasts: {toasts}"
+        );
+        assert!(toasts.contains("connection refused"), "toasts: {toasts}");
     }
 
     /// Saving without a cover starts a lookup alongside the notice (P-31):
@@ -11180,8 +11345,24 @@ mod tests {
     /// which every `Err` reply arm embodies by toasting the raw message, and
     /// the prefix tool's bare `str(exc)` (499), which its reply arm passes
     /// through untouched.
+    ///
+    /// **The (161) row's needle is a spelling, and it went stale once.** It read
+    /// `toast_task(result.unwrap_err())`, which was how the two cover arms
+    /// happened to be written; `UX-15` gave those two arms a context prefix, so
+    /// that exact text stopped existing and this test went red — correctly, and
+    /// for the wrong reason: what the row asserts is that *some* port path
+    /// surfaces a raw error verbatim, which is still true and is what the pass
+    /// samples at `state.rs:2500`. Anchoring a rule to a spelling that one
+    /// reviewer's style happened to produce is the fragility, so the needle is
+    /// the more common production form. Both readings have a cost: the old
+    /// needle was a stronger claim about those two arms specifically, the new
+    /// one is a weaker claim about the mechanism and does not fail when a single
+    /// arm stops doing it.
     const NOTIFY_VOICES: [(&str, &str); 39] = [
-        ("notify.emit(message)", "toast_task(result.unwrap_err())"),
+        (
+            "notify.emit(message)",
+            "Err(message) => self.state.toast_task(message)",
+        ),
         ("A game needs a name", "A game needs a name"),
         ("Added “{game.name}”", "Added “{name}”"),
         ("Updated “{game.name}”", "Updated “{name}”"),

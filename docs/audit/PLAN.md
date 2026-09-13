@@ -64,7 +64,7 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 34 | 32 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 17 | 16 `FIXED`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 16 | 14 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
+| `COSMIC-UX.md` | 30 | 17 | 15 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 6 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 10 | 8 | 6 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
@@ -131,9 +131,9 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 51 | 40 | 0 | 11 |
+| P2 | 51 | 41 | 0 | 10 |
 | P3 | 49 | 12 | 0 | 37 |
-| **Total** | **129** | **81** | **0** | **48** |
+| **Total** | **129** | **82** | **0** | **47** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -142,8 +142,8 @@ advocate reviews every row before it is called done and owns no row.
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 6 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
-| `UX-xx` | `COSMIC-UX.md` | 29 | 14 | 0 | 15 |
-| **Total** | | **129** | **81** | **0** | **48** |
+| `UX-xx` | `COSMIC-UX.md` | 29 | 15 | 0 | 14 |
+| **Total** | | **129** | **82** | **0** | **47** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -282,7 +282,7 @@ across families, not within them.
 | `UX-12` | Three icon-only buttons have no accessible name and no tooltip | S2 | — | Give all three `button::icon` sites an accessible name and a tooltip; verify the drawn strings and the a11y nodes. **Status: FIXED `1992b42`.** All three icon buttons carry a name — `BROWSE_EXE_HINT` and `BROWSE_COVER_HINT` for the two browse buttons, `remove_hint(name)` for the per-row uninstall — set through an `Accessible::wrap` helper rather than `builder.name` at each site, and the two hints double as tooltips. Verified on the built element: the two names must **differ**, and the case where a control publishes a node labelled `Some("")` is covered, since a name that is *set* and one that is *plumbed* look identical in source. | FIXED |
 | `UX-13` | Re-picking a custom cover silently destroys the previous one | S2 | — | Refuse or confirm an overwrite, or keep both files; verify by picking a cover twice and checking the first still exists. **Status: FIXED `502aa61`.** The additive shape was taken over the dialog this row suggested: a second pick keeps the cover it replaces as `<id>.preserved-<n>.<suffix>`, because **the reference destroys the first cover too** (`covers.py:295-304`, `GameFormPage.qml:349-361`), so the destructive act was unintended on both sides. Order is load-bearing — copy, then preserve, then rename — or re-picking the current cover truncates it to empty. `MAX_PRESERVED_COVERS` refuses rather than destroys at the far end. Regression tests compare the whole directory, not the returned path, which is identical before and after. | FIXED |
 | `UX-14` | Toasts are the app's universal error channel, and they are invisible to assistive technology and expire after 5 s | S2 | — | Give the toaster an accessibility node and make the duration reasonable for a screen reader; verify the node list from a built toaster. | OPEN |
-| `UX-15` | A cover-fetch failure surfaces as a bare, unprefixed error string with no game name and no indication that a cover lookup is what failed — e.g | S2 | — | Prefix the message with the game and the operation; verify the drawn toast string for a forced failure. | OPEN |
+| `UX-15` | A cover-fetch failure surfaces as a bare, unprefixed error string with no game name and no indication that a cover lookup is what failed — e.g | S2 | — | Prefix the message with the game and the operation; verify the drawn toast string for a forced failure. | FIXED |
 | `UX-16` | Per-game context menus have no keyboard route | S2 | — | Add a keyboard route to the context menu (Menu key / Shift+F10) or duplicate its actions into the focused tile; verify by driving the key. | FIXED |
 | `UX-17` | Plate initials are drawn white-on-accent at roughly 3:1, below the 4.5:1 required at the size they are drawn | S2 | — | Raise the initials' contrast to 4.5:1 at the drawn size; verify the computed ratio against the darkest gradient stop. | FIXED |
 | `UX-18` | No text_input in the app is ever given .label() or .helper_text(), and the visible labels are unassociated sibling text widgets in a Row, so they identify a field to a sighted user and to nothing else | S2 | — | Give each `text_input` a label or helper text; verify the field's accessible name. **Half done, half refuted, and the refuted half is the one the row proposed.** The verification half holds and is what closes the finding: `crates/app/src/view/a11y.rs::input`/`input_with_id` publish a `Role::TextInput` node whose `label` is the field's caption and whose `value` is its contents, read off the real page by `form.rs`'s `every_wrapped_control_on_the_real_form_is_a_tab_stop_and_a_named_node`. The `.label(...)` half is **refused on measurement**: the toolkit paints its label *inside* the widget in a layout child above the box (`.../a401af8/src/widget/text_input/input.rs:2606-2614`, `:2716-2732`), and a caption is already drawn at all four sites — `field_row`'s `text::body(row.label)` beside the control (`view/form.rs:602-609`, the reference's own beside-the-field arrangement at `gamehandler/qml/GameFormPage.qml:83`, `:111`, `:117`), `LABEL_CATEGORY` for the category field, and the search boxes' placeholders — so `.label(...)` would draw each string twice and the category field's three times. `TextInput::label` is also not what carries accessibility here: libcosmic's `src/` holds five `accesskit` occurrences, all in `button/widget.rs` and `wayland/tooltip/widget.rs`, so no node exists for a labelled input in this stack either way. **The defect that was actually here was in the test asserting the row**: `a_text_input_publishes_its_label_and_value` took `"Name"` for both placeholder and caption, so a wrapper forwarding the placeholder passed it — the audit's own recurring shape, inside a test written to close this row. Repaired to `text_input("Half-Life", "Half-Life")` against the caption `"Game name"`; mutation-proved by replacing the wrapper's caption with `String::new()`, which fails `left: Some("")`, `right: Some("Game name")`. | FIXED |

@@ -414,11 +414,117 @@ def pairing_problems(plan: str) -> list[str]:
     return problems
 
 
+
+def regenerate(path: Path, replacements: list[tuple[str, str]]) -> int:
+    """Rewrite the generated lines of `path` in place. Returns lines changed.
+
+    Every `(old, new)` pair is a line-for-line substitution, and the function
+    refuses unless the result has **exactly the same number of lines** and every
+    line outside the replaced set is byte-identical. That is not defensive
+    padding: the first version of this file's editor rewrote `BUGS.md` from its
+    cross-reference table to the end and silently dropped 117 lines of findings,
+    because the write was `open(p,'w').write(rest)` where `rest` had been built
+    from a slice rather than the whole document. `--check` would have caught the
+    result on the next run; nothing would have caught it before the commit.
+
+    This exists so that regenerating four summary tables after a status flip is
+    one command rather than four hand edits — and the hand edits are what went
+    wrong three times this audit, most recently by inventing a count.
+    """
+    original = path.read_text(encoding="utf-8")
+    lines = original.split("\n")
+    changed = 0
+    for old, new in replacements:
+        hits = [index for index, line in enumerate(lines) if line == old]
+        if len(hits) != 1:
+            raise SystemExit(
+                f"{path.name}: expected exactly one line equal to {old[:70]!r}, "
+                f"found {len(hits)}. A generated line that is missing was edited "
+                f"by hand or never written; fixing it is not this tool's job")
+        lines[hits[0]] = new
+        changed += 1
+    updated = "\n".join(lines)
+    if len(updated.split("\n")) != len(lines):
+        raise SystemExit(f"{path.name}: the rewrite changed the line count")
+    if len(updated.splitlines(True)) != len(original.splitlines(True)):
+        raise SystemExit(f"{path.name}: the rewrite changed the line count")
+    path.write_text(updated, encoding="utf-8")
+    return changed
+
+
+def generated_replacements(plan: str):
+    """`[(old, new)]` for every generated line of `PLAN.md` that is out of date.
+
+    Three of `PLAN.md`'s summaries are generated: the severity table, the family
+    table and the tails table. Each is located by its own header or document
+    name rather than by line number, so prose moving above it cannot shift the
+    substitution onto the wrong line.
+    """
+    rows, _ = parse(plan)
+    severity_table, family_table, _, _ = tables(rows)
+    tails = tail_lines()
+    lines = plan.split("\n")
+    pairs: list[tuple[str, str]] = []
+
+    # `tables()` returns each table as its list of lines, which is what `main`
+    # joins to print — not as one string.
+    for fresh in (severity_table, family_table):
+        if fresh[0] not in plan:
+            raise SystemExit(
+                f"table header not found verbatim in PLAN.md: {fresh[0]!r}. The "
+                f"table was deleted or its header reworded; regenerate by hand")
+        start = lines.index(fresh[0])
+        current = lines[start:start + len(fresh)]
+        if len(current) != len(fresh):
+            raise SystemExit(f"table at {fresh[0]!r} is truncated")
+        for old, new in zip(current, fresh):
+            if old != new:
+                pairs.append((old, new))
+
+    for fresh in tails:
+        document = fresh.split("`")[1]
+        matches = [line for line in lines
+                   if line.startswith(f"| `{document}` |") and line.count("|") == 5]
+        if len(matches) != 1:
+            raise SystemExit(
+                f"expected one tails row for {document} in PLAN.md, found "
+                f"{len(matches)}")
+        if matches[0] != fresh:
+            pairs.append((matches[0], fresh))
+    return pairs
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true",
                         help="exit non-zero if the file disagrees with its rows")
+    parser.add_argument("--write", action="store_true",
+                        help="rewrite the generated tables from the rows "
+                             "instead of only reporting them stale")
     args = parser.parse_args()
+
+    if args.write:
+        plan = PLAN.read_text(encoding="utf-8")
+        for line in generated_replacements(plan):
+            print(f"PLAN.md: {line[0][:60]!r} -> {line[1][:60]!r}")
+        count = regenerate(PLAN, generated_replacements(plan))
+        print(f"PLAN.md: {count} line(s) rewritten")
+        plan = PLAN.read_text(encoding="utf-8")
+        rows, headers = parse(plan)
+        report_tables_for_write = report_tables(rows)
+        if REPORT.exists():
+            report = REPORT.read_text(encoding="utf-8")
+            pairs = []
+            for fresh in report_tables_for_write:
+                start = report.split("\n").index(fresh[0])
+                current = report.split("\n")[start:start + len(fresh)]
+                pairs += [(old, new) for old, new in zip(current, fresh)
+                          if old != new]
+            if pairs:
+                for line in pairs:
+                    print(f"REPORT.md: {line[0][:60]!r} -> {line[1][:60]!r}")
+                print(f"REPORT.md: {regenerate(REPORT, pairs)} line(s) rewritten")
+        return 0
 
     plan = PLAN.read_text(encoding="utf-8")
     rows, headers = parse(plan)
