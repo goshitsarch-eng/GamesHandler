@@ -66,20 +66,20 @@ those rows contain `Status:`:
 | `ARCHITECTURE.md` | 25 | 7 | 7 `FIXED` |
 | `COSMIC-UX.md` | 30 | 1 | 1 `FIXED` |
 | `SECURITY.md` | 10 | 1 | 1 `FIXED` (inside `SEC-01`'s suggested-fix cell) |
-| `PACKAGING.md` | 9 | 1 | 1 `FIXED` |
-| `PERFORMANCE.md` | 8 | 0 | — |
+| `PACKAGING.md` | 9 | 4 | 4 `FIXED` |
+| `PERFORMANCE.md` | 8 | 3 | 3 `FIXED` |
 
 `BUGS.md`'s 21 tail-less rows are the 20 open `P3` rows and `BUG-11`, whose
-withdrawal is recorded in its ID cell rather than as a tail. `PERFORMANCE.md`
-carries no tail because it has no fixed row to carry one — all eight are open.
-The previous revision of this paragraph described a state that no longer
-existed when it was read: it said `BUGS.md` was "the only specialist document
-whose rows carry `Status:` tails" and that the other four carried "**none** …
-`grep -c 'Status: [A-Z]*'` returns 0 for all four". That was true when the
-paragraph was written and false by the time the documentation pass it
-announced had run — which is this project's named defect class arriving in the
-file that names it, one paragraph above the sentence explaining why the numbers
-are generated rather than written.
+withdrawal is recorded in its ID cell rather than as a tail. The seven rows in
+`ARCHITECTURE.md`, `COSMIC-UX.md`, `SECURITY.md`, `PACKAGING.md` and
+`PERFORMANCE.md` that gained tails since the previous revision did so in the
+commits that fixed them (`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`), so
+the pair rule was kept where it applies. The paragraph above it, and the first
+revision of this table, are kept in the record because both were instances of the
+defect this file names: the table said `PACKAGING.md` carried 1 `FIXED` tail while
+the document carried 4, and `PERFORMANCE.md` carried none while it carried 3 —
+computed from the document as it stood several commits earlier and then read as
+current. Re-counted here from the files on disk.
 
 ## Owners
 
@@ -101,26 +101,38 @@ advocate reviews every row before it is called done and owns no row.
 | Severity | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
-| P1 | 23 | 15 | 0 | 8 |
-| P2 | 53 | 16 | 2 | 35 |
+| P1 | 23 | 18 | 0 | 5 |
+| P2 | 51 | 17 | 0 | 34 |
 | P3 | 49 | 0 | 0 | 49 |
-| **Total** | **129** | **35** | **2** | **92** |
+| **Total** | **127** | **39** | **0** | **88** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 7 | 0 | 18 |
-| `BUG-xx` | `BUGS.md` | 47 | 23 | 2 | 22 |
-| `PERF-xx` | `PERFORMANCE.md` | 8 | 0 | 0 | 8 |
-| `PKG-xx` | `PACKAGING.md` | 9 | 3 | 0 | 6 |
+| `BUG-xx` | `BUGS.md` | 45 | 23 | 0 | 22 |
+| `PERF-xx` | `PERFORMANCE.md` | 8 | 3 | 0 | 5 |
+| `PKG-xx` | `PACKAGING.md` | 9 | 4 | 0 | 5 |
 | `SEC-xx` | `SECURITY.md` | 10 | 1 | 0 | 9 |
 | `UX-xx` | `COSMIC-UX.md` | 30 | 1 | 0 | 29 |
-| **Total** | | **129** | **35** | **2** | **92** |
+| **Total** | | **127** | **39** | **0** | **88** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
-beside them. `Remaining` counts `PARTIAL` as remaining, because a half-fixed
-finding is not closed; `Fixed` therefore excludes them and the two `PARTIAL`
-rows appear in `Remaining` until they are finished.
+beside them. The two refuted rows (`BUG-11`, `BUG-15`) sit in their own `### Not a
+defect` section and in no severity bucket, which is why the family table counts 45
+`BUG-xx` rows against the 47 the document holds. `Remaining` counts `PARTIAL` as
+remaining, because a half-fixed finding is not closed; `Fixed` therefore excludes
+them and the two `PARTIAL` rows appear in `Remaining` until they are finished.
+
+**The 129 in the previous revision of these tables was wrong**, and the way it was
+wrong is worth one sentence because the fix is a shape change rather than a
+recount. `BUG-11` and `BUG-15` were counted both as findings *and* as withdrawn,
+so the two totals disagreed with each other by exactly the two rows — and `BUG-15`
+additionally sat inside `P2` while its own tail said the defect did not exist. Two
+refuted rows now sit outside the severity tree entirely and the arithmetic in both
+tables is the same arithmetic. The row count for the whole audit is **129 findings
+raised, of which 127 are defects**; `BUGS.md`'s own `## Counts` carries the same
+distinction.
 
 ## Findings
 
@@ -154,9 +166,9 @@ across families, not within them.
 | `BUG-08` | The Plugins page never re-detects the host | S1 | — | `arriving_at_the_plugins_page_re_detects_the_host`: pre-fix the host is unchanged, post-fix it is re-detected. | FIXED `17b463b` |
 | `BUG-09` | The Runners page has no Refresh control, so after a failed fetch the error is on screen with nothing to press | S2 | — | `the_runners_page_offers_refresh_when_a_fetch_has_failed`, over the drawn strings of the error state. | FIXED `8e6181c` |
 | `BUG-10` | stage_test has no floor on the number of tests run: an emptied or fully #[ignore]d workspace is green | S6 | — | `require_tests_ran` against a zero-test probe: pre-fix green, post-fix FAIL. Floors 900 (workspace) / 500 (core alone). | FIXED `ec10910` |
-| `PERF-01` | Every game's cover is classified on every frame — two filesystem syscalls per game with a cover, per frame — regardless of whether the tile is visible | S3 | — | Classify once at load or change and cache on the game; verify the per-frame syscall count (`strace -c -e trace=statx,newfstatat`) on a 500-game fixture. | OPEN |
-| `PERF-02` | Cover images are decoded at full source resolution and retained, and the cache is bounded only by "what was drawn in the last frame" — which, with no virtualization (PERF-03), is every game in the library | S3 | `PERF-03` | Bound the cache by bytes and decode at the drawn size; verify RSS on a 500-cover fixture (baseline 753 MB / 333 covers, measured). | OPEN |
-| `PERF-03` | Nothing is virtualized: every game in the filtered library gets a built Element every frame | S3 | — | Virtualize the grid and row lists; verify the built-element count per frame against a 500-game fixture. | OPEN |
+| `PERF-01` | Every game's cover is classified on every frame — two filesystem syscalls per game with a cover, per frame — regardless of whether the tile is visible | S3 | — | Classify once at load or change and cache on the game; verify the per-frame syscall count (`strace -c -e trace=statx,newfstatat`) on a 500-game fixture. | FIXED `be31a7b` |
+| `PERF-02` | Cover images are decoded at full source resolution and retained, and the cache is bounded only by "what was drawn in the last frame" — which, with no virtualization (PERF-03), is every game in the library | S3 | `PERF-03` | Bound the cache by bytes and decode at the drawn size; verify RSS on a 500-cover fixture (baseline 753 MB / 333 covers, measured). | FIXED `be31a7b` |
+| `PERF-03` | Nothing is virtualized: every game in the filtered library gets a built Element every frame | S3 | — | Virtualize the grid and row lists; verify the built-element count per frame against a 500-game fixture. | FIXED `be31a7b` |
 | `PKG-01` | The only check that executes the built artefact can execute a stale, previously installed build instead | S6 | — | Resolve which artefact `scripts/smoke-test.sh` executes after the build, or refuse to fall back when a tree build exists; verify by planting a stale installed build and observing the runner name it. | FIXED `8abac0b` |
 | `SEC-01` | --device=all has no justification in launcher code | S4 | — | Narrow to `--device=dri`, then run the controller hotplug test `docs/migration/packaging.md` Q-2 asks for and record that test as the grant's justification. | FIXED `e2c6476` |
 | `UX-01` | Dropdowns are in no keyboard focus ring and contribute no accessibility node | S2 | — | A test asserting the `Operation` from a built dropdown contains a focusable node. Upstream `Dropdown` has its `operate` hook commented out, so this needs a wrapper or a carried patch. | OPEN |
@@ -165,7 +177,7 @@ across families, not within them.
 | `UX-04` | The application configures no minimum window size, so the window can be dragged to 1×1 and every page becomes unusable | S2 | — | Set the window minimum and assert it is at least what the narrowest page layout needs (`UX-08`, `UX-09`, `UX-21`). | OPEN |
 | `UX-05` | "Add Game" has no always-visible control | S2 | duplicate of `BUG-07` | As `BUG-07`; the toolbar button is the always-visible control. | FIXED with `BUG-07` |
 
-### P2 — 53
+### P2 — 51
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
@@ -184,7 +196,6 @@ across families, not within them.
 | `BUG-12` | The Settings page advertises four keyboard shortcuts; three of them do not fire while a text field has focus, which is the state a user is most often in when reaching for one | S1 | — | Guard must assert the caveat is *rendered*, not that a word occurs in `main.rs`. The behavioural half needs a raw-event subscription and is not attempted. | PARTIAL with `BUG-21` |
 | `BUG-13` | A cover-art write failure is reported to the user as "no Steam cover found" | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
 | `BUG-14` | read_metadata collapses four distinct failures into an empty map, and the consequences are silent | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
-| `BUG-15` | An unknown runner family id silently becomes the default family instead of erroring, so fetch_available fetches and returns *a different family's releases* | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | WITHDRAWN — **not a defect.** the recorded behaviour does not occur. `resolve_family` applies `unwrap_or` to the `Option` *inside* a call returning `Result`, so `None` takes the default and `Some("nonsense")` propagates Python's text byte-identically. The function had no test at all, which is how the row was written without the measurement to settle it; it now pins default, named and unknown as three separate assertions |
 | `BUG-16` | Both desktop-metainfo and the cargo-sources coverage half pass without inspecting what they claim | S1 | — | Strengthen the guard so it fails on the input it claims to reject; demonstrate the pre-fix pass first. | FIXED |
 | `BUG-17` | The placeholder guard cannot see a renamed placeholder, and the "no-results" test for the installers page asserts nothing about what is drawn | S1 | — | Strengthen the guard so it fails on the input it claims to reject; demonstrate the pre-fix pass first. | FIXED |
 | `BUG-18` | The notify-voice guard's haystack contains its own needle: read_crates walks back in the same #[cfg(test)] mod tests that holds the NOTIFY_VOICES literal table, so port.contains(voice) is satisfied by the table itself and cannot fail | S1 | — | Strengthen the guard so it fails on the input it claims to reject; demonstrate the pre-fix pass first. | FIXED |
@@ -199,9 +210,9 @@ across families, not within them.
 | `PERF-04` | The project's claim that startup performs only two filesystem reads is false, and the comment asserting it sits three lines above the calls that contradict it | S3 | — | Correct the comment and the README claim, and enumerate the reads that actually happen; verify by counting the syscalls at startup (`strace -c -e trace=openat,statx`). | OPEN |
 | `PERF-05` | search() re-sorts and re-filters the entire library, and categories() rebuilds and re-sorts the category list, on every frame — and both allocate Strings inside sort comparators | S3 | — | Cache the filtered/sorted result against the inputs it depends on, and drop the comparator allocations; verify the per-frame allocation count on a 500-game fixture. | OPEN |
 | `PERF-06` | RunnerManager::label is uncached, walks the filesystem, and is called once per shown game per frame — and it reads and JSON-parses each runner's metadata only to discard the parsed value | S3 | — | Cache the label against the runner directory's mtime, or read the id without parsing metadata; verify the per-frame file opens on a 5-runner fixture. | OPEN |
-| `PKG-02` | Nothing in the repository runs the verification chain automatically | S6 | — | Add CI (or a hook, or a `just`/`make` entry) that runs `scripts/verify.sh`; verify by breaking a test and watching the wiring fail. | OPEN |
+| `PKG-02` | Nothing in the repository runs the verification chain automatically | S6 | — | Add CI (or a hook, or a `just`/`make` entry) that runs `scripts/verify.sh`; verify by breaking a test and watching the wiring fail. | FIXED `372b86e` |
 | `PKG-03` | Both the Flatpak build and the cargo-sources freshness check depend on things a clean checkout does not contain, and one of them needs the network by default | S6 | — | Make the Flatpak build and the cargo-sources check either self-provisioning or an explicit, reported skip with the reason; verify on a clean checkout. | OPEN |
-| `PKG-04` | flatpak-contents verifies placement and bytes but never runs the binary, and its one binary check is a text search inside the ELF rather than an execution | S6 | — | Execute the installed binary in `flatpak-contents` (a `--version` is enough); verify by planting a binary that cannot run and watching the stage fail. | FIXED `ead99e7` |
+| `PKG-04` | flatpak-contents verifies placement and bytes but never runs the binary, and its one binary check is a text search inside the ELF rather than an execution | S6 | — | Execute the installed binary in `flatpak-contents` (a `--version` is enough); verify by planting a binary that cannot run and watching the stage fail. | FIXED `ead99e7`, re-fixed `f278b7d` |
 | `PKG-05` | The application ships a single 128×128 SVG and no PNG icon at any size | S6 | — | Ship PNGs at the sizes the specification names; verify with the AppStream validator and `flatpak-contents`. | FIXED `9e10566` |
 | `SEC-02` | --filesystem=home grants read-write to the entire home directory, which is broader than the directories the code touches | S4 | — | Narrow to the XDG roots the code actually touches plus the seven fixed search roots; verify by running the app in the narrowed sandbox and exercising every path-touching flow. | OPEN |
 | `SEC-03` | The Authenticode authenticity decision is weaker than it reads | S4 | — | Compare the publisher against the verifier's structured field rather than a case-folded substring of merged output; verify with a fixture whose output contains a matching substring in an unrelated field. | OPEN |
@@ -221,9 +232,6 @@ across families, not within them.
 | `UX-18` | No text_input in the app is ever given .label() or .helper_text(), and the visible labels are unassociated sibling text widgets in a Row, so they identify a field to a sighted user and to nothing else | S2 | — | Give each `text_input` a label or helper text; verify the field's accessible name. | OPEN |
 | `UX-19` | Card surfaces are hand-built three times as a local card_style closure, and two of the three hardcode the radius their own comment says is kept in sync | S2 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `UX-20` | libcosmic's purpose-built settings widgets are used nowhere in the app | S2 | — | Adopt `settings::section`/`item`/`item_row`, or record why the hand-built rows are kept; verify by reading the settings view. | OPEN |
-
-| ~~`BUG-11`~~ | Case-variant categories are lost by `dedup` after the sort, where Python's `set` keeps them | S1 | — | Refuted by measurement: both implementations return 39 entries on a 40-game fixture, with the same ten fold-groups. The regression the finding was reaching for is real and *is* guarded — changing the sort's primary term to `a.cmp(b)` reproduces the symptom exactly (28 groups instead of 10) and `case_variant_categories_fold_into_the_same_groups_as_python` fails on it | WITHDRAWN |
-
 ### P3 — 49
 
 | ID | Finding | Owner | Deps | Verification | Status |
@@ -277,6 +285,19 @@ across families, not within them.
 | `UX-29` | A dead Option<()> field and a stale comment about theme inertness | S2 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `UX-30` | A page body's scrollable does not put the page's own primary action within reach, and the page reports this as a layout failure twice | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `SEC-10` | Dependency hygiene: five live RustSec advisories against the locked graph, none reachable from the shipped binary, and no unused or duplicated direct dependency | S4 | — | Controls for the advisory matcher (it flags `time 0.1.0` and `openssl 0.10.0`; it clears `time 0.3.44` and `openssl 0.10.99`), plus `strings` over the shipped binary for the renderer reachability claim (44,912 `tiny_skia` matches, 0 `wgpu`) and a `grep` over `xkbcommon`'s source for the six affected `memmap2` functions | OPEN |
+
+### Not a defect — 2
+
+Refuted by measurement rather than fixed. Both rows are kept because a reader who
+has heard the claim should see it was tested. They carry a severity cell of `—` in
+`BUGS.md` for the same reason they sit outside the severity counts here: a refuted
+row that stays inside a severity bucket gets scored as a repaired one, which is
+exactly what had happened to `BUG-15`.
+
+| ID | Finding | Owner | Deps | Verification | Status |
+|---|---|---|---|---|---|
+| `BUG-15` | An unknown runner family id silently becomes the default family instead of erroring, so fetch_available fetches and returns *a different family's releases* | S1 | — | Three assertions pinning default, named and unknown; reintroducing the conflation (a `match` falling back to the default for any unresolvable id) fails the test | CLOSED — **not a defect.** the recorded behaviour does not occur. `resolve_family` applies `unwrap_or` to the `Option` *inside* a call returning `Result`, so `None` takes the default and `Some("nonsense")` propagates Python's text byte-identically. The function had no test at all, which is how the row was written without the measurement to settle it; it now pins default, named and unknown as three separate assertions |
+| ~~`BUG-11`~~ | Case-variant categories are lost by `dedup` after the sort, where Python's `set` keeps them | S1 | — | Refuted by measurement: both implementations return 39 entries on a 40-game fixture, with the same ten fold-groups. The regression the finding was reaching for is real and *is* guarded — changing the sort's primary term to `a.cmp(b)` reproduces the symptom exactly (28 groups instead of 10) and `case_variant_categories_fold_into_the_same_groups_as_python` fails on it | WITHDRAWN |
 
 ## Cross-referenced pairs
 
