@@ -27,7 +27,7 @@ level up — and the fourth move is the proof of it: `88578db` marked `SEC-04`
 tables, so this file inherited a count that was three rows stale. That is now a
 `plan-counts` stage in `scripts/verify.sh` rather than an intention.
 
-**This is not a final report.** 65 of 129 defects are still open, most of them
+**This is not a final report.** 67 of 130 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -118,13 +118,13 @@ is **met for P0 and P1** and **not met for P2**, where the reason is that the
 work is unfinished rather than impossible. Stating that plainly is the point of
 this section.
 
-Where the 65 rows are:
+Where the 67 rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All five fixed and each verified by restoring the pre-fix body and watching the new test fail. |
-| P1 | 0 | **Closed.** `UX-01`–`UX-03` were the four upstream-widget accessibility gaps plus `ARCH-02`; all five are fixed, and the three widget rows each record the residue that is upstream's rather than this port's. |
-| P2 | 18 | Actionable. The largest concentration is `UX` (9) and `ARCH` (6); the rest are 2 `BUG` and 1 `PKG`. |
+| P1 | 1 | `SEC-11`, from the red team's second pass: the approved-publisher gate reads signer-chosen text as a certificate subject, so an unapproved publisher passes. The rest of this band is closed — `UX-01`–`UX-03` were the four upstream-widget accessibility gaps plus `ARCH-02`, all fixed, and the three widget rows each record the residue that is upstream's rather than this port's. |
+| P2 | 19 | Actionable. The largest concentration is `UX` (10) and `ARCH` (6); the rest are 2 `BUG` and 1 `PKG`. |
 | P3 | 47 | Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. The 19 open `BUG` rows are all here, along with 10 `UX`, 7 `ARCH`, 5 `SEC`, 4 `PKG` and 2 `PERF`. |
 
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes

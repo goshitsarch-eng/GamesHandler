@@ -69,7 +69,7 @@ those rows contain `Status:`:
 | `PACKAGING.md` | 10 | 6 | 5 `FIXED`, 1 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
-`BUGS.md`'s 21 tail-less rows are its twenty open `P3` rows plus the withdrawn
+`BUGS.md`'s 20 tail-less rows are its nineteen open `P3` rows plus the withdrawn
 `BUG-11`, which carries no severity because it is not a defect. Each of the
 other five documents gained tails in the commits that fixed the rows they
 describe (`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`, `41d4b34`,
@@ -78,9 +78,12 @@ where it applies.
 
 **Both numbers in the `BUGS.md` row were wrong until this revision, and the
 sentence above them was wrong in the same direction.** The row read `46` and the
-sentence said "20 tail-less rows are its open `P3` rows"; the document holds
-**47** id-bearing rows, 26 with tails and 21 without. The cause was the row
-pattern this script matches with: it accepted `| **BUG-nn**` and not
+sentence said "20 tail-less rows are its open `P3` rows"; the document held
+**47** id-bearing rows at that revision, 26 with tails and 21 without. Rows have
+gained tails since, so the table above and not this sentence is where the current
+numbers are read — a present-tense count of a moving target drifts by
+construction. The cause was the row pattern this script matches with: it
+accepted `| **BUG-nn**` and not
 `| ~~**BUG-11**~~ **WITHDRAWN**`, so the one struck-through row was invisible to
 the count — and because `46 − 26 = 20` also happens to be the number of open
 `P3` rows, the wrong count and the wrong sentence agreed with each other. This
@@ -171,9 +174,9 @@ recount. `BUG-11` and `BUG-15` were counted both as findings *and* as withdrawn,
 so the two totals disagreed with each other by exactly the two rows — and `BUG-15`
 additionally sat inside `P2` while its own tail said the defect did not exist. Two
 refuted rows now sit outside the severity tree entirely and the arithmetic in both
-tables is the same arithmetic. The row count for the whole audit is **129 findings
-raised, of which 127 are defects**; `BUGS.md`'s own `## Counts` carries the same
-distinction.
+tables is the same arithmetic. The row count for the whole audit is **133 rows
+raised, of which 130 are defects and 3 are refuted**; `BUGS.md`'s own `## Counts`
+carries the same distinction.
 
 ## Findings
 
