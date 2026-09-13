@@ -547,7 +547,7 @@ pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
     // 420 px window, this page's leftmost drawn string sat at x=0 where the
     // Library's sat at x=18, and `max_right` reached 420, the window edge.
     container(cosmic::widget::scrollable(body))
-        .padding(super::GUTTER)
+        .padding(super::gutter())
         .into()
 }
 
@@ -1136,7 +1136,15 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             // One modal layer: opening this dialog closes a pending game
             // removal, as `ConfirmDeleteGame` closes this one.
             state.confirm_delete = None;
-            Some(Task::none())
+            // **UX-24**: the prompt opens with the keyboard on its Cancel and
+            // not on its destructive Remove. The pending state written above is
+            // what puts the button in the tree for this operation to land on —
+            // the two are one task for `Shell::focus_library_search`'s reason,
+            // and the id is the view layer's, so the focus cannot name a
+            // control nothing draws.
+            Some(cosmic::iced::widget::operation::focus(
+                crate::view::REMOVE_RUNNER_CANCEL_ID,
+            ))
         }
         // The dialog's Remove (`RunnersPage.qml:267-271`): the pending removal
         // is cleared first so the dialog closes whether or not the removal
@@ -3047,6 +3055,38 @@ mod tests {
         );
     }
 
+    /// **The ask opens the prompt focused (UX-24).**
+    ///
+    /// `asking_sets_the_pending_removal_the_dialog_draws` asserts the field the
+    /// dialog draws from, which an arm that returned `Task::none()` would set
+    /// just as well — the dialog would open with the keyboard still on the
+    /// Delete button that raised it, because the page stays in the tree under
+    /// the layer and its focusables stay registered. This is the half that
+    /// looks at the task.
+    ///
+    /// What a `Task` can be asked is its unit count and nothing else
+    /// (`iced/runtime/src/task.rs:282`), so this says *that* a focus was asked
+    /// for and not which control; `crate::view::REMOVE_RUNNER_CANCEL_ID`'s
+    /// header has the choice and `main`'s
+    /// `the_runner_removal_prompt_opens_with_the_keyboard_on_cancel` reads the
+    /// target off the laid-out tree.
+    #[test]
+    fn the_ask_opens_the_prompt_focused() {
+        let mut state = state();
+        let task = update(
+            &mut state,
+            &Message::ConfirmRemoveRunner {
+                runner_id: "GE-Proton9-5".to_string(),
+                name: "GE-Proton9-5".to_string(),
+            },
+        );
+
+        assert!(
+            task.expect("the ask is this page's to handle").units() > 0,
+            "opening the prompt must ask the runtime to move the focus into it"
+        );
+    }
+
     /// The confirmation clears the pending removal and runs the removal —
     /// through the refused id, so this needs no fixture.
     ///
@@ -3250,25 +3290,38 @@ mod tests {
         }
     }
 
-    /// **The page pads its body by the gutter the other five views use** —
-    /// UX-10, measured as the edges anything on the page is drawn inside.
+    /// **The page pads its body by the toolkit's spacing token** — UX-10 for the
+    /// padding existing at all, UX-23 for *which* number it is.
     ///
     /// Five of the seven top-level views ended in
     /// `container(scrollable(body)).padding(18)`; this one and
     /// `view::installers` ended in a bare `scrollable(body)`, so their content
     /// ran flush against the window edge and, with the nav bar condensed (every
     /// window under `Core::is_condensed_update`'s 648 px), flush against the
-    /// hamburger.
+    /// hamburger. UX-10 gave those two the same gutter as the other five; UX-23
+    /// then had to answer what that gutter *is*, and the answer is `space_s` —
+    /// the nearest of `cosmic-theme`'s tokens to the literal and the only one of
+    /// them that moves with the user's density.
     ///
-    /// **Measured, at a 420 px window:** before the fix the leftmost published
+    /// **Measured, at a 420 px window:** before UX-10 the leftmost published
     /// node sat at **x = 0.0** and the rightmost at **x = 420.0** — the window's
-    /// own edges — while the Library's sat at 18.0 and 390.6; after, this page's
-    /// are 18.0 and 402.0. The mutation proof is that revert: dropping the
+    /// own edges — while the Library's sat at 18.0 and 390.6; UX-10 made this
+    /// page's 18.0 and 402.0; UX-23 makes them **16.0 and 404.0** and ties the
+    /// two to the theme. The UX-10 mutation proof is that revert: dropping the
     /// `container` fails with `leftmost node at x = 0, expected 18`.
     ///
-    /// The measure is the *nodes*, not a padding value read out of the builder:
-    /// the pages that already had the gutter are the control, and this is the
-    /// same instrument that showed the difference between them.
+    /// [`view::installers`](super::installers) carries the same test, and the
+    /// two are deliberately not one shared helper: they build the two different
+    /// pages, and a helper over "a page" would have to be handed the page — at
+    /// which point the page under test is the argument rather than the subject.
+    ///
+    /// # Why the expected value is read from the toolkit and not from the page
+    ///
+    /// `cosmic::theme::spacing().space_s` is read here **directly**, not through
+    /// [`super::gutter`]. Reading it through the function under test would make
+    /// this assertion true by construction: a `gutter()` that returned the old
+    /// literal `18` would pad the page by 18 *and* hand this test 18 to expect,
+    /// so the two would agree and the UX-23 fix would be unasserted.
     #[test]
     fn the_page_pads_its_body_by_the_same_gutter_as_the_other_views() {
         use super::a11y::harness;
@@ -3297,14 +3350,19 @@ mod tests {
             .iter()
             .filter_map(|node| node.bounds.map(|rect| rect.x1))
             .fold(f64::NEG_INFINITY, f64::max);
-        // The same constant `view::installers` pads by, so the two pages that
-        // were missing the gutter cannot drift to a third value.
-        let gutter = f64::from(crate::view::GUTTER);
+        // From the toolkit, not from `super::gutter` — see the test's header.
+        let gutter = f64::from(cosmic::theme::spacing().space_s);
+        assert!(
+            gutter != 18.0,
+            "the fixture is at the default density, where the token is 16 — if \
+             this ever reads 18 the assertion below stops distinguishing the \
+             token from the literal it replaced"
+        );
 
         assert!(
             (left - gutter).abs() < 0.5,
-            "the page's content must start at the gutter, not at the window \
-             edge: leftmost node at x = {left}, expected {gutter}"
+            "the page's content must start at the theme's gutter, not at the \
+             window edge: leftmost node at x = {left}, expected {gutter}"
         );
         assert!(
             (right - (420.0 - gutter)).abs() < 0.5,

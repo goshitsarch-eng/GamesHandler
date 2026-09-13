@@ -389,7 +389,7 @@ pub fn view(_page: CreditsPage) -> Element<'static, Message> {
         .push(text::caption(footer_line()))
         .push(button::link(GITHUB_LABEL.to_string()).on_press(repository_press()));
 
-    container(scrollable(body)).padding(18).into()
+    container(scrollable(body)).padding(super::gutter()).into()
 }
 
 #[cfg(test)]

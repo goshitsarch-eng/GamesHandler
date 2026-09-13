@@ -777,7 +777,7 @@ pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
                 content_height: viewport.content_bounds().height,
             }),
     )
-    .padding(18)
+    .padding(super::gutter())
     .into()
 }
 

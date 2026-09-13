@@ -77,22 +77,101 @@
 //! [`plugins::install_command`]: gamehandler_core::plugins::install_command
 //! [`plugins::privileged_command`]: gamehandler_core::plugins::privileged_command
 
-/// The gutter every top-level view pads its body by — UX-10.
+/// The gutter every top-level view pads its body by — UX-10, and the theme's
+/// own token since UX-23.
 ///
-/// Five of the seven views ended in `container(scrollable(body)).padding(18)`
-/// and two — [`installers`] and [`runners`] — ended in a bare
+/// All seven views end in `container(scrollable(body)).padding(gutter())`. Two
+/// of them — [`installers`] and [`runners`] — used to end in a bare
 /// `scrollable(body)`, so their text ran flush against the window edge and,
 /// with the nav bar condensed (every window under
-/// `Core::is_condensed_update`'s 648 px), flush against the hamburger.
+/// `Core::is_condensed_update`'s 648 px), flush against the hamburger; UX-10
+/// fixed that by giving those two the same gutter the other five had. UX-23 is
+/// the second half: the five spelled it as the literal `18`, so the app's
+/// outermost rhythm was a number the toolkit knew nothing about.
 ///
-/// The value is the five existing sites' own, which is why it is `18` and not a
-/// number this port chose: `view::installers`'s
-/// `the_page_pads_its_body_by_the_same_gutter_as_the_other_views` and
-/// `view::runners`'s test of the same name both assert their whole page is drawn
-/// inside it, so the five that had it are the control the two that did not are
-/// measured against. It lives here rather than in either page because it has two
-/// users and is a property of the layer, not of a screen.
-pub const GUTTER: u16 = 18;
+/// # Why this is a function and no longer a `const`
+///
+/// **`18` is not a COSMIC spacing value at any density, and that is the whole
+/// finding.** `cosmic-theme`'s token set is `space_xxxs 4`, `space_xxs 8`,
+/// `space_xs 12`, `space_s 16`, `space_m 24`, `space_l 32`, `space_xl 48`
+/// (`src/model/spacing.rs:32-38`), and the two other densities scale it —
+/// `Compact` gives `8, 4, 8, 8, 16, 24, 32` and `Spacious` `8, 12, 16, 24, 32,
+/// 48, 64` (`:61-81`). There is no density at which `18` is a token, so a
+/// hardcoded gutter cannot follow the user's density setting at all: a
+/// `Compact` user gets a page whose margin is 18 while the `settings::item_row`
+/// inside it spaces by 8, and a `Spacious` one gets 18 around content spaced by
+/// 24 — the page margin reads as the tighter of the two, which is backwards.
+///
+/// **`space_s` is the token adopted, and it is the nearest by measurement.**
+/// Against the literal it replaces, `|18 − 16| = 2` for `space_s` against
+/// `|18 − 12| = 6` for `space_xs` and `|18 − 24| = 6` for `space_m`, and
+/// `space_s` is what UX-23's own recommendation names. **What that costs, stated
+/// rather than hidden: the gutter moves from 18 to 16 at the default density,
+/// which is 2 px per side — a 4 px wider content band at every window width.**
+/// That is a visual change and it is measured below, not asserted to look
+/// better: there is no display in this environment, so "correct" here means
+/// *off-token at every density before, nearest token and density-responsive
+/// after*, and not "checked by eye". The `Compact`/`Spacious` responsiveness
+/// this buys is untestable from here for [`crate::theme::apply`]'s reason —
+/// `cosmic::theme::spacing()` reads a global that libcosmic exposes no writer
+/// for (`src/theme/mod.rs:47` is `pub(crate)`), so a test cannot install a
+/// density and watch the layout follow. It can only read the active token,
+/// which is what the two page tests do.
+///
+/// # Why `metrics::GRID_UNIT` is still 18 and this is not
+///
+/// The two numbers agreeing was a coincidence, and the change separates them
+/// deliberately. [`crate::view::metrics::GRID_UNIT`] is an *estimate of a
+/// font-relative length* — Kirigami's `gridUnit`, which the QML's card sizes are
+/// expressions over (`gridUnit * 3.4` and so on) — and it is tied to the 2:3
+/// aspect the store art is authored for. It is geometry, not rhythm, and COSMIC
+/// has no font-relative unit to translate it to; that module's own doc says so.
+/// This is rhythm, and the toolkit has tokens for it.
+pub fn gutter() -> u16 {
+    cosmic::theme::spacing().space_s
+}
+
+/// The `Id` the game-removal prompt's **Cancel** button carries, and the control
+/// the arm that opens it moves the keyboard to — UX-24.
+///
+/// # Why the port has to name this control at all
+///
+/// The reference's prompt distinguishes its two actions by *kind*: Cancel is a
+/// `standardButton` and the destructive Remove is a `customFooterAction`
+/// (`gamehandler/qml/LibraryPage.qml:349` and `:350-359`, identically at
+/// `RunnersPage.qml:260` and `:261-270`). libcosmic's `dialog()` keeps that
+/// distinction — `secondary_action` and `primary_action` — but gives neither
+/// one focus. Measured on the pinned revision: `src/widget/dialog.rs` mentions
+/// `focus` nowhere, and the two buttons it is handed are built with the default
+/// `Id::unique()` (`a401af8 src/widget/button/widget.rs:63`, `:88`). So nothing
+/// in the toolkit decides which of the two the keyboard lands on.
+///
+/// In this port that leaves the keyboard where it was: the page stays in the
+/// tree under the layer, so the Delete control that raised the prompt is *still
+/// a registered focusable* and keeps the focus it had. The user's next Tab then
+/// walks the rest of the page before reaching the two buttons they are being
+/// asked about, and the destructive one is indistinguishable from the safe one
+/// at the moment of decision. `Message::OpenGameMenu` answers exactly this for
+/// the actions layer (**UX-16**, `crates/app/src/main.rs:2196-2207`); the two
+/// destructive prompts are the same problem with a worse failure mode, so the
+/// control named here is the **secondary** action and never the destructive
+/// one.
+///
+/// # Why there are two of these and not one
+///
+/// A single shared id would read better — only one prompt is normally open —
+/// but it cannot be shown not to collide: `view_with_overlays`'s own ordering
+/// backstop names the state in which `confirm_delete` and
+/// `confirm_remove_runner` are both pending as reachable, and in that tree one
+/// shared id would name two widgets. One constant per prompt costs a line and
+/// cannot be made to collide.
+pub const REMOVE_GAME_CANCEL_ID: &str = "gamehandler.dialog.remove-game.cancel";
+
+/// [`REMOVE_GAME_CANCEL_ID`]'s counterpart on the runner-removal prompt.
+///
+/// The same argument, the same failure mode, a different dialog — see that
+/// constant's header rather than a second copy of it.
+pub const REMOVE_RUNNER_CANCEL_ID: &str = "gamehandler.dialog.remove-runner.cancel";
 
 /// The label-and-control row the Settings page and the game form both draw
 /// (`UX-20`).
@@ -123,7 +202,7 @@ pub const GUTTER: u16 = 18;
 /// not of what the page looks like, which is the whole reason to use the
 /// framework's helper for the job.
 ///
-/// **Why this is here and not in either page.** The same reason [`GUTTER`] is:
+/// **Why this is here and not in either page.** The same reason [`gutter`] is:
 /// it has two users, and it is a property of the layer rather than of a screen.
 /// Written generic over `M` so that it stays on the pure side of the split the
 /// module docs describe — it names no `Message` and reads no `State`.
@@ -495,6 +574,129 @@ mod tests {
             "`text::heading` and `text::title4` now measure the same, so \
              `settings::section`'s smaller header is no longer a reason to keep this \
              helper — `UX-22` owns that decision, and this is where it gets made"
+        );
+    }
+
+    /// **All seven pages pad their body by [`gutter`], and none by a literal** —
+    /// the layer half of UX-23.
+    ///
+    /// # Why this exists beside the two edge tests
+    ///
+    /// `view::installers` and `view::runners` each carry a test that lays the
+    /// page out at a 420 px window and asserts the leftmost and rightmost
+    /// published nodes sit at `cosmic::theme::spacing().space_s`. Those two are
+    /// the **strong** half: they read the built tree, so they pin the token's
+    /// *value* as well as the padding, and a `gutter` reverted to the literal
+    /// fails them with `leftmost node at x = 18, expected 16`.
+    ///
+    /// They cover two of the seven pages. The other five — [`library`],
+    /// [`settings`], [`credits`], [`plugins`], [`form`] — had their literal
+    /// replaced by the same mechanical edit and had **nothing** that would
+    /// notice it being put back: this test is that notice. It is deliberately
+    /// the weaker instrument and is described as such — see the bound below.
+    ///
+    /// # The bound, stated rather than left for a reader to find
+    ///
+    /// This is a **source** check, and it matches text line by line. Comments
+    /// are cut first, which the first draft of this test did not do — it failed
+    /// on correct code, because *this very fix's* prose quotes the literal it
+    /// removed (`"Five of the seven views ended in
+    /// `container(scrollable(body)).padding(18)`"`). That is the same
+    /// "a pointer that no longer lands is worse than no pointer" trap
+    /// `ARCH-16` names, one level down: a guard that fires on the documentation
+    /// of its own fix is a guard someone deletes. So [`code_lines`] drops
+    /// `//`-prefixed lines, and both spelling lists below are matched against
+    /// code only.
+    ///
+    /// What survives that cut is still text, not parsed Rust. `padding(18)` in
+    /// a string literal would satisfy the negative half's match, and the
+    /// positive half requires only the gutter's name as the argument of a
+    /// `padding(`, which a code-shaped line that is not a call could also
+    /// satisfy. What neither half can be fooled by is the *regression it is
+    /// here for*: restoring `.padding(18)` is an edit to a code line, and that
+    /// fails the first assertion. `wiring_claims.rs` states its equivalent
+    /// bound in the same terms.
+    ///
+    /// The positive half is asserted per page rather than layer-wide so that a
+    /// page losing its padding outright fails here too, and not only in the two
+    /// edge tests that would not cover it.
+    #[test]
+    fn every_page_pads_its_body_by_the_theme_gutter_and_not_a_literal() {
+        let sources = sources();
+
+        /// The lines of a file that are code, not prose about code.
+        ///
+        /// A trimmed line starting `//` is a comment — `//`, `///` and `//!`
+        /// alike — and the layer's doc comments quote both the old literal and
+        /// the new call, so leaving them in would make both halves of the
+        /// assertion below fire on documentation.
+        fn code_lines(text: &str) -> String {
+            text.lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .collect::<Vec<&str>>()
+                .join("\n")
+        }
+
+        // The literal UX-23 replaced, in the three spellings the tree had. Each
+        // is matched as a whole call, so the number `18` stays legal elsewhere
+        // in this layer (`metrics::GRID_UNIT`, `metrics::ICON_INSET`, the card
+        // sizes) and this does not fail on correct code.
+        //
+        // Scoped to the page modules, which is the claim — *the pages* pad by
+        // the gutter. The layer as a whole legitimately pads other things by
+        // literals, and this test's own spelling list is a code line in this
+        // file: run layer-wide, the guard would match the strings it is made of
+        // and fail on itself.
+        for spelling in [
+            ".padding(18)",
+            ".padding(GUTTER)",
+            ".padding(super::GUTTER)",
+        ] {
+            let offenders: Vec<&str> = sources
+                .iter()
+                .filter(|(name, _)| PAGE_MODULES.contains(&name.as_str()))
+                .filter(|(_, text)| code_lines(text).contains(spelling))
+                .map(|(name, _)| name.as_str())
+                .collect();
+            assert!(
+                offenders.is_empty(),
+                "these pages still pad by the literal {spelling:?}, so their \
+                 gutter cannot follow the user's density setting: {offenders:?}. \
+                 It is `gutter()` now — see `view::gutter`'s header for why the \
+                 token is `space_s` and what the 2 px costs."
+            );
+        }
+
+        // And every page's body padding names the gutter. `PAGE_MODULES` is the
+        // same list the layer-split test classifies with, so a page added to the
+        // layer is covered here with no edit, and a page that loses its padding
+        // is a failure rather than a smaller file.
+        for page in PAGE_MODULES {
+            let text = sources
+                .iter()
+                .find(|(name, _)| name == page)
+                .map(|(_, text)| text.as_str())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "`{page}` is in `PAGE_MODULES` and not on disk; the two \
+                         lists have come apart"
+                    )
+                });
+            let code = code_lines(text);
+            assert!(
+                code.contains("padding(gutter())") || code.contains("padding(super::gutter())"),
+                "`view::{page}` no longer pads anything by `gutter()`. Every \
+                 top-level page pads its body by it — UX-10 for the padding \
+                 existing at all, UX-23 for it being the theme's token."
+            );
+        }
+
+        // This test is worth nothing against an empty or partial read.
+        assert!(
+            sources.len() > 10,
+            "read only {} files from the view tree; the assertions above would \
+             pass vacuously",
+            sources.len()
         );
     }
 }

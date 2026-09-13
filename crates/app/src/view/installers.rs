@@ -92,9 +92,9 @@ use gamehandler_core::models::UNCATEGORIZED;
 use crate::Message;
 use crate::state::State;
 
-use super::GUTTER;
 use super::a11y;
 use super::badge::badge;
+use super::gutter;
 use super::widgets::card_style;
 
 /// The filter value that means "do not filter", which the reference writes as
@@ -625,7 +625,7 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
     // Measured before the change, at a 420 px window: this page's leftmost drawn
     // string sat at x=0 while the Library's sat at x=18.
     container(cosmic::widget::scrollable(body))
-        .padding(GUTTER)
+        .padding(gutter())
         .into()
 }
 
@@ -2115,7 +2115,7 @@ mod tests {
         // ceilings: a field of 0 px would satisfy the comparison above and is not
         // a fix, and a field wider than the window is the defect stated the other
         // way round. The ceiling here is the window rather than the row: the row
-        // is the page's, and its own gutter is `view::GUTTER`'s subject, measured
+        // is the page's, and its own gutter is `view::gutter`'s subject, measured
         // by the page test below.
         assert!(
             field > 100.0,
@@ -2129,24 +2129,41 @@ mod tests {
         );
     }
 
-    /// **The page pads its body by the gutter the other five views use** —
-    /// UX-10, measured as the leftmost edge anything on the page is drawn at.
+    /// **The page pads its body by the toolkit's spacing token** — UX-10 for the
+    /// padding existing at all, UX-23 for *which* number it is.
     ///
     /// Five of the seven top-level views ended in
     /// `container(scrollable(body)).padding(18)`; this one and `view::runners`
     /// ended in a bare `scrollable(body)`, so their content ran flush against
     /// the window edge and, with the nav bar condensed (every window under
-    /// `Core::is_condensed_update`'s 648 px), flush against the hamburger.
+    /// `Core::is_condensed_update`'s 648 px), flush against the hamburger. UX-10
+    /// gave those two the same gutter as the other five; UX-23 then had to
+    /// answer what that gutter *is*, and the answer is `space_s` — the nearest
+    /// of `cosmic-theme`'s tokens to the literal, and the only one of them that
+    /// moves with the user's density.
     ///
-    /// **Measured, at a 420 px window:** before the fix the leftmost published
+    /// **Measured, at a 420 px window:** before UX-10 the leftmost published
     /// node sat at **x = 0.0** on this page while the Library's sat at **x =
-    /// 18.0**; after, both are 18.0. The mutation proof is that revert: dropping
-    /// the `container` fails with `left: 0.0, right: 18.0`.
+    /// 18.0**; UX-10 made both 18.0; UX-23 makes both **16.0** and ties the two
+    /// to the theme. The UX-10 mutation proof is that revert — dropping the
+    /// `container` fails with `left: 0.0, right: 18.0`.
     ///
     /// The measure is the *nodes*, not a padding value read out of the builder:
-    /// a `padding(18)` on a container the page does not end in would leave every
+    /// a `padding` on a container the page does not end in would leave every
     /// string where it was, and this is the same instrument that showed the
     /// difference in the first place.
+    ///
+    /// # Why the expected value is read from the toolkit and not from the page
+    ///
+    /// `cosmic::theme::spacing().space_s` is read here **directly**, not through
+    /// [`super::gutter`]. Reading it through the function under test would make
+    /// this assertion true by construction: a `gutter()` that returned the old
+    /// literal `18` would pad the page by 18 and hand this test 18 to expect, so
+    /// `left == expected` would hold and the UX-23 fix would be unasserted. Read
+    /// from the toolkit, the two can disagree, and that is the mutation below.
+    ///
+    /// This is the same reason the pair is asserted as two edges rather than as
+    /// one: a left-only check passes for a page padded on one side.
     #[test]
     fn the_page_pads_its_body_by_the_same_gutter_as_the_other_views() {
         use super::a11y::harness;
@@ -2172,12 +2189,24 @@ mod tests {
             .iter()
             .filter_map(|node| node.bounds.map(|rect| rect.x1))
             .fold(f64::NEG_INFINITY, f64::max);
-        let gutter = f64::from(crate::view::GUTTER);
+        // From the toolkit, not from `super::gutter` — see the test's header.
+        // `space_s` is 16 at the default density, 8 at `Compact` and 24 at
+        // `Spacious` (`cosmic-theme` `src/model/spacing.rs:32-38`, `:61-81`),
+        // so this assertion is also the one that would follow a density change
+        // if a test could install one; `cosmic::theme::spacing()` reads a global
+        // with no public writer, which is why it cannot.
+        let gutter = f64::from(cosmic::theme::spacing().space_s);
+        assert!(
+            gutter != 18.0,
+            "the fixture is at the default density, where the token is 16 — if \
+             this ever reads 18 the assertion below stops distinguishing the \
+             token from the literal it replaced"
+        );
 
         assert!(
             (left - gutter).abs() < 0.5,
-            "the page's content must start at the gutter, not at the window \
-             edge: leftmost node at x = {left}, expected {gutter}"
+            "the page's content must start at the theme's gutter, not at the \
+             window edge: leftmost node at x = {left}, expected {gutter}"
         );
         assert!(
             (right - (420.0 - gutter)).abs() < 0.5,

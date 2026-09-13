@@ -730,7 +730,15 @@ fn remove_game_dialog<'a>(
         .body(
             "This removes the game from your GameHandler library. Its Wine prefix and game files are left on disk.",
         )
-        .secondary_action(button::standard("Cancel").on_press(Message::CloseDialog))
+        // The id is what `Message::ConfirmDeleteGame` focuses (**UX-24**), and
+        // it is on Cancel rather than on Remove for `view::REMOVE_GAME_CANCEL_ID`'s
+        // reason: the prompt must open with the keyboard on the action that
+        // keeps the game.
+        .secondary_action(
+            button::standard("Cancel")
+                .id(view::REMOVE_GAME_CANCEL_ID.into())
+                .on_press(Message::CloseDialog),
+        )
         .primary_action(
             button::destructive("Remove")
                 .on_press(Message::DeleteGameConfirmed(game_id.to_string())),
@@ -836,7 +844,13 @@ fn remove_runner_dialog<'a>(
     let popup: cosmic::Element<'a, Message> = dialog()
         .title(pending.title())
         .body(crate::state::remove_runner_subtitle())
-        .secondary_action(button::standard("Cancel").on_press(Message::CloseDialog))
+        // Focused when the prompt opens, on the same reasoning as the game
+        // prompt's Cancel above — [`view::REMOVE_RUNNER_CANCEL_ID`] (**UX-24**).
+        .secondary_action(
+            button::standard("Cancel")
+                .id(view::REMOVE_RUNNER_CANCEL_ID.into())
+                .on_press(Message::CloseDialog),
+        )
         .primary_action(
             button::destructive("Remove")
                 .on_press(Message::RemoveRunnerConfirmed(pending.runner_id.clone())),
@@ -1674,6 +1688,12 @@ impl Shell {
                 if self.state.library.get(&game_id).is_some() {
                     self.state.confirm_delete = Some(game_id);
                     self.state.confirm_remove_runner = None;
+                    // **UX-24**: the prompt opens with the keyboard on Cancel.
+                    // The state above put the layer in the tree, so the focus
+                    // issued here has a widget to land on; the arm is a
+                    // fall-through when the id is unknown precisely so that a
+                    // focus is never asked for a dialog nothing drew.
+                    return cosmic::iced::widget::operation::focus(view::REMOVE_GAME_CANCEL_ID);
                 }
             }
             // `removeGame()` past the dialog: the entry goes, the prefix and
@@ -8539,6 +8559,159 @@ mod tests {
                 .iter()
                 .any(|text| text == crate::view::library::NO_GAMES_TITLE),
             "the fall-through is the page; drawn: {fallthrough:?}"
+        );
+    }
+
+    /// Whether `inner` is drawn inside `outer`, both being laid-out rectangles.
+    fn contains(outer: cosmic::iced::Rectangle, inner: cosmic::iced::Rectangle) -> bool {
+        inner.x >= outer.x
+            && inner.y >= outer.y
+            && inner.x + inner.width <= outer.x + outer.width
+            && inner.y + inner.height <= outer.y + outer.height
+    }
+
+    /// The focus `id` names lands on the control labelled `on` and not on the
+    /// one labelled `not_on` — asserted on the view rather than on the builder.
+    ///
+    /// This is the **UX-24** check, in one place because both destructive
+    /// prompts make the same three claims and a second copy of them would be a
+    /// second thing to forget to update. In order:
+    ///
+    /// - the id names a widget the laid-out tree actually draws, **exactly
+    ///   once** — a focus that names nothing, or that names two controls, is
+    ///   not a focus;
+    /// - the control it is on contains the `on` label's bounds — read off the
+    ///   layout, so moving the `.id(...)` call from `secondary_action` to
+    ///   `primary_action` fails here even though the id is still drawn once;
+    /// - it does not contain `not_on`'s. A focus on the destructive action is
+    ///   the failure the row names, and it satisfies everything above it.
+    ///
+    /// `what` names the prompt, so a failure says which one moved.
+    fn assert_focus_lands_on<M: Clone + 'static>(
+        view: cosmic::Element<'_, M>,
+        id: &str,
+        on: &str,
+        not_on: &str,
+        what: &str,
+    ) {
+        let mut view = view;
+        let seen = crate::view::testkit::traversal(&mut view);
+        let ids = crate::view::testkit::ids(&seen);
+        let wanted = cosmic::widget::Id::from(id.to_string());
+        assert_eq!(
+            ids.iter().filter(|drawn| **drawn == wanted).count(),
+            1,
+            "{what}: the focused id must name a widget the tree draws, once; ids: {ids:?}"
+        );
+
+        let landing = seen
+            .iter()
+            .find(|node| node.id.as_ref() == Some(&wanted))
+            .expect("the id was counted just above, so a node carries it")
+            .bounds;
+        let label = |text: &str| {
+            seen.iter()
+                .find(|node| node.text.as_deref() == Some(text))
+                .unwrap_or_else(|| panic!("{what}: {text:?} is not drawn; seen: {seen:?}"))
+                .bounds
+        };
+        assert!(
+            contains(landing, label(on)),
+            "{what}: the prompt must open with the keyboard on {on}: id bounds \
+             {landing:?}, {on} label bounds {:?}",
+            label(on)
+        );
+        assert!(
+            !contains(landing, label(not_on)),
+            "{what}: the prompt must not open with the keyboard on the \
+             destructive {not_on}: id bounds {landing:?}, {not_on} label bounds {:?}",
+            label(not_on)
+        );
+    }
+
+    /// **The remove-game prompt opens with the keyboard on Cancel, not on
+    /// Remove (UX-24).**
+    ///
+    /// The finding's consequence is stated the other way round from how it
+    /// reads. The prompt is drawn *over* a page that is still in the tree, so
+    /// the Delete control that raised it is still a registered focusable and
+    /// keeps the focus it had; the next Tab walks the rest of the page before
+    /// reaching the two buttons being asked about, and at the moment of
+    /// decision the destructive one is indistinguishable from the safe one.
+    /// Nothing in the toolkit decides otherwise: libcosmic's `dialog()` builds
+    /// its two actions with the default `Id::unique()` and mentions `focus`
+    /// nowhere (`a401af8 src/widget/dialog.rs`), so the choice is the port's to
+    /// make and `view::REMOVE_GAME_CANCEL_ID` records why it is Cancel.
+    ///
+    /// The arm's `units()` is the request; `assert_focus_lands_on` is the
+    /// target. Neither implies the other, which is why both are here.
+    ///
+    /// The unknown-id half is the same guard the dialog already had
+    /// (`Message::ConfirmDeleteGame`'s doc): no game, no dialog, and therefore
+    /// no focus asked for a dialog nothing drew.
+    #[test]
+    fn the_remove_game_prompt_opens_with_the_keyboard_on_cancel() {
+        let (_root, library) = library_with("u24-focus", &[("g1", "Hades")]);
+        let mut shell = Shell::new();
+        shell.state.library = library;
+
+        assert!(
+            shell
+                .update(Message::ConfirmDeleteGame("g1".to_string()))
+                .units()
+                > 0,
+            "opening the prompt must ask the runtime to move the focus into it, \
+             or the keyboard stays on the Delete control that raised it"
+        );
+        assert_focus_lands_on(
+            shell.view_with_overlays(),
+            crate::view::REMOVE_GAME_CANCEL_ID,
+            "Cancel",
+            "Remove",
+            "the remove-game prompt",
+        );
+
+        // An id the library does not hold opens nothing, so nothing is focused.
+        let mut empty = Shell::new();
+        assert_eq!(
+            empty
+                .update(Message::ConfirmDeleteGame("nobody".to_string()))
+                .units(),
+            0,
+            "there is no prompt for a game that is not there, so there is no \
+             focus to ask for either"
+        );
+    }
+
+    /// **The runner-removal prompt opens with the keyboard on Cancel (UX-24).**
+    ///
+    /// [`the_remove_game_prompt_opens_with_the_keyboard_on_cancel`]'s claims for
+    /// the second destructive prompt. It is not a copy of that test for a
+    /// different reason than the copy would cost: this prompt's arm lives in
+    /// `view::runners::update`, so the `units()` half here also pins that the
+    /// page hands the operation back — an arm that answered `Task::none()` would
+    /// leave the dialog opening unfocused and this test is the only one that
+    /// looks.
+    #[test]
+    fn the_runner_removal_prompt_opens_with_the_keyboard_on_cancel() {
+        let mut shell = Shell::new();
+        assert!(
+            shell
+                .update(Message::ConfirmRemoveRunner {
+                    runner_id: "GE-Proton9-5".to_string(),
+                    name: "GE-Proton9-5".to_string(),
+                })
+                .units()
+                > 0,
+            "the runner page's own arm must hand back the focus operation, not \
+             `Task::none()`"
+        );
+        assert_focus_lands_on(
+            shell.view_with_overlays(),
+            crate::view::REMOVE_RUNNER_CANCEL_ID,
+            "Cancel",
+            "Remove",
+            "the runner-removal prompt",
         );
     }
 

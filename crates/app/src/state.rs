@@ -1053,9 +1053,6 @@ pub struct State {
     /// field beside the rows rather than a constant because it depends on
     /// `detect_package_manager`, which reads the host.
     pub plugins_intro: String,
-    /// was `self._theme`. `None` means "follow the desktop", which is what the
-    /// QML backend did when no theme manager was injected.
-    pub theme_manager: Option<()>,
 }
 
 impl State {
@@ -1110,7 +1107,6 @@ impl State {
             toasts: Toasts::new(Message::DismissToast),
             notice: None,
             form_cover_token: 0,
-            theme_manager: None,
             plugins: Vec::new(),
             plugins_intro: String::new(),
         }
