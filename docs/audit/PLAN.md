@@ -65,16 +65,16 @@ those rows contain `Status:`:
 | `BUGS.md` | 47 | 26 | 23 `FIXED`, 1 `CLOSED`, 2 `PARTIAL` |
 | `ARCHITECTURE.md` | 25 | 7 | 7 `FIXED` |
 | `COSMIC-UX.md` | 30 | 1 | 1 `FIXED` |
-| `SECURITY.md` | 10 | 1 | 1 `FIXED` (inside `SEC-01`'s suggested-fix cell) |
+| `SECURITY.md` | 10 | 2 | 2 `FIXED` (inside the `SEC-01` and `SEC-09` suggested-fix cells) |
 | `PACKAGING.md` | 9 | 4 | 4 `FIXED` |
 | `PERFORMANCE.md` | 8 | 3 | 3 `FIXED` |
 
 `BUGS.md`'s 21 tail-less rows are the 20 open `P3` rows and `BUG-11`, whose
-withdrawal is recorded in its ID cell rather than as a tail. The seven rows in
+withdrawal is recorded in its ID cell rather than as a tail. The eight rows in
 `ARCHITECTURE.md`, `COSMIC-UX.md`, `SECURITY.md`, `PACKAGING.md` and
 `PERFORMANCE.md` that gained tails since the previous revision did so in the
-commits that fixed them (`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`), so
-the pair rule was kept where it applies. The paragraph above it, and the first
+commits that fixed them (`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`,
+and `SEC-09`'s own), so the pair rule was kept where it applies. The paragraph above it, and the first
 revision of this table, are kept in the record because both were instances of the
 defect this file names: the table said `PACKAGING.md` carried 1 `FIXED` tail while
 the document carried 4, and `PERFORMANCE.md` carried none while it carried 3 —
@@ -102,9 +102,9 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
 | P1 | 23 | 18 | 0 | 5 |
-| P2 | 51 | 17 | 0 | 34 |
-| P3 | 49 | 0 | 0 | 49 |
-| **Total** | **127** | **39** | **0** | **88** |
+| P2 | 51 | 18 | 0 | 33 |
+| P3 | 49 | 1 | 0 | 48 |
+| **Total** | **127** | **41** | **0** | **86** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -112,9 +112,9 @@ advocate reviews every row before it is called done and owns no row.
 | `BUG-xx` | `BUGS.md` | 45 | 23 | 0 | 22 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 3 | 0 | 5 |
 | `PKG-xx` | `PACKAGING.md` | 9 | 4 | 0 | 5 |
-| `SEC-xx` | `SECURITY.md` | 10 | 1 | 0 | 9 |
+| `SEC-xx` | `SECURITY.md` | 10 | 3 | 0 | 7 |
 | `UX-xx` | `COSMIC-UX.md` | 30 | 1 | 0 | 29 |
-| **Total** | | **127** | **39** | **0** | **88** |
+| **Total** | | **127** | **41** | **0** | **86** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -123,6 +123,22 @@ defect` section and in no severity bucket, which is why the family table counts 
 `BUG-xx` rows against the 47 the document holds. `Remaining` counts `PARTIAL` as
 remaining, because a half-fixed finding is not closed; `Fixed` therefore excludes
 them and the two `PARTIAL` rows appear in `Remaining` until they are finished.
+
+**Two of the tables in this file were stale, and the reason is one commit.** The
+severity table read `P2 17` and `P3 0` while the rows said 18 and 1, and the tails
+table said `SECURITY.md` carried one `Status:` tail while the document carried
+two. All three came from the same place: the commit that marked `SEC-04` `FIXED`
+updated the specialist row and this file's row and did not regenerate either
+table — which is precisely the half-pair the paragraph above describes, caught
+from the other side. Re-deriving all of it found it rather than reading it, so
+the derivation is a script now (`scripts/plan-counts.py`, `--check` in
+`scripts/verify.sh`) instead of an intention. Its first version had a defect of
+the same family and is worth recording: its row pattern had no `~~`, so
+`BUG-11` — the struck-through row — was invisible to every count it produced.
+A hand-maintained table overstates; that one understated; both are a summary that
+disagrees with the rows it summarises, and the five rows the script reproduced
+byte-for-byte against the pre-existing file are the control that shows it is
+reading rather than guessing.
 
 **The 129 in the previous revision of these tables was wrong**, and the way it was
 wrong is worth one sentence because the fix is a shape change rather than a

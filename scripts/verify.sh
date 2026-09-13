@@ -193,6 +193,7 @@ STAGES=(
     "cli|stage_cli|the headless CLI --list/--launch/--version, against a library it must read"
     "oracle-freshness|stage_oracle|the checked-in fixtures equal what the Python generators produce"
     "python-tests|stage_python|the Python suite stays green (D-17)"
+    "plan-counts|stage_plan_counts|docs/audit/PLAN.md's summary tables equal the rows they summarise"
     "cargo-sources|stage_cargo_sources|cargo-sources.json is fresh against Cargo.lock and covers every git source"
     "flatpak-build|stage_flatpak|flatpak-builder builds the manifest"
     "smoke-test|stage_smoke|scripts/smoke-test.sh — CLI + headless GUI"
@@ -1244,6 +1245,27 @@ stage_python() {
 }
 
 # ---------------------------------------------------------------------------
+# Stage: plan-counts — docs/audit/PLAN.md's summary tables equal its rows
+#
+# `PLAN.md` is the audit's schedule and its two summary tables are its headline
+# numbers. They have been wrong three times, every time for the same reason:
+# the status of a row changed in one commit and the table that summarises it was
+# regenerated in a later one, or not at all. A rule about two places staying in
+# step is satisfied by a same-commit pair and violated by two commits a minute
+# apart, and nothing in the tree could tell the difference — which is why this
+# is a stage rather than a note asking the next person to be careful.
+#
+# The check is not "do the numbers parse back out of the table": the script
+# reproduces each table line and requires it to appear verbatim, so a table whose
+# columns were reordered fails even though its numbers are unchanged. That is
+# deliberate — this whole audit's most common defect is a check that passes
+# without inspecting what it claims.
+# ---------------------------------------------------------------------------
+stage_plan_counts() {
+    python3 scripts/plan-counts.py --check
+}
+
+# ---------------------------------------------------------------------------
 # Stage: cargo-sources — cargo-sources.json freshness + git coverage
 #
 # The generator is not part of this repository (it is flatpak/flatpak-builder-
@@ -2188,6 +2210,7 @@ run_stage test
 run_stage cli
 run_stage oracle-freshness
 run_stage python-tests
+run_stage plan-counts
 run_stage cargo-sources
 # Everything from here to `release_flatpak_lock` is one critical section over
 # build-flatpak/ — the four locked stages, whether they build, run or merely
