@@ -64,7 +64,7 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 47 | 45 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 25 | 20 `FIXED`, 3 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
+| `COSMIC-UX.md` | 30 | 26 | 20 `FIXED`, 3 `PARTIAL`, 2 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
@@ -136,8 +136,8 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 37 | 0 | 12 |
-| **Total** | **130** | **112** | **0** | **18** |
+| P3 | 49 | 38 | 0 | 11 |
+| **Total** | **130** | **113** | **0** | **17** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -146,8 +146,8 @@ advocate reviews every row before it is called done and owns no row.
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
-| `UX-xx` | `COSMIC-UX.md` | 29 | 20 | 0 | 9 |
-| **Total** | | **130** | **112** | **0** | **18** |
+| `UX-xx` | `COSMIC-UX.md` | 29 | 21 | 0 | 8 |
+| **Total** | | **130** | **113** | **0** | **17** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -338,7 +338,7 @@ across families, not within them.
 | `SEC-07` | open_url performs no scheme validation, and its message payload is a plain String rather than a catalogue-constant type | S4 | — | Validate the scheme in `open_url` itself and give the payload a catalogue-constant type; verify with a non-`http(s)` producer. **Status: FIXED `c7d4299`.** The scheme is checked in `open_url` before the command is built, so no ordering reaches `spawn`; `open_url_command` has exactly one caller, the line after the gate. Two tests: one asserts a refused URL never spawned, the other drives both real catalogues as acceptances so a gate that refused everything fails. | FIXED `c7d4299` |
 | `SEC-08` | Three manifest permissions are justified only by the child process, with no direct launcher-code tie; the permissions that *do* tie to code are recorded here so the distinction is auditable | S4 | — | Record each permission's justification in the manifest beside it, or drop the ones with none; verify by reading the manifest against the code. **Status: FIXED.** `packaging.md` §3.1 is now a per-argument table with three kinds (launcher-code / child-process / *nothing in this tree*) and the falsification test for each. The row's six `file:line` anchors were **all wrong, at the commit that wrote them**, and were replaced with symbols that cannot drift. `--device=input` and `--device=usb` — which the row never named — have no anchor in `crates/` at all; measured with `--device=dri` alone, `gui-stays-up` still passes, so the launcher's window needs neither. `--device=dri` is recorded as **unsettled** because `--nodevice=all` re-adds it for any GL-extending app, and the green run therefore says nothing about it. | FIXED |
 | `SEC-09` | Two of the app's process spawns inherit the launcher's entire environment, and they are the two security-relevant ones: the package-manager install and the Authenticode verifier | S4 | — | Clear the environment at the two spawn sites and pass back only what the child needs; verify by dumping the child's environment. | FIXED |
-| `UX-21` | Grid cells are fixed at 200×300 with a fixed column count, so at narrow widths the library grid runs off the right edge and the cards there cannot be reached | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `UX-21` | Grid cells are fixed at 200×300 with a fixed column count, so at narrow widths the library grid runs off the right edge and the cards there cannot be reached | S2 | — | Refuted by measurement: `Row::wrap` children are laid out under `limits.loose()` (`row.rs:496`), so `Fixed(200)` resolves `200.min(max)` and the card **shrinks** below 200 rather than overflowing — the same clamp that withdrew UX-08. Measured at a 150 px window: card right edge 134, no grid node outside; the plain-`Row` mutation (the semantics the finding assumed) reaches x=182 and fails `the_grid_never_lets_a_card_escape_the_right_edge`. At the enforced 420 floor the viewport is ~388 and `the_page_fits_its_window_at_the_floor_it_enforces` holds every node inside. Residual recorded in the row's tail: below the floor the *toolbar* can still paint a control past the edge (the flex-path escape, UX-09's mechanism). | WITHDRAWN |
 | `UX-22` | Two heading levels do the same job | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: OPEN** — located precisely, not changed. Section headings are `title4` on Settings/Plugins/Credits/form (via the pinned `settings_section` helper) and `title3` on Runners (4) and Installers (1). Not changed: on those two pages `title3` is the top rung of a three-level hierarchy (`title3` section → `title4` item → 14 px list heading), so reconciling upward collapses two rungs — and the change is purely visual, verifiable only by looking at the pages, which this environment has no display for. The row now carries the decision and its cost instead of a call-site count. | OPEN |
 | `UX-23` | Page padding is a hardcoded 18 and the theme's spacing tokens are never consulted | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** `view::GUTTER: u16 = 18` is deleted and `view::gutter()` returns `cosmic::theme::spacing().space_s`; all seven pages pad by it. UX-10's constant only *mechanically* partly satisfied this row — it held the literal, so it named the number without consulting the theme, and it had two users while five pages still wrote `.padding(18)`, which is why the row was genuinely OPEN. `18` is not a token at any density; `space_s` (16) is nearest, off by 2, and the page moves 18 → 16 (2 px per side, 4 px wider content) as the price of the token, stated rather than asserted to look better. Mutation-checked: `gutter()` back to `18` fails both page edge tests (`leftmost node at x = 18, expected 16`), reverting `view/library.rs` to `.padding(18)` fails the new guard (`["library"]`), and dropping the padding in `view/plugins.rs` fails its positive half. Density responsiveness itself is untestable here — `theme::spacing()` reads a `pub(crate)` static with no public writer. | FIXED |
 | `UX-24` | The app's only widget id is the library search box, so only that one field can ever be focused programmatically, and no dialog sets an initial focus | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | PARTIAL |

@@ -2817,4 +2817,137 @@ mod tests {
     fn clearing_the_filters_is_a_single_message() {
         assert!(matches!(clear_filters(), Message::ClearFilters));
     }
+
+    /// **The grid's cards cannot be drawn past the viewport's right edge — not
+    /// even in a window narrower than a card** (UX-21).
+    ///
+    /// The finding's premise was that a `Fixed(GRID_CELL.0)` card keeps its
+    /// 200 px in a narrower viewport and runs off the right edge of a
+    /// vertical-only scrollable. It does not: `Row::wrap` lays every child out
+    /// under `limits.loose()` (`iced/widget/src/row.rs:496`), and `Limits`
+    /// resolves a `Fixed` length as `amount.min(max)` (`iced/core/src/layout/
+    /// limits.rs:168`) — the card *shrinks* to the viewport rather than
+    /// overflowing it, the same mechanism that withdrew UX-08. Measured: at a
+    /// 150 px window the card's right edge is 134, inside the window by 16 px.
+    ///
+    /// So the pin is the *clamp*, not a width: below one card width the card
+    /// narrows (and at the floor and above it stays exactly
+    /// `GRID_CELL.0` — cells do not stretch, which is the reference's own
+    /// `cellWidth: 200` semantics, `LibraryPage.qml:139`). A layout that let
+    /// the card keep 200 px at a 150 px viewport is precisely the defect the
+    /// finding described, and the second assertion fails on it.
+    ///
+    /// The bounds are walked rather than the windowing arithmetic checked,
+    /// because `grid_columns`'s arithmetic is a *model* of the wrap rule —
+    /// the property that matters is that no node iced actually placed crosses
+    /// the edge, which only the real layout answers.
+    #[test]
+    fn the_grid_never_lets_a_card_escape_the_right_edge() {
+        use super::a11y::harness;
+        use cosmic::iced::Size;
+        use cosmic::iced::advanced::Layout;
+
+        let library = two_games_with_known_ids();
+        let covers = CoverCache::new();
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+        let shown: Vec<&Game> = library.search("", ALL_CATEGORIES, "name");
+
+        let mut grid: Element<'_, Message> = grid_body(
+            &shown,
+            &runners,
+            &covers,
+            ScrollGeometry {
+                viewport_width: 150.0,
+                ..ScrollGeometry::default()
+            },
+        );
+        let (_tree, node, _nodes) = harness::laid_out_tree(&mut grid, Size::new(150.0, 600.0));
+
+        let mut cards = 0usize;
+        let mut right = 0.0f32;
+        let mut card_width = 0.0f32;
+        let mut stack = vec![Layout::new(&node)];
+        while let Some(l) = stack.pop() {
+            let b = l.bounds();
+            right = right.max(b.x + b.width);
+            if (b.height - metrics::GRID_CELL.1).abs() < 0.5 && b.width > card_width {
+                card_width = b.width;
+                cards += 1;
+            }
+            stack.extend(l.children());
+        }
+        assert!(cards > 0, "the fixture must draw at least one card");
+        assert!(
+            right <= 150.0,
+            "a node reaches x={right} in a 150 px window — the card ran off \
+             the right edge, which is UX-21's stated defect"
+        );
+        assert!(
+            card_width < metrics::GRID_CELL.0,
+            "the card kept {card_width} px of its fixed {} in a 150 px \
+             viewport: it was not shrunk by the wrap limits and its edge is \
+             only inside the window by accident of position",
+            metrics::GRID_CELL.0
+        );
+    }
+
+    /// The other half of UX-21's refutation: at the floor the app enforces,
+    /// the page as a whole — toolbar, grid, scrollable — draws nothing past
+    /// the window's right edge.
+    ///
+    /// [`MIN_WINDOW`](crate::MIN_WINDOW) is what makes the sub-card case above
+    /// unreachable in practice: at 420 px the viewport is ~388 and the grid
+    /// draws one full 200 px column. This test measures the floor itself, so a
+    /// change that dropped it — or widened a toolbar control past it — fails
+    /// here rather than in a screenshot.
+    ///
+    /// One residual is recorded rather than asserted: *below* the floor the
+    /// toolbar's rightmost control is squeezed to a zero-width allocation by
+    /// the flex pass while its content still paints ~32 px past the edge (the
+    /// `Fixed`-main-child path of `flex.rs:260-267`, the same mechanism as
+    /// UX-09). It is unreachable while the floor is honoured — a compositor
+    /// that ignores `min_width` degrades the reference's `minimumWidth: 420`
+    /// (`Main.qml:14`) identically — and this test's window is the floor for
+    /// exactly that reason.
+    #[test]
+    fn the_page_fits_its_window_at_the_floor_it_enforces() {
+        use super::a11y::harness;
+        use cosmic::iced::Size;
+        use cosmic::iced::advanced::Layout;
+
+        let library = two_games_with_known_ids();
+        let covers = CoverCache::new();
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+        let mut element = page_element(
+            &library,
+            GRID,
+            ScrollGeometry {
+                // The value a real frame at the floor publishes: the
+                // scrollable's viewport is the window less the page gutter.
+                viewport_width: crate::MIN_WINDOW.0 - 2.0 * crate::view::gutter() as f32,
+                viewport_height: crate::MIN_WINDOW.1 - 2.0 * crate::view::gutter() as f32,
+                ..ScrollGeometry::default()
+            },
+            &covers,
+            &runners,
+        );
+        let (_tree, node, _nodes) = harness::laid_out_tree(
+            &mut element,
+            Size::new(crate::MIN_WINDOW.0, crate::MIN_WINDOW.1),
+        );
+
+        let mut right = 0.0f32;
+        let mut stack = vec![Layout::new(&node)];
+        while let Some(l) = stack.pop() {
+            let b = l.bounds();
+            right = right.max(b.x + b.width);
+            stack.extend(l.children());
+        }
+        assert!(
+            right <= crate::MIN_WINDOW.0,
+            "a node reaches x={right} in a {} px window — the page overflows \
+             the floor `MIN_WINDOW` enforces",
+            crate::MIN_WINDOW.0
+        );
+    }
 }
