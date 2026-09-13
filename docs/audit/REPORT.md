@@ -25,7 +25,7 @@ prose count beside them in this file and in `PLAN.md` was re-derived by counting
 the rows, and three were wrong when this paragraph was written (see the
 `PARTIAL` paragraph below and `PLAN.md`'s note on the `BUGS.md` row).
 
-The `Fixed` column counts `FIXED` only; the five `PARTIAL` rows are counted in
+The `Fixed` column counts `FIXED` only; the six `PARTIAL` rows are counted in
 `Remaining`, because a half-fixed finding is not closed.
 
 **This report tracks a moving tree, and the count is recomputed on every move.**
@@ -84,16 +84,19 @@ By severity:
 
 `Not a defect` is not a euphemism for "wontfix": all four rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`, `BUG-15`,
-`UX-08`, `ARCH-24`). Five of the rows counted as `Remaining` above are `PARTIAL` rather
+`UX-08`, `ARCH-24`). Six of the rows counted as `Remaining` above are `PARTIAL` rather
 than untouched, and each names the half that is still missing: `BUG-47` (the
 ellipsis is commented but cannot be asserted — iced offers no downcast and
 `Text::format` is private), `PKG-03` (the freshness check is split and always
 runs; the generator half is unvendored because the only copy to hand has no
 nameable upstream), `PKG-06` (keywords added, screenshots still absent),
-`UX-06` (the scrim blocks the pointer, not Tab) and `SEC-05` (the request is
+`UX-06` (the scrim blocks the pointer, not Tab), `SEC-05` (the request is
 now scheme- and origin-checked, but the redirect target is judged by nothing,
 because every Proton-GE asset redirects off `github.com` and no host allowlist
-is writable).
+is writable) and `UX-14` (the notice is published as an assertive alert and every
+toast lasts 15 s rather than 5, but nothing delivers the node at the pinned rev —
+`UserInterface::a11y_nodes` has no caller, the same upstream gap `UX-01`–`UX-03`
+sit behind).
 
 **This paragraph read "two… `BUG-12` and `BUG-47`" and named `SEC-05` as "a
 third", which was wrong twice over.** `BUG-12` had been fixed outright since it

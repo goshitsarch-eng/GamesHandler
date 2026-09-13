@@ -64,7 +64,7 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 34 | 32 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 17 | 16 `FIXED`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 17 | 15 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
+| `COSMIC-UX.md` | 30 | 18 | 15 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 6 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 10 | 8 | 6 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
@@ -157,7 +157,7 @@ leaves out is `ARCH-24`. This sentence read "three" and named three ids until
 `ARCH-24` was refuted; the count is here because a reader should not have to union
 four documents to learn how many findings were withdrawn. `Remaining` counts `PARTIAL` as
 remaining, because a half-fixed finding is not closed; `Fixed` therefore excludes
-them and the five `PARTIAL` rows (`BUG-47`, `PKG-03`, `PKG-06`, `UX-06`,
+them and the six `PARTIAL` rows (`BUG-47`, `PKG-03`, `PKG-06`, `UX-06`,
 `SEC-05`) appear in `Remaining` until they are finished. That read "two"
 while the status cells said five — a count beside the rows rather than taken
 from them, which is the shape this file has been corrected for twice already.
@@ -281,7 +281,7 @@ across families, not within them.
 | `UX-11` | A capability the UI advertises is not drawn: the game form's cover preview | S2 | — | Draw the cover preview and the "No cover yet" placeholder the reference has; verify with tree-walking assertions on the form. | OPEN |
 | `UX-12` | Three icon-only buttons have no accessible name and no tooltip | S2 | — | Give all three `button::icon` sites an accessible name and a tooltip; verify the drawn strings and the a11y nodes. **Status: FIXED `1992b42`.** All three icon buttons carry a name — `BROWSE_EXE_HINT` and `BROWSE_COVER_HINT` for the two browse buttons, `remove_hint(name)` for the per-row uninstall — set through an `Accessible::wrap` helper rather than `builder.name` at each site, and the two hints double as tooltips. Verified on the built element: the two names must **differ**, and the case where a control publishes a node labelled `Some("")` is covered, since a name that is *set* and one that is *plumbed* look identical in source. | FIXED |
 | `UX-13` | Re-picking a custom cover silently destroys the previous one | S2 | — | Refuse or confirm an overwrite, or keep both files; verify by picking a cover twice and checking the first still exists. **Status: FIXED `502aa61`.** The additive shape was taken over the dialog this row suggested: a second pick keeps the cover it replaces as `<id>.preserved-<n>.<suffix>`, because **the reference destroys the first cover too** (`covers.py:295-304`, `GameFormPage.qml:349-361`), so the destructive act was unintended on both sides. Order is load-bearing — copy, then preserve, then rename — or re-picking the current cover truncates it to empty. `MAX_PRESERVED_COVERS` refuses rather than destroys at the far end. Regression tests compare the whole directory, not the returned path, which is identical before and after. | FIXED |
-| `UX-14` | Toasts are the app's universal error channel, and they are invisible to assistive technology and expire after 5 s | S2 | — | Give the toaster an accessibility node and make the duration reasonable for a screen reader; verify the node list from a built toaster. | OPEN |
+| `UX-14` | Toasts are the app's universal error channel, and they are invisible to assistive technology and expire after 5 s | S2 | — | Give the toaster an accessibility node and make the duration reasonable for a screen reader; verify the node list from a built toaster. | PARTIAL |
 | `UX-15` | A cover-fetch failure surfaces as a bare, unprefixed error string with no game name and no indication that a cover lookup is what failed — e.g | S2 | — | Prefix the message with the game and the operation; verify the drawn toast string for a forced failure. | FIXED |
 | `UX-16` | Per-game context menus have no keyboard route | S2 | — | Add a keyboard route to the context menu (Menu key / Shift+F10) or duplicate its actions into the focused tile; verify by driving the key. | FIXED |
 | `UX-17` | Plate initials are drawn white-on-accent at roughly 3:1, below the 4.5:1 required at the size they are drawn | S2 | — | Raise the initials' contrast to 4.5:1 at the drawn size; verify the computed ratio against the darkest gradient stop. | FIXED |
