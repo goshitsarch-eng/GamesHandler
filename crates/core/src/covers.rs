@@ -549,6 +549,14 @@ pub enum SaveIconError {
     /// since [`crate::exe_icons::extract_icon`] folds every unreadable input
     /// into `None` before this error is built.
     NoIcon { exe: String },
+    /// The game id could not be turned into a filename without the possibility
+    /// of leaving the covers directory. See [`cover_stem`].
+    ///
+    /// **Deliberate divergence from `covers.py:307-317`** (`SECURITY.md`
+    /// `SEC-04`). The reference interpolates `game_id` into a destination path
+    /// unvalidated; this port refuses an id that contains a path separator,
+    /// because that is the only thing in the interpolation that can traverse.
+    UnsafeId { id: String },
     /// Creating the covers directory, writing the temporary file, or the
     /// rename into place failed.
     Io(std::io::Error),
@@ -566,6 +574,7 @@ impl fmt::Display for SaveIconError {
             SaveIconError::NoIcon { exe } => {
                 write!(formatter, "{exe} carries no icon to use as a cover")
             }
+            SaveIconError::UnsafeId { id } => formatter.write_str(&unsafe_id_message(id)),
             SaveIconError::Io(error) => error.fmt(formatter),
         }
     }
@@ -578,6 +587,52 @@ impl std::error::Error for SaveIconError {
             _ => None,
         }
     }
+}
+
+/// Turn a game id into the stem of a filename inside the covers directory, or
+/// refuse it. **Deliberate divergence from the reference** (`SECURITY.md`
+/// `SEC-04`).
+///
+/// Every cover write builds its destination as `covers_dir.join(format!("{id}…"))`,
+/// and the id comes from a `games.json` entry — which the app loads verbatim,
+/// so it is untrusted input in the sense of the brief's category C. The
+/// reference interpolates it with no check at all, and this port copied that
+/// until this function existed. An id of `"../../.config/autostart/x"` then
+/// writes `x.ico`, `x.jpg` or `x.png` there instead, which is an arbitrary-file
+/// write anywhere the sandbox can reach.
+///
+/// **The rule is one condition, not a sanitiser.** A path separator is the only
+/// thing in the interpolation that can traverse: the id is always followed by
+/// `.{ext}`, so `".."` becomes `"...ico"` — a legal, harmless filename — and an
+/// empty id becomes `".ico"`. Rewriting the id rather than rejecting it would
+/// rename every existing user's cover files, so nothing here alters a value that
+/// passes; `desktop::id_prefix`, which *does* rewrite, is the right shape for a
+/// desktop entry whose name is this port's to choose and the wrong shape for a
+/// filename the reference already picked.
+///
+/// `\` is rejected alongside `/` even though it is an ordinary character in a
+/// Unix filename, so that the rule matches
+/// [`safe_install_id`](crate::runners::archive::safe_install_id) and so that a
+/// library carried between machines cannot change meaning.
+///
+/// Both `covers_dir()` and the directory argument the tests pass are subject to
+/// this, and neither caller can be reached with a separator by the application
+/// itself: ids are minted by [`crate::models::new_id`], which is 32 lowercase
+/// hex characters. Refusing is therefore a foreign-or-hand-edited-`games.json`
+/// path, and it surfaces as an error the user is told about rather than as a
+/// write somewhere else.
+fn cover_stem(game_id: &str) -> Result<&str, &'static str> {
+    if game_id.contains('/') || game_id.contains('\\') {
+        return Err("it contains a path separator");
+    }
+    Ok(game_id)
+}
+
+/// The one message both [`SaveIconError::UnsafeId`] and
+/// [`CoverError::UnsafeId`] render, so the refusal reads identically whichever
+/// flow reached it.
+fn unsafe_id_message(id: &str) -> String {
+    format!("{id:?} cannot be used as a cover filename: it contains a path separator")
 }
 
 /// Write the icon embedded in a Windows executable into the covers directory.
@@ -604,7 +659,10 @@ pub fn save_exe_icon_to(
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default(),
     })?;
-    let destination = covers_dir.join(format!("{game_id}.ico"));
+    let stem = cover_stem(game_id).map_err(|_| SaveIconError::UnsafeId {
+        id: game_id.to_string(),
+    })?;
+    let destination = covers_dir.join(format!("{stem}.ico"));
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -678,6 +736,14 @@ pub enum CoverError {
     /// created, a temporary file could not be written, a rename into place
     /// failed, or a custom-cover source was missing.
     Io(std::io::Error),
+    /// The game id could not be turned into a filename without the possibility
+    /// of leaving the covers directory. See [`cover_stem`] for the rule and for
+    /// why it is a refusal rather than a rewrite.
+    ///
+    /// **Deliberate divergence from the reference** (`SECURITY.md` `SEC-04`):
+    /// the reference interpolates the id unvalidated and would write outside
+    /// `covers_dir`.
+    UnsafeId { id: String },
 }
 
 impl From<std::io::Error> for CoverError {
@@ -722,6 +788,9 @@ impl fmt::Display for CoverError {
             ),
             CoverError::Http(error) => error.fmt(formatter),
             CoverError::Io(error) => error.fmt(formatter),
+            CoverError::UnsafeId { id } => {
+                write!(formatter, "{}", unsafe_id_message(id))
+            }
         }
     }
 }
@@ -941,7 +1010,10 @@ pub fn save_cover_from_urls(
     covers_dir: &Path,
     timeout: Duration,
 ) -> Result<(PathBuf, String), CoverError> {
-    let destination = covers_dir.join(format!("{game_id}.jpg"));
+    let stem = cover_stem(game_id).map_err(|_| CoverError::UnsafeId {
+        id: game_id.to_string(),
+    })?;
+    let destination = covers_dir.join(format!("{stem}.jpg"));
     let mut last_error = "No cover URLs".to_string();
     for url in urls {
         match download_image(client, url, &destination, timeout) {
@@ -976,10 +1048,13 @@ pub fn copy_custom_cover(
         .and_then(|extension| extension.to_str())
         .unwrap_or_default()
         .to_lowercase();
+    let stem = cover_stem(game_id).map_err(|_| CoverError::UnsafeId {
+        id: game_id.to_string(),
+    })?;
     let file_name = if ["png", "jpg", "jpeg", "webp"].contains(&extension.as_str()) {
-        format!("{game_id}.{extension}")
+        format!("{stem}.{extension}")
     } else {
-        format!("{game_id}.jpg")
+        format!("{stem}.jpg")
     };
     let destination = covers_dir.join(file_name);
     if let Some(parent) = destination.parent() {
@@ -1918,6 +1993,91 @@ mod tests {
             .expect_err("missing source");
         assert_eq!(error.to_string(), root.join("gone.png").to_string_lossy());
         assert!(matches!(error, CoverError::Io(_)));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_game_id_that_can_traverse_is_refused_by_every_cover_write() {
+        // `SECURITY.md` SEC-04. The id is loaded verbatim from a `games.json`
+        // entry — untrusted input — and every cover write builds its destination
+        // by interpolating it. Before this check existed all three sites below
+        // wrote outside `covers_dir`: with the id used here the icon landed at
+        // `<root>/escape.ico` and the custom cover at `<root>/escape.png`, both
+        // one level above the directory the caller named.
+        //
+        // `scratch_dir` returns the directory whose *sibling* the traversal
+        // reaches, so the assertion is on an absolute path the write would
+        // otherwise have created — not merely on the error variant. A test that
+        // only checked `matches!(error, UnsafeId { .. })` would pass against an
+        // implementation that refused everything and wrote nothing for any id,
+        // which is why the accepted cases below are in the same test.
+        let root = scratch_dir("traversal");
+        let covers = root.join("covers");
+        let escaped = root.join("escape");
+        let id = "../escape";
+
+        let exe = windows_executable(&root.join("app.exe"));
+        let error = save_exe_icon_to(&exe, id, &covers).expect_err("an escaping id");
+        assert!(matches!(error, SaveIconError::UnsafeId { .. }));
+        assert!(
+            error.to_string().contains("path separator"),
+            "the refusal must say why: {error}"
+        );
+        assert!(!escaped.with_extension("ico").exists());
+        assert!(!covers.join(format!("{id}.ico")).exists());
+        // The `.ico.tmp` sibling `save_exe_icon_to` writes beside its target is
+        // the other half of this: refusing after the write would still leave
+        // that file at the traversed location.
+        assert!(!escaped.with_extension("ico.tmp").exists());
+
+        let mut client = FakeClient::new(vec![]);
+        let error = save_cover_from_urls(
+            &client,
+            &["https://cdn/a.jpg".to_string()],
+            id,
+            &covers,
+            TIMEOUT,
+        )
+        .expect_err("an escaping id");
+        assert!(matches!(error, CoverError::UnsafeId { .. }));
+        assert!(!escaped.with_extension("jpg").exists());
+        // The check runs before the transfer, so a doomed id does not reach the
+        // network. An empty route table fails every transfer, so a refusal that
+        // happened *after* the loop would surface as `DownloadFailed`.
+        assert_eq!(
+            client.urls(),
+            Vec::<String>::new(),
+            "no request may be made for an id that cannot be written"
+        );
+
+        let source = root.join("art.png");
+        std::fs::write(&source, b"\x89PNG fake").expect("write the source");
+        let error = copy_custom_cover(&source, id, &covers).expect_err("an escaping id");
+        assert!(matches!(error, CoverError::UnsafeId { .. }));
+        assert!(!escaped.with_extension("png").exists());
+
+        // A backslash is an ordinary character in a Unix filename and still
+        // refused, so that the rule matches `safe_install_id` and a library
+        // carried between machines cannot change meaning.
+        let error = copy_custom_cover(&source, "..\\escape", &covers).expect_err("a backslash");
+        assert!(matches!(error, CoverError::UnsafeId { .. }));
+        let _ = &mut client;
+
+        // The other half of the rule, and the reason it is one condition rather
+        // than a sanitiser: `..` on its own is *not* a traversal, because the
+        // id is always followed by `.` and an extension. Refusing it would
+        // refuse a filename the reference picks happily, and rewriting it would
+        // rename every existing user's covers.
+        let dotdot = save_exe_icon_to(&exe, "..", &covers).expect("`..` is a legal stem here");
+        assert_eq!(dotdot, covers.join("...ico"));
+        let empty = save_exe_icon_to(&exe, "", &covers).expect("the empty id is a legal stem here");
+        assert_eq!(empty, covers.join(".ico"));
+        // A real id, minted by `models::new_id`, is 32 lowercase hex characters
+        // and passes untouched — the value is not rewritten on the way through.
+        let real = crate::models::new_id();
+        let path = save_exe_icon_to(&exe, &real, &covers).expect("a real id");
+        assert_eq!(path, covers.join(format!("{real}.ico")));
+
         let _ = std::fs::remove_dir_all(&root);
     }
 
