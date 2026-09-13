@@ -33,7 +33,7 @@
 //! `sourceSize.width: 512` and `sourceSize.height: 512` on the one `Image` that
 //! draws a cover, so the Python app decodes no cover larger than 512 in either
 //! axis either. That is the parity argument *and* the size argument: the widest
-//! box this app draws a cover in is a card's, 188×254
+//! box this app draws a cover in is a card's, 188×207
 //! ([`metrics::card_cover_box`](super::metrics::card_cover_box)), so a 512-axis
 //! decode is at least twice the drawn size in both axes and does not upscale on
 //! a 2× display.
@@ -94,11 +94,21 @@ pub const DECODE_MAX: u32 = 512;
 /// bound has to live somewhere that knows what a byte of pixels costs.
 ///
 /// The arithmetic: a cover at the cap is 512 × 512 × 4 = 1 MiB, and a typical
-/// 2:3 cover is 341 × 512 × 4 = 700 KiB. A 1200×800 window draws about fifteen
-/// cards — the tiles at 200×300 (`metrics::GRID_CELL`) plus the rows below its
-/// fold — so the drawn set is ~10 MiB. 64 MiB is about six times that, which is
-/// what makes a scroll back through a page of already-seen tiles free, and it
-/// is a *ceiling*: a library of five games holds five covers' worth, not 64 MiB.
+/// 2:3 cover is 341 × 512 × 4 = 700 KiB. The window PERF-03 builds draws **45
+/// cards** in the grid and **36 rows** in the list at 1200×800, so one window at
+/// the cap is 45 × 1 MiB = 45 MiB. 64 MiB holds that window with 1.4× to spare,
+/// and about two windows at the typical 2:3 size — which is what makes a short
+/// scroll back through tiles just seen free rather than a decode.
+///
+/// Stated as headroom rather than as a guarantee, because 1.4× is not much: a
+/// window of *square, at-cap* covers nearly fills the budget on its own, and a
+/// scroll longer than a screen re-decodes at the typical size too. The knob for
+/// that is this constant.
+///
+/// The window is the load-bearing bound and this budget is the backstop — with
+/// PERF-03's window in place, iced's own cache never sees more than a window
+/// either. Both are kept because each bounds something the other does not: the
+/// window bounds what is *asked for*, the budget bounds what is *held*.
 pub const IMAGE_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
 /// A cover that could not be decoded. See [`CoverCache::image`].
@@ -130,7 +140,6 @@ struct Inner {
     classify_calls: usize,
     image_calls: usize,
     decode_calls: usize,
-    image_hits: usize,
 }
 
 /// The cover cache: what a game's cover *is*, and what it *looks like*.
@@ -161,9 +170,9 @@ struct Inner {
 /// print `RefCell<Inner>`'s whole contents — a line per cover path, plus a page
 /// of decoded pixel counts — every time anything in the app is formatted with
 /// `{:?}`, which is the opposite of useful. This impl prints the counters
-/// instead, which are the four numbers a reader of a debug dump would want: how
+/// instead, which are the numbers a reader of a debug dump would want: how
 /// many paths are memoised, how many covers are resident, what they cost, and
-/// how much filesystem work has actually happened.
+/// how much filesystem work and decoding has actually happened.
 pub struct CoverCache {
     inner: RefCell<Inner>,
     budget: usize,
@@ -263,7 +272,6 @@ impl CoverCache {
             let mut inner = self.inner.borrow_mut();
             inner.image_calls += 1;
             if inner.images.contains_key(cover_path) {
-                inner.image_hits += 1;
                 touch(&mut inner.order, cover_path);
                 return inner
                     .images
@@ -334,7 +342,13 @@ impl CoverCache {
         self.inner.borrow().bytes
     }
 
-    /// How many covers are decoded and resident.
+    /// How many cover entries the cache holds.
+    ///
+    /// Includes entries whose file could not be read or decoded, which are kept
+    /// deliberately so a broken cover is attempted once rather than per frame
+    /// (see [`Decoded::handle`]). Those cost the budget zero bytes, so this
+    /// count and [`CoverCache::resident_bytes`] answer different questions and
+    /// are not expected to agree.
     pub fn resident_images(&self) -> usize {
         self.inner.borrow().images.len()
     }
@@ -763,12 +777,29 @@ mod tests {
     fn the_shipped_cache_is_bounded_by_the_documented_budget() {
         assert_eq!(CoverCache::new().budget(), IMAGE_BUDGET_BYTES);
         assert_eq!(CoverCache::default().budget(), IMAGE_BUDGET_BYTES);
-        // And the documented number is a bound a library page can live inside:
-        // one 512-axis cover is 512×512×4 = 1 MiB, so the budget holds at least
-        // a few dozen of them. A budget below one cover would evict the entry it
-        // just decoded on the next insert — see `evict`'s note on the last
-        // entry.
-        assert!(IMAGE_BUDGET_BYTES >= DECODE_MAX as usize * DECODE_MAX as usize * 4);
+        // And the documented number is a bound a library page can live inside.
+        // The assertion is the *claim the doc makes* — "the drawn set fits" — and
+        // not merely "the budget is non-zero": a `IMAGE_BUDGET_BYTES` of 1 MiB
+        // would satisfy `>= one cover` while being the pre-fix state for PERF-02
+        // (the entry just decoded would be evicted to make room for itself, since
+        // `evict` never drops the most recent entry and so the cache would sit
+        // permanently over budget). The drawn set is a measured 45 cards, so the
+        // budget must hold one whole window at the cap — 45 MiB — before it can
+        // hold anything else.
+        //
+        // The first version of this line asserted `16 *` that, which is 720 MiB
+        // and fails against the shipped 64 MiB. It was written from the intent
+        // ("many windows") rather than from the arithmetic, and the test caught
+        // it — which is the only reason to state the multiple explicitly here
+        // instead of in a comment.
+        const DRAWN_CARDS_MEASURED: usize = 45;
+        let one_window_at_cap =
+            DRAWN_CARDS_MEASURED * DECODE_MAX as usize * DECODE_MAX as usize * 4;
+        assert!(
+            IMAGE_BUDGET_BYTES >= one_window_at_cap,
+            "the budget must hold a whole window at the cap ({one_window_at_cap} bytes), \
+             not one cover"
+        );
     }
 
     /// A cover that cannot be decoded is attempted **once**, not once per
@@ -791,6 +822,13 @@ mod tests {
         }
         assert_eq!(cache.decode_calls(), 1, "one attempt, ten frames");
         assert_eq!(cache.resident_bytes(), 0, "a failure costs no budget");
+        assert_eq!(
+            cache.resident_images(),
+            1,
+            "but it IS a resident entry — see `resident_images`: the count includes \
+             the failures, which is why it and `resident_bytes` answer different \
+             questions"
+        );
         assert!(cache.image("").is_none(), "an empty path is never a file");
         assert_eq!(cache.decode_calls(), 1, "and is not an attempt either");
     }
