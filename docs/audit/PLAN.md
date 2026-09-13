@@ -63,7 +63,7 @@ those rows contain `Status:`:
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
 | `BUGS.md` | 48 | 39 | 37 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
-| `ARCHITECTURE.md` | 26 | 20 | 18 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
+| `ARCHITECTURE.md` | 26 | 21 | 19 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 21 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
@@ -136,18 +136,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 21 | 0 | 28 |
-| **Total** | **130** | **96** | **0** | **34** |
+| P3 | 49 | 22 | 0 | 27 |
+| **Total** | **130** | **97** | **0** | **33** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 18 | 0 | 7 |
+| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 19 | 0 | 6 |
 | `BUG-xx` | `BUGS.md` | 46 | 37 | 0 | 9 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 17 | 0 | 12 |
-| **Total** | | **130** | **96** | **0** | **34** |
+| **Total** | | **130** | **97** | **0** | **33** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -305,7 +305,7 @@ across families, not within them.
 | `ARCH-22` | A 58-line dialog docblock describes the runner dialog but sits above the game dialog, leaving the runner dialog undocumented | S5 | — | Move the docblock onto the runner dialog and write one for the game dialog; verify both dialogs have a doc comment naming them. | OPEN |
 | `ARCH-23` | The page-handler convention is inconsistent: two page modules own an update, the third does not | S5 | — | Adopt one convention across the three page modules, or record why Plugins differs; verify by reading the three signatures. | OPEN |
 
-| `ARCH-25` | A module-level #[allow(dead_code)] covers the whole view layer, suppressing fifteen never-used items, including an entire dead widget stack | S5 | — | Narrow the allow to the items that need it and delete the dead widget stack; verify the crate still builds with `-D warnings`. | OPEN |
+| `ARCH-25` | A module-level #[allow(dead_code)] covered the whole view layer, suppressing ten never-used items, including a dead widget stack | S5 | — | Delete the dead widget stack and gate the test-only constants, so the allow's removal is a small change rather than a triage. **Status: FIXED.** The allow is gone and `cargo check -p gamehandler --all-targets` reports zero warnings without it, so lint reaches the whole view layer. The row's own list was stale — 10 items exist, not 15, and two it named (`cover_preview`, `preview_label`) are live. Nine deleted, three gated with `#[cfg(test)]`. Gating one broke `runners.rs`'s source-scanner cut point, caught by that scanner's own anti-vacuity assert; the cut is now the rule its name promised and the regression test is mutation-verified. See `ARCHITECTURE.md`'s `ARCH-25` row for the full account. | FIXED |
 | `ARCH-26` | Four comments cite `RunnerManager::choices` at line numbers that hold `system_wine` instead, and they had drifted before this session's merges rather than because of them | S5 | — | Point all four at `runners/mod.rs:1322` and check each against the tree. **Status: FIXED.** `settings.rs:275` and `form.rs:2087`, `:2710`, `:2772` now name `:1322`/`:1322-1327`, where `choices` is; `widgets.rs:708` also names `:1119` and is **correct as written**, because it is a historical note about where the number was at the time of an earlier correction. | FIXED |
 | `BUG-19` | sanitize accepts a bare - as the number null, so [-], [-]-style malformed numbers and {"last_played":-} parse where Python raises JSONDecodeError | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** `number_end` returns a zero-width span when no digit follows the sign and `sanitize` steps over the character rather than normalising `text[i..i]`; the guard and the zero-width return are one fix, because the `null` was synthesised by the *caller* passing an empty token to `normalize_number`. `sanitize_leaves_a_sign_with_no_digits_alone` fails on the pre-fix body with `left: "[null]"`, `right: "[-]"`. | FIXED |
 | `BUG-20` | Library::all("recent") / all("added") do not treat -0.0 and 0.0 as equal, so two games whose timestamps tie present in a different order than the reference | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** A new `zero_normalised` fuses `-0.0` into `0.0` before both `total_cmp` arms, so equal timestamps reach the name tie-break; the regression asserts the sign survives the load, so it cannot pass vacuously, and fails on the pre-fix arms with `left: ["ZZZ", "AAA"]`, `right: ["AAA", "ZZZ"]`. | FIXED |
