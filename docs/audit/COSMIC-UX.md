@@ -22,11 +22,20 @@ counted twice.
 It was performed by reading `crates/app/src/view/` at commit `d56782d`. The
 reconnaissance pass was read-only; the fixes it produced landed separately on
 branch `audit-hardening` and each row below that has one carries a **Status**
-tail — five do (`UX-01`, `UX-02`, `UX-03`, `UX-05`, and this sentence, which was
-itself wrong in the same way the PLAN tables have been wrong three times: it said
-"one" while four rows carried one, because it was maintained by hand beside the
-rows instead of counted from them. `grep -c 'Status: FIXED' COSMIC-UX.md` is the
-count that cannot drift).
+tail. **Eleven** rows do — ten `FIXED` and one `WITHDRAWN` — and the pattern that
+counts them is `PLAN.md`'s own `scripts/plan-counts.py --check`, which derives the
+figure from the rows rather than from a sentence beside them.
+
+**This sentence has now been wrong twice, in the same way, and the second time is
+worth more than the number.** It first said "one" while four rows carried a tail,
+and was rewritten to name the four and to recommend
+`grep -c 'Status: FIXED' COSMIC-UX.md` as "the count that cannot drift". That
+recommendation is itself the defect class this audit is named for: the sentence
+containing the literal string `Status: FIXED` **is a line of this file**, so the
+grep counts the advice as a finding and returns one more than the document holds.
+A check that passes without inspecting what it claims — here, a check that counts
+itself. `plan-counts.py` reads `PLAN.md`'s rows for the same reason `ARCH-05`
+records: the number has to come from the rows, not from a sentence about them.
 
 Two of those tails record a **premise** correction rather than a fix. `UX-02`'s
 evidence was wrong about which widget the app draws, and wrong in the direction
