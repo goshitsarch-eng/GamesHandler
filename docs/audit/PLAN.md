@@ -101,20 +101,20 @@ advocate reviews every row before it is called done and owns no row.
 | Severity | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
-| P1 | 23 | 21 | 0 | 2 |
+| P1 | 23 | 22 | 0 | 1 |
 | P2 | 52 | 19 | 0 | 33 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **128** | **45** | **0** | **83** |
+| **Total** | **128** | **46** | **0** | **82** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 7 | 0 | 18 |
+| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 8 | 0 | 17 |
 | `BUG-xx` | `BUGS.md` | 45 | 23 | 0 | 22 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 3 | 0 | 5 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
 | `SEC-xx` | `SECURITY.md` | 10 | 3 | 0 | 7 |
 | `UX-xx` | `COSMIC-UX.md` | 30 | 4 | 0 | 26 |
-| **Total** | | **128** | **45** | **0** | **83** |
+| **Total** | | **128** | **46** | **0** | **82** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -169,7 +169,7 @@ across families, not within them.
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
-| `ARCH-02` | The view layer's stated contract is false, and the code that violates it is the code the contract was written to describe | S5 | — | Either the two `view` `update` bodies move behind `Message` and `view/mod.rs:5-11` becomes true, or the paragraph is rewritten to describe the split the code has. A test walking `view/` for `&mut State` parameters enforces whichever is chosen. | OPEN |
+| `ARCH-02` | The view layer's stated contract is false, and the code that violates it is the code the contract was written to describe | S5 | — | Either the two `view` `update` bodies move behind `Message` and `view/mod.rs:5-11` becomes true, or the paragraph is rewritten to describe the split the code has. A test walking `view/` for `&mut State` parameters enforces whichever is chosen. | FIXED — the paragraph was rewritten to describe the split the code has, and the test is `view/mod.rs`'s `the_layer_split_the_docs_describe_is_the_split_the_code_has`, which reads the tier table back out of the source |
 | `ARCH-03` | uninstall reports success for a removal that did not happen | S5 | duplicate of `BUG-03` | As `BUG-03`. The remaining `!target.is_dir()` arm returns `Ok(())` for an absent target, which is the intended convergence rather than the defect. | FIXED with `BUG-03` |
 | `ARCH-04` | One of the two "open something for the user" helpers discards its spawn failure and returns Ok(()); the other reports | S5 | duplicate of `BUG-04` | As `BUG-04`. | FIXED with `BUG-04` |
 | `ARCH-05` | A core module's own header declares the live easy-install path dead | S5 | — | Rewrite `installers.rs:15-23` in the present tense naming `easy_install_worker`; verify every function the header calls callerless has a non-test call site. | FIXED `75fc739` (re-fixed after the line citations went stale) |
