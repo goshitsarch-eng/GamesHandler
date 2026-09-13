@@ -1274,9 +1274,12 @@ ORACLE_REL="docs/migration/oracle"
 FIXTURES_REL="$ORACLE_REL/fixtures"
 
 fixture_hashes() {
+    # `xargs -r`: without it an empty find still runs sha256sum once, on empty
+    # stdin, and prints the well-known hash of nothing — which looks exactly
+    # like evidence. -r makes "no files" read as no output instead.
     find "$ROOT/$FIXTURES_REL" -type f -print0 2>/dev/null \
         | sort -z \
-        | xargs -0 sha256sum 2>/dev/null
+        | xargs -r -0 sha256sum 2>/dev/null
 }
 
 stage_oracle() {
@@ -1287,6 +1290,14 @@ stage_oracle() {
 
     local before
     before="$(fixture_hashes)"
+    # A floor: the read-only assertion below compares before == after, which
+    # holds trivially when both are empty — a missing fixtures directory reads
+    # as "stayed read-only" instead of as "no oracle". Require the evidence to
+    # exist. (Partial loss is still the diff -ru below's job, not this one's.)
+    if [ -z "$before" ]; then
+        echo "no fixture files under $FIXTURES_REL — the oracle is absent, not stale"
+        return 1
+    fi
 
     local tmp
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/gh-oracle-XXXXXX")" || return 1
@@ -1862,19 +1873,29 @@ stage_desktop_metainfo() {
 # command with `&&` is therefore not matched — it reads as a failure, which is
 # the safe direction, and the manifest's convention is one install per
 # build-command), and the token immediately before the destination token must be
-# exactly the source. ${FLATPAK_DEST}/... and /app/... spellings are accepted by
-# matching on the destination tail. It is still a string match on a command and
-# not an execution of it; it is now a match on the argument that decides the
-# outcome rather than on any substring that happens to appear.
+# exactly the source. The destination is matched from a fixed install root —
+# ${FLATPAK_DEST}/<dest> or /app/<dest>, the same rel() the completeness half
+# below uses — not by suffix, and only inside the gamehandler module, which is
+# the module this stage claims to cover. The earlier endswith("/" + dest) over
+# *all* modules would accept a right-tail install by another module, or one
+# under an extra path prefix, as declaring ours. It is still a string match on
+# a command and not an execution of it; it is now a match on the argument that
+# decides the outcome rather than on any substring that happens to appear.
 DECLARES_PY='
 import json, shlex, sys
 doc = json.load(open(sys.argv[1]))
 src, dest = sys.argv[2], sys.argv[3]
+MODULE = "gamehandler"
 
-def is_dest(token):
-    return token == dest or token.endswith("/" + dest)
+def rel(token):
+    for prefix in ("${FLATPAK_DEST}/", "/app/"):
+        if token.startswith(prefix):
+            return token[len(prefix):]
+    return None
 
 for module in doc.get("modules", []):
+    if module.get("name") != MODULE:
+        continue
     commands = module.get("build-commands", []) + module.get("post-install", [])
     for command in commands:
         if not command.startswith("install "):
@@ -1884,7 +1905,7 @@ for module in doc.get("modules", []):
         except ValueError:
             continue
         for i, token in enumerate(tokens):
-            if i >= 1 and is_dest(token) and tokens[i - 1] == src:
+            if i >= 1 and rel(token) == dest and tokens[i - 1] == src:
                 sys.exit(0)
 sys.exit(1)
 '
