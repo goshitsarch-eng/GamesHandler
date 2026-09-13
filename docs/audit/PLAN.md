@@ -63,7 +63,7 @@ those rows contain `Status:`:
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
 | `BUGS.md` | 48 | 39 | 37 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
-| `ARCHITECTURE.md` | 26 | 22 | 19 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
+| `ARCHITECTURE.md` | 26 | 23 | 20 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 21 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
@@ -136,18 +136,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 22 | 0 | 27 |
-| **Total** | **130** | **97** | **0** | **33** |
+| P3 | 49 | 23 | 0 | 26 |
+| **Total** | **130** | **98** | **0** | **32** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 19 | 0 | 6 |
+| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 20 | 0 | 5 |
 | `BUG-xx` | `BUGS.md` | 46 | 37 | 0 | 9 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 17 | 0 | 12 |
-| **Total** | | **130** | **97** | **0** | **33** |
+| **Total** | | **130** | **98** | **0** | **32** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -302,7 +302,7 @@ across families, not within them.
 | `ARCH-19` | Three Python citations land on a blank line | S5 | — | Re-point the three citations; verify each lands on the code it names. | FIXED |
 | `ARCH-20` | Two comments record the size of a mutation-testing result, the two numbers disagree with each other, and neither matches the current suite | S5 | — | Re-measure the mutation result and record the method with the number; verify by re-running the measurement. | OPEN |
 | `ARCH-21` | The shortcut guard test is not enforced by the gate that is supposed to enforce it | S5 | — | Delete one of the two constants and observe the gate stay green (pre-fix), then fail (post-fix) once the guard is wired into a stage. | OPEN |
-| `ARCH-22` | A 58-line dialog docblock describes the runner dialog but sits above the game dialog, leaving the runner dialog undocumented | S5 | — | Move the docblock onto the runner dialog and write one for the game dialog; verify both dialogs have a doc comment naming them. | OPEN |
+| `ARCH-22` | A 58-line dialog docblock describes the runner dialog but sits above the game dialog, leaving the runner dialog undocumented | S5 | — | Move the docblock onto the runner dialog and write one for the game dialog; verify both dialogs have a doc comment naming them. **Status: FIXED.** The row understated it: **three** blocks were tangled, not two, and the merged comment is **107** lines, not 58. `page_entry_task`'s block ran into `remove_runner_dialog`'s with no blank `///`, and that into `remove_game_dialog`'s, so all of it attached to the last function in the chain — `remove_game_dialog` was documented with two other functions' prose and the two dialogs the block was written for had none. Each block is now re-homed above the function it describes. The guard is `every_dialog_docblock_names_the_dialog_it_sits_above` in `main.rs`, and it grades the two-way claim the finding actually made: every dialog has a comment (no orphans) **and** each comment names its own subject (no mis-attachment), with the phrase for each taken from the reference's own QML name (`removeDialog`, `removeRunnerDialog`, `page.openGameMenu`). The weaker "there is a `///` above each `fn`" test passes on the broken file, which is why it is not the one written. Mutation-verified in both directions: re-merging the blocks fails on the length check, and stripping one block fails on the orphan check. `cargo fmt --check`, clippy `-D warnings`, the `doc` stage and `cargo test --workspace` (1130 passing) are clean. | FIXED |
 | `ARCH-23` | The page-handler convention is inconsistent: two page modules own an update, the third does not | S5 | — | Adopt one convention across the three page modules, or record why Plugins differs; verify by reading the three signatures. | OPEN |
 
 | `ARCH-25` | A module-level #[allow(dead_code)] covered the whole view layer, suppressing ten never-used items, including a dead widget stack | S5 | — | Delete the dead widget stack and gate the test-only constants, so the allow's removal is a small change rather than a triage. **Status: FIXED.** The allow is gone and `cargo check -p gamehandler --all-targets` reports zero warnings without it, so lint reaches the whole view layer. The row's own list was stale — 10 items exist, not 15, and two it named (`cover_preview`, `preview_label`) are live. Nine deleted, three gated with `#[cfg(test)]`. Gating one broke `runners.rs`'s source-scanner cut point, caught by that scanner's own anti-vacuity assert; the cut is now the rule its name promised and the regression test is mutation-verified. See `ARCHITECTURE.md`'s `ARCH-25` row for the full account. | FIXED |

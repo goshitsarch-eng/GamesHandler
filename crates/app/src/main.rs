@@ -706,100 +706,6 @@ pub struct Shell {
     nav_model: nav_bar::Model,
 }
 
-/// What arriving at `page` starts, if anything. D-48's page-entry emission.
-///
-/// The counterpart of the reference's `Component.onCompleted`, which fires once
-/// per page *instance*: `RunnersPage.qml:19` fetches the selected family's
-/// releases when the page is completed, and `:26` re-fetches when the user
-/// changes the family. Both routes reach the same handler, so the two cannot
-/// drift apart.
-///
-/// `Runners` is the only page with entry work. Every other page draws state the
-/// shell already holds, so arriving there is a repaint and nothing more — an
-/// empty arm rather than a missing one, which is why the wildcard is written
-/// out rather than left to fall through.
-///
-/// # Why this goes through the page's own `update`
-///
-/// Entering the page is the same event as a family change: it must set
-/// `releases_family`, mark the fetch in flight, clear the stale list, recompute
-/// the rows and start the download. Writing that out again here would be a
-/// second copy of `FetchReleases`'s transition — the copy that goes stale when
-/// the transition changes. Calling the handler instead is what makes "entering
-/// the page fetches the selected family" true by construction.
-///
-/// # Which family
-///
-/// The one the page is showing, which is `state.releases_family` and defaults
-/// to [`view::runners::default_family`] — `"proton-ge"` — before the user has
-/// ever changed it, which is the reference's own default
-/// (`RunnersPage.qml:14`).
-///
-/// **This is a deliberate divergence, and it is worth stating because the
-/// reference's literal behaviour is different.** In QML, `selectedFamilyId` is
-/// a page-local property, so a fresh page instance resets to `"proton-ge"` and
-/// re-entering the page always refetches Proton-GE even if the user had chosen
-/// another family a moment earlier. This port hoisted that property into
-/// `State` — the decision is recorded in `view::runners`'s header, because the
-/// dropdown has to be bound to *something* and a value that vanishes on
-/// navigation cannot be it — and once the family outlives the page, fetching
-/// anything but the family the dropdown is showing would draw a list under a
-/// selector that names a different family. The two must be the same value.
-/// The Runners page's removal confirmation, `removeRunnerDialog`
-/// (`RunnersPage.qml:257-272`), drawn as a modal over the page body.
-///
-/// The reference's dialog is a `Kirigami.PromptDialog`: its `title` is
-/// `"Remove " + pendingRemove.name + "?"`, its `subtitle` the fixed sentence,
-/// and its footer is Cancel plus a custom Remove action — Cancel closes, and
-/// Remove sends the row's `runnerId` to `uninstallRunner` and then closes
-/// (`RunnersPage.qml:259-271`). The port renders the same three parts through
-/// libcosmic's own composition: `cosmic::widget::dialog` builds the titled card
-/// (`src/widget/dialog.rs`), and [`dialog_over`] lays it over the body behind an
-/// input-blocking scrim.
-///
-/// This is a free function over `(body, pending)` rather than a method on
-/// [`State`] or a page module for the same reason [`Shell::view_body`]'s arms
-/// borrow rather than build: the dialog needs the already-built body beneath
-/// it, and the page's view does not know a dialog is open. P-37.
-///
-/// # Why not `popover`, and what the composition is now
-///
-/// The first version composed the dialog over the body with
-/// `cosmic::widget::popover` — the same widget libcosmic itself uses to lay an
-/// application dialog over its view (`src/app/mod.rs:874-887`). It draws
-/// correctly and behaves correctly, but it is untestable in exactly the way
-/// that matters: `Popover::operate` returns early when `modal && popup.is_some()`
-/// (`src/widget/popover.rs:138-141`), skipping the background content *and*
-/// the popup, so the `drawn_strings` instrument this file's overlay tests use
-/// sees neither half — an open dialog photographs as `[]`. A passing render
-/// test would then be asserting the absence it was written to refute, which is
-/// the D-44 defect wearing a dialog's clothes.
-///
-/// The second version answered that with a `Column` — the dialog in one band,
-/// the page in the next — and paid for it with UX-06: in sequence, the page is
-/// neither behind the dialog nor blocked by it, so every control on it stayed
-/// live under an open destructive prompt. [§ `dialog_over`](dialog_over) has
-/// the measurement and the composition that replaces it. What is preserved is
-/// the behaviour the reference's dialog promises: the title names the pending
-/// removal, both actions are drawn, Cancel closes without removing, and Remove
-/// removes the pending id and then closes.
-///
-/// # The Remove button's message, and the gap beside it
-///
-/// Remove sends [`Message::RemoveRunnerConfirmed`], not
-/// [`Message::UninstallRunner`] — and the choice is load-bearing rather than
-/// nominal: the confirmed arm clears the pending removal before removing, and
-/// a button sending the direct route would remove while leaving the dialog
-/// open. **No test here sees that choice**: a built `Button`'s message is
-/// opaque (the sources are cited at `installed_card`'s call site), so
-/// `the_runner_dialog_is_a_modal_over_the_page_it_names` photographs the
-/// *label* "Remove" and cannot tell which of the two variants it carries —
-/// mutating one into the other leaves all 322 green, measured. This paragraph
-/// is the record of that gap, and the fix is the same one the codebase
-/// already uses for it: a named press helper carrying the value, as
-/// `remove_press` does for the delete
-/// button — except the helper would live in this file, beside the button,
-/// rather than across the page boundary.
 /// The game-removal dialog over the library it names: `removeDialog`
 /// (`LibraryPage.qml:346-360`).
 ///
@@ -867,6 +773,61 @@ fn game_menu_dialog<'a>(
     dialog_over(body, popup)
 }
 
+/// The Runners page's removal confirmation, `removeRunnerDialog`
+/// (`RunnersPage.qml:257-272`), drawn as a modal over the page body.
+///
+/// The reference's dialog is a `Kirigami.PromptDialog`: its `title` is
+/// `"Remove " + pendingRemove.name + "?"`, its `subtitle` the fixed sentence,
+/// and its footer is Cancel plus a custom Remove action — Cancel closes, and
+/// Remove sends the row's `runnerId` to `uninstallRunner` and then closes
+/// (`RunnersPage.qml:259-271`). The port renders the same three parts through
+/// libcosmic's own composition: `cosmic::widget::dialog` builds the titled card
+/// (`src/widget/dialog.rs`), and [`dialog_over`] lays it over the body behind an
+/// input-blocking scrim.
+///
+/// This is a free function over `(body, pending)` rather than a method on
+/// [`State`] or a page module for the same reason [`Shell::view_body`]'s arms
+/// borrow rather than build: the dialog needs the already-built body beneath
+/// it, and the page's view does not know a dialog is open. P-37.
+///
+/// # Why not `popover`, and what the composition is now
+///
+/// The first version composed the dialog over the body with
+/// `cosmic::widget::popover` — the same widget libcosmic itself uses to lay an
+/// application dialog over its view (`src/app/mod.rs:874-887`). It draws
+/// correctly and behaves correctly, but it is untestable in exactly the way
+/// that matters: `Popover::operate` returns early when `modal && popup.is_some()`
+/// (`src/widget/popover.rs:138-141`), skipping the background content *and*
+/// the popup, so the `drawn_strings` instrument this file's overlay tests use
+/// sees neither half — an open dialog photographs as `[]`. A passing render
+/// test would then be asserting the absence it was written to refute, which is
+/// the D-44 defect wearing a dialog's clothes.
+///
+/// The second version answered that with a `Column` — the dialog in one band,
+/// the page in the next — and paid for it with UX-06: in sequence, the page is
+/// neither behind the dialog nor blocked by it, so every control on it stayed
+/// live under an open destructive prompt. [§ `dialog_over`](dialog_over) has
+/// the measurement and the composition that replaces it. What is preserved is
+/// the behaviour the reference's dialog promises: the title names the pending
+/// removal, both actions are drawn, Cancel closes without removing, and Remove
+/// removes the pending id and then closes.
+///
+/// # The Remove button's message, and the gap beside it
+///
+/// Remove sends [`Message::RemoveRunnerConfirmed`], not
+/// [`Message::UninstallRunner`] — and the choice is load-bearing rather than
+/// nominal: the confirmed arm clears the pending removal before removing, and
+/// a button sending the direct route would remove while leaving the dialog
+/// open. **No test here sees that choice**: a built `Button`'s message is
+/// opaque (the sources are cited at `installed_card`'s call site), so
+/// `the_runner_dialog_is_a_modal_over_the_page_it_names` photographs the
+/// *label* "Remove" and cannot tell which of the two variants it carries —
+/// mutating one into the other leaves all 322 green, measured. This paragraph
+/// is the record of that gap, and the fix is the same one the codebase
+/// already uses for it: a named press helper carrying the value, as
+/// `remove_press` does for the delete
+/// button — except the helper would live in this file, beside the button,
+/// rather than across the page boundary.
 fn remove_runner_dialog<'a>(
     body: cosmic::Element<'a, Message>,
     pending: &crate::state::PendingRunnerRemoval,
@@ -973,6 +934,45 @@ fn dialog_scrim<'a>() -> cosmic::Element<'a, Message> {
     .into()
 }
 
+/// What arriving at `page` starts, if anything. D-48's page-entry emission.
+///
+/// The counterpart of the reference's `Component.onCompleted`, which fires once
+/// per page *instance*: `RunnersPage.qml:19` fetches the selected family's
+/// releases when the page is completed, and `:26` re-fetches when the user
+/// changes the family. Both routes reach the same handler, so the two cannot
+/// drift apart.
+///
+/// `Runners` is the only page with entry work. Every other page draws state the
+/// shell already holds, so arriving there is a repaint and nothing more — an
+/// empty arm rather than a missing one, which is why the wildcard is written
+/// out rather than left to fall through.
+///
+/// # Why this goes through the page's own `update`
+///
+/// Entering the page is the same event as a family change: it must set
+/// `releases_family`, mark the fetch in flight, clear the stale list, recompute
+/// the rows and start the download. Writing that out again here would be a
+/// second copy of `FetchReleases`'s transition — the copy that goes stale when
+/// the transition changes. Calling the handler instead is what makes "entering
+/// the page fetches the selected family" true by construction.
+///
+/// # Which family
+///
+/// The one the page is showing, which is `state.releases_family` and defaults
+/// to [`view::runners::default_family`] — `"proton-ge"` — before the user has
+/// ever changed it, which is the reference's own default
+/// (`RunnersPage.qml:14`).
+///
+/// **This is a deliberate divergence, and it is worth stating because the
+/// reference's literal behaviour is different.** In QML, `selectedFamilyId` is
+/// a page-local property, so a fresh page instance resets to `"proton-ge"` and
+/// re-entering the page always refetches Proton-GE even if the user had chosen
+/// another family a moment earlier. This port hoisted that property into
+/// `State` — the decision is recorded in `view::runners`'s header, because the
+/// dropdown has to be bound to *something* and a value that vanishes on
+/// navigation cannot be it — and once the family outlives the page, fetching
+/// anything but the family the dropdown is showing would draw a list under a
+/// selector that names a different family. The two must be the same value.
 fn page_entry_task(state: &mut State, page: Page) -> cosmic::app::Task<Message> {
     match page {
         Page::Runners => {
@@ -8373,6 +8373,112 @@ mod tests {
     ///
     /// The title and subtitle are the state's own values rather than literals,
     /// so this cannot pass against a dialog that titles a constant.
+    /// **Each dialog carries its own doc comment, and the comment is about
+    /// that dialog.** ARCH-22.
+    ///
+    /// The three dialog builders had one 107-line doc comment between them:
+    /// `page_entry_task`'s block ran into `remove_runner_dialog`'s with no
+    /// blank `///`, and that block in turn ran into `remove_game_dialog`'s. All
+    /// of it therefore attached to the last function in the chain, and the two
+    /// dialogs it was written for had no documentation at all — `rustdoc` showed
+    /// one enormous block above `remove_game_dialog` and nothing above the
+    /// others. Reading the file bottom-up, the mistake is invisible; the giveaway
+    /// is a `///` line whose sentence has no antecedent, which is exactly what a
+    /// reader skims past.
+    ///
+    /// # What this grades, and why it is a source scan
+    ///
+    /// A doc comment is not reachable at run time — no `Operation` arm carries
+    /// one and this crate's traversal instruments photograph widgets, not
+    /// attributes — so the source is the only place to look. Reading it is a
+    /// weaker instrument than a call and it is the strongest one available.
+    ///
+    /// The claim graded is the one ARCH-22 was actually about, and it is a
+    /// *two-way* claim, because the defect had two halves: every dialog has a
+    /// comment (no orphans), **and** each comment names its own subject (no
+    /// mis-attachment). A weaker test — "there is a `///` line above each `fn`"
+    /// — passes on the broken file, since there was a `///` line above
+    /// `remove_game_dialog`; it was 107 lines long and described something else.
+    #[test]
+    fn every_dialog_docblock_names_the_dialog_it_sits_above() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
+        )
+        .expect("this file must be readable");
+        let tests_at = source
+            .find("\nmod tests {")
+            .expect("this file has a test module; the split below depends on it");
+        let production = &source[..tests_at];
+
+        // The dialogs this file draws, and the phrase each one's own doc must
+        // contain. The phrase is the dialog's QML name, which is what the
+        // reference calls it and what a reader arrives looking for.
+        // Bare identifiers, not the backticked spellings: the third is written
+        // `` `page.openGameMenu` ``, so requiring the backticked form would fail
+        // on a doc that does name it — which is how this list was written the
+        // first time, and the failure was the list's rather than the file's.
+        let dialogs: [(&str, &str); 3] = [
+            ("remove_game_dialog", "removeDialog"),
+            ("remove_runner_dialog", "removeRunnerDialog"),
+            ("game_menu_dialog", "openGameMenu"),
+        ];
+
+        for (function, phrase) in dialogs {
+            let definition = format!("\nfn {function}<'a>(");
+            let at = production.find(&definition).unwrap_or_else(|| {
+                panic!(
+                    "`{function}` is not defined at column 0 in this file, so this \
+                     scan found nothing to grade — the scan is stale rather than \
+                     the documentation being right"
+                )
+            });
+
+            // The doc comment is the unbroken run of `///` lines directly above
+            // the definition, which is the region rustdoc itself reads.
+            let above = &production[..at];
+            let mut block: Vec<&str> = Vec::new();
+            for line in above.lines().rev() {
+                if line.starts_with("///") {
+                    block.push(line);
+                } else if line.trim().is_empty() && block.is_empty() {
+                    // A blank between the item and its doc would mean there is
+                    // none; keep walking until something non-blank appears.
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            block.reverse();
+
+            assert!(
+                !block.is_empty(),
+                "`{function}` has no doc comment — the ARCH-22 defect, where the \
+                 block describing it was attached to the function below"
+            );
+
+            let text = block.join("\n");
+            assert!(
+                text.contains(phrase),
+                "`{function}`'s doc comment ({n} lines) never names {phrase}, so it \
+                 is not this dialog's comment. ARCH-22: the give-away is a `///` \
+                 line whose sentence has no antecedent.\n\n{text}",
+                n = block.len()
+            );
+
+            // The orphan half: a doc comment this long above a dialog means a
+            // neighbouring block has been swallowed into it, which is how the
+            // 107-line block happened. 60 is well above the longest legitimate
+            // dialog comment here and well below the merged one.
+            assert!(
+                block.len() < 60,
+                "`{function}`'s doc comment is {} lines, which is longer than a \
+                 dialog block and is what ARCH-22 looked like — check the function \
+                 above it has not lost its own doc to this one",
+                block.len()
+            );
+        }
+    }
+
     #[test]
     fn the_runner_dialog_is_a_modal_over_the_page_it_names() {
         // `shell_with_work_to_do` holds an open form, and the form takes
