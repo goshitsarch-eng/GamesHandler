@@ -81,17 +81,17 @@ use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rustix::fs::{renameat_with, RenameFlags, CWD};
+use rustix::fs::{CWD, RenameFlags, renameat_with};
 use rustix::io::Errno;
 use serde_json::Value;
 
 use super::archive::{
-    safe_install_id, sanitise_release_tag, MAX_RUNNER_ARCHIVE_BYTES, METADATA_NAME,
+    MAX_RUNNER_ARCHIVE_BYTES, METADATA_NAME, safe_install_id, sanitise_release_tag,
 };
 use super::families::{
-    family_by_id, find_wine_binary, is_truthy, pick_asset, python_str, ReleaseInfo, RunnerFamily,
+    ReleaseInfo, RunnerFamily, family_by_id, find_wine_binary, is_truthy, pick_asset, python_str,
 };
-use super::{read_metadata, RunnerError, SYSTEM_WINE, USER_AGENT};
+use super::{RunnerError, SYSTEM_WINE, USER_AGENT, read_metadata};
 
 /// The default family, matching Python's `family_by_id("proton-ge")` default
 /// on every entry point that takes a family. A release with no family named is
@@ -307,7 +307,9 @@ pub fn python_int(text: &str) -> Option<i64> {
         // Saturating rather than wrapping: Python is unbounded here, so a
         // hostile header cannot be reported as a *small* number by wrapping
         // into the negative — the direction that would slip a size check.
-        magnitude = magnitude.saturating_mul(10).saturating_add(i128::from(value));
+        magnitude = magnitude
+            .saturating_mul(10)
+            .saturating_add(i128::from(value));
         previous_was_digit = true;
         any_digit = true;
     }
@@ -421,10 +423,8 @@ fn json_type_name(value: &Value) -> &'static str {
 pub fn parse_content_length(header: Option<&str>) -> Result<i64, RunnerError> {
     match header {
         None | Some("") => Ok(0),
-        Some(text) => python_int(text).ok_or_else(|| {
-            RunnerError::Http {
-                message: "Runner download has an invalid Content-Length".to_string(),
-            }
+        Some(text) => python_int(text).ok_or_else(|| RunnerError::Http {
+            message: "Runner download has an invalid Content-Length".to_string(),
         }),
     }
 }
@@ -440,9 +440,8 @@ pub fn parse_content_length(header: Option<&str>) -> Result<i64, RunnerError> {
 /// `family_by_id` returns the message as a `String`, and it is carried through
 /// unchanged so the text stays byte-identical.
 fn resolve_family(family: Option<&str>) -> Result<&'static RunnerFamily, RunnerError> {
-    family_by_id(family.unwrap_or(DEFAULT_FAMILY_ID)).map_err(|message| RunnerError::Http {
-        message,
-    })
+    family_by_id(family.unwrap_or(DEFAULT_FAMILY_ID))
+        .map_err(|message| RunnerError::Http { message })
 }
 
 /// Turn a GitHub releases payload into [`ReleaseInfo`] values.
@@ -638,7 +637,8 @@ pub fn is_installed(runners_directory: &Path, tag: &str, family_id: Option<&str>
         // family id `"5"`, which Python does not. A metadata file written by
         // this app always holds strings, so the difference is only reachable
         // from a hand-edited or foreign one.
-        let matches_family = matches!(metadata.get("family"), Some(Value::String(text)) if *text == family_id);
+        let matches_family =
+            matches!(metadata.get("family"), Some(Value::String(text)) if *text == family_id);
         let matches_tag = matches!(metadata.get("tag"), Some(Value::String(text)) if *text == tag);
         if matches_family && matches_tag && is_staged_runner(&child) {
             return true;
@@ -848,7 +848,9 @@ fn write_metadata(root: &Path, release: &ReleaseInfo) -> Result<(), RunnerError>
     // releases from families that exist, but reachable from a caller that
     // constructs a `ReleaseInfo` by hand, and the two outcomes are not
     // equivalent: one is a failed install, the other a corrupt record.
-    let family = release.family().map_err(|message| RunnerError::Http { message })?;
+    let family = release
+        .family()
+        .map_err(|message| RunnerError::Http { message })?;
     let payload = Metadata {
         family: &release.family_id,
         tag: &release.tag,
@@ -1050,7 +1052,11 @@ pub fn install_with(
             if declared < 0 || declared as u64 > download_cap {
                 return Err(RunnerError::ArchiveTooLarge);
             }
-            total.set(if declared != 0 { declared } else { release.size });
+            total.set(if declared != 0 {
+                declared
+            } else {
+                release.size
+            });
             Ok(())
         },
         &mut |chunk| {
@@ -1257,13 +1263,13 @@ mod tests {
     fn unicode_decimal_digits_are_rejected_where_cpython_accepts_them() {
         // (input, what CPython's int() returns)
         let divergence: &[(&str, i64)] = &[
-            ("\u{661}\u{662}", 12),          // Arabic-Indic ١٢
-            ("\u{663}", 3),                  // ٣
-            ("\u{661}_\u{662}", 12),         // with a PEP 515 underscore
+            ("\u{661}\u{662}", 12),  // Arabic-Indic ١٢
+            ("\u{663}", 3),          // ٣
+            ("\u{661}_\u{662}", 12), // with a PEP 515 underscore
             ("\u{661}\u{662}_\u{663}", 123),
-            ("\u{665}\u{665}\u{665}", 555),  // ٥٥٥
-            ("\u{663}\u{664}", 34),          // ٣٤
-            ("\u{ff11}\u{ff12}", 12),        // fullwidth １２
+            ("\u{665}\u{665}\u{665}", 555), // ٥٥٥
+            ("\u{663}\u{664}", 34),         // ٣٤
+            ("\u{ff11}\u{ff12}", 12),       // fullwidth １２
             ("\u{ff11}\u{ff12}\u{ff13}\u{ff14}\u{ff15}", 12345),
         ];
         for (input, cpython) in divergence {
@@ -1339,7 +1345,14 @@ mod tests {
         assert_eq!(int_from_json(&json!(-1)).unwrap(), -1);
         // `or 0` makes the falsy values zero, tested by identity rather than
         // by type: all five are distinct JSON shapes.
-        for falsy in [json!(null), json!(false), json!(0), json!(""), json!([]), json!({})] {
+        for falsy in [
+            json!(null),
+            json!(false),
+            json!(0),
+            json!(""),
+            json!([]),
+            json!({}),
+        ] {
             assert_eq!(int_from_json(&falsy).unwrap(), 0, "{falsy} is falsy");
         }
         // A float truncates toward zero: `int(1.5)` is 1, `int(-1.5)` is -1.
@@ -1442,7 +1455,10 @@ mod tests {
 
         // The contrast: an archive-like name is *not* skipped, and a bare
         // `source.tar.gz` is exactly what proton-ge will happily install.
-        let data = vec![release("v1", serde_json::json!([asset("source.tar.gz", "u", 7)]))];
+        let data = vec![release(
+            "v1",
+            serde_json::json!([asset("source.tar.gz", "u", 7)]),
+        )];
         let parsed = parse_releases(&data, Some("proton-ge")).unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, "source.tar.gz");
@@ -1495,10 +1511,7 @@ mod tests {
         );
         // Neither: empty, and the release is still kept — the asset matched,
         // and the tag is only a label.
-        assert_eq!(
-            parse_one(serde_json::json!({"assets": good_asset()})),
-            ""
-        );
+        assert_eq!(parse_one(serde_json::json!({"assets": good_asset()})), "");
         // A non-string tag is coerced rather than passed through as JSON, per
         // divergence 3: Python carries the number into a `str`-annotated field
         // and fails later; the port coerces at the boundary.
@@ -1525,7 +1538,9 @@ mod tests {
             "assets": [{"size": 5}],
         })];
         assert!(
-            parse_releases(&nameless, Some("proton-ge")).unwrap().is_empty(),
+            parse_releases(&nameless, Some("proton-ge"))
+                .unwrap()
+                .is_empty(),
             "an asset with no name cannot be recognised as an archive"
         );
 
@@ -1603,7 +1618,10 @@ mod tests {
             "assets": [asset("GE-Proton9-20.tar.gz", "u", 1)],
         })];
         // An explicit `None` is the default family, not "no family".
-        assert_eq!(parse_releases(&data, None).unwrap()[0].family_id, "proton-ge");
+        assert_eq!(
+            parse_releases(&data, None).unwrap()[0].family_id,
+            "proton-ge"
+        );
         assert_eq!(
             parse_releases(&data, Some("proton-ge")).unwrap()[0].family_id,
             "proton-ge"
@@ -1631,8 +1649,8 @@ mod tests {
 
         // `wine-proton` excludes `win32` and `wow64`; the 64-bit build is
         // taken and the 32-bit-only one is not.
-        let taken = parse_releases(&one("wine-10.0-proton-amd64.tar.xz"), Some("wine-proton"))
-            .unwrap();
+        let taken =
+            parse_releases(&one("wine-10.0-proton-amd64.tar.xz"), Some("wine-proton")).unwrap();
         assert_eq!(taken.len(), 1);
         assert_eq!(taken[0].family_id, "wine-proton");
 
@@ -1648,8 +1666,7 @@ mod tests {
         // not a blanket rejection: `proton-ge` has no token lists, so it takes
         // the very same 32-bit build. A port that applied one family's tokens
         // to another would fail one of these two.
-        let ge = parse_releases(&one("wine-10.0-proton-win32.tar.xz"), Some("proton-ge"))
-            .unwrap();
+        let ge = parse_releases(&one("wine-10.0-proton-win32.tar.xz"), Some("proton-ge")).unwrap();
         assert_eq!(ge.len(), 1);
         assert_eq!(ge[0].family_id, "proton-ge");
     }
@@ -1733,10 +1750,12 @@ mod tests {
                     on_head(head)?;
                     sink(body)
                 }
-                Err(RunnerError::Http { message }) => {
-                    Err(RunnerError::Http { message: message.clone() })
-                }
-                Err(_) => Err(RunnerError::Http { message: "transport".to_string() }),
+                Err(RunnerError::Http { message }) => Err(RunnerError::Http {
+                    message: message.clone(),
+                }),
+                Err(_) => Err(RunnerError::Http {
+                    message: "transport".to_string(),
+                }),
             }
         }
     }
@@ -1751,9 +1770,15 @@ mod tests {
         // `User-Agent` it is rejected outright, so both are pinned.
         let client = FakeClient::body(&payload(serde_json::json!([])));
         fetch_available(&client, None, 15, Duration::from_secs(30)).unwrap();
-        assert_eq!(client.url(), "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases");
+        assert_eq!(
+            client.url(),
+            "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases"
+        );
         let headers = &client.seen.borrow()[0].1;
-        assert!(headers.contains(&("Accept".to_string(), "application/vnd.github+json".to_string())));
+        assert!(headers.contains(&(
+            "Accept".to_string(),
+            "application/vnd.github+json".to_string()
+        )));
         assert!(headers.contains(&("User-Agent".to_string(), USER_AGENT.to_string())));
     }
 
@@ -1818,12 +1843,20 @@ mod tests {
         ] {
             let client = FakeClient::body(body);
             let error = fetch_available(&client, None, 15, Duration::from_secs(30)).unwrap_err();
-            assert_eq!(error.to_string(), "Unexpected GitHub releases response", "{body}");
+            assert_eq!(
+                error.to_string(),
+                "Unexpected GitHub releases response",
+                "{body}"
+            );
         }
         // An empty array is a *successful* empty listing — the contrast that
         // shows the check is not simply rejecting everything.
         let client = FakeClient::body("[]");
-        assert!(fetch_available(&client, None, 15, Duration::from_secs(30)).unwrap().is_empty());
+        assert!(
+            fetch_available(&client, None, 15, Duration::from_secs(30))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// Divergence 4: Python's `resp.read().decode("utf-8")` raises an uncaught
@@ -1843,7 +1876,9 @@ mod tests {
     #[test]
     fn a_transport_failure_propagates_rather_than_becoming_an_empty_listing() {
         let client = FakeClient {
-            status: Err(RunnerError::Http { message: "connection refused".to_string() }),
+            status: Err(RunnerError::Http {
+                message: "connection refused".to_string(),
+            }),
             seen: std::cell::RefCell::new(Vec::new()),
         };
         let error = fetch_available(&client, None, 15, Duration::from_secs(30)).unwrap_err();
@@ -1884,7 +1919,8 @@ mod tests {
         assert!(!is_installed(root, "GE-Proton9-20", Some("proton-cachyos")));
 
         // Once the namespaced directory exists it is found by name.
-        let namespaced = crate::runners::families::install_id_for("v1.0", "proton-cachyos").unwrap();
+        let namespaced =
+            crate::runners::families::install_id_for("v1.0", "proton-cachyos").unwrap();
         usable(&root.join(&namespaced));
         assert!(is_installed(root, "v1.0", Some("proton-cachyos")));
         // The un-namespaced path is a different directory, and there is no
@@ -1943,11 +1979,7 @@ mod tests {
         let garbage_root = garbage_root.as_path();
         let garbage = garbage_root.join("v1.0");
         usable(&garbage);
-        fs::write(
-            garbage.join(crate::runners::METADATA_NAME),
-            "{not json",
-        )
-        .unwrap();
+        fs::write(garbage.join(crate::runners::METADATA_NAME), "{not json").unwrap();
         assert!(!is_installed(garbage_root, "v1.0", Some("proton-cachyos")));
 
         // The paired case, differing only in whether the metadata parses. Both
@@ -1984,7 +2016,11 @@ mod tests {
         assert!(!is_installed(root, "v-nothing", None));
 
         // A missing runners directory is "not installed", not an error.
-        assert!(!is_installed(&root.join("does-not-exist"), "v1.0", Some("proton-ge")));
+        assert!(!is_installed(
+            &root.join("does-not-exist"),
+            "v1.0",
+            Some("proton-ge")
+        ));
     }
 
     #[test]
@@ -2037,7 +2073,10 @@ mod tests {
     fn text_accumulates_every_chunk_in_order() {
         let client = Chunky {
             chunks: vec![b"he", b"llo", b" world"],
-            head: ResponseHead { content_length: Some("11".to_string()), final_url: String::new() },
+            head: ResponseHead {
+                content_length: Some("11".to_string()),
+                final_url: String::new(),
+            },
         };
         let text = get_text(&client, "u", &[], Duration::from_secs(1)).unwrap();
         assert_eq!(text, "hello world");
@@ -2066,7 +2105,10 @@ mod tests {
                 on_head: &mut dyn FnMut(&ResponseHead) -> Result<(), RunnerError>,
                 sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
             ) -> Result<(), RunnerError> {
-                on_head(&ResponseHead { content_length: Some("3".to_string()), final_url: String::new() })?;
+                on_head(&ResponseHead {
+                    content_length: Some("3".to_string()),
+                    final_url: String::new(),
+                })?;
                 sink(b"abc")
             }
         }
@@ -2105,7 +2147,9 @@ mod tests {
                 &mut |_head| Ok(()),
                 &mut |chunk| {
                     delivered.push(chunk.to_vec());
-                    Err(RunnerError::Http { message: "abandoned".to_string() })
+                    Err(RunnerError::Http {
+                        message: "abandoned".to_string(),
+                    })
                 },
             )
             .unwrap_err();
@@ -2121,7 +2165,11 @@ mod tests {
                 "u",
                 &[],
                 Duration::from_secs(1),
-                &mut |_head| Err(RunnerError::Http { message: "too big".to_string() }),
+                &mut |_head| {
+                    Err(RunnerError::Http {
+                        message: "too big".to_string(),
+                    })
+                },
                 &mut |chunk| {
                     delivered.push(chunk.to_vec());
                     Ok(())
@@ -2129,7 +2177,10 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(error.to_string(), "too big");
-        assert!(delivered.is_empty(), "the body was read despite the head aborting");
+        assert!(
+            delivered.is_empty(),
+            "the body was read despite the head aborting"
+        );
     }
     // -----------------------------------------------------------------
     // The filesystem half: staging, resolution, install, uninstall
@@ -2146,7 +2197,12 @@ mod tests {
     /// A release whose download URL points at nothing, for the tests that
     /// never reach the network.
     fn a_release(tag: &str) -> ReleaseInfo {
-        ReleaseInfo::new(tag, "GE-Proton.tar.gz", "https://example.invalid/x.tar.gz", 1024)
+        ReleaseInfo::new(
+            tag,
+            "GE-Proton.tar.gz",
+            "https://example.invalid/x.tar.gz",
+            1024,
+        )
     }
 
     /// The same, with a `size` small enough to pass a test's download cap.
@@ -2197,7 +2253,12 @@ mod tests {
 
     impl Serve {
         fn new(body: Vec<u8>) -> Self {
-            Self { body, declared: None, chunks: 1, calls: std::cell::Cell::new(0) }
+            Self {
+                body,
+                declared: None,
+                chunks: 1,
+                calls: std::cell::Cell::new(0),
+            }
         }
         fn declaring(mut self, value: &str) -> Self {
             self.declared = Some(value.to_string());
@@ -2222,7 +2283,10 @@ mod tests {
             sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
         ) -> Result<(), RunnerError> {
             self.calls.set(self.calls.get() + 1);
-            on_head(&ResponseHead { content_length: self.declared.clone(), final_url: String::new() })?;
+            on_head(&ResponseHead {
+                content_length: self.declared.clone(),
+                final_url: String::new(),
+            })?;
             if self.body.is_empty() {
                 return Ok(());
             }
@@ -2291,7 +2355,8 @@ mod tests {
                 Duration::from_secs(5),
             )
             .unwrap();
-            let text = fs::read_to_string(runners.join("GE-Proton9-5").join(METADATA_NAME)).unwrap();
+            let text =
+                fs::read_to_string(runners.join("GE-Proton9-5").join(METADATA_NAME)).unwrap();
             assert_eq!(
                 text,
                 concat!(
@@ -2324,7 +2389,10 @@ mod tests {
                 Duration::from_secs(5),
             )
             .unwrap_err();
-            assert_eq!(error.to_string(), "Runner 'GE-Proton9-5' is already installed");
+            assert_eq!(
+                error.to_string(),
+                "Runner 'GE-Proton9-5' is already installed"
+            );
             assert_eq!(client.calls(), 0, "the refusal must precede the download");
         });
     }
@@ -2387,7 +2455,10 @@ mod tests {
                 100_000,
             )
             .unwrap_err();
-            assert_eq!(error.to_string(), "Runner archive exceeds the download size limit");
+            assert_eq!(
+                error.to_string(),
+                "Runner archive exceeds the download size limit"
+            );
             assert!(!runners.join("GE-Proton9-5").exists());
             // The head was read — the request happened, so the error is not
             // being produced before the transfer starts — and the body was
@@ -2426,7 +2497,10 @@ mod tests {
                 100,
             )
             .unwrap_err();
-            assert_eq!(error.to_string(), "Runner archive exceeds the download size limit");
+            assert_eq!(
+                error.to_string(),
+                "Runner archive exceeds the download size limit"
+            );
             assert!(!runners.join("GE-Proton9-5").exists());
         });
     }
@@ -2535,7 +2609,10 @@ mod tests {
             fs::create_dir_all(root.join("GE-Proton9-5")).unwrap();
             fs::write(root.join("GE-Proton9-5/proton"), "#!/bin/sh\n").unwrap();
             let error = resolve_staged(root).unwrap_err();
-            assert_eq!(error.to_string(), "Runner archive contains an unsafe top-level link");
+            assert_eq!(
+                error.to_string(),
+                "Runner archive contains an unsafe top-level link"
+            );
         });
     }
 
@@ -2615,7 +2692,10 @@ mod tests {
             let error = rename_noreplace(&source, &target).unwrap_err();
             assert_eq!(error.to_string(), "Runner 'target' is already installed");
             assert_eq!(fs::read_to_string(target.join("proton")).unwrap(), "old\n");
-            assert!(source.is_dir(), "a refused rename must not consume the source");
+            assert!(
+                source.is_dir(),
+                "a refused rename must not consume the source"
+            );
 
             // The happy path, once the target is gone.
             fs::remove_dir_all(&target).unwrap();
@@ -2658,7 +2738,10 @@ mod tests {
                     "{id:?} should be refused, got {error}"
                 );
             }
-            assert!(outside.join("keep").is_file(), "nothing outside was touched");
+            assert!(
+                outside.join("keep").is_file(),
+                "nothing outside was touched"
+            );
         });
     }
 
@@ -2680,7 +2763,10 @@ mod tests {
             std::os::unix::fs::symlink(&real, runners.join("GE-Proton9-6")).unwrap();
             uninstall(&runners, "GE-Proton9-6").unwrap();
             assert!(real.join("keep").is_file(), "the link target must survive");
-            assert!(runners.join("GE-Proton9-6").is_symlink(), "the link is left alone");
+            assert!(
+                runners.join("GE-Proton9-6").is_symlink(),
+                "the link is left alone"
+            );
 
             // A plain file where a directory would be.
             fs::write(runners.join("GE-Proton9-7"), "x").unwrap();

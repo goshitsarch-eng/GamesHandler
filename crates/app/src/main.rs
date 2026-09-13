@@ -477,10 +477,7 @@ fn start_gui(
             // A failure to start is reported here rather than by the caller, so
             // there is one place that decides what a user sees and one place
             // that can be tested for it.
-            let _ = writeln!(
-                out,
-                "{APP_NAME}: could not start the interface: {error}"
-            );
+            let _ = writeln!(out, "{APP_NAME}: could not start the interface: {error}");
             GuiStart::Failed(error)
         }
     }
@@ -799,10 +796,7 @@ pub enum Message {
     /// opens `removeRunnerDialog` (`RunnersPage.qml:82-85,257-272`) rather than
     /// deleting; the dialog closes on Cancel and sends the row's `runnerId` to
     /// `uninstallRunner` on Remove. P-37.
-    ConfirmRemoveRunner {
-        runner_id: String,
-        name: String,
-    },
+    ConfirmRemoveRunner { runner_id: String, name: String },
     /// The user confirmed; do it. `uninstallRunner()` — synchronous, so this
     /// returns no task.
     RemoveRunnerConfirmed(String),
@@ -844,7 +838,10 @@ pub enum Message {
     /// it is what `StartEasyInstall`'s `runner_id` is read from. See D-55.
     SetInstallRunner(String),
     /// Start a one-click install. `installEasy()`.
-    StartEasyInstall { installer_id: String, runner_id: String },
+    StartEasyInstall {
+        installer_id: String,
+        runner_id: String,
+    },
     /// The install's progress fraction.
     EasyInstallProgress(f32),
     /// The installer process ended.
@@ -861,10 +858,7 @@ pub enum Message {
     ///
     /// `path` of `None` or empty means they cancelled, which takes the
     /// `cancelEasyInstall` path (`bridge.py:926-928`).
-    CompleteEasyInstall {
-        token: String,
-        path: Option<String>,
-    },
+    CompleteEasyInstall { token: String, path: Option<String> },
     /// Abandon an interrupted install, keeping the prefix it made.
     CancelEasyInstall(String),
     /// The install's worker gave up before there was a wizard to watch.
@@ -1129,7 +1123,7 @@ fn remove_game_dialog<'a>(
     name: &str,
     game_id: &str,
 ) -> cosmic::Element<'a, Message> {
-    use cosmic::widget::{button, dialog, Column};
+    use cosmic::widget::{Column, button, dialog};
     let popup: cosmic::Element<'a, Message> = dialog()
         .title(format!("Remove “{name}”?"))
         .body(
@@ -1148,7 +1142,7 @@ fn remove_runner_dialog<'a>(
     body: cosmic::Element<'a, Message>,
     pending: &crate::state::PendingRunnerRemoval,
 ) -> cosmic::Element<'a, Message> {
-    use cosmic::widget::{button, dialog, Column};
+    use cosmic::widget::{Column, button, dialog};
     let popup: cosmic::Element<'a, Message> = dialog()
         .title(pending.title())
         .body(crate::state::remove_runner_subtitle())
@@ -1634,10 +1628,7 @@ impl Shell {
             // that whole function, tested without a display.
             Message::OpenNewGameForm => {
                 let id = gamehandler_core::models::new_id();
-                self.state.game_form = Some(GameForm::new_template(
-                    &self.state.settings,
-                    id,
-                ));
+                self.state.game_form = Some(GameForm::new_template(&self.state.settings, id));
                 self.state.confirm_delete = None;
             }
             // `getGame(id)` + push (`bridge.py:356-379`). An id the library does
@@ -1735,10 +1726,7 @@ impl Shell {
                     // with no file name at all leaves the blank name blank,
                     // which is setting it to `""` with fewer steps.
                     if let Some(stem) = Path::new(&path).file_stem() {
-                        form.set_field(
-                            FormField::Name,
-                            stem.to_string_lossy().into_owned(),
-                        );
+                        form.set_field(FormField::Name, stem.to_string_lossy().into_owned());
                     }
                 }
             }
@@ -1797,8 +1785,7 @@ impl Shell {
                 ) {
                     Ok(destination) => {
                         if let Some(form) = self.state.game_form.as_mut() {
-                            form.cover_path =
-                                destination.to_string_lossy().into_owned();
+                            form.cover_path = destination.to_string_lossy().into_owned();
                         }
                         return self.state.toast_task("Custom cover added".to_string());
                     }
@@ -1876,9 +1863,7 @@ impl Shell {
             // would silently fold it back — the same defect D-34 names, on the
             // other side of the file.
             Message::SetViewMode(value) => {
-                if VIEW_MODES.contains(&value.as_str())
-                    && self.state.settings.view_mode != value
-                {
+                if VIEW_MODES.contains(&value.as_str()) && self.state.settings.view_mode != value {
                     self.state.settings.view_mode = value;
                     if let Some(task) = self.state.save_settings_or_toast() {
                         return task;
@@ -1886,9 +1871,7 @@ impl Shell {
                 }
             }
             Message::SetSortMode(value) => {
-                if SORT_MODES.contains(&value.as_str())
-                    && self.state.settings.sort_mode != value
-                {
+                if SORT_MODES.contains(&value.as_str()) && self.state.settings.sort_mode != value {
                     self.state.settings.sort_mode = value;
                     if let Some(task) = self.state.save_settings_or_toast() {
                         return task;
@@ -2015,9 +1998,9 @@ impl Shell {
                             self.state.library.update(game)
                         };
                         if let Err(error) = stored {
-                            return self.state.toast_task(format!(
-                                "Could not save “{name}”: {error}"
-                            ));
+                            return self
+                                .state
+                                .toast_task(format!("Could not save “{name}”: {error}"));
                         }
                         // The two sentences are the reference's, em dashes and
                         // all (`bridge.py:439`, `:442`).
@@ -2097,9 +2080,10 @@ impl Shell {
                 // silent swallow.
                 let mut tasks = Vec::new();
                 if let Err(error) = self.state.library.mark_played(&game_id) {
-                    tasks.push(self.state.toast_task(format!(
-                        "Could not save “{name}”: {error}"
-                    )));
+                    tasks.push(
+                        self.state
+                            .toast_task(format!("Could not save “{name}”: {error}")),
+                    );
                 }
                 tasks.push(self.state.toast_task(format!("Launching “{name}”…")));
                 if self.state.settings.close_on_launch {
@@ -2151,7 +2135,11 @@ impl Shell {
             // which is the reference's bare exception text with no prefix
             // (`bridge.py:495-499`). `tool` is spelled the way the reference
             // spells it — the `winecfg` / `winetricks` string the QML sends.
-            Message::PrefixToolStarted { game_id, tool, result } => {
+            Message::PrefixToolStarted {
+                game_id,
+                tool,
+                result,
+            } => {
                 let name = self.state.game_name(&game_id);
                 let text = match result {
                     Ok(()) => format!("Opening {} for “{name}”", tool.command()),
@@ -2167,7 +2155,8 @@ impl Shell {
                     return cosmic::task::none();
                 };
                 if game.is_linux() {
-                    return self.state
+                    return self
+                        .state
                         .toast_task("Linux games do not use a Wine prefix".to_string());
                 }
                 return cosmic::app::Task::perform(
@@ -2193,7 +2182,11 @@ impl Shell {
             // synchronous version would launch a browser from `cargo test`.
             Message::OpenUrl(url) => {
                 return cosmic::app::Task::perform(
-                    async move { Message::UrlOpened { result: open_url(&url) } },
+                    async move {
+                        Message::UrlOpened {
+                            result: open_url(&url),
+                        }
+                    },
                     cosmic::Action::App,
                 );
             }
@@ -2284,7 +2277,9 @@ impl Shell {
                 }
                 let name = game.name.clone();
                 if let Err(error) = self.state.library.update(game) {
-                    return self.state.toast_task(format!("Could not save “{name}”: {error}"));
+                    return self
+                        .state
+                        .toast_task(format!("Could not save “{name}”: {error}"));
                 }
                 return self.state.toast_task(format!(
                     "Cover set from {}: {}",
@@ -2312,7 +2307,9 @@ impl Shell {
                 }
                 let token = self.state.next_form_cover_token();
                 let exe = (!exe.trim().is_empty()).then(|| PathBuf::from(exe.trim()));
-                let looking = self.state.toast_task(format!("Looking for artwork for “{name}”…"));
+                let looking = self
+                    .state
+                    .toast_task(format!("Looking for artwork for “{name}”…"));
                 let fetch = cosmic::app::Task::perform(
                     async move {
                         let result = cover_lookup(&name, &game_id, exe.as_deref());
@@ -2373,16 +2370,15 @@ impl Shell {
             // routed here for the same reason rather than handled above: the
             // pending state is the runners dialog's, and splitting the pair
             // across files would put the set and the clear in two places. P-37.
-            message
-                @ (Message::FetchReleases { .. }
-                | Message::ReleasesFetchFinished { .. }
-                | Message::InstallRunner { .. }
-                | Message::RunnerProgress(_)
-                | Message::RunnerInstallFinished { .. }
-                | Message::ConfirmRemoveRunner { .. }
-                | Message::RemoveRunnerConfirmed(_)
-                | Message::UninstallRunner(_)
-                | Message::RunnersRefreshed { .. }) => {
+            message @ (Message::FetchReleases { .. }
+            | Message::ReleasesFetchFinished { .. }
+            | Message::InstallRunner { .. }
+            | Message::RunnerProgress(_)
+            | Message::RunnerInstallFinished { .. }
+            | Message::ConfirmRemoveRunner { .. }
+            | Message::RemoveRunnerConfirmed(_)
+            | Message::UninstallRunner(_)
+            | Message::RunnersRefreshed { .. }) => {
                 return view::runners::update(&mut self.state, &message)
                     .unwrap_or_else(cosmic::app::Task::none);
             }
@@ -2675,7 +2671,12 @@ fn hide_window(hidden: bool) -> cosmic::app::Task<Message> {
 /// divergence that produces a command that is right in the GUI and wrong from a
 /// shortcut.
 fn launch_process(game: &Game, runners: &RunnerManager) -> Result<LaunchedGame, RunnerError> {
-    launch::launch(game, runners, &SystemLaunchEnv, &NetpathsShares::new(&SystemEnv))
+    launch::launch(
+        game,
+        runners,
+        &SystemLaunchEnv,
+        &NetpathsShares::new(&SystemEnv),
+    )
 }
 
 /// The grace period `started.failure()` is given, as a `Duration`.
@@ -2745,11 +2746,7 @@ fn launch_and_watch(game: &Game, runners: &RunnerManager, sender: &UnboundedSend
 /// `tool.command()` is the string the reference receives from the QML —
 /// `"winecfg"` or `"winetricks"` — so the core function's `UnknownTool` arm is
 /// unreachable from here by construction rather than by luck.
-fn start_prefix_tool(
-    game: &Game,
-    runners: &RunnerManager,
-    tool: PrefixTool,
-) -> Result<(), String> {
+fn start_prefix_tool(game: &Game, runners: &RunnerManager, tool: PrefixTool) -> Result<(), String> {
     let command = tool_command(game, runners, tool.command(), &SystemLaunchEnv)
         .map_err(|error| error.to_string())?;
     let Some((program, arguments)) = command.argv.split_first() else {
@@ -2940,9 +2937,7 @@ fn shlex_quote(value: &str) -> String {
         return "''".to_string();
     }
     let safe = value.chars().all(|character| {
-        character.is_ascii_alphanumeric()
-            || character == '_'
-            || "@%+=:,./-".contains(character)
+        character.is_ascii_alphanumeric() || character == '_' || "@%+=:,./-".contains(character)
     });
     if safe {
         return value.to_string();
@@ -3007,7 +3002,10 @@ fn start_easy_install(
     {
         let runner = state.runners.get(&resolved, &SystemLaunchEnv);
         if !runner.is_available() {
-            let text = format!("{} is not available. Download a runner first.", runner.name());
+            let text = format!(
+                "{} is not available. Download a runner first.",
+                runner.name()
+            );
             return state.toast_task(text);
         }
     }
@@ -3091,11 +3089,11 @@ fn easy_install_worker(
         installer.name
     )));
     let runner = runners.get(&runner_id, &launch_env);
-    let command =
-        match build_installer_command(&*runner, &prefix, installer, &archive, &launch_env) {
-            Ok(command) => command,
-            Err(error) => return fail(error.to_string()),
-        };
+    let command = match build_installer_command(&*runner, &prefix, installer, &archive, &launch_env)
+    {
+        Ok(command) => command,
+        Err(error) => return fail(error.to_string()),
+    };
     // `Path(prefix).mkdir(parents=True, exist_ok=True)` (`bridge.py:867`),
     // which is redundant here — `prepare_prefix` made it — and is kept because
     // the reference's line sits between the two steps that need it.
@@ -3121,9 +3119,7 @@ fn easy_install_worker(
         &prefix,
         installer.expected_exe,
         &SystemClock,
-        &|runner, env, seconds| {
-            wait_for_prefix_idle(runner, env, seconds, &SystemLaunchEnv)
-        },
+        &|runner, env, seconds| wait_for_prefix_idle(runner, env, seconds, &SystemLaunchEnv),
     );
     let _ = sender.unbounded_send(Message::EasyInstallWizardFinished { found, returncode });
 }
@@ -3203,7 +3199,10 @@ fn locate_exe_task(token: String, installer_name: String) -> cosmic::app::Task<M
             for filter in filters {
                 dialog = dialog.filter(filter);
             }
-            let answer = dialog.open_file().await.map(|response| response.url().clone());
+            let answer = dialog
+                .open_file()
+                .await
+                .map(|response| response.url().clone());
             locate_message(token, answer)
         },
         cosmic::Action::App,
@@ -3220,7 +3219,9 @@ fn locate_exe_task(token: String, installer_name: String) -> cosmic::app::Task<M
 fn exe_file_filters() -> Vec<cosmic::dialog::file_chooser::FileFilter> {
     use cosmic::dialog::file_chooser::FileFilter;
     vec![
-        FileFilter::new("Windows executables").glob("*.exe").glob("*.EXE"),
+        FileFilter::new("Windows executables")
+            .glob("*.exe")
+            .glob("*.EXE"),
         FileFilter::new("All files").glob("*"),
     ]
 }
@@ -3328,27 +3329,15 @@ fn image_file_filters() -> Vec<cosmic::dialog::file_chooser::FileFilter> {
 /// `Url::to_file_path` (which is what the locate reply uses): the reference
 /// runs the raw `selectedFile` through `as_local_path`, so a share URL keeps
 /// its verbatim fallback instead of collapsing to a cancel.
-fn exe_choice_message(
-    answer: Result<url::Url, cosmic::dialog::file_chooser::Error>,
-) -> Message {
-    Message::ExeFileChosen(
-        answer
-            .ok()
-            .map(|url| as_local_path(url.as_str())),
-    )
+fn exe_choice_message(answer: Result<url::Url, cosmic::dialog::file_chooser::Error>) -> Message {
+    Message::ExeFileChosen(answer.ok().map(|url| as_local_path(url.as_str())))
 }
 
 /// The pure half of the cover reply: same URL handling as the exe choice —
 /// the reference runs both through `as_local_path` (`importCustomCover` does
 /// it on the way in, `bridge.py:593`) — and the same silent cancel.
-fn cover_choice_message(
-    answer: Result<url::Url, cosmic::dialog::file_chooser::Error>,
-) -> Message {
-    Message::CoverFileChosen(
-        answer
-            .ok()
-            .map(|url| as_local_path(url.as_str())),
-    )
+fn cover_choice_message(answer: Result<url::Url, cosmic::dialog::file_chooser::Error>) -> Message {
+    Message::CoverFileChosen(answer.ok().map(|url| as_local_path(url.as_str())))
 }
 
 /// The installed toast's Play action, as a value: `showPassiveNotification`'s
@@ -3479,7 +3468,10 @@ fn finish_easy_install(
         state.easy_busy = false;
         state.progress = None;
         state.running_install = None;
-        return state.toast_task(format!("Could not install {}: {message}", record.installer_name));
+        return state.toast_task(format!(
+            "Could not install {}: {message}",
+            record.installer_name
+        ));
     };
     let mut game = game_from_install(
         installer,
@@ -3638,7 +3630,6 @@ fn is_handled(shell: &mut Shell, message: Message) -> bool {
 }
 
 impl cosmic::Application for App {
-
     /// The tokio-backed executor, as in libcosmic's own application example.
     type Executor = cosmic::executor::Default;
 
@@ -3871,10 +3862,7 @@ mod tests {
     /// from a real file rather than injected — a listing that worked only on an
     /// in-memory library would pass here and print nothing for a user.
     fn library_with(label: &str, games: &[(&str, &str)]) -> (std::path::PathBuf, Library) {
-        let root = std::env::temp_dir().join(format!(
-            "gh-cli-{label}-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("gh-cli-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("games.json");
@@ -3891,10 +3879,8 @@ mod tests {
     /// name order Python's default sort produces.
     #[test]
     fn list_lines_are_the_ids_and_names_in_name_order() {
-        let (_root, library) = library_with(
-            "rows",
-            &[("b", "Beta"), ("a", "Alpha"), ("c", "gamma")],
-        );
+        let (_root, library) =
+            library_with("rows", &[("b", "Beta"), ("a", "Alpha"), ("c", "gamma")]);
         assert_eq!(
             list_lines(&library),
             vec!["a\tAlpha", "b\tBeta", "c\tgamma"]
@@ -3910,10 +3896,8 @@ mod tests {
     /// be produced by a given implementation, so this cannot pass vacuously.
     #[test]
     fn the_listing_sorts_case_insensitively_like_python_s_default() {
-        let (_root, library) = library_with(
-            "case",
-            &[("z", "Zebra"), ("a", "apple"), ("m", "Mango")],
-        );
+        let (_root, library) =
+            library_with("case", &[("z", "Zebra"), ("a", "apple"), ("m", "Mango")]);
         assert_eq!(
             list_lines(&library),
             vec!["a\tapple", "m\tMango", "z\tZebra"],
@@ -4042,7 +4026,10 @@ mod tests {
         assert_eq!(
             launch_report("Alpha", Err("no Proton runner is configured".to_string())),
             (
-                Some("GameHandler: could not launch Alpha: no Proton runner is configured".to_string()),
+                Some(
+                    "GameHandler: could not launch Alpha: no Proton runner is configured"
+                        .to_string()
+                ),
                 1
             )
         );
@@ -4318,13 +4305,19 @@ mod tests {
         assert_eq!(before, 0.0, "the fixture should start unplayed");
 
         let code = launch_game_at(&mut library, &runners, "native");
-        assert_eq!(code, ExitCode::SUCCESS, "a title that stayed up exited non-zero");
+        assert_eq!(
+            code,
+            ExitCode::SUCCESS,
+            "a title that stayed up exited non-zero"
+        );
 
         // Read back through a **fresh** Library over the same file: an
         // in-memory read would pass on a handler that set the field and never
         // saved, which is the whole of `mark_played`.
         let reread = Library::new_at(Some(root.join("games.json")), 0.0);
-        let played = reread.get("native").expect("the game should still be there");
+        let played = reread
+            .get("native")
+            .expect("the game should still be there");
         assert_ne!(
             played.last_played, before,
             "the game was launched and never marked as played"
@@ -4384,21 +4377,24 @@ mod tests {
     /// follow it.
     #[test]
     fn the_grace_period_is_the_references() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../gamehandler/runners.py");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../gamehandler/runners.py");
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("{} is unreadable: {error}", path.display()));
         let line = source
             .lines()
             .find(|line| line.starts_with("LAUNCH_GRACE_SECONDS"))
-            .unwrap_or_else(|| panic!("{} no longer declares LAUNCH_GRACE_SECONDS", path.display()));
+            .unwrap_or_else(|| {
+                panic!("{} no longer declares LAUNCH_GRACE_SECONDS", path.display())
+            });
         let value = line
             .split('=')
             .nth(1)
             .and_then(|value| value.trim().trim_end_matches(';').parse::<f64>().ok())
             .unwrap_or_else(|| panic!("`{line}` is not a float assignment"));
         assert_eq!(
-            LAUNCH_GRACE_SECONDS, value,
+            LAUNCH_GRACE_SECONDS,
+            value,
             "the port's grace period has drifted from `{}`",
             path.display()
         );
@@ -4766,10 +4762,7 @@ mod tests {
                 line.starts_with("  "),
                 "{line:?} should be indented like the rest of the block"
             );
-            assert!(
-                !line.ends_with(' '),
-                "{line:?} should not end in a space"
-            );
+            assert!(!line.ends_with(' '), "{line:?} should not end in a space");
         }
     }
 
@@ -4796,10 +4789,8 @@ mod tests {
             })
             .collect();
 
-        let expected: Vec<(&str, Page)> = Page::ALL
-            .iter()
-            .map(|page| (page.label(), *page))
-            .collect();
+        let expected: Vec<(&str, Page)> =
+            Page::ALL.iter().map(|page| (page.label(), *page)).collect();
         assert_eq!(
             rows, expected,
             "the panel's rows and Page::ALL must be the same list in the same \
@@ -4864,7 +4855,6 @@ mod tests {
         }
         assert_eq!(seen.len(), Page::ALL.len());
     }
-
 
     /// Every message the application can receive, once each.
     ///
@@ -5453,12 +5443,7 @@ mod tests {
             // The two `App::update` arms. `Shell::update`'s bodies for them are
             // deliberately empty — both need the framework's window — so they
             // are not part of the claim. See the doc above.
-            .filter(|message| {
-                !matches!(
-                    message,
-                    Message::Quit | Message::SetWindowHidden(_)
-                )
-            })
+            .filter(|message| !matches!(message, Message::Quit | Message::SetWindowHidden(_)))
             .filter(|message| {
                 let mut shell = shell_with_work_to_do();
                 is_handled(&mut shell, message.clone())
@@ -5661,8 +5646,7 @@ mod tests {
         changed.sort_unstable();
 
         assert_eq!(
-            changed,
-            expected,
+            changed, expected,
             "these are the arms of `Shell::update` that do anything, and the \
              list is now checked rather than described. `Quit` is excluded \
              because `App::update` owns it; `DismissToast` is written but \
@@ -5941,9 +5925,12 @@ mod tests {
             shell.state.toasts
         );
         assert!(
-            shell.state.running_install.is_none() && !shell.state.easy_pending.values().any(
-                |record| record.game_id == "no-such-installer"
-            ),
+            shell.state.running_install.is_none()
+                && !shell
+                    .state
+                    .easy_pending
+                    .values()
+                    .any(|record| record.game_id == "no-such-installer"),
             "a refused install wrote a record — the guard is supposed to leave \
              the state exactly as it found it"
         );
@@ -6170,7 +6157,8 @@ mod tests {
         let mut shell = shell_for_installs();
         shell.state.easy_busy = true;
         shell.state.progress = Some(0.4);
-        shell.state
+        shell
+            .state
             .easy_pending
             .insert("tok".to_string(), install_record(&prefix, "install-2"));
 
@@ -6486,19 +6474,29 @@ mod tests {
             Some(std::env::temp_dir().join("gh-empty-library/games.json")),
             0.0,
         );
-        assert_eq!(shell.state.library.len(), 0, "this fixture is the empty library");
+        assert_eq!(
+            shell.state.library.len(),
+            0,
+            "this fixture is the empty library"
+        );
         let drawn = drawn_strings(shell.view_body());
 
         assert!(
-            drawn.iter().any(|text| text == crate::view::library::NO_GAMES_TITLE),
+            drawn
+                .iter()
+                .any(|text| text == crate::view::library::NO_GAMES_TITLE),
             "an empty library draws the empty state; drawn: {drawn:?}"
         );
         assert!(
-            drawn.iter().any(|text| text == crate::view::library::ADD_FIRST_GAME),
+            drawn
+                .iter()
+                .any(|text| text == crate::view::library::ADD_FIRST_GAME),
             "and the button out of it; drawn: {drawn:?}"
         );
         assert!(
-            !drawn.iter().any(|text| text.contains("has not been ported yet")),
+            !drawn
+                .iter()
+                .any(|text| text.contains("has not been ported yet")),
             "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
         );
     }
@@ -6526,12 +6524,16 @@ mod tests {
 
         let drawn = drawn_strings(shell.view_body());
         assert!(
-            drawn.iter().any(|text| text == crate::view::library::NO_MATCHES_TITLE),
+            drawn
+                .iter()
+                .any(|text| text == crate::view::library::NO_MATCHES_TITLE),
             "a library with a game in it whose search matches nothing says so; \
              drawn: {drawn:?}"
         );
         assert!(
-            !drawn.iter().any(|text| text == crate::view::library::NO_GAMES_TITLE),
+            !drawn
+                .iter()
+                .any(|text| text == crate::view::library::NO_GAMES_TITLE),
             "and must not claim the library is empty; drawn: {drawn:?}"
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -6551,7 +6553,10 @@ mod tests {
         let mut shell = shell_with_work_to_do();
 
         let effect = observe(&mut shell, Message::SetViewMode("nonsense".to_string()));
-        assert!(!effect.state_changed, "an unrecognised view mode must not be stored");
+        assert!(
+            !effect.state_changed,
+            "an unrecognised view mode must not be stored"
+        );
         assert_eq!(shell.state.settings.view_mode, "grid");
 
         let effect = observe(&mut shell, Message::SetViewMode("list".to_string()));
@@ -6559,7 +6564,10 @@ mod tests {
         assert_eq!(shell.state.settings.view_mode, "list");
 
         let effect = observe(&mut shell, Message::SetSortMode("nonsense".to_string()));
-        assert!(!effect.state_changed, "an unrecognised sort mode must not be stored");
+        assert!(
+            !effect.state_changed,
+            "an unrecognised sort mode must not be stored"
+        );
         assert_eq!(shell.state.settings.sort_mode, "name");
 
         // `"grid"` is a view mode, and must not be accepted as a sort.
@@ -6582,13 +6590,22 @@ mod tests {
     #[test]
     fn clearing_the_filters_empties_both_records_at_once() {
         let mut shell = shell_with_work_to_do();
-        assert!(!shell.state.search_text.is_empty(), "the fixture is filtering");
-        assert_ne!(shell.state.category_filter, "All", "the fixture is filtering");
+        assert!(
+            !shell.state.search_text.is_empty(),
+            "the fixture is filtering"
+        );
+        assert_ne!(
+            shell.state.category_filter, "All",
+            "the fixture is filtering"
+        );
 
         observe(&mut shell, Message::ClearFilters);
 
         assert!(shell.state.search_text.is_empty());
-        assert_eq!(shell.state.category_filter, crate::view::library::ALL_CATEGORIES);
+        assert_eq!(
+            shell.state.category_filter,
+            crate::view::library::ALL_CATEGORIES
+        );
     }
 
     /// `bridge.py:290-293`: an empty category folds to "All" rather than being
@@ -6598,7 +6615,10 @@ mod tests {
     fn an_empty_category_filter_folds_to_all() {
         let mut shell = shell_with_work_to_do();
         observe(&mut shell, Message::SetCategoryFilter(String::new()));
-        assert_eq!(shell.state.category_filter, crate::view::library::ALL_CATEGORIES);
+        assert_eq!(
+            shell.state.category_filter,
+            crate::view::library::ALL_CATEGORIES
+        );
     }
 
     /// **The Settings page's body is the Settings page, and it is not the
@@ -6637,7 +6657,7 @@ mod tests {
     #[test]
     fn the_settings_page_draws_the_settings_and_not_the_placeholder() {
         let mut shell = Shell::new();
-// The entry task is dropped: these tests are about the two records
+        // The entry task is dropped: these tests are about the two records
         // `show_page` writes, both of which are written before the task is
         // built. Driving it would reach the network.
         let _ = shell.show_page(Page::Settings);
@@ -6663,7 +6683,9 @@ mod tests {
             );
         }
         assert!(
-            !drawn.iter().any(|text| text.contains("has not been ported yet")),
+            !drawn
+                .iter()
+                .any(|text| text.contains("has not been ported yet")),
             "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
         );
     }
@@ -6679,7 +6701,7 @@ mod tests {
     #[test]
     fn the_plugins_page_draws_the_catalogue_and_not_the_placeholder() {
         let mut shell = Shell::new();
-// The entry task is dropped: these tests are about the two records
+        // The entry task is dropped: these tests are about the two records
         // `show_page` writes, both of which are written before the task is
         // built. Driving it would reach the network.
         let _ = shell.show_page(Page::Plugins);
@@ -6716,7 +6738,9 @@ mod tests {
         }
 
         assert!(
-            !drawn.iter().any(|text| text.contains("has not been ported yet")),
+            !drawn
+                .iter()
+                .any(|text| text.contains("has not been ported yet")),
             "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
         );
     }
@@ -6774,7 +6798,9 @@ mod tests {
         // `install_tooltip`'s own body, which already has one. See
         // `installer_card` for the note beside the wrap.
         assert!(
-            !drawn.iter().any(|text| text.contains("has not been ported yet")),
+            !drawn
+                .iter()
+                .any(|text| text.contains("has not been ported yet")),
             "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
         );
     }
@@ -6881,7 +6907,10 @@ mod tests {
         // here — so a page that drew the five headings above and stopped would
         // fail on the first section it dropped.
         let sections = crate::view::credits::credit_sections();
-        assert!(!sections.is_empty(), "the catalogue is empty; this checks nothing");
+        assert!(
+            !sections.is_empty(),
+            "the catalogue is empty; this checks nothing"
+        );
         for section in sections {
             assert!(
                 drawn.iter().any(|text| text == section.title),
@@ -6891,7 +6920,9 @@ mod tests {
         }
 
         assert!(
-            !drawn.iter().any(|text| text.contains("has not been ported yet")),
+            !drawn
+                .iter()
+                .any(|text| text.contains("has not been ported yet")),
             "the placeholder is gone from the dispatch arm; drawn: {drawn:?}"
         );
     }
@@ -6908,13 +6939,7 @@ mod tests {
         let mut form = if is_new {
             GameForm::new_template(&shell.state.settings, "layer-game".to_string())
         } else {
-            GameForm::from_game(
-                shell
-                    .state
-                    .library
-                    .get("g")
-                    .expect("the fixture holds `g`"),
-            )
+            GameForm::from_game(shell.state.library.get("g").expect("the fixture holds `g`"))
         };
         form.is_new = is_new;
         form.is_linux = is_linux;
@@ -6982,10 +7007,16 @@ mod tests {
         // Nothing open: the same call is the page, with no form in it.
         let fallthrough = drawn_strings(closed.view_with_overlays());
         assert!(
-            fallthrough.iter().any(|text| text == crate::view::library::NO_MATCHES_TITLE),
+            fallthrough
+                .iter()
+                .any(|text| text == crate::view::library::NO_MATCHES_TITLE),
             "the fall-through is not the page; drawn: {fallthrough:?}"
         );
-        assert!(!fallthrough.iter().any(|text| text == crate::view::form::TITLE_ADD));
+        assert!(
+            !fallthrough
+                .iter()
+                .any(|text| text == crate::view::form::TITLE_ADD)
+        );
     }
 
     /// **The edit form draws the edit form**, not the add form with values in it.
@@ -7037,7 +7068,9 @@ mod tests {
             },
         );
         let drawn = drawn_strings(shell_with_form_open(true, false).view_with_overlays());
-        let button_on_screen = drawn.iter().any(|text| text == crate::view::form::FIND_COVER);
+        let button_on_screen = drawn
+            .iter()
+            .any(|text| text == crate::view::form::FIND_COVER);
 
         assert!(
             button_on_screen,
@@ -7118,7 +7151,12 @@ mod tests {
     #[test]
     fn a_finished_fetch_leaves_a_categorised_game_alone() {
         let mut shell = shell_with_work_to_do();
-        let mut categorised = shell.state.library.get("g").expect("the fixture holds `g`").clone();
+        let mut categorised = shell
+            .state
+            .library
+            .get("g")
+            .expect("the fixture holds `g`")
+            .clone();
         categorised.category = "Puzzle".to_string();
         shell.state.library.update(categorised).unwrap();
         let hit = CoverHit::from_steam(
@@ -7197,7 +7235,12 @@ mod tests {
     #[test]
     fn a_finished_fetch_with_no_appid_keeps_the_old_one() {
         let mut shell = shell_with_work_to_do();
-        let mut identified = shell.state.library.get("g").expect("the fixture holds `g`").clone();
+        let mut identified = shell
+            .state
+            .library
+            .get("g")
+            .expect("the fixture holds `g`")
+            .clone();
         identified.steam_appid = 999;
         shell.state.library.update(identified).unwrap();
         let hit = CoverHit::from_steam(
@@ -7217,7 +7260,12 @@ mod tests {
         );
 
         assert_eq!(
-            shell.state.library.get("g").expect("the fixture holds `g`").steam_appid,
+            shell
+                .state
+                .library
+                .get("g")
+                .expect("the fixture holds `g`")
+                .steam_appid,
             999,
             "an appid of zero must not overwrite a stored one"
         );
@@ -7257,8 +7305,8 @@ mod tests {
     /// not a behaviour to reproduce (see `CoverFetchFinished`).
     #[test]
     fn a_finished_fetch_that_cannot_persist_is_reported() {
-        let stale = std::env::temp_dir()
-            .join(format!("gh-cli-u5-cover-fail-{}", std::process::id()));
+        let stale =
+            std::env::temp_dir().join(format!("gh-cli-u5-cover-fail-{}", std::process::id()));
         let _ = std::fs::remove_file(&stale);
         let (root, library) = library_with("u5-cover-fail", &[("g1", "Hades")]);
         let mut shell = Shell::new();
@@ -7384,8 +7432,12 @@ mod tests {
     #[test]
     fn a_form_reply_writes_the_form_and_names_its_source() {
         let mut shell = shell_with_work_to_do();
-        shell.state.game_form.as_mut().expect("the fixture opens a form").category =
-            "Uncategorized".to_string();
+        shell
+            .state
+            .game_form
+            .as_mut()
+            .expect("the fixture opens a form")
+            .category = "Uncategorized".to_string();
         let hit = CoverHit::from_steam(
             70,
             "Half-Life".to_string(),
@@ -7419,8 +7471,12 @@ mod tests {
     #[test]
     fn a_form_reply_keeps_a_categorised_form_and_an_empty_hit_category() {
         let mut shell = shell_with_work_to_do();
-        shell.state.game_form.as_mut().expect("the fixture opens a form").category =
-            "Puzzle".to_string();
+        shell
+            .state
+            .game_form
+            .as_mut()
+            .expect("the fixture opens a form")
+            .category = "Puzzle".to_string();
         let hit = CoverHit::from_steam(
             70,
             "Half-Life".to_string(),
@@ -7438,14 +7494,23 @@ mod tests {
         );
 
         assert_eq!(
-            shell.state.game_form.as_ref().expect("the form stays open").category,
+            shell
+                .state
+                .game_form
+                .as_ref()
+                .expect("the form stays open")
+                .category,
             "Puzzle",
             "the user's category must win over the hit's"
         );
 
         let mut shell = shell_with_work_to_do();
-        shell.state.game_form.as_mut().expect("the fixture opens a form").category =
-            "Uncategorized".to_string();
+        shell
+            .state
+            .game_form
+            .as_mut()
+            .expect("the fixture opens a form")
+            .category = "Uncategorized".to_string();
         let blank = CoverHit::from_steam(
             70,
             "Half-Life".to_string(),
@@ -7463,7 +7528,12 @@ mod tests {
         );
 
         assert_eq!(
-            shell.state.game_form.as_ref().expect("the form stays open").category,
+            shell
+                .state
+                .game_form
+                .as_ref()
+                .expect("the form stays open")
+                .category,
             "Uncategorized",
             "an `Uncategorized` hit must not write its own blank"
         );
@@ -7474,7 +7544,11 @@ mod tests {
     #[test]
     fn a_form_reply_with_no_appid_keeps_the_old_one() {
         let mut shell = shell_with_work_to_do();
-        let form = shell.state.game_form.as_mut().expect("the fixture opens a form");
+        let form = shell
+            .state
+            .game_form
+            .as_mut()
+            .expect("the fixture opens a form");
         form.steam_appid = "999".to_string();
         let hit = CoverHit::from_steam(
             0,
@@ -7493,7 +7567,12 @@ mod tests {
         );
 
         assert_eq!(
-            shell.state.game_form.as_ref().expect("the form stays open").steam_appid,
+            shell
+                .state
+                .game_form
+                .as_ref()
+                .expect("the form stays open")
+                .steam_appid,
             "999",
             "an appid of zero must not overwrite a stored one"
         );
@@ -7554,8 +7633,7 @@ mod tests {
     #[test]
     fn saving_without_a_cover_starts_a_lookup() {
         let mut shell = shell_with_work_to_do();
-        let mut form =
-            GameForm::new_template(&shell.state.settings, "coverless".to_string());
+        let mut form = GameForm::new_template(&shell.state.settings, "coverless".to_string());
         form.set_field(crate::state::FormField::Name, "Coverless".to_string());
 
         let effect = observe(&mut shell, Message::SaveGameForm(form));
@@ -7575,8 +7653,7 @@ mod tests {
     #[test]
     fn saving_with_a_cover_starts_no_lookup() {
         let mut shell = shell_with_work_to_do();
-        let mut form =
-            GameForm::new_template(&shell.state.settings, "covered".to_string());
+        let mut form = GameForm::new_template(&shell.state.settings, "covered".to_string());
         form.set_field(crate::state::FormField::Name, "Covered".to_string());
         form.set_field(
             crate::state::FormField::CoverPath,
@@ -7597,11 +7674,8 @@ mod tests {
     /// `save_exe_icon_to`, tested there (see [`easy_install_cover`]).
     #[test]
     fn an_install_whose_executable_has_no_icon_keeps_no_cover() {
-        let missing = std::env::temp_dir().join(format!(
-            "gh-no-such-exe-{}-{}",
-            std::process::id(),
-            "u5"
-        ));
+        let missing =
+            std::env::temp_dir().join(format!("gh-no-such-exe-{}-{}", std::process::id(), "u5"));
         let _ = std::fs::remove_file(&missing);
 
         assert_eq!(
@@ -7664,7 +7738,10 @@ mod tests {
 
         let form = shell.state.game_form.as_ref().expect("the form stays open");
         assert_eq!(form.exe_path, "/tmp/Setup/setup.exe");
-        assert_eq!(form.name, "Fixture", "the typed name must win over the basename");
+        assert_eq!(
+            form.name, "Fixture",
+            "the typed name must win over the basename"
+        );
     }
 
     /// The autofill agrees with the QML on the edge shapes: `dot > 0` keeps a
@@ -7684,7 +7761,12 @@ mod tests {
             let _ = observe(&mut shell, Message::ExeFileChosen(Some(chosen.to_string())));
 
             assert_eq!(
-                shell.state.game_form.as_ref().expect("the form stays open").name,
+                shell
+                    .state
+                    .game_form
+                    .as_ref()
+                    .expect("the form stays open")
+                    .name,
                 named,
                 "choosing {chosen} must name the game {named}"
             );
@@ -7774,7 +7856,13 @@ mod tests {
             shell.state.toasts
         );
         assert!(
-            shell.state.game_form.as_ref().expect("the form stays open").cover_path.is_empty(),
+            shell
+                .state
+                .game_form
+                .as_ref()
+                .expect("the form stays open")
+                .cover_path
+                .is_empty(),
             "a failed import must not write the field"
         );
     }
@@ -7894,13 +7982,17 @@ mod tests {
     fn the_runner_row_is_hidden_exactly_when_it_cannot_be_disabled() {
         let windows = drawn_strings(shell_with_form_open(true, false).view_with_overlays());
         assert!(
-            windows.iter().any(|text| text == crate::view::form::LABEL_RUNNER),
+            windows
+                .iter()
+                .any(|text| text == crate::view::form::LABEL_RUNNER),
             "a Windows game has a runner to choose; drawn: {windows:?}"
         );
 
         let linux = drawn_strings(shell_with_form_open(true, true).view_with_overlays());
         assert_eq!(
-            linux.iter().any(|text| text == crate::view::form::LABEL_RUNNER),
+            linux
+                .iter()
+                .any(|text| text == crate::view::form::LABEL_RUNNER),
             !crate::view::form::RUNNER_ROW_HIDDEN_FOR_LINUX,
             "a Linux game's runner row: the reference disables it (`:175`), and \
              `RUNNER_ROW_HIDDEN_FOR_LINUX` = {}",
@@ -7953,8 +8045,7 @@ mod tests {
             !subtitle.is_empty(),
             "the row picked names no subtitle, so this measures nothing"
         );
-        let drawn =
-            drawn_strings::<Message>(toggler(true).label(subtitle.to_string()).into());
+        let drawn = drawn_strings::<Message>(toggler(true).label(subtitle.to_string()).into());
         assert!(
             drawn.is_empty(),
             "if this now lists {subtitle:?}, `Toggler` gained a child text widget \
@@ -7972,7 +8063,10 @@ mod tests {
         assert_eq!(shell.state.settings.color_scheme, "dark", "the default");
 
         let effect = observe(&mut shell, Message::SetColorScheme("nonsense".to_string()));
-        assert!(!effect.state_changed, "an unrecognised scheme must not be stored");
+        assert!(
+            !effect.state_changed,
+            "an unrecognised scheme must not be stored"
+        );
         assert_eq!(shell.state.settings.color_scheme, "dark");
 
         let effect = observe(&mut shell, Message::SetColorScheme("light".to_string()));
@@ -8019,7 +8113,10 @@ mod tests {
         let original = shell.state.settings.default_runner.clone();
 
         let effect = observe(&mut shell, Message::SetDefaultRunner(String::new()));
-        assert!(!effect.state_changed, "an empty runner id must not be stored");
+        assert!(
+            !effect.state_changed,
+            "an empty runner id must not be stored"
+        );
         assert_eq!(shell.state.settings.default_runner, original);
 
         let effect = observe(&mut shell, Message::SetDefaultRunner(original.clone()));
@@ -8028,7 +8125,10 @@ mod tests {
             "writing the stored runner must report no change"
         );
 
-        let effect = observe(&mut shell, Message::SetDefaultRunner("GE-Proton9-1".to_string()));
+        let effect = observe(
+            &mut shell,
+            Message::SetDefaultRunner("GE-Proton9-1".to_string()),
+        );
         assert!(effect.state_changed, "a different runner must be stored");
         assert_eq!(shell.state.settings.default_runner, "GE-Proton9-1");
     }
@@ -8051,35 +8151,56 @@ mod tests {
     fn the_default_toggle_writes_only_a_real_change() {
         let mut shell = shell_with_work_to_do();
 
-        let effect = observe(&mut shell, Message::SetDefaultToggle {
-            name: "mangohud".to_string(),
-            value: true,
-        });
-        assert!(effect.state_changed, "mangohud defaults to false, so this is a change");
+        let effect = observe(
+            &mut shell,
+            Message::SetDefaultToggle {
+                name: "mangohud".to_string(),
+                value: true,
+            },
+        );
+        assert!(
+            effect.state_changed,
+            "mangohud defaults to false, so this is a change"
+        );
         assert!(shell.state.settings.default_mangohud);
 
         // Not "the compare fired": indistinguishable from no write. See above.
-        let effect = observe(&mut shell, Message::SetDefaultToggle {
-            name: "mangohud".to_string(),
-            value: true,
-        });
-        assert!(!effect.state_changed, "the state is unchanged by a repeated write");
+        let effect = observe(
+            &mut shell,
+            Message::SetDefaultToggle {
+                name: "mangohud".to_string(),
+                value: true,
+            },
+        );
+        assert!(
+            !effect.state_changed,
+            "the state is unchanged by a repeated write"
+        );
 
-        let effect = observe(&mut shell, Message::SetDefaultToggle {
-            name: "wayland".to_string(),
-            value: true,
-        });
+        let effect = observe(
+            &mut shell,
+            Message::SetDefaultToggle {
+                name: "wayland".to_string(),
+                value: true,
+            },
+        );
         assert!(
             !effect.state_changed,
             "`wayland` has no `default_wayland` field and must not be written"
         );
 
         // The other direction of the compare: `esync` is true by default.
-        let effect = observe(&mut shell, Message::SetDefaultToggle {
-            name: "esync".to_string(),
-            value: false,
-        });
-        assert!(effect.state_changed, "esync defaults to true, so turning it off is a change");
+        let effect = observe(
+            &mut shell,
+            Message::SetDefaultToggle {
+                name: "esync".to_string(),
+                value: false,
+            },
+        );
+        assert!(
+            effect.state_changed,
+            "esync defaults to true, so turning it off is a change"
+        );
         assert!(!shell.state.settings.default_esync);
     }
 
@@ -8106,23 +8227,32 @@ mod tests {
         observe(&mut shell, Message::SetSortMode("recent".to_string()));
         assert_eq!(reloaded().sort_mode, "recent");
 
-        observe(&mut shell, Message::SetDefaultRunner("GE-Proton9-1".to_string()));
+        observe(
+            &mut shell,
+            Message::SetDefaultRunner("GE-Proton9-1".to_string()),
+        );
         assert_eq!(reloaded().default_runner, "GE-Proton9-1");
 
         observe(&mut shell, Message::SetCloseOnLaunch(true));
         assert!(reloaded().close_on_launch);
 
-        observe(&mut shell, Message::SetDefaultToggle {
-            name: "mangohud".to_string(),
-            value: true,
-        });
+        observe(
+            &mut shell,
+            Message::SetDefaultToggle {
+                name: "mangohud".to_string(),
+                value: true,
+            },
+        );
         assert!(reloaded().default_mangohud);
 
         // The other direction of a toggle, off a default-true field.
-        observe(&mut shell, Message::SetDefaultToggle {
-            name: "esync".to_string(),
-            value: false,
-        });
+        observe(
+            &mut shell,
+            Message::SetDefaultToggle {
+                name: "esync".to_string(),
+                value: false,
+            },
+        );
         assert!(!reloaded().default_esync);
     }
 
@@ -8149,23 +8279,32 @@ mod tests {
         let runner = shell.state.settings.default_runner.clone();
         observe(&mut shell, Message::SetDefaultRunner(runner));
         observe(&mut shell, Message::SetCloseOnLaunch(false));
-        observe(&mut shell, Message::SetDefaultToggle {
-            name: "mangohud".to_string(),
-            value: false,
-        });
-        observe(&mut shell, Message::SetDefaultToggle {
-            name: "esync".to_string(),
-            value: true,
-        });
+        observe(
+            &mut shell,
+            Message::SetDefaultToggle {
+                name: "mangohud".to_string(),
+                value: false,
+            },
+        );
+        observe(
+            &mut shell,
+            Message::SetDefaultToggle {
+                name: "esync".to_string(),
+                value: true,
+            },
+        );
         // Invalid values are ignored, not stored and not saved.
         observe(&mut shell, Message::SetColorScheme("neon".to_string()));
         observe(&mut shell, Message::SetViewMode("masonry".to_string()));
         observe(&mut shell, Message::SetSortMode("chaos".to_string()));
         observe(&mut shell, Message::SetDefaultRunner(String::new()));
-        observe(&mut shell, Message::SetDefaultToggle {
-            name: "wayland".to_string(),
-            value: true,
-        });
+        observe(
+            &mut shell,
+            Message::SetDefaultToggle {
+                name: "wayland".to_string(),
+                value: true,
+            },
+        );
         assert!(
             !path.exists(),
             "nothing changed, so nothing was saved — yet {path:?} exists"
@@ -8187,7 +8326,10 @@ mod tests {
         // Inside the shell's own fixture directory, which `Shell::new` made
         // unique per call: no counter, no clock, no sharing.
         let dir = shell.state.settings.path().to_path_buf();
-        let dir = dir.parent().expect("the fixture path has a parent").to_path_buf();
+        let dir = dir
+            .parent()
+            .expect("the fixture path has a parent")
+            .to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let blocker = dir.join("blocker");
         std::fs::write(&blocker, b"a file, not a directory").unwrap();
@@ -8240,7 +8382,10 @@ mod tests {
         // Not "the guard fired": a write of the same value is indistinguishable
         // from no write at all. See the doc above.
         let effect = observe(&mut shell, Message::SetCloseOnLaunch(true));
-        assert!(!effect.state_changed, "the state is unchanged by a repeated write");
+        assert!(
+            !effect.state_changed,
+            "the state is unchanged by a repeated write"
+        );
 
         let effect = observe(&mut shell, Message::SetCloseOnLaunch(false));
         assert!(effect.state_changed);
@@ -8271,7 +8416,11 @@ mod tests {
     #[test]
     fn navigate_to_moves_both_records_of_the_current_page() {
         let mut shell = Shell::new();
-        assert_eq!(shell.state.page, Page::Library, "the reference's start page");
+        assert_eq!(
+            shell.state.page,
+            Page::Library,
+            "the reference's start page"
+        );
 
         let _ = shell.update(Message::NavigateTo(Page::Plugins));
 
@@ -8375,11 +8524,7 @@ mod tests {
         let pending = shell.state.confirm_remove_runner.clone().unwrap();
         let drawn = drawn_strings(shell.view_with_overlays());
 
-        for expected in [
-            pending.title(),
-            "Cancel".to_string(),
-            "Remove".to_string(),
-        ] {
+        for expected in [pending.title(), "Cancel".to_string(), "Remove".to_string()] {
             assert!(
                 drawn.iter().any(|text| text == &expected),
                 "the open dialog should draw {expected:?}; drawn: {drawn:?}"
@@ -8388,7 +8533,9 @@ mod tests {
         // The subtitle is long; assert it is drawn rather than equal, so a
         // re-wrapping does not fail what is a presence claim.
         assert!(
-            drawn.iter().any(|text| text.contains("fall back to System Wine")),
+            drawn
+                .iter()
+                .any(|text| text.contains("fall back to System Wine")),
             "the dialog should draw the reference's subtitle; drawn: {drawn:?}"
         );
         // The page underneath: a fresh shell opens on the Library page, and a
@@ -8445,7 +8592,9 @@ mod tests {
         let drawn = drawn_strings(shell.view_with_overlays());
 
         assert!(
-            drawn.iter().any(|text| text == crate::view::form::TITLE_ADD),
+            drawn
+                .iter()
+                .any(|text| text == crate::view::form::TITLE_ADD),
             "the form must still be drawn; drawn: {drawn:?}"
         );
         assert!(
@@ -8506,7 +8655,9 @@ mod tests {
         let drawn = drawn_strings(shell.view_with_overlays());
 
         assert!(
-            drawn.iter().any(|text| text == "Remove \u{201c}Hades\u{201d}?"),
+            drawn
+                .iter()
+                .any(|text| text == "Remove \u{201c}Hades\u{201d}?"),
             "the dialog must name the entry it is about to remove; drawn: {drawn:?}"
         );
         assert!(
@@ -8530,7 +8681,9 @@ mod tests {
         shell.state.confirm_delete = None;
         let fallthrough = drawn_strings(shell.view_with_overlays());
         assert!(
-            !fallthrough.iter().any(|text| text == "Remove \u{201c}Hades\u{201d}?"),
+            !fallthrough
+                .iter()
+                .any(|text| text == "Remove \u{201c}Hades\u{201d}?"),
             "no pending delete, so no dialog title; drawn: {fallthrough:?}"
         );
         assert!(
@@ -8552,7 +8705,9 @@ mod tests {
         let drawn = drawn_strings(shell.view_with_overlays());
 
         assert!(
-            drawn.iter().any(|text| text == "Remove \u{201c}missing\u{201d}?"),
+            drawn
+                .iter()
+                .any(|text| text == "Remove \u{201c}missing\u{201d}?"),
             "the fallback title must carry the raw id; drawn: {drawn:?}"
         );
     }
@@ -8785,12 +8940,14 @@ mod tests {
 
         // A sidebar built from something other than `Page::ALL`: one row.
         let mut stub = nav_bar::Model::default();
-        stub.insert().text(Page::Library.label()).data(Page::Library);
+        stub.insert()
+            .text(Page::Library.label())
+            .data(Page::Library);
         assert!(stub.activate_position(0));
         shell.nav_model = stub;
 
         // `Page::Settings` is the sixth page, and this model has one row.
-// The entry task is dropped: these tests are about the two records
+        // The entry task is dropped: these tests are about the two records
         // `show_page` writes, both of which are written before the task is
         // built. Driving it would reach the network.
         let _ = shell.show_page(Page::Settings);
@@ -8814,7 +8971,11 @@ mod tests {
     #[test]
     fn arriving_at_the_runners_page_fetches_and_a_re_visit_does_not() {
         let mut shell = Shell::new();
-        assert_eq!(shell.state.page, Page::Library, "the shell starts on Library");
+        assert_eq!(
+            shell.state.page,
+            Page::Library,
+            "the shell starts on Library"
+        );
 
         // The entry task is dropped: driving it reaches GitHub.
         let _ = shell.show_page(Page::Runners);
@@ -8882,13 +9043,15 @@ mod tests {
     fn the_pending_pages_are_exactly_the_ones_whose_body_says_so() {
         let mut shell = Shell::new();
         for page in Page::ALL {
-// The entry task is dropped: these tests are about the two records
+            // The entry task is dropped: these tests are about the two records
             // `show_page` writes, both of which are written before the task is
             // built. Driving it would reach the network.
             let _ = shell.show_page(page);
             let drawn = drawn_strings(shell.view_body());
 
-            let says_pending = drawn.iter().any(|text| text.contains("has not been ported yet"));
+            let says_pending = drawn
+                .iter()
+                .any(|text| text.contains("has not been ported yet"));
 
             match pending_task(page) {
                 Some(task) => {
@@ -8919,7 +9082,7 @@ mod tests {
     /// only through `Widget::operate`.
     fn drawn_strings<M: Clone + 'static>(mut element: cosmic::Element<'_, M>) -> Vec<String> {
         use cosmic::iced::advanced::widget::{Operation, Tree};
-        use cosmic::iced::advanced::{layout::Limits, Layout};
+        use cosmic::iced::advanced::{Layout, layout::Limits};
         use cosmic::iced::{Font, Pixels, Rectangle, Size};
 
         #[derive(Default)]
@@ -8938,7 +9101,9 @@ mod tests {
         let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
         let mut tree = Tree::new(element.as_widget());
         let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let node = element.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
         let mut texts = Texts::default();
         element
             .as_widget_mut()
@@ -9098,7 +9263,10 @@ mod tests {
         ("Select a game first", "Select a game first"),
         ("Could not launch “{game.name}”", "Could not launch “{}”"),
         ("Launching “{game.name}”…", "Launching “{name}”…"),
-        ("stopped right away: {reason}", "stopped right away: {reason}"),
+        (
+            "stopped right away: {reason}",
+            "stopped right away: {reason}",
+        ),
         (
             "Prefix tools are only available for Windows games",
             "Prefix tools are only available for Windows games",
@@ -9118,16 +9286,10 @@ mod tests {
             "Could not create the shortcut",
         ),
         ("Shortcut created at {path}", "Shortcut created at {}"),
-        (
-            "Cover set from {hit.origin_label}",
-            "Cover set from {}",
-        ),
+        ("Cover set from {hit.origin_label}", "Cover set from {}"),
         ("Enter a game name first", "Enter a game name first"),
         ("Looking for artwork for", "Looking for artwork for"),
-        (
-            "Cover found via {hit.origin_label}",
-            "Cover found via {}",
-        ),
+        ("Cover found via {hit.origin_label}", "Cover found via {}"),
         ("Could not copy cover", "Could not copy cover"),
         ("Custom cover added", "Custom cover added"),
         ("Downloading {release.tag}", "Downloading {tag}…"),
@@ -9135,11 +9297,11 @@ mod tests {
             "Installed {release.tag}. You can now choose",
             "Installed {tag}. You can now choose",
         ),
+        ("Failed to install {release.tag}", "Failed to install {tag}"),
         (
-            "Failed to install {release.tag}",
-            "Failed to install {tag}",
+            "Could not remove {runner_id}",
+            "Could not remove {runner_id}",
         ),
-        ("Could not remove {runner_id}", "Could not remove {runner_id}"),
         ("Removed {runner_id}", "Removed {runner_id}"),
         (
             "Another install is already running",
@@ -9256,14 +9418,13 @@ mod tests {
     #[test]
     fn every_reference_notify_has_a_port_voice() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../");
-        let bridge = std::fs::read_to_string(root.join("gamehandler/bridge.py")).unwrap_or_else(
-            |err| {
+        let bridge =
+            std::fs::read_to_string(root.join("gamehandler/bridge.py")).unwrap_or_else(|err| {
                 panic!(
                     "bridge.py should be readable: it is the reference this shell was ported \
                      from: {err}"
                 )
-            },
-        );
+            });
         let calls = notify_calls(&bridge);
         assert!(
             calls.iter().all(|call| call.len() < 500),

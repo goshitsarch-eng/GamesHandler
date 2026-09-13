@@ -91,9 +91,9 @@
 //! instead of being discovered as a pixel diff. It is decoration on a control
 //! that works, so the behavioural parity P-65 asks for is met without it.
 
+use cosmic::Element;
 use cosmic::iced::Length;
 use cosmic::widget::{Column, Row, button, container, scrollable, text};
-use cosmic::Element;
 use gamehandler_core::credits::{self, Credit, CreditSection};
 use gamehandler_core::{APP_NAME, VERSION};
 
@@ -117,7 +117,8 @@ pub const WHY_HEADING: &str = "Why one app instead of assembling the stack yours
 
 /// The sentence under that heading — *not* a [`credits::WHY_ALL_IN_ONE`] entry,
 /// which are the five that follow it. `CreditsPage.qml:104`.
-pub const WHY_LEAD: &str = "GameHandler replaces none of these projects. It removes the assembly work between them.";
+pub const WHY_LEAD: &str =
+    "GameHandler replaces none of these projects. It removes the assembly work between them.";
 
 /// The label on a credit's link button. `CreditsPage.qml:88`.
 pub const VISIT_LABEL: &str = "Visit";
@@ -522,8 +523,11 @@ mod tests {
         // Both arms are exercised by the real catalogue, which is what makes
         // this a test of the page rather than of one branch.
         assert!(with_license > 0, "no credit carries a licence");
-        assert!(without > 0, "every credit carries a licence; the empty arm is \
-                              untested against real data");
+        assert!(
+            without > 0,
+            "every credit carries a licence; the empty arm is \
+                              untested against real data"
+        );
     }
 
     /// **A credit with no URL draws no link**, and no real credit is in that
@@ -912,7 +916,7 @@ mod tests {
     /// draws is reachable only through `Widget::operate`.
     fn drawn_strings(mut element: Element<'static, Message>) -> Vec<String> {
         use cosmic::iced::advanced::widget::{Operation, Tree};
-        use cosmic::iced::advanced::{layout::Limits, Layout};
+        use cosmic::iced::advanced::{Layout, layout::Limits};
         use cosmic::iced::{Font, Pixels, Rectangle, Size};
 
         #[derive(Default)]
@@ -931,7 +935,9 @@ mod tests {
         let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
         let mut tree = Tree::new(element.as_widget());
         let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let node = element.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
         let mut texts = Texts::default();
         element
             .as_widget_mut()

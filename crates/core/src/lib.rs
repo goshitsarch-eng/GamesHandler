@@ -40,10 +40,10 @@ pub const APP_NAME: &str = "GameHandler";
 /// cannot drift apart.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-mod hash;
 pub mod covers;
 pub mod credits;
 pub mod exe_icons;
+mod hash;
 pub mod installers;
 pub mod json;
 pub mod models;

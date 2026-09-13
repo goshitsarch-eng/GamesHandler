@@ -304,10 +304,9 @@ impl fmt::Display for InstallError {
                 "Plugin installation is unavailable inside Flatpak; sandbox package \
                  managers cannot install or expose host packages",
             ),
-            InstallError::NoPackage { plugin } => write!(
-                f,
-                "No install package is known for {plugin} on this system"
-            ),
+            InstallError::NoPackage { plugin } => {
+                write!(f, "No install package is known for {plugin} on this system")
+            }
             InstallError::UnsupportedManager(manager) => {
                 write!(f, "Unsupported package manager: {manager}")
             }
@@ -339,7 +338,11 @@ pub fn install_command(
     let package = plugin.package_for(manager);
     let package = match (manager.is_empty(), package) {
         (false, Some(package)) => package,
-        _ => return Err(InstallError::NoPackage { plugin: plugin.name }),
+        _ => {
+            return Err(InstallError::NoPackage {
+                plugin: plugin.name,
+            });
+        }
     };
     let argv: &[&str] = match manager {
         "apt" => &["apt-get", "install", "-y", package],
@@ -360,7 +363,10 @@ pub fn install_command(
 /// argv[0] == "flatpak"`, i.e. an *empty* argv falls through to the uid check
 /// rather than being special-cased.
 pub fn privileged_command(argv: &[String], env: &dyn PluginEnv) -> Vec<String> {
-    if argv.first().is_some_and(|first| first.as_str() == "flatpak") {
+    if argv
+        .first()
+        .is_some_and(|first| first.as_str() == "flatpak")
+    {
         return argv.to_vec();
     }
     if env.euid() == Some(0) {
@@ -475,7 +481,10 @@ pub fn plugin_row(plugin: &Plugin, env: &dyn PluginEnv) -> PluginRow {
 
 /// Every row, in the catalogue's order (`bridge.py::_get_plugins`).
 pub fn plugin_rows(env: &dyn PluginEnv) -> Vec<PluginRow> {
-    PLUGINS.iter().map(|plugin| plugin_row(plugin, env)).collect()
+    PLUGINS
+        .iter()
+        .map(|plugin| plugin_row(plugin, env))
+        .collect()
 }
 
 /// The sentence above the list (`bridge.py::pluginsIntro`).
@@ -555,7 +564,9 @@ mod tests {
         /// A host with a package manager but nothing installed — the shape
         /// every "missing" case wants.
         pub fn with_apt_host() -> Self {
-            Self::new().with_which("apt-get", "/usr/bin/apt-get").with_file("/etc/debian_version")
+            Self::new()
+                .with_which("apt-get", "/usr/bin/apt-get")
+                .with_file("/etc/debian_version")
         }
     }
 
@@ -941,8 +952,7 @@ mod tests {
         let apt_without_release = FakePluginEnv::new().with_which("apt-get", "/usr/bin/apt-get");
         assert_eq!(detect_package_manager(&apt_without_release), "");
 
-        let pacman_without_release =
-            FakePluginEnv::new().with_which("pacman", "/usr/bin/pacman");
+        let pacman_without_release = FakePluginEnv::new().with_which("pacman", "/usr/bin/pacman");
         assert_eq!(detect_package_manager(&pacman_without_release), "");
     }
 
@@ -1015,8 +1025,8 @@ mod tests {
              Install with: apt-get install -y mangohud"
         );
 
-        let sandboxed = FakePluginEnv::with_apt_host()
-            .with_var("FLATPAK_ID", "com.goshapps.GameHandler");
+        let sandboxed =
+            FakePluginEnv::with_apt_host().with_var("FLATPAK_ID", "com.goshapps.GameHandler");
         let row = plugin_row(plugin_by_id("mangohud").unwrap(), &sandboxed);
         assert_eq!(row.state, PluginState::Unavailable);
         assert_eq!(row.state.as_str(), "unavailable");

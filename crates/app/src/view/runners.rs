@@ -66,24 +66,24 @@
 //! [`WineRunner::version`]: gamehandler_core::runners::WineRunner::version
 //! [`HttpClient`]: gamehandler_core::runners::proton::HttpClient
 
-use cosmic::app::Task;
-use cosmic::widget::{Column, Row, Space, button, container, divider, icon, progress_bar, text};
 use cosmic::Element;
+use cosmic::app::Task;
 use cosmic::iced::{Alignment, Background, Border, Length};
+use cosmic::widget::{Column, Row, Space, button, container, divider, icon, progress_bar, text};
 use gamehandler_core::runners::families::{
     ReleaseInfo, RunnerFamily, RunnerGuide, families, runner_guide_details,
 };
 use gamehandler_core::runners::proton;
 use gamehandler_core::runners::proton::HttpClient;
-use gamehandler_core::runners::{ProtonRunner, Runner, RunnerError, SystemLaunchEnv, SYSTEM_WINE};
+use gamehandler_core::runners::{ProtonRunner, Runner, RunnerError, SYSTEM_WINE, SystemLaunchEnv};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// `StreamExt::map`, for turning the install's report channel into a task.
 use cosmic::iced::futures::StreamExt;
 
-use crate::state::{ReleasesStatus, State};
 use crate::Message;
+use crate::state::{ReleasesStatus, State};
 
 use super::badge::badge;
 
@@ -213,9 +213,7 @@ pub fn status_line(status: &ReleasesStatus, release_count: usize) -> Option<Stri
     match status {
         ReleasesStatus::Ready if release_count > 0 => None,
         ReleasesStatus::Loading => Some("Fetching the latest builds…".to_string()),
-        ReleasesStatus::Error(message) => {
-            Some(format!("Could not fetch builds — {message}"))
-        }
+        ReleasesStatus::Error(message) => Some(format!("Could not fetch builds — {message}")),
         ReleasesStatus::Ready | ReleasesStatus::Idle => {
             Some("No builds found for this family.".to_string())
         }
@@ -228,7 +226,10 @@ pub fn family_note(family: &RunnerFamily) -> String {
     if family.maintainer.is_empty() {
         family.description.to_string()
     } else {
-        format!("{}\nMaintained by {}", family.description, family.maintainer)
+        format!(
+            "{}\nMaintained by {}",
+            family.description, family.maintainer
+        )
     }
 }
 
@@ -273,7 +274,10 @@ pub fn progress_fraction(state: &State) -> Option<f32> {
     if !state.busy() {
         return None;
     }
-    state.progress.filter(|value| *value >= 0.0).map(|value| value.max(0.0))
+    state
+        .progress
+        .filter(|value| *value >= 0.0)
+        .map(|value| value.max(0.0))
 }
 
 /// The index of `family_id` in the catalogue, for the selector.
@@ -400,11 +404,10 @@ pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
     }
 
     // ---- Installed ---------------------------------------------------------
-    body = body
-        .push(text::title3("Installed"))
-        .push(
-            text::body("Available for launching and for the per-game runner picker.").width(Length::Fill),
-        );
+    body = body.push(text::title3("Installed")).push(
+        text::body("Available for launching and for the per-game runner picker.")
+            .width(Length::Fill),
+    );
 
     for row in page.installed {
         body = body.push(installed_card(row));
@@ -420,26 +423,22 @@ pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
     body = body.push(divider::horizontal::default());
 
     // ---- Download a build --------------------------------------------------
-    body = body
-        .push(text::title3("Download a build"))
-        .push(text::body(
-            "GameHandler fetches these archives from each maintainer's own release \
+    body = body.push(text::title3("Download a build")).push(text::body(
+        "GameHandler fetches these archives from each maintainer's own release \
              page, the same upstream sources ProtonPlus uses. Nothing is bundled or \
              re-hosted here.",
-        ));
+    ));
 
     let names: Vec<String> = families().iter().map(|f| f.name.to_string()).collect();
     let selected = family_index(page.selected_family);
     body = body.push(
         Row::new()
             .push(text::body("Family:"))
-            .push(cosmic::widget::dropdown(
-                names,
-                selected,
-                move |index| Message::FetchReleases {
+            .push(cosmic::widget::dropdown(names, selected, move |index| {
+                Message::FetchReleases {
                     family: families()[index].id.to_string(),
-                },
-            ))
+                }
+            }))
             .spacing(8)
             .align_y(Alignment::Center),
     );
@@ -534,7 +533,8 @@ fn installed_card(row: &InstalledRow) -> Element<'_, Message> {
         // page, where the guard is at least a value). This line is checked by
         // reading it.
         line = line.push(
-            button::icon(crate::icons::handle(crate::icons::Icon::Delete)).on_press(remove_press(row)),
+            button::icon(crate::icons::handle(crate::icons::Icon::Delete))
+                .on_press(remove_press(row)),
         );
     }
 
@@ -988,7 +988,10 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             // busy with no explanation of why.
             Some(Task::batch([
                 push_toast(state, format!("Downloading {tag}…")),
-                install_runner_task(release.clone(), state.runners.runners_directory().to_path_buf()),
+                install_runner_task(
+                    release.clone(),
+                    state.runners.runners_directory().to_path_buf(),
+                ),
             ]))
         }
         // `_progress_cb` (`bridge.py:733-735`).
@@ -1016,9 +1019,9 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             // Both arms name the release (`bridge.py:756-758`, `:767`), which is
             // why the tag travels on the message rather than only on success.
             let line = match result {
-                Ok(()) => format!(
-                    "Installed {tag}. You can now choose it when adding or editing a game."
-                ),
+                Ok(()) => {
+                    format!("Installed {tag}. You can now choose it when adding or editing a game.")
+                }
                 Err(message) => format!("Failed to install {tag}: {message}"),
             };
             Some(Task::batch([rows, push_toast(state, line)]))
@@ -1299,8 +1302,10 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
 
         let release = released("GE-Proton9-5", "a.tar.gz", 1024 * 1024);
-        std::fs::create_dir_all(root.join(install_id_for(&release.tag, &release.family_id).unwrap()))
-            .unwrap();
+        std::fs::create_dir_all(
+            root.join(install_id_for(&release.tag, &release.family_id).unwrap()),
+        )
+        .unwrap();
 
         let rows = release_rows(&[release], &root);
         assert!(
@@ -1318,7 +1323,10 @@ mod tests {
     fn a_release_detail_names_the_family_the_asset_and_the_whole_megabytes() {
         // 432_000_000 bytes is 412.0 MiB; 412.6 rounds to 413.
         let release = released("GE-Proton9-5", "GE-Proton9-5.tar.gz", 432_600_000);
-        assert_eq!(release_detail(&release), "Proton-GE · GE-Proton9-5.tar.gz · 413 MB");
+        assert_eq!(
+            release_detail(&release),
+            "Proton-GE · GE-Proton9-5.tar.gz · 413 MB"
+        );
     }
 
     /// `round()` is half-away-from-zero on a `.5`, and the reference writes
@@ -1337,7 +1345,10 @@ mod tests {
     fn an_unknown_family_id_is_shown_rather_than_dropped() {
         let mut release = released("t", "a.tar.gz", 1024 * 1024);
         release.family_id = "proton-nonesuch".to_string();
-        assert_eq!(release_detail(&release), "proton-nonesuch · a.tar.gz · 1 MB");
+        assert_eq!(
+            release_detail(&release),
+            "proton-nonesuch · a.tar.gz · 1 MB"
+        );
     }
 
     // ---- status_line ------------------------------------------------------
@@ -1563,7 +1574,11 @@ mod tests {
         for (name, source) in &sources {
             let found = link_without_press_findings(source);
             links += link_button_count(source);
-            findings.extend(found.into_iter().map(|finding| format!("{name}: {finding}")));
+            findings.extend(
+                found
+                    .into_iter()
+                    .map(|finding| format!("{name}: {finding}")),
+            );
         }
 
         assert!(
@@ -1726,13 +1741,16 @@ mod tests {
                     code[index] = ' ';
                     index += 1;
                 }
-            } else if chars[index] == '\''
-                && chars.get(index + 2) == Some(&'\'')
+            } else if chars[index] == '\'' && chars.get(index + 2) == Some(&'\'')
                 || chars[index] == '\''
                     && chars.get(index + 1) == Some(&'\\')
                     && chars.get(index + 3) == Some(&'\'')
             {
-                let width = if chars.get(index + 1) == Some(&'\\') { 4 } else { 3 };
+                let width = if chars.get(index + 1) == Some(&'\\') {
+                    4
+                } else {
+                    3
+                };
                 for offset in 0..width {
                     if index + offset < code.len() && chars[index + offset] != '\n' {
                         code[index + offset] = ' ';
@@ -1883,9 +1901,16 @@ mod tests {
     #[test]
     fn the_selected_family_is_looked_up_by_id_and_an_unknown_one_is_no_selection() {
         assert_eq!(family_index("proton-ge"), Some(0));
-        assert_eq!(family_index("proton-cachyos"), families().iter().position(|f| f.id == "proton-cachyos"));
+        assert_eq!(
+            family_index("proton-cachyos"),
+            families().iter().position(|f| f.id == "proton-cachyos")
+        );
         assert_eq!(family_index("proton-nonesuch"), None);
-        assert_eq!(family_index(""), None, "the initial state is empty, not a family");
+        assert_eq!(
+            family_index(""),
+            None,
+            "the initial state is empty, not a family"
+        );
     }
 
     // ---- fetch_releases ---------------------------------------------------
@@ -2005,10 +2030,17 @@ mod tests {
     #[test]
     fn a_failure_never_renders_an_empty_message() {
         let empty: Vec<(&str, RunnerError)> = vec![
-            ("Http", RunnerError::Http { message: String::new() }),
+            (
+                "Http",
+                RunnerError::Http {
+                    message: String::new(),
+                },
+            ),
             (
                 "UnreachableShare",
-                RunnerError::UnreachableShare { message: String::new() },
+                RunnerError::UnreachableShare {
+                    message: String::new(),
+                },
             ),
             ("Io", RunnerError::Io(std::io::Error::other(""))),
             (
@@ -2057,11 +2089,19 @@ mod tests {
         state.releases = vec![released("old", "old.tar.gz", 1024)];
         state.releases_status = ReleasesStatus::Ready;
 
-        let task = update(&mut state, &Message::FetchReleases { family: "proton-ge".to_string() });
+        let task = update(
+            &mut state,
+            &Message::FetchReleases {
+                family: "proton-ge".to_string(),
+            },
+        );
         assert!(task.is_some(), "FetchReleases is this page's message");
         assert_eq!(state.releases_family, "proton-ge");
         assert_eq!(state.releases_status, ReleasesStatus::Loading);
-        assert!(state.releases.is_empty(), "the previous family's list must go");
+        assert!(
+            state.releases.is_empty(),
+            "the previous family's list must go"
+        );
     }
 
     /// The stale guard, in both directions. This is the one that matters: a
@@ -2094,7 +2134,10 @@ mod tests {
                 result: Ok(vec![released("stale", "s.tar.gz", 2048)]),
             },
         );
-        assert_eq!(state.releases, fresh, "the stale reply overwrote the live list");
+        assert_eq!(
+            state.releases, fresh,
+            "the stale reply overwrote the live list"
+        );
         assert_eq!(state.releases_status, ReleasesStatus::Ready);
     }
 
@@ -2256,12 +2299,20 @@ mod tests {
         let mut state = state();
         state.releases = vec![released("GE-Proton9-5", "a.tar.gz", 1024)];
 
-        let task = update(&mut state, &Message::InstallRunner { tag: "not-offered".to_string() });
+        let task = update(
+            &mut state,
+            &Message::InstallRunner {
+                tag: "not-offered".to_string(),
+            },
+        );
         assert!(
             task.is_some(),
             "the message is this page's — it is dropped, not declined"
         );
-        assert!(!state.runner_busy, "a dropped install must not mark the page busy");
+        assert!(
+            !state.runner_busy,
+            "a dropped install must not mark the page busy"
+        );
         assert_eq!(state.progress, None, "and must not draw a bar");
     }
 
@@ -2279,7 +2330,12 @@ mod tests {
         state.runner_busy = true;
         state.progress = Some(0.4);
 
-        let task = update(&mut state, &Message::InstallRunner { tag: "GE-Proton9-5".to_string() });
+        let task = update(
+            &mut state,
+            &Message::InstallRunner {
+                tag: "GE-Proton9-5".to_string(),
+            },
+        );
         assert!(task.is_some(), "dropped, not declined");
         assert!(state.runner_busy, "the guard is unchanged");
         assert_eq!(
@@ -2305,7 +2361,12 @@ mod tests {
         let mut state = state();
         state.releases = vec![released("GE-Proton9-5", "a.tar.gz", 1024)];
 
-        let task = update(&mut state, &Message::InstallRunner { tag: "GE-Proton9-5".to_string() });
+        let task = update(
+            &mut state,
+            &Message::InstallRunner {
+                tag: "GE-Proton9-5".to_string(),
+            },
+        );
         assert!(task.is_some(), "the install is this page's message");
         assert!(state.runner_busy, "the guard is up before the download");
         assert_eq!(
@@ -2347,7 +2408,11 @@ mod tests {
     /// is asserted for a downloaded build, the only row that draws one.
     #[test]
     fn the_remove_press_helper_names_the_rows_own_id() {
-        let protons = vec![ProtonRunner::new("/runners/GE-Proton9-5", "proton-ge", "GE-Proton9-5")];
+        let protons = vec![ProtonRunner::new(
+            "/runners/GE-Proton9-5",
+            "proton-ge",
+            "GE-Proton9-5",
+        )];
         let rows = installed_rows(&WineRunner::with_binary(None), &protons);
 
         match remove_press(&rows[1]) {

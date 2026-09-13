@@ -150,7 +150,10 @@ fn app_id_matches_the_desktop_entry() {
 
     let entry = &entries[0];
     assert_eq!(
-        entry.file_stem().expect("a .desktop filename").to_string_lossy(),
+        entry
+            .file_stem()
+            .expect("a .desktop filename")
+            .to_string_lossy(),
         app_id,
         "the desktop entry's basename must be the application id: a launcher \
          looks up {} for the id the window reports",
@@ -212,7 +215,9 @@ fn app_id_matches_the_flatpak_manifest() {
 #[test]
 fn app_id_matches_the_metainfo_launchable() {
     let app_id = gamehandler_core::APP_ID;
-    let metainfo = repo_root().join("data").join(format!("{app_id}.metainfo.xml"));
+    let metainfo = repo_root()
+        .join("data")
+        .join(format!("{app_id}.metainfo.xml"));
 
     let text = read(&metainfo);
     assert_eq!(

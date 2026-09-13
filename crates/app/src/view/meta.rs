@@ -163,10 +163,7 @@ mod tests {
     /// [`SEPARATOR`] fails here rather than silently altering every subtitle.
     #[test]
     fn a_categorised_game_shows_the_category_then_the_runner() {
-        assert_eq!(
-            subtitle("Action", "Proton-GE"),
-            "Action \u{b7} Proton-GE"
-        );
+        assert_eq!(subtitle("Action", "Proton-GE"), "Action \u{b7} Proton-GE");
     }
 
     /// An uncategorised game shows the runner alone. `UNCATEGORIZED` is the
@@ -211,7 +208,10 @@ mod tests {
     /// with a placeholder here.
     #[test]
     fn a_windows_game_gets_the_managers_label_verbatim() {
-        assert_eq!(runner_label(false, "Proton-GE \u{b7} Proton"), "Proton-GE \u{b7} Proton");
+        assert_eq!(
+            runner_label(false, "Proton-GE \u{b7} Proton"),
+            "Proton-GE \u{b7} Proton"
+        );
         assert_eq!(runner_label(false, ""), "");
     }
 

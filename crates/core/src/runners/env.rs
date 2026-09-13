@@ -487,7 +487,10 @@ pub(crate) mod tests {
             which_in(binary.to_str().unwrap(), &env),
             Some(binary.clone())
         );
-        assert_eq!(which_in(root.join("bin/nope").to_str().unwrap(), &env), None);
+        assert_eq!(
+            which_in(root.join("bin/nope").to_str().unwrap(), &env),
+            None
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -553,9 +556,7 @@ pub(crate) mod tests {
             .with_anticheat("battleye", "/declared/battleye")
             .with_root_dirs(&[root.to_str().unwrap()]);
         assert_eq!(
-            declared
-                .anticheat_runtime("battleye", &[])
-                .as_deref(),
+            declared.anticheat_runtime("battleye", &[]).as_deref(),
             Some("/declared/battleye")
         );
         // The declared value wins for its own kind only; `eac` falls through

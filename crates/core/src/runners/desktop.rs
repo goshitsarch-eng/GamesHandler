@@ -269,10 +269,8 @@ mod tests {
 
     impl Scratch {
         fn new(label: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "gh-desktop-{label}-{}",
-                std::process::id()
-            ));
+            let path =
+                std::env::temp_dir().join(format!("gh-desktop-{label}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir_all(&path).unwrap();
             Self(path)
@@ -353,9 +351,7 @@ mod tests {
         assert_eq!(lines[0], "[Desktop Entry]");
         assert_eq!(lines.iter().filter(|line| line.starts_with('[')).count(), 1);
         for line in &lines {
-            let is_key = line
-                .split_once('=')
-                .is_some_and(|(key, _)| !key.is_empty());
+            let is_key = line.split_once('=').is_some_and(|(key, _)| !key.is_empty());
             assert!(
                 line.starts_with('[') || is_key,
                 "not a group header and not a key=value line: {line:?}"
@@ -406,12 +402,8 @@ mod tests {
         let scratch = Scratch::new("percent");
         let mut title = game("100% Done", "ffffffff00000000");
         title.cover_path = "/covers/100%.png".to_string();
-        let path = create_desktop_shortcut(
-            &title,
-            "gamehandler --launch %f",
-            Some(scratch.path()),
-        )
-        .unwrap();
+        let path = create_desktop_shortcut(&title, "gamehandler --launch %f", Some(scratch.path()))
+            .unwrap();
         let body = read(&path);
 
         assert!(body.contains("Name=100% Done\n"), "{body}");
@@ -436,12 +428,18 @@ mod tests {
         let lines: Vec<&str> = body.lines().collect();
 
         assert_eq!(
-            lines.iter().filter(|line| line.starts_with("Exec=")).count(),
+            lines
+                .iter()
+                .filter(|line| line.starts_with("Exec="))
+                .count(),
             1,
             "{body}"
         );
         assert_eq!(
-            lines.iter().filter(|line| line.starts_with("Name=")).count(),
+            lines
+                .iter()
+                .filter(|line| line.starts_with("Name="))
+                .count(),
             1,
             "{body}"
         );
@@ -470,10 +468,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            read(&path)
-                .contains("Icon=/home/u/.local/share/gamehandler/covers/ab.png\n")
-        );
+        assert!(read(&path).contains("Icon=/home/u/.local/share/gamehandler/covers/ab.png\n"));
     }
 
     /// An empty name takes the fallback in the `Name=` key, and a name with no
@@ -489,7 +484,10 @@ mod tests {
             Some(scratch.path()),
         )
         .unwrap();
-        assert_eq!(empty.file_name().unwrap(), "gamehandler-11111111-game.desktop");
+        assert_eq!(
+            empty.file_name().unwrap(),
+            "gamehandler-11111111-game.desktop"
+        );
         assert!(read(&empty).contains("Name=Game\n"));
         assert!(read(&empty).contains("Comment=Launch Game with GameHandler\n"));
 
@@ -536,12 +534,9 @@ mod tests {
             Some(scratch.path()),
         )
         .unwrap();
-        let second = create_desktop_shortcut(
-            &target,
-            "gamehandler --launch again",
-            Some(scratch.path()),
-        )
-        .unwrap();
+        let second =
+            create_desktop_shortcut(&target, "gamehandler --launch again", Some(scratch.path()))
+                .unwrap();
 
         assert_eq!(first, second);
         assert_eq!(fs::read_dir(scratch.path()).unwrap().count(), 1);
@@ -566,7 +561,10 @@ mod tests {
             .filter(|name| name.ends_with(".tmp"))
             .collect();
         assert_eq!(leftovers, Vec::<String>::new());
-        assert_eq!(path.file_name().unwrap(), "gamehandler-abcd1234-hades-ii.desktop");
+        assert_eq!(
+            path.file_name().unwrap(),
+            "gamehandler-abcd1234-hades-ii.desktop"
+        );
     }
 
     /// If the bytes cannot be written, the destination is not touched: that is
@@ -576,7 +574,9 @@ mod tests {
     #[test]
     fn a_failed_write_leaves_no_shortcut_behind() {
         let scratch = Scratch::new("failed");
-        let blocked = scratch.path().join("gamehandler-abcd1234-hades-ii.desktop.tmp");
+        let blocked = scratch
+            .path()
+            .join("gamehandler-abcd1234-hades-ii.desktop.tmp");
         fs::create_dir_all(blocked.join("occupied")).unwrap();
 
         let error = create_desktop_shortcut(
@@ -587,7 +587,12 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::IsADirectory);
-        assert!(!scratch.path().join("gamehandler-abcd1234-hades-ii.desktop").exists());
+        assert!(
+            !scratch
+                .path()
+                .join("gamehandler-abcd1234-hades-ii.desktop")
+                .exists()
+        );
     }
 
     /// The default directory is the session's application menu, not this

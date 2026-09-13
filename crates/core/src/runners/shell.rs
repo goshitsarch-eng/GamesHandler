@@ -195,10 +195,7 @@ mod tests {
             split("-fullscreen -dx11"),
             ["-fullscreen".to_string(), "-dx11".to_string()]
         );
-        assert_eq!(
-            split(" \t-x\r\n-y "),
-            ["-x".to_string(), "-y".to_string()]
-        );
+        assert_eq!(split(" \t-x\r\n-y "), ["-x".to_string(), "-y".to_string()]);
     }
 
     #[test]

@@ -29,8 +29,8 @@ use std::io;
 use std::path::Path;
 
 use serde::Serialize;
-use serde_json::ser::{CharEscape, Formatter, PrettyFormatter, Serializer};
 use serde_json::Value;
+use serde_json::ser::{CharEscape, Formatter, PrettyFormatter, Serializer};
 
 /// The deepest value this parser will materialise (DECISIONS D-21).
 ///
@@ -226,9 +226,7 @@ pub fn sanitize(text: &str) -> Cow<'_, str> {
             }
             b'N' if bytes[i..].starts_with(b"NaN") => (i, i + 3, Cow::Borrowed("null")),
             b'I' if bytes[i..].starts_with(b"Infinity") => (i, i + 8, Cow::Borrowed("null")),
-            b'-' if bytes[i + 1..].starts_with(b"Infinity") => {
-                (i, i + 9, Cow::Borrowed("null"))
-            }
+            b'-' if bytes[i + 1..].starts_with(b"Infinity") => (i, i + 9, Cow::Borrowed("null")),
             b'-' | b'0'..=b'9' => {
                 let end = number_end(bytes, i);
                 match normalize_number(&text[i..end]) {
@@ -356,11 +354,15 @@ pub fn to_python_string<T: Serialize + ?Sized>(value: &T) -> Result<String, serd
 /// mid-write cannot truncate a library the user would then lose
 /// (`docs/migration/architecture.md` §5).
 pub fn write_python_file<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent)?;
     }
     // In memory, so this cannot fail for any value we can actually build.
-    let text = to_python_string(value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let text = to_python_string(value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let temporary = path.with_extension("json.tmp");
     std::fs::write(&temporary, text.as_bytes())?;
     std::fs::rename(&temporary, path)
@@ -592,7 +594,10 @@ mod tests {
 
         for (literal, expected) in [
             ("18446744073709551616", 18446744073709551616_f64),
-            ("123456789012345678901234567890", 123456789012345678901234567890_f64),
+            (
+                "123456789012345678901234567890",
+                123456789012345678901234567890_f64,
+            ),
         ] {
             let text = format!("[{literal}]");
             let rewritten = sanitize(&text);
@@ -659,7 +664,10 @@ mod tests {
         let text = format!(r#"[{{"name": "{name}"}}]"#);
         assert!(matches!(clamp_depth(&text), Cow::Borrowed(_)));
         assert_eq!(
-            parse_lenient(&text).unwrap()[0]["name"].as_str().unwrap().len(),
+            parse_lenient(&text).unwrap()[0]["name"]
+                .as_str()
+                .unwrap()
+                .len(),
             500
         );
     }
@@ -809,7 +817,8 @@ mod tests {
             }
         }
         assert_eq!(
-            mismatches, 0,
+            mismatches,
+            0,
             "{mismatches}/{} timestamps came back off by one ULP — is the \
              `float_roundtrip` feature still enabled on serde_json?",
             expected.len()
@@ -840,7 +849,11 @@ mod tests {
             .filter_map(Result::ok)
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(files, ["settings.json"], "the .tmp file must be renamed away");
+        assert_eq!(
+            files,
+            ["settings.json"],
+            "the .tmp file must be renamed away"
+        );
 
         let _ = std::fs::remove_dir_all(&directory);
     }

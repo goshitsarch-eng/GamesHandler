@@ -53,17 +53,17 @@
 //! [`crate::Message::PickExeFile`]: crate::Message::PickExeFile
 //! [`crate::Message::PickCoverFile`]: crate::Message::PickCoverFile
 
+use cosmic::Element;
 use cosmic::iced::Length;
 use cosmic::widget::{
     Column, Row, button, container, divider, dropdown, scrollable, text, text_input, toggler,
 };
-use cosmic::Element;
 use gamehandler_core::covers::DEFAULT_CATEGORIES;
 use gamehandler_core::models::Library;
 use gamehandler_core::runners::RunnerManager;
 
-use crate::state::{FormField, GameForm};
 use crate::Message;
+use crate::state::{FormField, GameForm};
 
 // ---------------------------------------------------------------------------
 // The reference's own words. Every one of these is a string
@@ -630,7 +630,9 @@ fn text_control<'a>(row: &TextRow, form: &'a GameForm, live: bool) -> Element<'a
     let field = row.field;
     let input = text_input(row.placeholder, form.field(field)).width(Length::Fill);
     let input = if live {
-        input.on_input(move |value| field_message(field, value)).into()
+        input
+            .on_input(move |value| field_message(field, value))
+            .into()
     } else {
         input.into()
     };
@@ -660,7 +662,9 @@ fn toggle_control<'a>(row: &'a ToggleRow, form: &'a GameForm, live: bool) -> Ele
         .label(Some(row.subtitle.to_string()))
         .width(Length::Fill);
     if live {
-        switch.on_toggle(move |value| toggle_message(row, value)).into()
+        switch
+            .on_toggle(move |value| toggle_message(row, value))
+            .into()
     } else {
         switch.into()
     }
@@ -757,7 +761,10 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
             )
             // The custom-cover browse `ToolButton` (`:159-164`, F8): same
             // read-not-tested edge as the exe row's — see `text_control`.
-            .push(button::icon(crate::icons::handle(crate::icons::Icon::Open)).on_press(Message::PickCoverFile))
+            .push(
+                button::icon(crate::icons::handle(crate::icons::Icon::Open))
+                    .on_press(Message::PickCoverFile),
+            )
             .width(Length::Fill)
             .into()
         }));
@@ -825,14 +832,12 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
     // The two actions. Cancel closes whatever overlay is open, which is the
     // reference's `dismiss()` (`:15`, `:20-23`) and the same message the
     // confirm-delete dialog closes with.
-    body = body
-        .push(divider::horizontal::default())
-        .push(
-            Row::new()
-                .push(button::standard(ACTION_CANCEL).on_press(Message::CloseDialog))
-                .push(button::suggested(action_label(is_new)).on_press_maybe(save_message(form)))
-                .spacing(12),
-        );
+    body = body.push(divider::horizontal::default()).push(
+        Row::new()
+            .push(button::standard(ACTION_CANCEL).on_press(Message::CloseDialog))
+            .push(button::suggested(action_label(is_new)).on_press_maybe(save_message(form)))
+            .spacing(12),
+    );
 
     container(scrollable(body)).padding(18).into()
 }
@@ -870,7 +875,11 @@ mod tests {
     /// [`a_block_is_the_widget_it_was_asked_for`] checks the two shapes this file
     /// relies on against the real reference.
     fn balanced(source: &str, open: usize) -> &str {
-        assert_eq!(&source[open..open + 1], "{", "the block does not open with a brace");
+        assert_eq!(
+            &source[open..open + 1],
+            "{",
+            "the block does not open with a brace"
+        );
         let mut depth = 0usize;
         for (offset, character) in source[open..].char_indices() {
             match character {
@@ -1013,17 +1022,26 @@ mod tests {
         let name = qml_widget(&source, "nameField");
         assert!(name.starts_with('{') && name.ends_with('}'));
         assert!(name.contains("text: form.gameData.name || \"\""));
-        assert!(!name.contains("argsField"), "the block ran past its own close");
+        assert!(
+            !name.contains("argsField"),
+            "the block ran past its own close"
+        );
 
         let switch = qml_switch(&source, "mangohud");
         assert!(switch.contains("Kirigami.FormData.label: \"MangoHud:\""));
-        assert!(!switch.contains("gamemode"), "the block ran past its own close");
+        assert!(
+            !switch.contains("gamemode"),
+            "the block ran past its own close"
+        );
 
         // And the label lookup, for both shapes: one on the control, one on the
         // enclosing RowLayout.
         assert_eq!(governing_label(&source, "nameField"), "Name:");
         assert_eq!(governing_label(&source, "exeField"), "Executable:");
-        assert_eq!(governing_label(&source, "desktopSizeField"), "Desktop size:");
+        assert_eq!(
+            governing_label(&source, "desktopSizeField"),
+            "Desktop size:"
+        );
         assert_eq!(form_label("Kirigami.FormData.label: \"X\""), Some("X"));
     }
 
@@ -1042,7 +1060,13 @@ mod tests {
         let source = qml();
         let mut words: Vec<String> = Vec::new();
 
-        for word in [TITLE_ADD, TITLE_EDIT, ACTION_CANCEL, ACTION_ADD, ACTION_SAVE] {
+        for word in [
+            TITLE_ADD,
+            TITLE_EDIT,
+            ACTION_CANCEL,
+            ACTION_ADD,
+            ACTION_SAVE,
+        ] {
             words.push(word.to_string());
         }
         for word in [
@@ -1087,7 +1111,10 @@ mod tests {
         // empty placeholders are dropped for the same reason — `contains("")` is
         // always true — and they are checked as empty by the row test below.
         let words: Vec<String> = words.into_iter().filter(|word| !word.is_empty()).collect();
-        assert!(words.len() >= 40, "this test has lost its material: {words:?}");
+        assert!(
+            words.len() >= 40,
+            "this test has lost its material: {words:?}"
+        );
         let missing: Vec<&String> = words
             .iter()
             .filter(|word| !source.contains(word.as_str()))
@@ -1114,7 +1141,11 @@ mod tests {
         rows.push(&DESKTOP_SIZE_ROW);
 
         for row in rows {
-            assert!(!row.id.is_empty(), "{:?} has no id, so it cannot be checked", row.field);
+            assert!(
+                !row.id.is_empty(),
+                "{:?} has no id, so it cannot be checked",
+                row.field
+            );
             assert_eq!(
                 governing_label(&source, row.id),
                 row.label,
@@ -1353,7 +1384,10 @@ mod tests {
         // a sorted list, and the selector's order is user-visible.
         let mut sorted = names.clone();
         sorted.sort();
-        assert_ne!(names, sorted, "the list got sorted, which moves Uncategorized");
+        assert_ne!(
+            names, sorted,
+            "the list got sorted, which moves Uncategorized"
+        );
 
         // A library with nothing in it still offers the built-ins.
         let no_games = library("cats-empty", &[]);
@@ -1413,7 +1447,10 @@ mod tests {
                 gamehandler_core::models::SYSTEM_WINE.to_string(),
                 "System Wine".to_string(),
             ),
-            ("GE-Proton9-1".to_string(), "Proton 9.1 (renamed)".to_string()),
+            (
+                "GE-Proton9-1".to_string(),
+                "Proton 9.1 (renamed)".to_string(),
+            ),
         ];
         // No two halves in this fixture are equal, so a mutation that reads the
         // wrong half cannot pass by coincidence — the defect the doc above records.
@@ -1421,8 +1458,12 @@ mod tests {
         halves.sort();
         let all = halves.len();
         halves.dedup();
-        assert_eq!(halves.len(), all, "the fixture has an id equal to a label, so it \
-            cannot tell `runnerId` from `textRole`: {choices:?}");
+        assert_eq!(
+            halves.len(),
+            all,
+            "the fixture has an id equal to a label, so it \
+            cannot tell `runnerId` from `textRole`: {choices:?}"
+        );
 
         assert_eq!(runner_index(&choices, "GE-Proton9-1"), 1);
         // A runner that is not installed degrades to index 0, which is System
@@ -1686,7 +1727,11 @@ mod tests {
         if chars.get(index) != Some(&'\'') {
             return None;
         }
-        match (chars.get(index + 1), chars.get(index + 2), chars.get(index + 3)) {
+        match (
+            chars.get(index + 1),
+            chars.get(index + 2),
+            chars.get(index + 3),
+        ) {
             (Some('\\'), Some(_), Some('\'')) => Some(4),
             (Some(_), Some('\''), _) => Some(3),
             _ => None,
@@ -1758,7 +1803,9 @@ mod tests {
         let mut from = 0usize;
         while let Some(start) = find_chars(source, &needle, from) {
             let open = start + needle.len() - 1;
-            let Some(close) = matching(source, open) else { break };
+            let Some(close) = matching(source, open) else {
+                break;
+            };
             let arguments: Vec<char> = source[open + 1..close].to_vec();
             let parts = split_top_level(&arguments);
             if let Some((offset, callback)) = parts.get(2) {
@@ -2209,11 +2256,17 @@ mod tests {
         );
 
         form.name = "   ".to_string();
-        assert!(!can_save(&form), "the reference trims before it measures (`:34`)");
+        assert!(
+            !can_save(&form),
+            "the reference trims before it measures (`:34`)"
+        );
 
         form.name = "  Celeste  ".to_string();
         assert!(can_save(&form));
-        assert!(matches!(save_message(&form), Some(Message::SaveGameForm(_))));
+        assert!(matches!(
+            save_message(&form),
+            Some(Message::SaveGameForm(_))
+        ));
     }
 
     /// Each switch sends the name of *its own* row.
@@ -2242,8 +2295,17 @@ mod tests {
                 row.name
             );
 
-            assert!(form.set_toggle(row.name, !drawn_at), "{} is not the form's own name", row.name);
-            assert_eq!(toggle_value(&form, row), !drawn_at, "{} did not take the write", row.name);
+            assert!(
+                form.set_toggle(row.name, !drawn_at),
+                "{} is not the form's own name",
+                row.name
+            );
+            assert_eq!(
+                toggle_value(&form, row),
+                !drawn_at,
+                "{} did not take the write",
+                row.name
+            );
             assert!(form.set_toggle(row.name, drawn_at));
             assert_eq!(toggle_value(&form, row), drawn_at);
         }
@@ -2266,7 +2328,10 @@ mod tests {
     fn the_desktop_size_field_needs_both_gates() {
         let mut form = form();
         form.set_toggle(VIRTUAL_DESKTOP_TOGGLE, false);
-        assert!(!desktop_size_enabled(&form), "the switch that owns it is off");
+        assert!(
+            !desktop_size_enabled(&form),
+            "the switch that owns it is off"
+        );
 
         form.set_toggle(VIRTUAL_DESKTOP_TOGGLE, true);
         assert!(desktop_size_enabled(&form));

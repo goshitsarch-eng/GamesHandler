@@ -40,12 +40,12 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::hash::sha256_hex;
 use crate::json as python_json;
-use crate::models::{format_last_played, Game, Library, SORT_MODES, UNCATEGORIZED};
-use crate::settings::{Settings, COLOR_SCHEMES, VIEW_MODES};
+use crate::models::{Game, Library, SORT_MODES, UNCATEGORIZED, format_last_played};
+use crate::settings::{COLOR_SCHEMES, Settings, VIEW_MODES};
 
 /// The instant `gen_oracle.py` freezes its clock to. Every regenerated
 /// timestamp in the fixtures is exactly this, so the port must be handed the
@@ -144,10 +144,6 @@ fn expected_output(case: &Value, label: &str) -> String {
     }
     bytes
 }
-
-
-
-
 
 /// A fresh, empty scratch directory. Fixtures are never written to: the
 /// implementation under test writes here and the two are compared.
@@ -309,7 +305,9 @@ fn from_dict_cases_match_the_oracle_field_for_field() {
         // The two derived properties the oracle also records.
         assert_eq!(
             game.is_linux(),
-            case.get("is_linux").and_then(Value::as_bool).unwrap_or(false),
+            case.get("is_linux")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             "from_dict[{label}].is_linux"
         );
         assert_eq!(
@@ -340,10 +338,7 @@ fn a_null_timestamp_never_reaches_the_sort() {
     // `sorted(key=lambda g: (-g.last_played, ...))` raises
     // `TypeError: bad operand type for unary -: 'NoneType'`. Rust has no
     // nullable timestamp, so both sorts must simply work.
-    let library = Library::new_at(
-        Some(fixtures_dir().join("nan_values.in.json")),
-        FROZEN_NOW,
-    );
+    let library = Library::new_at(Some(fixtures_dir().join("nan_values.in.json")), FROZEN_NOW);
     assert_eq!(library.len(), 1);
 
     let directory = scratch("null-ts");
@@ -521,7 +516,11 @@ fn every_format_last_played_branch_matches_the_oracle() {
     let mut replayed = 0usize;
     for (label, timestamp) in [("never_zero", 0.0), ("never_falsy", 0.0)]
         .into_iter()
-        .chain(offsets.into_iter().map(|(label, offset)| (label, now - offset)))
+        .chain(
+            offsets
+                .into_iter()
+                .map(|(label, offset)| (label, now - offset)),
+        )
     {
         let expected_label = cases
             .get(label)
@@ -729,7 +728,9 @@ fn u64_max_is_not_mistaken_for_a_negative_timestamp() {
     let oracle = oracle();
     let cases = object_at(&oracle, "out_of_range");
     let expected: f64 = string_at(
-        cases.get("u64_max_plus").expect("the oracle has u64_max_plus"),
+        cases
+            .get("u64_max_plus")
+            .expect("the oracle has u64_max_plus"),
         "added",
     )
     .parse()
@@ -802,7 +803,8 @@ fn floats_survive_a_roundtrip_numerically_though_the_exponent_is_spelled_differe
 
     let python_bytes = expected_output(float_format, "floats");
 
-    let Value::Array(ours) = python_json::parse_lenient(&produced).expect("our output parses") else {
+    let Value::Array(ours) = python_json::parse_lenient(&produced).expect("our output parses")
+    else {
         panic!("a saved library is a JSON array");
     };
     let Value::Array(theirs) = python_json::parse_lenient(&python_bytes).expect("Python's parses")
@@ -1007,7 +1009,10 @@ fn the_notation_band_diverges_only_in_spelling() {
         "expected at least one case where this port writes a fixed-point literal \
          and Python writes an exponent; the fixture no longer covers the notation band"
     );
-    assert!(differing > 0, "the fixture should produce some divergence at all");
+    assert!(
+        differing > 0,
+        "the fixture should produce some divergence at all"
+    );
 
     // And the declared bit patterns are the ones on disk, so a change to the
     // fixture regeneration cannot silently move them. Every declared value must
@@ -1147,7 +1152,10 @@ fn the_two_float_divergence_bands_are_pinned_at_both_edges() {
         // differently spelled one.
         let theirs: f64 = python_text.parse().expect("Python's text parses");
         assert_eq!(
-            through_str.parse::<f64>().expect("our text parses").to_bits(),
+            through_str
+                .parse::<f64>()
+                .expect("our text parses")
+                .to_bits(),
             theirs.to_bits(),
             "{value:e}: {through_str} and {python_text} must be the same double"
         );
@@ -1207,7 +1215,8 @@ fn realistic_timestamps_survive_a_load_and_save_with_their_bits_intact() {
                 if wrong <= 3 {
                     eprintln!(
                         "{}: {field} read as {:#018x}, the oracle says {expected:#018x}",
-                        game.name, value.to_bits()
+                        game.name,
+                        value.to_bits()
                     );
                 }
             }
@@ -1333,7 +1342,10 @@ fn a_wrong_typed_scalar_never_makes_the_library_unusable() {
     // port must survive.
     let oracle = oracle();
     let cases = object_at(&oracle, "wrong_types");
-    assert!(cases.len() >= 9, "the wrong_types fixtures should be present");
+    assert!(
+        cases.len() >= 9,
+        "the wrong_types fixtures should be present"
+    );
 
     let mut repaired = 0usize;
     for (label, name, appid, category, mangohud) in WRONG_TYPE_EXPECTATIONS {
@@ -1374,10 +1386,7 @@ fn a_wrong_typed_scalar_never_makes_the_library_unusable() {
         assert_eq!(&game.name, name, "wrong_types[{label}].name");
         assert_eq!(game.steam_appid, *appid, "wrong_types[{label}].steam_appid");
         assert_eq!(&game.category, category, "wrong_types[{label}].category");
-        assert_eq!(
-            game.mangohud, *mangohud,
-            "wrong_types[{label}].mangohud"
-        );
+        assert_eq!(game.mangohud, *mangohud, "wrong_types[{label}].mangohud");
 
         // And everything downstream of those fields still answers.
         let _ = game.display_category();
@@ -1540,7 +1549,10 @@ fn deep_nesting_does_not_lose_the_library() {
         .cloned()
         .expect("the oracle has a deep_nesting case");
 
-    let library = Library::new_at(Some(fixtures_dir().join("deep_nesting.in.json")), FROZEN_NOW);
+    let library = Library::new_at(
+        Some(fixtures_dir().join("deep_nesting.in.json")),
+        FROZEN_NOW,
+    );
     assert_eq!(
         library.len(),
         case.get("count").and_then(Value::as_u64).unwrap_or(0) as usize,
@@ -1604,7 +1616,11 @@ fn save_replaces_a_symlink_rather_than_writing_through_it() {
         !link.is_symlink(),
         "the link is replaced by a real file, as in Python"
     );
-    assert_eq!(read(&target), "[]", "the original target keeps its stale contents");
+    assert_eq!(
+        read(&target),
+        "[]",
+        "the original target keeps its stale contents"
+    );
     assert_eq!(
         read(&link),
         string_at(case, "link_bytes"),
@@ -1613,7 +1629,6 @@ fn save_replaces_a_symlink_rather_than_writing_through_it() {
 
     let _ = std::fs::remove_dir_all(&directory);
 }
-
 
 // ---------------------------------------------------------------------------
 // 12. the runners vector corpus (T-03)
@@ -1761,9 +1776,7 @@ fn canonicalise_object_keys(value: &Value) -> Value {
             }
             Value::Object(canonical)
         }
-        Value::Array(items) => {
-            Value::Array(items.iter().map(canonicalise_object_keys).collect())
-        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalise_object_keys).collect()),
         scalar => scalar.clone(),
     }
 }
@@ -1834,19 +1847,18 @@ fn rust_vector_answer(op: &str, args: &Value) -> Result<Value, String> {
                 .get("exit_code")
                 .and_then(Value::as_i64)
                 .expect("launch_failure_text needs an exit_code");
-            let captured = args
-                .get("capture")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
+            let captured = args.get("capture").and_then(Value::as_bool).unwrap_or(true);
             let detail = if captured {
                 crate::runners::readable_error(&text("stderr"))
             } else {
                 String::new()
             };
-            Ok(match crate::runners::failure_message(code as i32, &detail) {
-                None => Value::Null,
-                Some(message) => json!(message),
-            })
+            Ok(
+                match crate::runners::failure_message(code as i32, &detail) {
+                    None => Value::Null,
+                    Some(message) => json!(message),
+                },
+            )
         }
         "shell_split" => match shell::split_posix(&text("text")) {
             Ok(words) => Ok(json!(words)),
@@ -1881,10 +1893,7 @@ fn rust_vector_answer(op: &str, args: &Value) -> Result<Value, String> {
                     object
                         .iter()
                         .map(|(key, value)| {
-                            (
-                                key.clone(),
-                                value.as_str().unwrap_or_default().to_string(),
-                            )
+                            (key.clone(), value.as_str().unwrap_or_default().to_string())
                         })
                         .collect()
                 })
@@ -1897,9 +1906,9 @@ fn rust_vector_answer(op: &str, args: &Value) -> Result<Value, String> {
             }
             Ok(Value::Object(object))
         }
-        "normalize_desktop_size" => Ok(json!(
-            crate::runners::launch_opts::normalize_desktop_size(&text("value"))
-        )),
+        "normalize_desktop_size" => Ok(json!(crate::runners::launch_opts::normalize_desktop_size(
+            &text("value")
+        ))),
         "virtual_desktop_argv" => {
             // The op passes the two fields the function reads — the name and
             // the size — rather than a whole `Game`, because a case that had to
@@ -1976,16 +1985,15 @@ fn rust_vector_answer(op: &str, args: &Value) -> Result<Value, String> {
                 Err(error) => Err(format!("ValueError: {error}")),
             }
         }
-        "wine_prefix_root" => Ok(json!(crate::runners::wine_prefix_root(
-            Path::new(&text("prefix"))
-        )
-        .to_string_lossy())),
-        "prefix_drive_cs" => Ok(json!(crate::runners::prefix_drive_cs(Path::new(
-            &text("prefix")
-        ))
-        .iter()
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect::<Vec<_>>())),
+        "wine_prefix_root" => Ok(json!(
+            crate::runners::wine_prefix_root(Path::new(&text("prefix"))).to_string_lossy()
+        )),
+        "prefix_drive_cs" => Ok(json!(
+            crate::runners::prefix_drive_cs(Path::new(&text("prefix")))
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        )),
         other => panic!("no Rust arm for vector op {other:?}"),
     }
 }
@@ -2268,10 +2276,9 @@ fn canonicalising_sorts_objects_without_reordering_arrays() {
     // so only objects may be canonicalised. The nested object is here because
     // the top-level test cannot see whether the recursion sorts an array's
     // *contents* when the array is not itself sorted.
-    let value: Value = serde_json::from_str(
-        r#"{"z": [{"b": 1, "a": 2}, "second", "first"], "a": 1}"#,
-    )
-    .expect("valid JSON");
+    let value: Value =
+        serde_json::from_str(r#"{"z": [{"b": 1, "a": 2}, "second", "first"], "a": 1}"#)
+            .expect("valid JSON");
 
     assert_eq!(
         python_answer_text(&value),

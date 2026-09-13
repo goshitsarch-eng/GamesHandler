@@ -124,9 +124,8 @@ pub const CARD_TEXT_SPACING: f32 = 2.0;
 /// size, so this needs no font stack to evaluate. At 14.0 and 11.0 it is
 /// 19.6 + 2.0 + 15.4 = 37.0, which is what a card lays out to — measured, in
 /// `view::widgets`'s `a_long_name_does_not_squeeze_the_play_control`.
-pub const CARD_TEXT_BLOCK_HEIGHT: f32 = CARD_NAME_SIZE * LINE_HEIGHT_RATIO
-    + CARD_TEXT_SPACING
-    + CARD_SUBTITLE_SIZE * LINE_HEIGHT_RATIO;
+pub const CARD_TEXT_BLOCK_HEIGHT: f32 =
+    CARD_NAME_SIZE * LINE_HEIGHT_RATIO + CARD_TEXT_SPACING + CARD_SUBTITLE_SIZE * LINE_HEIGHT_RATIO;
 
 /// The height the Play control lays out to at the layout tests' text size.
 ///
@@ -202,8 +201,7 @@ pub const PLAY_BUTTON_HEIGHT: f32 = 32.0;
 /// does (`LibraryPage.qml`'s card labels set `elide: Text.ElideRight` and no
 /// `wrapMode`, and `QQC2.Label`'s default is `Text.NoWrap`). The checks below are
 /// the compile-time half; the measured half is that test.
-pub const CARD_CHROME_HEIGHT: f32 =
-    CARD_TEXT_BLOCK_HEIGHT + 2.0 * CARD_MARGIN + PLAY_BUTTON_HEIGHT;
+pub const CARD_CHROME_HEIGHT: f32 = CARD_TEXT_BLOCK_HEIGHT + 2.0 * CARD_MARGIN + PLAY_BUTTON_HEIGHT;
 
 /// A card's chrome must leave a cover behind it.
 ///
@@ -323,7 +321,10 @@ mod tests {
     fn a_cell_shorter_than_its_chrome_yields_an_empty_box_not_a_negative_one() {
         let (w, h) = card_cover_box((200.0, 40.0), 70.0, CARD_MARGIN);
         assert_eq!(w, 188.0);
-        assert_eq!(h, 0.0, "a negative height would reach the renderer as an error");
+        assert_eq!(
+            h, 0.0,
+            "a negative height would reach the renderer as an error"
+        );
     }
 
     /// A cell narrower than twice its margin is degenerate for the same reason.

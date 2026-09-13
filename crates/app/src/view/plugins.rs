@@ -33,13 +33,11 @@
 
 use std::time::{Duration, Instant};
 
+use cosmic::Element;
 use cosmic::app::Task;
 use cosmic::iced::Length;
 use cosmic::widget::{Column, Row, button, container, scrollable, text};
-use cosmic::Element;
-use gamehandler_core::plugins::{
-    self, Plugin, PluginEnv, PluginRow, PluginState, SystemPluginEnv,
-};
+use gamehandler_core::plugins::{self, Plugin, PluginEnv, PluginRow, PluginState, SystemPluginEnv};
 
 use crate::Message;
 
@@ -259,8 +257,7 @@ fn card<'a>(row: &'a PluginRow) -> Element<'a, Message> {
         .width(Length::Fill)
         .push(text::heading(row.name))
         .push(text::caption(row.subtitle.as_str()));
-    let action =
-        button::standard(button_label(row.state)).on_press_maybe(card_action(row));
+    let action = button::standard(button_label(row.state)).on_press_maybe(card_action(row));
     container(
         Row::new()
             .push(details)
@@ -510,10 +507,18 @@ mod tests {
     fn the_runner_kills_a_child_that_outlasts_its_budget() {
         // A real child, and a real kill: `/bin/sh` is the one program this can
         // assume, and the two cases are the two answers `subprocess.run` gives.
-        let ok = vec!["/bin/sh".to_string(), "-c".to_string(), "exit 0".to_string()];
+        let ok = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "exit 0".to_string(),
+        ];
         assert_eq!(run_to_completion(&ok, Duration::from_secs(10)), Ok(true));
 
-        let bad = vec!["/bin/sh".to_string(), "-c".to_string(), "exit 3".to_string()];
+        let bad = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "exit 3".to_string(),
+        ];
         assert_eq!(run_to_completion(&bad, Duration::from_secs(10)), Ok(false));
 
         let slow = vec![
@@ -541,7 +546,10 @@ mod tests {
         // rather than a crash in a worker thread.
         let argv = vec!["/nonexistent/gh-t06-no-such-binary".to_string()];
         let outcome = run_to_completion(&argv, Duration::from_secs(5));
-        assert!(outcome.is_err(), "expected a spawn failure, got {outcome:?}");
+        assert!(
+            outcome.is_err(),
+            "expected a spawn failure, got {outcome:?}"
+        );
 
         // And the empty argv, which Python answers with an `IndexError`.
         assert_eq!(

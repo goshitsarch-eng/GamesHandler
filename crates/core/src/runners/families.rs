@@ -434,7 +434,13 @@ pub(crate) fn python_str(value: &Value) -> String {
         Value::Object(map) => {
             let rendered: Vec<String> = map
                 .iter()
-                .map(|(key, item)| format!("{}: {}", python_repr(&Value::String(key.clone())), python_repr(item)))
+                .map(|(key, item)| {
+                    format!(
+                        "{}: {}",
+                        python_repr(&Value::String(key.clone())),
+                        python_repr(item)
+                    )
+                })
                 .collect();
             format!("{{{}}}", rendered.join(", "))
         }
@@ -525,7 +531,12 @@ impl ReleaseInfo {
     /// The default family is `proton-ge`, matching the Python dataclass field
     /// default — a release with no family is a Proton-GE release, never an
     /// unknown one.
-    pub fn new(tag: impl Into<String>, name: impl Into<String>, download_url: impl Into<String>, size: i64) -> Self {
+    pub fn new(
+        tag: impl Into<String>,
+        name: impl Into<String>,
+        download_url: impl Into<String>,
+        size: i64,
+    ) -> Self {
         Self {
             tag: tag.into(),
             name: name.into(),
@@ -603,14 +614,24 @@ mod tests {
                 family.id,
                 family.kind
             );
-            assert!(!family.when_to_use.is_empty(), "{} has no advice", family.id);
+            assert!(
+                !family.when_to_use.is_empty(),
+                "{} has no advice",
+                family.id
+            );
             assert!(
                 !family.github.is_empty(),
                 "{} has no GitHub repo, so no releases URL",
                 family.id
             );
-            assert_eq!(family.releases_url(), format!("https://api.github.com/repos/{}/releases", family.github));
-            assert_eq!(family.homepage(), format!("https://github.com/{}", family.github));
+            assert_eq!(
+                family.releases_url(),
+                format!("https://api.github.com/repos/{}/releases", family.github)
+            );
+            assert_eq!(
+                family.homepage(),
+                format!("https://github.com/{}", family.github)
+            );
         }
     }
 
@@ -620,7 +641,10 @@ mod tests {
         // and silently orphan the other family's installs.
         for (index, family) in RUNNER_FAMILIES.iter().enumerate() {
             assert_eq!(
-                RUNNER_FAMILIES.iter().filter(|other| other.id == family.id).count(),
+                RUNNER_FAMILIES
+                    .iter()
+                    .filter(|other| other.id == family.id)
+                    .count(),
                 1,
                 "duplicate family id {:?} at index {index}",
                 family.id
@@ -644,7 +668,10 @@ mod tests {
         let cases: &[(&str, &str)] = &[
             ("proton-ge", "GE-Proton9-5.tar.gz"),
             ("proton-ge-rtsp", "GE-Proton-RTSP-9-5.tar.gz"),
-            ("proton-cachyos", "proton-cachyos-9.0-20250101-slr-x86_64.tar.xz"),
+            (
+                "proton-cachyos",
+                "proton-cachyos-9.0-20250101-slr-x86_64.tar.xz",
+            ),
             ("proton-em", "Proton-EM-9.0-1.tar.xz"),
             ("wine-vanilla", "wine-9.0-amd64.tar.xz"),
             ("wine-staging", "wine-9.0-staging-amd64.tar.xz"),
@@ -869,7 +896,11 @@ mod tests {
         // Every row must name a maintainer: the page credits the build author,
         // and an empty credit is the one thing the guide exists to prevent.
         for row in &rows {
-            assert!(!row.maintainer.is_empty(), "{} has no maintainer", row.title);
+            assert!(
+                !row.maintainer.is_empty(),
+                "{} has no maintainer",
+                row.title
+            );
             assert!(!row.homepage.is_empty(), "{} has no homepage", row.title);
         }
     }
@@ -969,9 +1000,15 @@ mod tests {
 
         let first_id = first.install_id().unwrap();
         let second_id = second.install_id().unwrap();
-        assert!(first_id.contains("~i"), "expected the hash fallback, got {first_id:?}");
+        assert!(
+            first_id.contains("~i"),
+            "expected the hash fallback, got {first_id:?}"
+        );
         assert!(first_id.len() <= 180, "got {} chars", first_id.len());
-        assert_ne!(first_id, second_id, "truncation must not alias distinct tags");
+        assert_ne!(
+            first_id, second_id,
+            "truncation must not alias distinct tags"
+        );
     }
 
     #[test]

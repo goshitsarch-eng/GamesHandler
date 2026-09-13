@@ -245,9 +245,18 @@ pub(crate) mod tests {
     #[test]
     fn defaults_follow_the_xdg_specification() {
         let env = FakeEnv::new(&[("HOME", HOME)]);
-        assert_eq!(data_home_in(&env), path("/home/tester/.local/share/gamehandler"));
-        assert_eq!(config_home_in(&env), path("/home/tester/.config/gamehandler"));
-        assert_eq!(games_file_in(&env), path("/home/tester/.config/gamehandler/games.json"));
+        assert_eq!(
+            data_home_in(&env),
+            path("/home/tester/.local/share/gamehandler")
+        );
+        assert_eq!(
+            config_home_in(&env),
+            path("/home/tester/.config/gamehandler")
+        );
+        assert_eq!(
+            games_file_in(&env),
+            path("/home/tester/.config/gamehandler/games.json")
+        );
         assert_eq!(
             settings_file_in(&env),
             path("/home/tester/.config/gamehandler/settings.json")
@@ -287,8 +296,14 @@ pub(crate) mod tests {
             ("GAMEHANDLER_CONFIG_HOME", ""),
             ("XDG_DATA_HOME", ""),
         ]);
-        assert_eq!(data_home_in(&env), path("/home/tester/.local/share/gamehandler"));
-        assert_eq!(config_home_in(&env), path("/home/tester/.config/gamehandler"));
+        assert_eq!(
+            data_home_in(&env),
+            path("/home/tester/.local/share/gamehandler")
+        );
+        assert_eq!(
+            config_home_in(&env),
+            path("/home/tester/.config/gamehandler")
+        );
     }
 
     #[test]
@@ -305,7 +320,10 @@ pub(crate) mod tests {
         // Redirecting data must not move the config file, and vice versa.
         let env = FakeEnv::new(&[("HOME", HOME), ("GAMEHANDLER_CONFIG_HOME", "/c")]);
         assert_eq!(games_file_in(&env), path("/c/games.json"));
-        assert_eq!(data_home_in(&env), path("/home/tester/.local/share/gamehandler"));
+        assert_eq!(
+            data_home_in(&env),
+            path("/home/tester/.local/share/gamehandler")
+        );
     }
 
     #[test]
@@ -314,7 +332,10 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let env = FakeEnv::new(&[
             ("GAMEHANDLER_DATA_HOME", root.join("data").to_str().unwrap()),
-            ("GAMEHANDLER_CONFIG_HOME", root.join("config").to_str().unwrap()),
+            (
+                "GAMEHANDLER_CONFIG_HOME",
+                root.join("config").to_str().unwrap(),
+            ),
         ]);
 
         ensure_dirs_in(&env).expect("ensure_dirs should create every directory");

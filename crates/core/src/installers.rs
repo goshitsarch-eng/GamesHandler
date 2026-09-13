@@ -114,9 +114,9 @@ use std::process::{Child, Command as ProcessCommand};
 use crate::models::Game;
 use crate::paths::{self, Env};
 use crate::runners::launch_opts::apply_launch_options;
-use crate::runners::shell::{split_posix, ShellError};
+use crate::runners::shell::{ShellError, split_posix};
 use crate::runners::{
-    prefix_drive_cs, pure_posix_name, uses_proton_runtime, Command, LaunchEnv, Runner, RunnerError,
+    Command, LaunchEnv, Runner, RunnerError, prefix_drive_cs, pure_posix_name, uses_proton_runtime,
 };
 
 /// The page's category for store launchers (`installers.py:35`).
@@ -597,7 +597,10 @@ impl fmt::Display for InstallerError {
                 kind.label()
             ),
             InstallerError::TooLarge { name } => {
-                write!(formatter, "{name} installer exceeds the download size limit")
+                write!(
+                    formatter,
+                    "{name} installer exceeds the download size limit"
+                )
             }
             InstallerError::SignatureToolMissing => write!(
                 formatter,
@@ -607,13 +610,19 @@ impl fmt::Display for InstallerError {
                 write!(formatter, "Timed out verifying {name}'s signature")
             }
             InstallerError::SignatureInvalid { name, tail } => {
-                write!(formatter, "{name} has an invalid Authenticode signature\n{tail}")
+                write!(
+                    formatter,
+                    "{name} has an invalid Authenticode signature\n{tail}"
+                )
             }
             InstallerError::PublisherUnapproved { name } => {
                 write!(formatter, "{name} is not signed by an approved publisher")
             }
             InstallerError::AuthenticodeRootUnavailable => {
-                write!(formatter, "The Microsoft Authenticode trust root is unavailable")
+                write!(
+                    formatter,
+                    "The Microsoft Authenticode trust root is unavailable"
+                )
             }
             InstallerError::Io(error) => error.fmt(formatter),
         }
@@ -687,13 +696,7 @@ pub const MAX_SCAN_ENTRIES: usize = 40_000;
 /// has an entire Windows installation inside it, and every one of those files
 /// is irrelevant to "where did the vendor put its launcher".
 const SKIP_DIRS: [&str; 7] = [
-    "windows",
-    "syswow64",
-    "system32",
-    "winsxs",
-    "temp",
-    "tmp",
-    "cache",
+    "windows", "syswow64", "system32", "winsxs", "temp", "tmp", "cache",
 ];
 
 /// Build the argv used to run a downloaded `exe` or `msi`
@@ -995,8 +998,8 @@ fn search_known_roots(drive_c: &Path, filenames: &[String]) -> Option<PathBuf> {
 ///    Files (x86)` or a user profile, bounded by [`search_known_roots`].
 fn find_in_drive_c(drive_c: &Path, expected: &[&str]) -> Option<PathBuf> {
     for relative in expected {
-        if let Some(found) = resolve_case_insensitive(drive_c, relative)
-            .filter(|found| found.is_file())
+        if let Some(found) =
+            resolve_case_insensitive(drive_c, relative).filter(|found| found.is_file())
         {
             return Some(found);
         }
@@ -1004,8 +1007,8 @@ fn find_in_drive_c(drive_c: &Path, expected: &[&str]) -> Option<PathBuf> {
         if parts.len() >= 2 && parts[0].to_lowercase() == USERS_COMPONENT {
             let rest = parts[2..].join("/");
             for profile in user_profile_candidates(drive_c) {
-                if let Some(found) = resolve_case_insensitive(&profile, &rest)
-                    .filter(|found| found.is_file())
+                if let Some(found) =
+                    resolve_case_insensitive(&profile, &rest).filter(|found| found.is_file())
                 {
                     return Some(found);
                 }
@@ -1035,7 +1038,11 @@ fn find_in_drive_c(drive_c: &Path, expected: &[&str]) -> Option<PathBuf> {
 /// would be returning `drive_c` itself, which `is_file()` then rejects, but the
 /// early return makes that explicit.
 pub fn find_prefix_exe(prefix: &Path, expected: &[&str]) -> Option<PathBuf> {
-    let expected: Vec<&str> = expected.iter().copied().filter(|item| !item.is_empty()).collect();
+    let expected: Vec<&str> = expected
+        .iter()
+        .copied()
+        .filter(|item| !item.is_empty())
+        .collect();
     if expected.is_empty() {
         return None;
     }
@@ -1115,7 +1122,7 @@ pub fn game_from_install(
 use std::time::Duration;
 
 use crate::runners::proton::{HttpClient, ResponseHead};
-use crate::runners::{wine_prefix_root, USER_AGENT};
+use crate::runners::{USER_AGENT, wine_prefix_root};
 
 /// `urlparse(url).scheme.lower()` and `urlparse(url).hostname`
 /// (`installers.py:552-554`).
@@ -1378,10 +1385,7 @@ pub fn validate_download_origin(
 /// spending ninety seconds on the signature verifier. The tests assert that
 /// ordering: a non-PE payload must fail here and the verifier must not be
 /// called.
-pub fn validate_installer_magic(
-    installer: &Installer,
-    path: &Path,
-) -> Result<(), InstallerError> {
+pub fn validate_installer_magic(installer: &Installer, path: &Path) -> Result<(), InstallerError> {
     use std::io::Read;
     const OLE: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
     let mut magic = [0u8; 8];
@@ -1484,7 +1488,9 @@ pub fn verify_installer_authenticity(
         path.to_string_lossy().into_owned(),
     ];
     if installer.microsoft_trust_root {
-        let root = authenticode_root_path(launch_env)?.to_string_lossy().into_owned();
+        let root = authenticode_root_path(launch_env)?
+            .to_string_lossy()
+            .into_owned();
         command.splice(
             2..2,
             [
@@ -1501,7 +1507,7 @@ pub fn verify_installer_authenticity(
         Err(RunFailure::TimedOut) => {
             return Err(InstallerError::SignatureTimedOut {
                 name: installer.name.to_string(),
-            })
+            });
         }
         Err(RunFailure::Failed(error)) => return Err(error.into()),
     };
@@ -1763,7 +1769,9 @@ pub fn download_installer(
     let target = dest_dir.join(&filename);
     let (file, temporary) = create_partial(dest_dir, &filename)?;
 
-    let result = download_into(installer, &temporary, file, progress, timeout, client, launch_env);
+    let result = download_into(
+        installer, &temporary, file, progress, timeout, client, launch_env,
+    );
     if let Err(error) = result {
         let _ = std::fs::remove_file(&temporary);
         return Err(error);
@@ -2009,15 +2017,13 @@ pub fn wait_for_prefix_idle(
     // server is worth waiting on.
     waiting_env.insert(
         "WINEPREFIX".to_string(),
-        wine_prefix_root(Path::new(prefix)).to_string_lossy().into_owned(),
+        wine_prefix_root(Path::new(prefix))
+            .to_string_lossy()
+            .into_owned(),
     );
 
     let argv = vec![server.to_string_lossy().into_owned(), "-w".to_string()];
-    run_with_env(
-        &argv,
-        &waiting_env,
-        Duration::from_secs(timeout_seconds),
-    )
+    run_with_env(&argv, &waiting_env, Duration::from_secs(timeout_seconds))
 }
 
 /// Run `argv` with `env`, discarding its output, and report whether it exited
@@ -2079,11 +2085,8 @@ fn run_with_env(
 /// rather than the spelled-out `&dyn Fn(…)` for the same reason
 /// [`crate::runners::proton::HttpClient`]'s callbacks are: the signature is the
 /// documentation of the seam.
-pub type IdleWait<'a> = &'a dyn Fn(
-    &dyn Runner,
-    &std::collections::BTreeMap<String, String>,
-    u64,
-) -> bool;
+pub type IdleWait<'a> =
+    &'a dyn Fn(&dyn Runner, &std::collections::BTreeMap<String, String>, u64) -> bool;
 
 /// Wait out a vendor wizard and return the executable it installed
 /// (`installers.py:360-408`).
@@ -2154,8 +2157,8 @@ pub fn wait_for_installer(
         let was_idle = idle(runner, env, slice_timeout);
         let waited = clock.now() - wait_started;
         if was_idle {
-            let confirmed =
-                waited >= INSTALL_WAIT_EVIDENCE_SECONDS || busy_wait >= INSTALL_WAIT_EVIDENCE_SECONDS;
+            let confirmed = waited >= INSTALL_WAIT_EVIDENCE_SECONDS
+                || busy_wait >= INSTALL_WAIT_EVIDENCE_SECONDS;
             let extra = if confirmed {
                 INSTALL_FLUSH_SECONDS
             } else {
@@ -2350,10 +2353,7 @@ mod tests {
             .iter()
             .map(|item| item.id)
             .collect();
-        let expected: Vec<&str> = all
-            .into_iter()
-            .filter(|id| *id != "discord")
-            .collect();
+        let expected: Vec<&str> = all.into_iter().filter(|id| *id != "discord").collect();
         assert_eq!(filtered, expected);
     }
 
@@ -2379,7 +2379,10 @@ mod tests {
     fn the_notes_and_the_library_categories_are_where_the_reference_puts_them() {
         assert!(!installer_by_id("battlenet").unwrap().notes.is_empty());
         assert!(!installer_by_id("discord").unwrap().notes.is_empty());
-        assert_eq!(installer_by_id("discord").unwrap().library_category, "Utility");
+        assert_eq!(
+            installer_by_id("discord").unwrap().library_category,
+            "Utility"
+        );
         assert_eq!(
             installer_by_id("discord").unwrap().launch_arguments,
             "--processStart Discord.exe"
@@ -2416,10 +2419,8 @@ mod tests {
 
     impl Scratch {
         fn new(label: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "gh-installers-{label}-{}",
-                std::process::id()
-            ));
+            let path =
+                std::env::temp_dir().join(format!("gh-installers-{label}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).unwrap();
             Self(path)
@@ -2455,8 +2456,8 @@ mod tests {
     /// nothing at all.
     #[test]
     fn an_msi_is_run_through_msiexec() {
-        let argv = installer_argv("/usr/bin/wine", Path::new("/tmp/Epic.msi"), Kind::Msi, "")
-            .unwrap();
+        let argv =
+            installer_argv("/usr/bin/wine", Path::new("/tmp/Epic.msi"), Kind::Msi, "").unwrap();
         assert_eq!(argv, ["/usr/bin/wine", "msiexec", "/i", "/tmp/Epic.msi"]);
     }
 
@@ -2476,9 +2477,13 @@ mod tests {
     /// `test_extra_arguments_are_appended` (`tests/test_installers.py:168-170`).
     #[test]
     fn extra_arguments_are_appended() {
-        let argv =
-            installer_argv("/usr/bin/wine", Path::new("/tmp/setup.exe"), Kind::Exe, "/S")
-                .unwrap();
+        let argv = installer_argv(
+            "/usr/bin/wine",
+            Path::new("/tmp/setup.exe"),
+            Kind::Exe,
+            "/S",
+        )
+        .unwrap();
         assert_eq!(argv.last().unwrap(), "/S");
         assert_eq!(argv.len(), 3);
     }
@@ -2561,7 +2566,11 @@ mod tests {
         )
         .unwrap();
 
-        for key in ["PROTON_BATTLEYE_RUNTIME", "PROTON_EAC_RUNTIME", "PROTONPATH"] {
+        for key in [
+            "PROTON_BATTLEYE_RUNTIME",
+            "PROTON_EAC_RUNTIME",
+            "PROTONPATH",
+        ] {
             assert!(
                 !command.env.contains_key(key),
                 "{key} leaked into a raw Wine installer run"
@@ -2604,7 +2613,10 @@ mod tests {
             "{:?}",
             command.argv
         );
-        assert_eq!(command.env.get("PROTONPATH").unwrap(), &root.to_string_lossy());
+        assert_eq!(
+            command.env.get("PROTONPATH").unwrap(),
+            &root.to_string_lossy()
+        );
     }
 
     /// A runner that cannot produce a command at all is an error naming it,
@@ -2634,12 +2646,18 @@ mod tests {
     /// could steer the write out of the download directory falls back.
     #[test]
     fn a_download_name_is_reduced_to_a_bare_name() {
-        assert_eq!(safe_download_name("SteamSetup.exe", "steam"), "SteamSetup.exe");
+        assert_eq!(
+            safe_download_name("SteamSetup.exe", "steam"),
+            "SteamSetup.exe"
+        );
         // A separator, either spelling, is folded to a basename.
         assert_eq!(safe_download_name("../../etc/passwd", "steam"), "passwd");
         assert_eq!(safe_download_name("..\\..\\evil.exe", "steam"), "evil.exe");
         // Whitespace around the name is stripped...
-        assert_eq!(safe_download_name("  SteamSetup.exe  ", "steam"), "SteamSetup.exe");
+        assert_eq!(
+            safe_download_name("  SteamSetup.exe  ", "steam"),
+            "SteamSetup.exe"
+        );
         // ...and the fallback is the installer's id, not a constant.
         assert_eq!(safe_download_name("", "steam"), "steam.exe");
         assert_eq!(safe_download_name("   ", "steam"), "steam.exe");
@@ -2704,7 +2722,10 @@ mod tests {
         let target = touch(&drive_c.join("Program Files/GOG Galaxy/GalaxyClient.exe"));
 
         assert_eq!(
-            find_prefix_exe(scratch.path(), &["Program Files (x86)/GOG Galaxy/GalaxyClient.exe"]),
+            find_prefix_exe(
+                scratch.path(),
+                &["Program Files (x86)/GOG Galaxy/GalaxyClient.exe"]
+            ),
             Some(target)
         );
     }
@@ -2845,7 +2866,10 @@ mod tests {
         let scratch = Scratch::new("pfx");
         let target = install_steam(&scratch.path().join("pfx/drive_c"));
         assert_eq!(
-            find_prefix_exe(scratch.path(), installer_by_id("steam").unwrap().expected_exe),
+            find_prefix_exe(
+                scratch.path(),
+                installer_by_id("steam").unwrap().expected_exe
+            ),
             Some(target)
         );
     }
@@ -2856,7 +2880,10 @@ mod tests {
         let scratch = Scratch::new("wine-layout");
         let target = install_steam(&scratch.path().join("drive_c"));
         assert_eq!(
-            find_prefix_exe(scratch.path(), installer_by_id("steam").unwrap().expected_exe),
+            find_prefix_exe(
+                scratch.path(),
+                installer_by_id("steam").unwrap().expected_exe
+            ),
             Some(target)
         );
     }
@@ -2870,7 +2897,10 @@ mod tests {
         std::fs::create_dir_all(scratch.path().join("drive_c")).unwrap();
         let target = install_steam(&scratch.path().join("pfx/drive_c"));
         assert_eq!(
-            find_prefix_exe(scratch.path(), installer_by_id("steam").unwrap().expected_exe),
+            find_prefix_exe(
+                scratch.path(),
+                installer_by_id("steam").unwrap().expected_exe
+            ),
             Some(target)
         );
     }
@@ -2940,7 +2970,11 @@ mod tests {
         // A generated id when the caller has none: 32 lowercase hex characters,
         // the same shape `uuid.uuid4().hex` produces.
         assert_eq!(game.id.len(), 32);
-        assert!(game.id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
+        assert!(
+            game.id
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase())
+        );
     }
 
     /// A game id the caller supplies is used verbatim, which is what keeps the
@@ -2953,7 +2987,9 @@ mod tests {
         let prefix = prepare_prefix_in("abc123", &env).unwrap();
         assert_eq!(
             prefix,
-            scratch.path().join(".local/share/gamehandler/prefixes/abc123")
+            scratch
+                .path()
+                .join(".local/share/gamehandler/prefixes/abc123")
         );
         assert!(prefix.is_dir());
         // Idempotent, as `mkdir(parents=True, exist_ok=True)` is: a retry after
@@ -3018,53 +3054,405 @@ mod tests {
         // every value in it came out of `urlsplit(...)`, so a disagreement here
         // is a disagreement with CPython and not with a prior reading of it.
         let vectors: [UrlVector; 58] = [
-            ("https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/client/installer/SteamSetup.exe", "cdn.akamai.steamstatic.com"),
-            ("HTTPS://CDN.AKAMAI.STEAMSTATIC.COM/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "CDN.AKAMAI.STEAMSTATIC.COM"),
-            ("https://cdn.akamai.steamstatic.com:443/x", "https", Some("cdn.akamai.steamstatic.com"), None, Some(443), "/x", "cdn.akamai.steamstatic.com:443"),
-            ("https://user:pw@cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), Some("user"), None, "/x", "user:pw@cdn.akamai.steamstatic.com"),
-            ("http://cdn.akamai.steamstatic.com/x", "http", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
-            ("https://evil.example/SteamSetup.exe", "https", Some("evil.example"), None, None, "/SteamSetup.exe", "evil.example"),
-            ("//cdn.akamai.steamstatic.com/x", "", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
-            ("cdn.akamai.steamstatic.com/x", "", None, None, None, "cdn.akamai.steamstatic.com/x", ""),
-            ("https://cdn.akamai.steamstatic.com./x", "https", Some("cdn.akamai.steamstatic.com."), None, None, "/x", "cdn.akamai.steamstatic.com."),
-            ("https://cdn.akamai.steamstatic.com@evil.example/x", "https", Some("evil.example"), Some("cdn.akamai.steamstatic.com"), None, "/x", "cdn.akamai.steamstatic.com@evil.example"),
-            ("https://evil.example@cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), Some("evil.example"), None, "/x", "evil.example@cdn.akamai.steamstatic.com"),
-            ("https://a@b@cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), Some("a@b"), None, "/x", "a@b@cdn.akamai.steamstatic.com"),
-            ("https://[2001:db8::1]/x", "https", Some("2001:db8::1"), None, None, "/x", "[2001:db8::1]"),
-            ("https://cdn.akamai.steamstatic.com:notaport/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com:notaport"),
+            (
+                "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "/client/installer/SteamSetup.exe",
+                "cdn.akamai.steamstatic.com",
+            ),
+            (
+                "HTTPS://CDN.AKAMAI.STEAMSTATIC.COM/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "/x",
+                "CDN.AKAMAI.STEAMSTATIC.COM",
+            ),
+            (
+                "https://cdn.akamai.steamstatic.com:443/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                Some(443),
+                "/x",
+                "cdn.akamai.steamstatic.com:443",
+            ),
+            (
+                "https://user:pw@cdn.akamai.steamstatic.com/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                Some("user"),
+                None,
+                "/x",
+                "user:pw@cdn.akamai.steamstatic.com",
+            ),
+            (
+                "http://cdn.akamai.steamstatic.com/x",
+                "http",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "/x",
+                "cdn.akamai.steamstatic.com",
+            ),
+            (
+                "https://evil.example/SteamSetup.exe",
+                "https",
+                Some("evil.example"),
+                None,
+                None,
+                "/SteamSetup.exe",
+                "evil.example",
+            ),
+            (
+                "//cdn.akamai.steamstatic.com/x",
+                "",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "/x",
+                "cdn.akamai.steamstatic.com",
+            ),
+            (
+                "cdn.akamai.steamstatic.com/x",
+                "",
+                None,
+                None,
+                None,
+                "cdn.akamai.steamstatic.com/x",
+                "",
+            ),
+            (
+                "https://cdn.akamai.steamstatic.com./x",
+                "https",
+                Some("cdn.akamai.steamstatic.com."),
+                None,
+                None,
+                "/x",
+                "cdn.akamai.steamstatic.com.",
+            ),
+            (
+                "https://cdn.akamai.steamstatic.com@evil.example/x",
+                "https",
+                Some("evil.example"),
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                "/x",
+                "cdn.akamai.steamstatic.com@evil.example",
+            ),
+            (
+                "https://evil.example@cdn.akamai.steamstatic.com/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                Some("evil.example"),
+                None,
+                "/x",
+                "evil.example@cdn.akamai.steamstatic.com",
+            ),
+            (
+                "https://a@b@cdn.akamai.steamstatic.com/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                Some("a@b"),
+                None,
+                "/x",
+                "a@b@cdn.akamai.steamstatic.com",
+            ),
+            (
+                "https://[2001:db8::1]/x",
+                "https",
+                Some("2001:db8::1"),
+                None,
+                None,
+                "/x",
+                "[2001:db8::1]",
+            ),
+            (
+                "https://cdn.akamai.steamstatic.com:notaport/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "/x",
+                "cdn.akamai.steamstatic.com:notaport",
+            ),
             ("https:///x", "https", None, None, None, "/x", ""),
             ("https://", "https", None, None, None, "", ""),
             ("", "", None, None, None, "", ""),
-            ("https://cdn.akamai.steamstatic.com\t/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
-            (" https://cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
-            ("https://\tcdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
-            ("ftp://cdn.akamai.steamstatic.com/x", "ftp", Some("cdn.akamai.steamstatic.com"), None, None, "/x", "cdn.akamai.steamstatic.com"),
-            ("https://cdn.akamai.steamstatic.com.evil.example/x", "https", Some("cdn.akamai.steamstatic.com.evil.example"), None, None, "/x", "cdn.akamai.steamstatic.com.evil.example"),
-            ("https://cdn.akamai.steamstatic.com?x=1", "https", Some("cdn.akamai.steamstatic.com"), None, None, "", "cdn.akamai.steamstatic.com"),
-            ("https://cdn.akamai.steamstatic.com#frag", "https", Some("cdn.akamai.steamstatic.com"), None, None, "", "cdn.akamai.steamstatic.com"),
-            ("1https://cdn.akamai.steamstatic.com/x", "", None, None, None, "1https://cdn.akamai.steamstatic.com/x", ""),
-            ("https:/cdn.akamai.steamstatic.com/x", "https", None, None, None, "/cdn.akamai.steamstatic.com/x", ""),
-            ("https://cdn.akamai.steamstatic.com:80/x", "https", Some("cdn.akamai.steamstatic.com"), None, Some(80), "/x", "cdn.akamai.steamstatic.com:80"),
-            ("smb://server/share/game.exe", "smb", Some("server"), None, None, "/share/game.exe", "server"),
-            ("smb://user@server/share/game.exe", "smb", Some("server"), Some("user"), None, "/share/game.exe", "user@server"),
-            ("smb://user:pw@SERVER/Share/dir/game.exe", "smb", Some("server"), Some("user"), None, "/Share/dir/game.exe", "user:pw@SERVER"),
-            ("smb://server:445/share/game.exe", "smb", Some("server"), None, Some(445), "/share/game.exe", "server:445"),
-            ("sftp://host/pub/game.exe", "sftp", Some("host"), None, None, "/pub/game.exe", "host"),
-            ("ssh://host/pub/game.exe", "ssh", Some("host"), None, None, "/pub/game.exe", "host"),
-            ("ftp://host/pub/game.exe", "ftp", Some("host"), None, None, "/pub/game.exe", "host"),
-            ("ftps://host/pub/game.exe", "ftps", Some("host"), None, None, "/pub/game.exe", "host"),
-            ("dav://host/pub/game.exe", "dav", Some("host"), None, None, "/pub/game.exe", "host"),
-            ("davs://host/pub/game.exe", "davs", Some("host"), None, None, "/pub/game.exe", "host"),
-            ("nfs://host/export/game.exe", "nfs", Some("host"), None, None, "/export/game.exe", "host"),
-            ("sftp://user@host:2222/pub/x.exe", "sftp", Some("host"), Some("user"), Some(2222), "/pub/x.exe", "user@host:2222"),
-            ("smb://server/share/a%20b.exe", "smb", Some("server"), None, None, "/share/a%20b.exe", "server"),
-            ("smb://us%40er@server/share/x.exe", "smb", Some("server"), Some("us%40er"), None, "/share/x.exe", "us%40er@server"),
-            ("smb:///nohost/x.exe", "smb", None, None, None, "/nohost/x.exe", ""),
-            ("file:///home/u/game.exe", "file", None, None, None, "/home/u/game.exe", ""),
-            ("file://host/home/u/game.exe", "file", Some("host"), None, None, "/home/u/game.exe", "host"),
-            ("https://host/x?q=1#f", "https", Some("host"), None, None, "/x", "host"),
-            ("smb://[fe80::1]/share/x.exe", "smb", Some("fe80::1"), None, None, "/share/x.exe", "[fe80::1]"),
-            ("http://host/pub/x.exe", "http", Some("host"), None, None, "/pub/x.exe", "host"),
+            (
+                "https://cdn.akamai.steamstatic.com\t/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "/x",
+                "cdn.akamai.steamstatic.com",
+            ),
+            (
+                " https://cdn.akamai.steamstatic.com/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "/x",
+                "cdn.akamai.steamstatic.com",
+            ),
+            (
+                "https://\tcdn.akamai.steamstatic.com/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "/x",
+                "cdn.akamai.steamstatic.com",
+            ),
+            (
+                "ftp://cdn.akamai.steamstatic.com/x",
+                "ftp",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "/x",
+                "cdn.akamai.steamstatic.com",
+            ),
+            (
+                "https://cdn.akamai.steamstatic.com.evil.example/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com.evil.example"),
+                None,
+                None,
+                "/x",
+                "cdn.akamai.steamstatic.com.evil.example",
+            ),
+            (
+                "https://cdn.akamai.steamstatic.com?x=1",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "",
+                "cdn.akamai.steamstatic.com",
+            ),
+            (
+                "https://cdn.akamai.steamstatic.com#frag",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                None,
+                "",
+                "cdn.akamai.steamstatic.com",
+            ),
+            (
+                "1https://cdn.akamai.steamstatic.com/x",
+                "",
+                None,
+                None,
+                None,
+                "1https://cdn.akamai.steamstatic.com/x",
+                "",
+            ),
+            (
+                "https:/cdn.akamai.steamstatic.com/x",
+                "https",
+                None,
+                None,
+                None,
+                "/cdn.akamai.steamstatic.com/x",
+                "",
+            ),
+            (
+                "https://cdn.akamai.steamstatic.com:80/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                None,
+                Some(80),
+                "/x",
+                "cdn.akamai.steamstatic.com:80",
+            ),
+            (
+                "smb://server/share/game.exe",
+                "smb",
+                Some("server"),
+                None,
+                None,
+                "/share/game.exe",
+                "server",
+            ),
+            (
+                "smb://user@server/share/game.exe",
+                "smb",
+                Some("server"),
+                Some("user"),
+                None,
+                "/share/game.exe",
+                "user@server",
+            ),
+            (
+                "smb://user:pw@SERVER/Share/dir/game.exe",
+                "smb",
+                Some("server"),
+                Some("user"),
+                None,
+                "/Share/dir/game.exe",
+                "user:pw@SERVER",
+            ),
+            (
+                "smb://server:445/share/game.exe",
+                "smb",
+                Some("server"),
+                None,
+                Some(445),
+                "/share/game.exe",
+                "server:445",
+            ),
+            (
+                "sftp://host/pub/game.exe",
+                "sftp",
+                Some("host"),
+                None,
+                None,
+                "/pub/game.exe",
+                "host",
+            ),
+            (
+                "ssh://host/pub/game.exe",
+                "ssh",
+                Some("host"),
+                None,
+                None,
+                "/pub/game.exe",
+                "host",
+            ),
+            (
+                "ftp://host/pub/game.exe",
+                "ftp",
+                Some("host"),
+                None,
+                None,
+                "/pub/game.exe",
+                "host",
+            ),
+            (
+                "ftps://host/pub/game.exe",
+                "ftps",
+                Some("host"),
+                None,
+                None,
+                "/pub/game.exe",
+                "host",
+            ),
+            (
+                "dav://host/pub/game.exe",
+                "dav",
+                Some("host"),
+                None,
+                None,
+                "/pub/game.exe",
+                "host",
+            ),
+            (
+                "davs://host/pub/game.exe",
+                "davs",
+                Some("host"),
+                None,
+                None,
+                "/pub/game.exe",
+                "host",
+            ),
+            (
+                "nfs://host/export/game.exe",
+                "nfs",
+                Some("host"),
+                None,
+                None,
+                "/export/game.exe",
+                "host",
+            ),
+            (
+                "sftp://user@host:2222/pub/x.exe",
+                "sftp",
+                Some("host"),
+                Some("user"),
+                Some(2222),
+                "/pub/x.exe",
+                "user@host:2222",
+            ),
+            (
+                "smb://server/share/a%20b.exe",
+                "smb",
+                Some("server"),
+                None,
+                None,
+                "/share/a%20b.exe",
+                "server",
+            ),
+            (
+                "smb://us%40er@server/share/x.exe",
+                "smb",
+                Some("server"),
+                Some("us%40er"),
+                None,
+                "/share/x.exe",
+                "us%40er@server",
+            ),
+            (
+                "smb:///nohost/x.exe",
+                "smb",
+                None,
+                None,
+                None,
+                "/nohost/x.exe",
+                "",
+            ),
+            (
+                "file:///home/u/game.exe",
+                "file",
+                None,
+                None,
+                None,
+                "/home/u/game.exe",
+                "",
+            ),
+            (
+                "file://host/home/u/game.exe",
+                "file",
+                Some("host"),
+                None,
+                None,
+                "/home/u/game.exe",
+                "host",
+            ),
+            (
+                "https://host/x?q=1#f",
+                "https",
+                Some("host"),
+                None,
+                None,
+                "/x",
+                "host",
+            ),
+            (
+                "smb://[fe80::1]/share/x.exe",
+                "smb",
+                Some("fe80::1"),
+                None,
+                None,
+                "/share/x.exe",
+                "[fe80::1]",
+            ),
+            (
+                "http://host/pub/x.exe",
+                "http",
+                Some("host"),
+                None,
+                None,
+                "/pub/x.exe",
+                "host",
+            ),
             // The rows below were added with `netpaths`, and two of them are
             // here because writing them caught a real defect in the widening
             // rather than because they were obvious:
@@ -3079,22 +3467,102 @@ mod tests {
             //   perfectly good `isdigit()`; so CPython reports 0 here while
             //   `_generic_mount_names`'s `if port:` still treats it as unset.
             //   Both halves of that are load-bearing and neither is guessable.
-            ("smb://[fe80::1%tESt]/share/x.exe", "smb", Some("fe80::1%tESt"), None, None, "/share/x.exe", "[fe80::1%tESt]"),
+            (
+                "smb://[fe80::1%tESt]/share/x.exe",
+                "smb",
+                Some("fe80::1%tESt"),
+                None,
+                None,
+                "/share/x.exe",
+                "[fe80::1%tESt]",
+            ),
             ("smb://h:0/x", "smb", Some("h"), None, Some(0), "/x", "h:0"),
-            ("smb://[::1]:8080/share/x.exe", "smb", Some("::1"), None, Some(8080), "/share/x.exe", "[::1]:8080"),
-            ("sftp://user@host:2222/pub/x", "sftp", Some("host"), Some("user"), Some(2222), "/pub/x", "user@host:2222"),
-            ("davs://host/path/x", "davs", Some("host"), None, None, "/path/x", "host"),
-            ("file:///home/u/game.exe", "file", None, None, None, "/home/u/game.exe", ""),
+            (
+                "smb://[::1]:8080/share/x.exe",
+                "smb",
+                Some("::1"),
+                None,
+                Some(8080),
+                "/share/x.exe",
+                "[::1]:8080",
+            ),
+            (
+                "sftp://user@host:2222/pub/x",
+                "sftp",
+                Some("host"),
+                Some("user"),
+                Some(2222),
+                "/pub/x",
+                "user@host:2222",
+            ),
+            (
+                "davs://host/path/x",
+                "davs",
+                Some("host"),
+                None,
+                None,
+                "/path/x",
+                "host",
+            ),
+            (
+                "file:///home/u/game.exe",
+                "file",
+                None,
+                None,
+                None,
+                "/home/u/game.exe",
+                "",
+            ),
             // The username is the text before the **first** colon of the
             // userinfo, so the password never leaks into it — while the
             // userinfo itself split at the **last** `@`, which is why the
             // `a@b` row below has a username containing an `@`.
-            ("smb://us:er:pw@h/s/x", "smb", Some("h"), Some("us"), None, "/s/x", "us:er:pw@h"),
-            ("https://a@b@cdn.akamai.steamstatic.com/x", "https", Some("cdn.akamai.steamstatic.com"), Some("a@b"), None, "/x", "a@b@cdn.akamai.steamstatic.com"),
+            (
+                "smb://us:er:pw@h/s/x",
+                "smb",
+                Some("h"),
+                Some("us"),
+                None,
+                "/s/x",
+                "us:er:pw@h",
+            ),
+            (
+                "https://a@b@cdn.akamai.steamstatic.com/x",
+                "https",
+                Some("cdn.akamai.steamstatic.com"),
+                Some("a@b"),
+                None,
+                "/x",
+                "a@b@cdn.akamai.steamstatic.com",
+            ),
             // A scheme with no netloc, and a netloc with no host.
-            ("smb:///nohost/x.exe", "smb", None, None, None, "/nohost/x.exe", ""),
-            ("smb://H/S/dir/game.exe", "smb", Some("h"), None, None, "/S/dir/game.exe", "H"),
-            ("ftp://host:21/pub/x", "ftp", Some("host"), None, Some(21), "/pub/x", "host:21"),
+            (
+                "smb:///nohost/x.exe",
+                "smb",
+                None,
+                None,
+                None,
+                "/nohost/x.exe",
+                "",
+            ),
+            (
+                "smb://H/S/dir/game.exe",
+                "smb",
+                Some("h"),
+                None,
+                None,
+                "/S/dir/game.exe",
+                "H",
+            ),
+            (
+                "ftp://host:21/pub/x",
+                "ftp",
+                Some("host"),
+                None,
+                Some(21),
+                "/pub/x",
+                "host:21",
+            ),
         ];
         for (url, scheme, host, user, port, path, netloc) in vectors {
             let parts = url_parts(url);
@@ -3163,11 +3631,10 @@ mod tests {
         // falling back to the request URL.
         assert!(validate_download_origin(steam, "").is_err());
         // A look-alike suffix is a different host.
-        assert!(validate_download_origin(
-            steam,
-            "https://cdn.akamai.steamstatic.com.evil.example/x"
-        )
-        .is_err());
+        assert!(
+            validate_download_origin(steam, "https://cdn.akamai.steamstatic.com.evil.example/x")
+                .is_err()
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -3358,8 +3825,8 @@ mod tests {
             0,
         );
         let steam = installer_by_id("steam").unwrap();
-        let client =
-            FakeResponse::at(steam.download_url, b"MZpayload").redirected_to("https://evil.example/SteamSetup.exe");
+        let client = FakeResponse::at(steam.download_url, b"MZpayload")
+            .redirected_to("https://evil.example/SteamSetup.exe");
 
         let error = download_installer(
             steam,
@@ -3386,7 +3853,10 @@ mod tests {
         );
         assert!(!record.exists(), "the signature verifier was run anyway");
         assert!(!dest.join("SteamSetup.exe").exists());
-        assert!(part_files(&dest).is_empty(), "the .part file was left behind");
+        assert!(
+            part_files(&dest).is_empty(),
+            "the .part file was left behind"
+        );
         assert_eq!(
             client.delivered(),
             0,
@@ -3450,7 +3920,10 @@ mod tests {
             &verifier_env(&script),
         )
         .unwrap_err();
-        assert_eq!(error.to_string(), "Epic Games Launcher download is not a valid MSI file");
+        assert_eq!(
+            error.to_string(),
+            "Epic Games Launcher download is not a valid MSI file"
+        );
 
         // The control for this arm: the real OLE header is accepted, so the
         // test above cannot pass by refusing every MSI.
@@ -3506,9 +3979,12 @@ mod tests {
             "Signature verification: ok\nSubject: /O=Impostor Corp./CN=Impostor Corp.",
             0,
         );
-        let error = verify_installer_authenticity(steam, &path, &verifier_env(&impostor))
-            .unwrap_err();
-        assert_eq!(error.to_string(), "Steam is not signed by an approved publisher");
+        let error =
+            verify_installer_authenticity(steam, &path, &verifier_env(&impostor)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Steam is not signed by an approved publisher"
+        );
 
         // The substring nature of the publisher test, spelled out: a name that
         // merely *contains* an approved one is approved, and that is the
@@ -3532,9 +4008,11 @@ mod tests {
 
         // Exit 0 but no success line — the case a status check alone misses.
         let quiet = fake_osslsigncode(scratch.path(), &scratch.path().join("argv-quiet"), "", 0);
-        let error =
-            verify_installer_authenticity(steam, &path, &verifier_env(&quiet)).unwrap_err();
-        assert_eq!(error.to_string(), "Steam has an invalid Authenticode signature\n");
+        let error = verify_installer_authenticity(steam, &path, &verifier_env(&quiet)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Steam has an invalid Authenticode signature\n"
+        );
 
         // A non-zero exit with output: the tail is what the user sees.
         let failing = fake_osslsigncode(
@@ -3588,10 +4066,7 @@ mod tests {
         );
         let env = FakeLaunchEnv::new()
             .with_which("osslsigncode", &script.to_string_lossy())
-            .with_vars(&[(
-                "GAMEHANDLER_AUTHENTICODE_ROOT",
-                &root.to_string_lossy(),
-            )]);
+            .with_vars(&[("GAMEHANDLER_AUTHENTICODE_ROOT", &root.to_string_lossy())]);
         let path = touch(&scratch.path().join("UbisoftConnectInstaller.exe"));
 
         verify_installer_authenticity(ubisoft, &path, &env).unwrap();
@@ -3620,7 +4095,9 @@ mod tests {
         let bundled = authenticode_root_path(&bare).unwrap();
         assert_eq!(
             bundled,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data").join(AUTHENTICODE_ROOT_NAME)
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../data")
+                .join(AUTHENTICODE_ROOT_NAME)
         );
         assert!(bundled.is_file(), "{bundled:?}");
 
@@ -3655,7 +4132,10 @@ mod tests {
             &verifier_env(&script),
         )
         .unwrap_err();
-        assert_eq!(error.to_string(), "Steam installer exceeds the download size limit");
+        assert_eq!(
+            error.to_string(),
+            "Steam installer exceeds the download size limit"
+        );
         // The variant as well as the sentence: the head callback records
         // `TooLarge` and returns a generic error to abandon the transfer, and a
         // test that only read the message could not see the difference.
@@ -3736,9 +4216,15 @@ mod tests {
             &verifier_env(&script),
         )
         .unwrap_err();
-        assert_eq!(error.to_string(), "Steam installer exceeds the download size limit");
+        assert_eq!(
+            error.to_string(),
+            "Steam installer exceeds the download size limit"
+        );
         assert!(!record.exists());
-        assert!(part_files(&dest).is_empty(), "the .part file was left behind");
+        assert!(
+            part_files(&dest).is_empty(),
+            "the .part file was left behind"
+        );
         // The loop stops within a chunk or two of the cap rather than running
         // to its own bound, which is what "refused while it streams" means.
         assert!(
@@ -3778,7 +4264,10 @@ mod tests {
 
         let seen = seen.into_inner();
         assert_eq!(seen.last(), Some(&1.0));
-        assert!(seen.iter().all(|value| (0.0..=1.0).contains(value)), "{seen:?}");
+        assert!(
+            seen.iter().all(|value| (0.0..=1.0).contains(value)),
+            "{seen:?}"
+        );
         assert!(seen.len() >= 2, "the body arrives in chunks: {seen:?}");
 
         // With no declared length there is no denominator, so the reference
@@ -3818,15 +4307,17 @@ mod tests {
         let steam = installer_by_id("steam").unwrap();
         let client = FakeResponse::at(steam.download_url, b"not-an-executable");
 
-        assert!(download_installer(
-            steam,
-            &dest,
-            None,
-            Duration::from_secs(60),
-            &client,
-            &verifier_env(&script),
-        )
-        .is_err());
+        assert!(
+            download_installer(
+                steam,
+                &dest,
+                None,
+                Duration::from_secs(60),
+                &client,
+                &verifier_env(&script),
+            )
+            .is_err()
+        );
         assert_eq!(std::fs::read(&existing).unwrap(), b"the good copy");
         assert!(part_files(&dest).is_empty());
     }
@@ -3977,13 +4468,24 @@ mod tests {
     #[test]
     fn an_already_installed_executable_is_returned_after_the_handoff_only() {
         let prefix = empty_prefix("poll-already");
-        touch(&prefix.path().join("drive_c/Program Files (x86)/Steam/steam.exe"));
+        touch(
+            &prefix
+                .path()
+                .join("drive_c/Program Files (x86)/Steam/steam.exe"),
+        );
         let run = drive_poll(prefix.path(), 30.0, None);
         assert_eq!(
             run.found,
-            Some(prefix.path().join("drive_c/Program Files (x86)/Steam/steam.exe"))
+            Some(
+                prefix
+                    .path()
+                    .join("drive_c/Program Files (x86)/Steam/steam.exe")
+            )
         );
-        assert!(run.idle_timeouts.is_empty(), "a wineserver wait happened anyway");
+        assert!(
+            run.idle_timeouts.is_empty(),
+            "a wineserver wait happened anyway"
+        );
         assert_eq!(run.elapsed, INSTALL_HANDOFF_SECONDS);
     }
 
@@ -4050,14 +4552,19 @@ mod tests {
 
         // A sibling that is not executable is not a wineserver.
         use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(binaries.join("wineserver")).unwrap().permissions();
+        let mut permissions = std::fs::metadata(binaries.join("wineserver"))
+            .unwrap()
+            .permissions();
         permissions.set_mode(0o644);
         std::fs::set_permissions(binaries.join("wineserver"), permissions).unwrap();
         assert_eq!(wineserver_binary(&runner, &env), Some(on_path));
 
         // And with no runner binary at all, only `PATH` is left.
         let bare = crate::runners::WineRunner::with_binary(None);
-        assert_eq!(wineserver_binary(&bare, &env), Some(env.which("wineserver").unwrap()));
+        assert_eq!(
+            wineserver_binary(&bare, &env),
+            Some(env.which("wineserver").unwrap())
+        );
     }
 
     /// `test_no_wineserver_means_no_wait_rather_than_a_crash` and
@@ -4075,12 +4582,20 @@ mod tests {
         let env = FakeLaunchEnv::new().with_which("wineserver", &server.to_string_lossy());
         let prefix = scratch.path().join("prefix");
         std::fs::create_dir_all(&prefix).unwrap();
-        let variables = [("WINEPREFIX".to_string(), prefix.to_string_lossy().into_owned())]
-            .into_iter()
-            .collect();
+        let variables = [(
+            "WINEPREFIX".to_string(),
+            prefix.to_string_lossy().into_owned(),
+        )]
+        .into_iter()
+        .collect();
 
         let bare = crate::runners::WineRunner::with_binary(None);
-        assert!(!wait_for_prefix_idle(&bare, &variables, 1, &FakeLaunchEnv::new()));
+        assert!(!wait_for_prefix_idle(
+            &bare,
+            &variables,
+            1,
+            &FakeLaunchEnv::new()
+        ));
         assert!(!wait_for_prefix_idle(
             &bare,
             &std::collections::BTreeMap::new(),
@@ -4098,7 +4613,10 @@ mod tests {
         // being asserted is that the wait ran at all, and the script's exit is
         // the evidence, not how long it took.
         assert!(wait_for_prefix_idle(&bare, &variables, 60, &env));
-        assert_eq!(std::fs::read_to_string(&record).unwrap().trim(), prefix.to_string_lossy());
+        assert_eq!(
+            std::fs::read_to_string(&record).unwrap().trim(),
+            prefix.to_string_lossy()
+        );
     }
 
     /// The wait is given the prefix the *wineserver* owns, which for a Proton
@@ -4118,9 +4636,12 @@ mod tests {
         // is what makes it a Proton prefix rather than a directory that happens
         // to be named `pfx`.
         std::fs::create_dir_all(prefix.join("pfx/drive_c")).unwrap();
-        let variables = [("WINEPREFIX".to_string(), prefix.to_string_lossy().into_owned())]
-            .into_iter()
-            .collect();
+        let variables = [(
+            "WINEPREFIX".to_string(),
+            prefix.to_string_lossy().into_owned(),
+        )]
+        .into_iter()
+        .collect();
 
         let bare = crate::runners::WineRunner::with_binary(None);
         assert!(wait_for_prefix_idle(&bare, &variables, 60, &env));
@@ -4145,14 +4666,20 @@ mod tests {
         let env = FakeLaunchEnv::new().with_which("wineserver", &server.to_string_lossy());
         let prefix = scratch.path().join("prefix");
         std::fs::create_dir_all(&prefix).unwrap();
-        let variables = [("WINEPREFIX".to_string(), prefix.to_string_lossy().into_owned())]
-            .into_iter()
-            .collect();
+        let variables = [(
+            "WINEPREFIX".to_string(),
+            prefix.to_string_lossy().into_owned(),
+        )]
+        .into_iter()
+        .collect();
 
         let started = std::time::Instant::now();
         let bare = crate::runners::WineRunner::with_binary(None);
         assert!(!wait_for_prefix_idle(&bare, &variables, 1, &env));
-        assert!(started.elapsed() < Duration::from_secs(30), "the bound was not applied");
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the bound was not applied"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -4197,7 +4724,10 @@ mod tests {
         assert!(record.exists(), "the control did not run the script");
 
         let before = retries_taken();
-        let held = std::fs::OpenOptions::new().write(true).open(&script).unwrap();
+        let held = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&script)
+            .unwrap();
         let failure = match run_capturing(&argv, Duration::from_secs(60)) {
             Ok(_) => panic!("a file this process is writing to was executed"),
             Err(failure) => failure,
@@ -4249,7 +4779,10 @@ mod tests {
         assert_eq!(output.status.code(), Some(0));
         assert_eq!(attempts, 3);
         assert_eq!(retries_taken() - before, 2);
-        assert!(record.exists(), "the script that finally ran was not the fake");
+        assert!(
+            record.exists(),
+            "the script that finally ran was not the fake"
+        );
 
         let before = retries_taken();
         let mut attempts = 0;

@@ -54,7 +54,7 @@ use std::path::{Path, PathBuf};
 use crate::models::Game;
 
 use super::env::LaunchEnv;
-use super::{Command, RunnerError, DXVK_ROOT, DXVK_ROOT_ENV, DXVK_VERSION};
+use super::{Command, DXVK_ROOT, DXVK_ROOT_ENV, DXVK_VERSION, RunnerError};
 
 /// The DLL overrides that make the bundled DXVK runtime take effect.
 ///
@@ -850,10 +850,7 @@ pub fn resolve_game_paths(game: &Game, resolver: &dyn ShareResolver) -> Result<G
         });
     }
 
-    if exe == game.exe_path
-        && cwd == game.working_directory
-        && extra == game.additional_app
-    {
+    if exe == game.exe_path && cwd == game.working_directory && extra == game.additional_app {
         return Ok(game.clone());
     }
 
@@ -867,7 +864,7 @@ pub fn resolve_game_paths(game: &Game, resolver: &dyn ShareResolver) -> Result<G
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runners::env::tests::{scratch, FakeLaunchEnv};
+    use crate::runners::env::tests::{FakeLaunchEnv, scratch};
 
     fn game(name: &str) -> Game {
         Game::new_named(name)
@@ -879,8 +876,14 @@ mod tests {
     }
 
     fn applied_with(game: &Game, proton_features: bool, host: FakeLaunchEnv) -> Command {
-        apply_launch_options(game, &["wine".to_string()], &BTreeMap::new(), proton_features, &host)
-            .expect("no gamescope was requested")
+        apply_launch_options(
+            game,
+            &["wine".to_string()],
+            &BTreeMap::new(),
+            proton_features,
+            &host,
+        )
+        .expect("no gamescope was requested")
     }
 
     // -- python_is_space / python_trim ---------------------------------------
@@ -945,11 +948,7 @@ mod tests {
             (b"", ""),
         ];
         for (bytes, expected) in cases {
-            assert_eq!(
-                decode_utf8_ignoring(bytes),
-                expected,
-                "decoding {bytes:?}"
-            );
+            assert_eq!(decode_utf8_ignoring(bytes), expected, "decoding {bytes:?}");
         }
     }
 
@@ -1066,9 +1065,12 @@ mod tests {
         // Tabs and the C0 separators are a different story: a tab separates…
         assert_eq!(
             parse_env_block("A=1\tB=2"),
-            [("A".to_string(), "1".to_string()), ("B".to_string(), "2".to_string())]
-                .into_iter()
-                .collect()
+            [
+                ("A".to_string(), "1".to_string()),
+                ("B".to_string(), "2".to_string())
+            ]
+            .into_iter()
+            .collect()
         );
         // …and an information separator is trimmed from the ends but does not
         // split, because it is not in `shlex.whitespace` either.
@@ -1099,9 +1101,12 @@ mod tests {
         );
         assert_eq!(
             parse_env_block("A=\"\" B=1"),
-            [("A".to_string(), String::new()), ("B".to_string(), "1".to_string())]
-                .into_iter()
-                .collect()
+            [
+                ("A".to_string(), String::new()),
+                ("B".to_string(), "1".to_string())
+            ]
+            .into_iter()
+            .collect()
         );
     }
 
@@ -1137,7 +1142,10 @@ A=\"quoted; with semicolon\"
         );
         assert_eq!(parsed.get("WINEARCH").map(String::as_str), Some("win64"));
         assert_eq!(parsed.get("PROTON_LOG").map(String::as_str), Some("1"));
-        assert_eq!(parsed.get("A").map(String::as_str), Some("quoted; with semicolon"));
+        assert_eq!(
+            parsed.get("A").map(String::as_str),
+            Some("quoted; with semicolon")
+        );
         assert!(!parsed.contains_key("# Proton"));
     }
 
@@ -1150,7 +1158,10 @@ A=\"quoted; with semicolon\"
         assert_eq!(
             parsed,
             [
-                ("WINEDLLOVERRIDES".to_string(), "winemenubuilder.exe=d".to_string()),
+                (
+                    "WINEDLLOVERRIDES".to_string(),
+                    "winemenubuilder.exe=d".to_string()
+                ),
                 ("mscoree,mshtml".to_string(), String::new()),
             ]
             .into_iter()
@@ -1171,10 +1182,26 @@ A=\"quoted; with semicolon\"
         let cases: [MergeCase<'_>; 6] = [
             (&[], "", &[]),
             (&[], "  ;a=b;; ", &[("WINEDLLOVERRIDES", "a=b")]),
-            (&[("WINEDLLOVERRIDES", "x")], "y", &[("WINEDLLOVERRIDES", "x;y")]),
-            (&[("WINEDLLOVERRIDES", "x;")], "y", &[("WINEDLLOVERRIDES", "x;y")]),
-            (&[("WINEDLLOVERRIDES", "  ")], " y ", &[("WINEDLLOVERRIDES", "y")]),
-            (&[("WINEDLLOVERRIDES", "")], "z", &[("WINEDLLOVERRIDES", "z")]),
+            (
+                &[("WINEDLLOVERRIDES", "x")],
+                "y",
+                &[("WINEDLLOVERRIDES", "x;y")],
+            ),
+            (
+                &[("WINEDLLOVERRIDES", "x;")],
+                "y",
+                &[("WINEDLLOVERRIDES", "x;y")],
+            ),
+            (
+                &[("WINEDLLOVERRIDES", "  ")],
+                " y ",
+                &[("WINEDLLOVERRIDES", "y")],
+            ),
+            (
+                &[("WINEDLLOVERRIDES", "")],
+                "z",
+                &[("WINEDLLOVERRIDES", "z")],
+            ),
         ];
         for (initial, extra, expected) in cases {
             let mut env: BTreeMap<String, String> = initial
@@ -1209,8 +1236,14 @@ A=\"quoted; with semicolon\"
         merge_dll_overrides(&mut env, "d3d12,d3d12core=b");
         let once = env.clone();
         merge_dll_overrides(&mut env, "d3d12,d3d12core=b");
-        assert_ne!(env, once, "appending the same fragment is a no-op in Python too");
-        assert_eq!(env["WINEDLLOVERRIDES"], "d3d12,d3d12core=b;d3d12,d3d12core=b");
+        assert_ne!(
+            env, once,
+            "appending the same fragment is a no-op in Python too"
+        );
+        assert_eq!(
+            env["WINEDLLOVERRIDES"],
+            "d3d12,d3d12core=b;d3d12,d3d12core=b"
+        );
     }
 
     // -- normalize_desktop_size ---------------------------------------------
@@ -1236,7 +1269,11 @@ A=\"quoted; with semicolon\"
             ("1920y1080", "1920x1080"),
         ];
         for (value, expected) in cases {
-            assert_eq!(normalize_desktop_size(value), expected, "normalising {value:?}");
+            assert_eq!(
+                normalize_desktop_size(value),
+                expected,
+                "normalising {value:?}"
+            );
         }
     }
 
@@ -1262,11 +1299,19 @@ A=\"quoted; with semicolon\"
         // decision rather than a mistake: `char::is_numeric` also covers `Nl`
         // and `No`, which Python's `\d` does not, so these are accepted here
         // and fall back to 1920x1080 in the Python app (measured for all three).
-        for value in ["\u{bd}\u{bd}x\u{bd}\u{bd}", "\u{216b}\u{216b}x\u{216a}\u{216a}", "\u{b2}\u{b2}x\u{b2}\u{b2}"] {
+        for value in [
+            "\u{bd}\u{bd}x\u{bd}\u{bd}",
+            "\u{216b}\u{216b}x\u{216a}\u{216a}",
+            "\u{b2}\u{b2}x\u{b2}\u{b2}",
+        ] {
             // Lowercased, because that is the first step of the normalisation —
             // `Ⅻ` and `ⅻ` are different code points and the output is the
             // lowered one.
-            assert_eq!(normalize_desktop_size(value), value.to_lowercase(), "{value:?}");
+            assert_eq!(
+                normalize_desktop_size(value),
+                value.to_lowercase(),
+                "{value:?}"
+            );
             // Every character of the two digit runs is numeric — `Nd` for the
             // fractions and the superscript, `Nl` for the Roman numerals — and
             // none of them is an ASCII digit, which is the whole point: the
@@ -1309,7 +1354,11 @@ A=\"quoted; with semicolon\"
         // The insertion point is the whole function: everything after `argv[0]`
         // is the game's own command line, and inserting at the front would make
         // `explorer` the launcher.
-        let argv = vec!["wine".to_string(), "game.exe".to_string(), "--flag".to_string()];
+        let argv = vec![
+            "wine".to_string(),
+            "game.exe".to_string(),
+            "--flag".to_string(),
+        ];
         let mut subject = game("Half-Life 2");
         subject.virtual_desktop_size = "1280x720".to_string();
         assert_eq!(
@@ -1335,7 +1384,10 @@ A=\"quoted; with semicolon\"
             ("\u{e9}\u{e9}\u{e9}", "Game"),
             ("Nier: Automata", "NierAutomata"),
             // Truncation happens *after* the removal, so it counts alphanumerics.
-            ("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa"),
+            (
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "aaaaaaaaaaaaaaaa",
+            ),
             // An underscore and a digit are not alphanumerics here: the class is
             // `A-Za-z0-9`, so `_` goes and the digits stay.
         ];
@@ -1343,7 +1395,11 @@ A=\"quoted; with semicolon\"
             let mut subject = game(name);
             subject.virtual_desktop_size.clear();
             let wrapped = virtual_desktop_argv(&["wine".to_string()], &subject);
-            assert_eq!(wrapped[2], format!("/desktop={expected},1920x1080"), "naming {name:?}");
+            assert_eq!(
+                wrapped[2],
+                format!("/desktop={expected},1920x1080"),
+                "naming {name:?}"
+            );
         }
 
         // The underscore case on its own, because it is the one that differs
@@ -1369,14 +1425,26 @@ A=\"quoted; with semicolon\"
         subject.prefer_sdl = true;
 
         let plain = applied(&subject, false);
-        assert_eq!(plain.env.get("SDL_JOYSTICK_HIDAPI").map(String::as_str), Some("1"));
+        assert_eq!(
+            plain.env.get("SDL_JOYSTICK_HIDAPI").map(String::as_str),
+            Some("1")
+        );
         assert!(!plain.env.contains_key("PROTON_ENABLE_HIDAPI"));
         assert!(!plain.env.contains_key("PROTON_NO_HIDRAW"));
 
         let proton = applied(&subject, true);
-        assert_eq!(proton.env.get("SDL_JOYSTICK_HIDAPI").map(String::as_str), Some("1"));
-        assert_eq!(proton.env.get("PROTON_ENABLE_HIDAPI").map(String::as_str), Some("1"));
-        assert_eq!(proton.env.get("PROTON_NO_HIDRAW").map(String::as_str), Some("1"));
+        assert_eq!(
+            proton.env.get("SDL_JOYSTICK_HIDAPI").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            proton.env.get("PROTON_ENABLE_HIDAPI").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            proton.env.get("PROTON_NO_HIDRAW").map(String::as_str),
+            Some("1")
+        );
     }
 
     #[test]
@@ -1384,17 +1452,35 @@ A=\"quoted; with semicolon\"
         let mut subject = game("x");
         subject.wayland = true;
 
-        let environments: BTreeMap<String, String> =
-            [("DISPLAY".to_string(), ":0".to_string())].into_iter().collect();
+        let environments: BTreeMap<String, String> = [("DISPLAY".to_string(), ":0".to_string())]
+            .into_iter()
+            .collect();
 
         // Without Proton nothing is written at all — not even DISPLAY, which
         // the user's own session set and which plain Wine still needs.
-        let plain = apply_launch_options(&subject, &["wine".to_string()], &environments, false, &FakeLaunchEnv::new()).unwrap();
+        let plain = apply_launch_options(
+            &subject,
+            &["wine".to_string()],
+            &environments,
+            false,
+            &FakeLaunchEnv::new(),
+        )
+        .unwrap();
         assert_eq!(plain.env.get("DISPLAY").map(String::as_str), Some(":0"));
         assert!(!plain.env.contains_key("PROTON_ENABLE_WAYLAND"));
 
-        let proton = apply_launch_options(&subject, &["wine".to_string()], &environments, true, &FakeLaunchEnv::new()).unwrap();
-        assert_eq!(proton.env.get("PROTON_ENABLE_WAYLAND").map(String::as_str), Some("1"));
+        let proton = apply_launch_options(
+            &subject,
+            &["wine".to_string()],
+            &environments,
+            true,
+            &FakeLaunchEnv::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            proton.env.get("PROTON_ENABLE_WAYLAND").map(String::as_str),
+            Some("1")
+        );
         // Empty, not absent: Proton reads the empty value as the instruction.
         assert_eq!(proton.env.get("DISPLAY").map(String::as_str), Some(""));
     }
@@ -1404,9 +1490,25 @@ A=\"quoted; with semicolon\"
         let mut subject = game("x");
         subject.hdr = true;
 
-        assert_eq!(applied(&subject, false).env.get("DXVK_HDR").map(String::as_str), Some("1"));
-        assert!(!applied(&subject, false).env.contains_key("PROTON_ENABLE_HDR"));
-        assert_eq!(applied(&subject, true).env.get("PROTON_ENABLE_HDR").map(String::as_str), Some("1"));
+        assert_eq!(
+            applied(&subject, false)
+                .env
+                .get("DXVK_HDR")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert!(
+            !applied(&subject, false)
+                .env
+                .contains_key("PROTON_ENABLE_HDR")
+        );
+        assert_eq!(
+            applied(&subject, true)
+                .env
+                .get("PROTON_ENABLE_HDR")
+                .map(String::as_str),
+            Some("1")
+        );
     }
 
     #[test]
@@ -1428,8 +1530,14 @@ A=\"quoted; with semicolon\"
         // `WINEESYNC=1` turn the toggle back on.
         assert_eq!(disabled.env.get("WINEESYNC").map(String::as_str), Some("0"));
         assert_eq!(disabled.env.get("WINEFSYNC").map(String::as_str), Some("0"));
-        assert_eq!(disabled.env.get("PROTON_NO_ESYNC").map(String::as_str), Some("1"));
-        assert_eq!(disabled.env.get("PROTON_NO_FSYNC").map(String::as_str), Some("1"));
+        assert_eq!(
+            disabled.env.get("PROTON_NO_ESYNC").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            disabled.env.get("PROTON_NO_FSYNC").map(String::as_str),
+            Some("1")
+        );
     }
 
     #[test]
@@ -1452,7 +1560,10 @@ A=\"quoted; with semicolon\"
         )
         .unwrap();
 
-        assert_eq!(command.env.get("PROTON_USE_WINED3D").map(String::as_str), Some("1"));
+        assert_eq!(
+            command.env.get("PROTON_USE_WINED3D").map(String::as_str),
+            Some("1")
+        );
         // Appended, not replaced: the prefix-quieting overrides survive, and
         // both fragments are present exactly once.
         let overrides = command.env.get("WINEDLLOVERRIDES").unwrap();
@@ -1467,7 +1578,10 @@ A=\"quoted; with semicolon\"
         subject.vkd3d = false;
         let command = applied(&subject, false);
         // No `PROTON_*` variable: VKD3D is disabled by DLL overrides alone.
-        assert_eq!(command.env.get("WINEDLLOVERRIDES").map(String::as_str), Some(VKD3D_DLL_OVERRIDES));
+        assert_eq!(
+            command.env.get("WINEDLLOVERRIDES").map(String::as_str),
+            Some(VKD3D_DLL_OVERRIDES)
+        );
         assert!(!command.env.keys().any(|key| key.starts_with("PROTON_")));
     }
 
@@ -1480,7 +1594,10 @@ A=\"quoted; with semicolon\"
         subject.dxvk = false;
         subject.vkd3d = false;
         assert_eq!(
-            applied(&subject, false).env.get("WINEDLLOVERRIDES").map(String::as_str),
+            applied(&subject, false)
+                .env
+                .get("WINEDLLOVERRIDES")
+                .map(String::as_str),
             Some(format!("{WINED3D_DLL_OVERRIDES};{VKD3D_DLL_OVERRIDES}").as_str())
         );
     }
@@ -1496,13 +1613,31 @@ A=\"quoted; with semicolon\"
         assert!(!plain.env.contains_key("WINE_FULLSCREEN_FSR"));
 
         let proton = applied(&subject, true);
-        assert_eq!(proton.env.get("PROTON_ENABLE_NVAPI").map(String::as_str), Some("1"));
-        assert_eq!(proton.env.get("DXVK_ENABLE_NVAPI").map(String::as_str), Some("1"));
+        assert_eq!(
+            proton.env.get("PROTON_ENABLE_NVAPI").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            proton.env.get("DXVK_ENABLE_NVAPI").map(String::as_str),
+            Some("1")
+        );
         // DLSS needs the real entry points, so DXVK's shim is explicitly off.
-        assert_eq!(proton.env.get("DXVK_NVAPIHACK").map(String::as_str), Some("0"));
-        assert_eq!(proton.env.get("WINE_FULLSCREEN_FSR").map(String::as_str), Some("1"));
+        assert_eq!(
+            proton.env.get("DXVK_NVAPIHACK").map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            proton.env.get("WINE_FULLSCREEN_FSR").map(String::as_str),
+            Some("1")
+        );
         // `setdefault`, so this is only written when nothing set it.
-        assert_eq!(proton.env.get("WINE_FULLSCREEN_FSR_STRENGTH").map(String::as_str), Some("2"));
+        assert_eq!(
+            proton
+                .env
+                .get("WINE_FULLSCREEN_FSR_STRENGTH")
+                .map(String::as_str),
+            Some("2")
+        );
     }
 
     #[test]
@@ -1513,8 +1648,21 @@ A=\"quoted; with semicolon\"
             [("WINE_FULLSCREEN_FSR_STRENGTH".to_string(), "4".to_string())]
                 .into_iter()
                 .collect();
-        let command = apply_launch_options(&subject, &["wine".to_string()], &inherited, true, &FakeLaunchEnv::new()).unwrap();
-        assert_eq!(command.env.get("WINE_FULLSCREEN_FSR_STRENGTH").map(String::as_str), Some("4"));
+        let command = apply_launch_options(
+            &subject,
+            &["wine".to_string()],
+            &inherited,
+            true,
+            &FakeLaunchEnv::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            command
+                .env
+                .get("WINE_FULLSCREEN_FSR_STRENGTH")
+                .map(String::as_str),
+            Some("4")
+        );
     }
 
     #[test]
@@ -1526,8 +1674,17 @@ A=\"quoted; with semicolon\"
         subject.battleye = false;
         subject.eac = false;
         let command = applied(&subject, true);
-        assert_eq!(command.env.get("PROTON_BATTLEYE_RUNTIME").map(String::as_str), Some(""));
-        assert_eq!(command.env.get("PROTON_EAC_RUNTIME").map(String::as_str), Some(""));
+        assert_eq!(
+            command
+                .env
+                .get("PROTON_BATTLEYE_RUNTIME")
+                .map(String::as_str),
+            Some("")
+        );
+        assert_eq!(
+            command.env.get("PROTON_EAC_RUNTIME").map(String::as_str),
+            Some("")
+        );
     }
 
     #[test]
@@ -1611,8 +1768,15 @@ A=\"quoted; with semicolon\"
         assert_eq!(without.env.get("MANGOHUD").map(String::as_str), Some("1"));
         assert_eq!(without.argv, vec!["wine".to_string()]);
 
-        let with = applied_with(&subject, false, FakeLaunchEnv::new().with_which("mangohud", "/usr/bin/mangohud"));
-        assert_eq!(with.argv, vec!["/usr/bin/mangohud".to_string(), "wine".to_string()]);
+        let with = applied_with(
+            &subject,
+            false,
+            FakeLaunchEnv::new().with_which("mangohud", "/usr/bin/mangohud"),
+        );
+        assert_eq!(
+            with.argv,
+            vec!["/usr/bin/mangohud".to_string(), "wine".to_string()]
+        );
         assert!(!with.env.contains_key("MANGOHUD"));
     }
 
@@ -1624,8 +1788,15 @@ A=\"quoted; with semicolon\"
         // Unlike mangohud there is no environment fallback, so a missing
         // gamemoderun is silently ignored rather than an error.
         assert_eq!(applied(&subject, false).argv, vec!["wine".to_string()]);
-        let with = applied_with(&subject, false, FakeLaunchEnv::new().with_which("gamemoderun", "/usr/bin/gamemoderun"));
-        assert_eq!(with.argv, vec!["/usr/bin/gamemoderun".to_string(), "wine".to_string()]);
+        let with = applied_with(
+            &subject,
+            false,
+            FakeLaunchEnv::new().with_which("gamemoderun", "/usr/bin/gamemoderun"),
+        );
+        assert_eq!(
+            with.argv,
+            vec!["/usr/bin/gamemoderun".to_string(), "wine".to_string()]
+        );
     }
 
     #[test]
@@ -1668,10 +1839,20 @@ A=\"quoted; with semicolon\"
         // did nothing.
         let mut subject = game("x");
         subject.gamescope = true;
-        let error = apply_launch_options(&subject, &["wine".to_string()], &BTreeMap::new(), false, &FakeLaunchEnv::new()).unwrap_err();
+        let error = apply_launch_options(
+            &subject,
+            &["wine".to_string()],
+            &BTreeMap::new(),
+            false,
+            &FakeLaunchEnv::new(),
+        )
+        .unwrap_err();
         assert!(matches!(error, RunnerError::GamescopeMissing));
         let message = error.to_string();
-        assert!(message.contains("org.freedesktop.Platform.VulkanLayer.gamescope//25.08"), "{message}");
+        assert!(
+            message.contains("org.freedesktop.Platform.VulkanLayer.gamescope//25.08"),
+            "{message}"
+        );
         assert!(message.contains("Flathub"), "{message}");
     }
 
@@ -1691,7 +1872,10 @@ A=\"quoted; with semicolon\"
         assert_eq!(command.env.get("DXVK_HDR").map(String::as_str), Some("0"));
         assert_eq!(command.env.get("EXTRA").map(String::as_str), Some("1"));
         // The variables the block does not mention are still the toggles'.
-        assert_eq!(command.env.get("PROTON_ENABLE_HDR").map(String::as_str), Some("1"));
+        assert_eq!(
+            command.env.get("PROTON_ENABLE_HDR").map(String::as_str),
+            Some("1")
+        );
     }
 
     #[test]
@@ -1720,11 +1904,20 @@ A=\"quoted; with semicolon\"
         )
         .unwrap();
 
-        assert_eq!(command.argv, vec!["/usr/bin/mangohud".to_string(), "/usr/bin/native".to_string()]);
+        assert_eq!(
+            command.argv,
+            vec![
+                "/usr/bin/mangohud".to_string(),
+                "/usr/bin/native".to_string()
+            ]
+        );
         // hdr is outside the `is_linux` block, so `DXVK_HDR` is still set — it
         // is harmless for a native title and Python sets it anyway.
         assert_eq!(command.env.get("DXVK_HDR").map(String::as_str), Some("1"));
-        assert_eq!(command.env.get("PROTON_ENABLE_HDR").map(String::as_str), Some("1"));
+        assert_eq!(
+            command.env.get("PROTON_ENABLE_HDR").map(String::as_str),
+            Some("1")
+        );
         for key in [
             "WINEESYNC",
             "WINEFSYNC",
@@ -1733,7 +1926,10 @@ A=\"quoted; with semicolon\"
             "PROTON_BATTLEYE_RUNTIME",
             "PROTON_EAC_RUNTIME",
         ] {
-            assert!(!command.env.contains_key(key), "{key} leaked onto a native title");
+            assert!(
+                !command.env.contains_key(key),
+                "{key} leaked onto a native title"
+            );
         }
     }
 
@@ -1753,7 +1949,14 @@ A=\"quoted; with semicolon\"
         let mut subject = game("x");
         subject.dxvk = false;
         subject.esync = false;
-        let _ = apply_launch_options(&subject, &["wine".to_string()], &original, false, &FakeLaunchEnv::new()).unwrap();
+        let _ = apply_launch_options(
+            &subject,
+            &["wine".to_string()],
+            &original,
+            false,
+            &FakeLaunchEnv::new(),
+        )
+        .unwrap();
 
         assert_eq!(original, before);
     }
@@ -1762,7 +1965,13 @@ A=\"quoted; with semicolon\"
     fn an_empty_environment_block_leaves_the_toggles_alone() {
         let mut subject = game("x");
         subject.esync = false;
-        assert_eq!(applied(&subject, false).env.get("WINEESYNC").map(String::as_str), Some("0"));
+        assert_eq!(
+            applied(&subject, false)
+                .env
+                .get("WINEESYNC")
+                .map(String::as_str),
+            Some("0")
+        );
     }
 
     // -- build_linux_command -------------------------------------------------
@@ -1774,7 +1983,8 @@ A=\"quoted; with semicolon\"
         subject.exe_path = "/usr/bin/native".to_string();
         subject.arguments = "--fullscreen 'two words'".to_string();
 
-        let host = FakeLaunchEnv::new().with_environ(&[("HOME", "/home/tester"), ("LANG", "C.UTF-8")]);
+        let host =
+            FakeLaunchEnv::new().with_environ(&[("HOME", "/home/tester"), ("LANG", "C.UTF-8")]);
         let command = build_linux_command(&subject, &host).unwrap();
 
         assert_eq!(
@@ -1854,8 +2064,9 @@ A=\"quoted; with semicolon\"
     fn a_whitespace_only_wineprefix_is_absent_too() {
         // `env.get("WINEPREFIX", "").strip()` — a prefix of spaces is not a
         // prefix, and treating it as one would create a directory named " ".
-        let mut env: BTreeMap<String, String> =
-            [("WINEPREFIX".to_string(), "   ".to_string())].into_iter().collect();
+        let mut env: BTreeMap<String, String> = [("WINEPREFIX".to_string(), "   ".to_string())]
+            .into_iter()
+            .collect();
         assert!(matches!(
             install_bundled_dxvk(&mut env, None, &FakeLaunchEnv::new()),
             Err(RunnerError::DxvkNeedsPrefix)
@@ -1869,7 +2080,8 @@ A=\"quoted; with semicolon\"
         std::fs::remove_file(source.join("x64").join("d3d11.dll")).unwrap();
 
         let mut env = prefix_env(&prefix, &[]);
-        let error = install_bundled_dxvk(&mut env, Some(&source), &FakeLaunchEnv::new()).unwrap_err();
+        let error =
+            install_bundled_dxvk(&mut env, Some(&source), &FakeLaunchEnv::new()).unwrap_err();
         assert!(matches!(error, RunnerError::DxvkUnavailable));
         assert_eq!(error.to_string(), "Bundled DXVK runtime is unavailable");
         // Nothing was written, not even the prefix directory.
@@ -1902,7 +2114,10 @@ A=\"quoted; with semicolon\"
         );
         // The overrides that make the DLLs take effect are the point of the
         // whole exercise.
-        assert_eq!(env.get("WINEDLLOVERRIDES").map(String::as_str), Some(DXVK_DLL_OVERRIDES));
+        assert_eq!(
+            env.get("WINEDLLOVERRIDES").map(String::as_str),
+            Some(DXVK_DLL_OVERRIDES)
+        );
         // `*.dll` is not `*.dll.txt`.
         assert!(!windows.join("system32/d3d11.dll.txt").exists());
         // And both DLLs, not just the one the check names.
@@ -1918,7 +2133,10 @@ A=\"quoted; with semicolon\"
         install_bundled_dxvk(&mut env, Some(&source), &FakeLaunchEnv::new()).unwrap();
 
         let windows = prefix.join("drive_c/windows");
-        assert_eq!(std::fs::read(windows.join("system32/d3d11.dll")).unwrap(), b"x32");
+        assert_eq!(
+            std::fs::read(windows.join("system32/d3d11.dll")).unwrap(),
+            b"x32"
+        );
         assert!(!windows.join("syswow64").exists());
     }
 
@@ -2005,7 +2223,11 @@ A=\"quoted; with semicolon\"
         // right version means the copy is skipped, so the damage survives. That
         // is the behaviour — the point is not to repair, it is not to copy on
         // every launch.
-        std::fs::write(prefix.join("drive_c/windows/system32/d3d11.dll"), b"tampered").unwrap();
+        std::fs::write(
+            prefix.join("drive_c/windows/system32/d3d11.dll"),
+            b"tampered",
+        )
+        .unwrap();
         let mut second = prefix_env(&prefix, &[]);
         install_bundled_dxvk(&mut second, Some(&source), &FakeLaunchEnv::new()).unwrap();
         assert_eq!(
@@ -2014,7 +2236,10 @@ A=\"quoted; with semicolon\"
         );
         // The overrides are still merged, which is the half that must not be
         // skipped.
-        assert_eq!(second.get("WINEDLLOVERRIDES").map(String::as_str), Some(DXVK_DLL_OVERRIDES));
+        assert_eq!(
+            second.get("WINEDLLOVERRIDES").map(String::as_str),
+            Some(DXVK_DLL_OVERRIDES)
+        );
     }
 
     #[test]
@@ -2043,8 +2268,16 @@ A=\"quoted; with semicolon\"
         let source = root.join("bundled");
         let mut env = prefix_env(&prefix, &[]);
         install_bundled_dxvk(&mut env, Some(&source), &FakeLaunchEnv::new()).unwrap();
-        std::fs::write(prefix.join(DXVK_MARKER_NAME), format!("  {DXVK_VERSION}  \n")).unwrap();
-        std::fs::write(prefix.join("drive_c/windows/system32/d3d11.dll"), b"tampered").unwrap();
+        std::fs::write(
+            prefix.join(DXVK_MARKER_NAME),
+            format!("  {DXVK_VERSION}  \n"),
+        )
+        .unwrap();
+        std::fs::write(
+            prefix.join("drive_c/windows/system32/d3d11.dll"),
+            b"tampered",
+        )
+        .unwrap();
 
         let mut second = prefix_env(&prefix, &[]);
         install_bundled_dxvk(&mut second, Some(&source), &FakeLaunchEnv::new()).unwrap();
@@ -2066,7 +2299,8 @@ A=\"quoted; with semicolon\"
         std::fs::write(prefix.join(DXVK_MARKER_NAME), b"\xff\xfe not utf8").unwrap();
 
         let mut env = prefix_env(&prefix, &[]);
-        let error = install_bundled_dxvk(&mut env, Some(&source), &FakeLaunchEnv::new()).unwrap_err();
+        let error =
+            install_bundled_dxvk(&mut env, Some(&source), &FakeLaunchEnv::new()).unwrap_err();
         assert!(matches!(error, RunnerError::Io(_)), "{error:?}");
         // And nothing was written, so a retry sees the same state.
         assert!(!prefix.join("drive_c/windows/system32/d3d11.dll").exists());
@@ -2142,7 +2376,8 @@ A=\"quoted; with semicolon\"
         }
 
         fn stuck(mut self, url: &str, message: &str) -> Self {
-            self.unreachable.insert(url.to_string(), message.to_string());
+            self.unreachable
+                .insert(url.to_string(), message.to_string());
             self
         }
     }
@@ -2185,9 +2420,18 @@ A=\"quoted; with semicolon\"
         subject.additional_app = "smb://host/share/tool.exe".to_string();
 
         let resolver = FakeResolver::new()
-            .mapping("smb://host/share/x.exe", "/run/user/1000/gvfs/smb-share:server=host,share=share/x.exe")
-            .mapping("smb://host/share", "/run/user/1000/gvfs/smb-share:server=host,share=share")
-            .mapping("smb://host/share/tool.exe", "/run/user/1000/gvfs/smb-share:server=host,share=share/tool.exe");
+            .mapping(
+                "smb://host/share/x.exe",
+                "/run/user/1000/gvfs/smb-share:server=host,share=share/x.exe",
+            )
+            .mapping(
+                "smb://host/share",
+                "/run/user/1000/gvfs/smb-share:server=host,share=share",
+            )
+            .mapping(
+                "smb://host/share/tool.exe",
+                "/run/user/1000/gvfs/smb-share:server=host,share=share/tool.exe",
+            );
 
         let resolved = resolve_game_paths(&subject, &resolver).unwrap();
         assert_eq!(
@@ -2252,7 +2496,8 @@ A=\"quoted; with semicolon\"
         // not raise — the order is the reason a mounted share works at all.
         let mut subject = game("x");
         subject.exe_path = "smb://host/share/x.exe".to_string();
-        let resolver = FakeResolver::new().mapping("smb://host/share/x.exe", "/run/user/1000/gvfs/x.exe");
+        let resolver =
+            FakeResolver::new().mapping("smb://host/share/x.exe", "/run/user/1000/gvfs/x.exe");
         let resolved = resolve_game_paths(&subject, &resolver).unwrap();
         assert_eq!(resolved.exe_path, "/run/user/1000/gvfs/x.exe");
     }
@@ -2298,8 +2543,8 @@ A=\"quoted; with semicolon\"
     /// shows up as a failure instead of as nothing at all.
     #[test]
     fn the_dll_override_literals_are_the_reference_s_and_not_a_copy_of_ourselves() {
-        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../gamehandler/runners.py");
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../gamehandler/runners.py");
         let text = std::fs::read_to_string(&source).unwrap_or_else(|err| {
             panic!(
                 "{} should be readable: {err}\n\

@@ -80,17 +80,17 @@
 //! and `busy` is *either* long job, so a runner download disables this page's
 //! buttons too. That coupling is preserved: see [`installing`].
 
-use cosmic::app::Task;
-use cosmic::widget::{Column, Row, Space, button, container, progress_bar, text};
-use cosmic::iced::{Alignment, Background, Border, Length};
 use cosmic::Element;
-use gamehandler_core::installers::{Installer, INSTALLER_CATEGORIES, search_installers};
+use cosmic::app::Task;
+use cosmic::iced::{Alignment, Background, Border, Length};
+use cosmic::widget::{Column, Row, Space, button, container, progress_bar, text};
+use gamehandler_core::installers::{INSTALLER_CATEGORIES, Installer, search_installers};
 use gamehandler_core::runners::RunnerManager;
 
 use gamehandler_core::models::UNCATEGORIZED;
 
-use crate::state::State;
 use crate::Message;
+use crate::state::State;
 
 use super::badge::badge;
 
@@ -501,7 +501,11 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
 
     // ---- The runner a new install will use ---------------------------------
     body = body.push(text::body("Runner for new installs:"));
-    let labels: Vec<String> = page.runners.iter().map(|(_, label)| label.clone()).collect();
+    let labels: Vec<String> = page
+        .runners
+        .iter()
+        .map(|(_, label)| label.clone())
+        .collect();
     let runner_choices = page.runners.to_vec();
     body = body.push(cosmic::widget::dropdown(
         labels,
@@ -535,7 +539,8 @@ fn installer_card<'a>(row: &'a InstallerRow, busy: bool, runner_id: &str) -> Ele
         .align_y(Alignment::Center);
 
     let install = {
-        let button = button::standard("Install").leading_icon(crate::icons::handle(crate::icons::Icon::Install));
+        let button = button::standard("Install")
+            .leading_icon(crate::icons::handle(crate::icons::Icon::Install));
         // `enabled: !backend.busy` — a disabled button rather than a refused
         // press, which is what P-59's "second refused" looks like in the
         // reference. `on_press_maybe(None)` is how libcosmic spells it, and
@@ -823,7 +828,10 @@ mod tests {
     fn the_selected_runner_is_looked_up_by_id_and_an_unknown_one_is_no_selection() {
         let choices = vec![
             ("system".to_string(), "System Wine".to_string()),
-            ("GE-Proton9-5".to_string(), "GE-Proton9-5 (Proton-GE)".to_string()),
+            (
+                "GE-Proton9-5".to_string(),
+                "GE-Proton9-5 (Proton-GE)".to_string(),
+            ),
         ];
         assert_eq!(runner_index(&choices, "system"), Some(0));
         assert_eq!(runner_index(&choices, "GE-Proton9-5"), Some(1));
@@ -857,7 +865,10 @@ mod tests {
                 gamehandler_core::models::SYSTEM_WINE.to_string(),
                 "System Wine".to_string(),
             ),
-            ("GE-Proton9-5".to_string(), "GE-Proton9-5 (Proton-GE)".to_string()),
+            (
+                "GE-Proton9-5".to_string(),
+                "GE-Proton9-5 (Proton-GE)".to_string(),
+            ),
         ];
         let mut halves: Vec<&String> = choices.iter().flat_map(|(id, label)| [id, label]).collect();
         halves.sort();
@@ -1013,7 +1024,13 @@ mod tests {
     #[test]
     fn the_search_box_is_stored_as_typed() {
         let mut state = state();
-        assert!(update(&mut state, &Message::SetInstallerSearch("steam".to_string())).is_some());
+        assert!(
+            update(
+                &mut state,
+                &Message::SetInstallerSearch("steam".to_string())
+            )
+            .is_some()
+        );
         assert_eq!(state.installer_search, "steam");
     }
 
@@ -1029,7 +1046,10 @@ mod tests {
         assert_eq!(state.installer_category, ALL_CATEGORIES);
         assert_ne!(state.installer_category, "");
 
-        update(&mut state, &Message::SetInstallerCategory("Launchers".to_string()));
+        update(
+            &mut state,
+            &Message::SetInstallerCategory("Launchers".to_string()),
+        );
         assert_eq!(state.installer_category, "Launchers");
     }
 
@@ -1053,11 +1073,13 @@ mod tests {
         state.settings.default_runner = "system".to_string();
         state.installer_runner = "system".to_string();
 
-        assert!(update(
-            &mut state,
-            &Message::SetInstallRunner("GE-Proton9-5".to_string())
-        )
-        .is_some());
+        assert!(
+            update(
+                &mut state,
+                &Message::SetInstallRunner("GE-Proton9-5".to_string())
+            )
+            .is_some()
+        );
         assert_eq!(state.installer_runner, "GE-Proton9-5");
         assert_eq!(
             state.settings.default_runner, "system",
@@ -1176,7 +1198,10 @@ mod tests {
         assert!(RUNNER_NOTE.contains("no game or launcher files are redistributed"));
 
         assert_eq!(EMPTY_TEXT, "No matching installers");
-        assert_eq!(EMPTY_EXPLANATION, "Try a different search, or switch the filter back to All.");
+        assert_eq!(
+            EMPTY_EXPLANATION,
+            "Try a different search, or switch the filter back to All."
+        );
     }
 
     /// The categories list is the reference's `["All", *INSTALLER_CATEGORIES]`
@@ -1197,7 +1222,11 @@ mod tests {
         assert_eq!(categories, expected);
         assert_eq!(categories[0], ALL_CATEGORIES, "the sentinel is first");
         assert_eq!(categories.len(), 1 + INSTALLER_CATEGORIES.len());
-        assert_ne!(categories.len(), 1, "the list is not the sentinel alone (#74)");
+        assert_ne!(
+            categories.len(),
+            1,
+            "the list is not the sentinel alone (#74)"
+        );
     }
 
     /// Every category the catalog can put on a card is one the filter can
@@ -1272,7 +1301,11 @@ mod tests {
     fn the_catalog_is_the_core_catalogs_recipes_in_its_order() {
         let rows = installer_rows("", ALL_CATEGORIES);
         let catalog = gamehandler_core::installers::installers();
-        assert_eq!(rows.len(), catalog.len(), "no recipe is dropped or invented");
+        assert_eq!(
+            rows.len(),
+            catalog.len(),
+            "no recipe is dropped or invented"
+        );
 
         for (row, installer) in rows.iter().zip(catalog) {
             assert_eq!(row.installer_id, installer.id);
@@ -1332,7 +1365,10 @@ mod tests {
             }
         }
 
-        assert!(with_notes > 0, "no recipe has notes, so the branch is untested");
+        assert!(
+            with_notes > 0,
+            "no recipe has notes, so the branch is untested"
+        );
         assert!(
             without_notes > 0,
             "every recipe has notes, so the other branch is untested"
@@ -1375,7 +1411,11 @@ mod tests {
 
         let apps = installer_rows("", APPS);
         assert!(apps.iter().all(|row| row.category == APPS));
-        assert_eq!(apps.len() + launchers.len(), all.len(), "the filter partitions");
+        assert_eq!(
+            apps.len() + launchers.len(),
+            all.len(),
+            "the filter partitions"
+        );
 
         // The category is compared **exactly**, with no case folding
         // (`installers.py:245`): a lowercased value is neither the sentinel nor

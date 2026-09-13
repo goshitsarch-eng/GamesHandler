@@ -637,7 +637,11 @@ mod tests {
         assert_eq!(ids.len(), total, "two sections share an id");
         for section in CREDIT_SECTIONS {
             assert!(!section.entries.is_empty(), "{} has no entries", section.id);
-            assert!(!section.title.trim().is_empty(), "{} has no title", section.id);
+            assert!(
+                !section.title.trim().is_empty(),
+                "{} has no title",
+                section.id
+            );
             assert!(
                 !section.summary.trim().is_empty(),
                 "{} has no summary",
@@ -648,7 +652,10 @@ mod tests {
 
     #[test]
     fn the_lookup_helpers_answer_and_refuse() {
-        assert_eq!(section_by_id("layers").unwrap().title, "Compatibility layers");
+        assert_eq!(
+            section_by_id("layers").unwrap().title,
+            "Compatibility layers"
+        );
         assert_eq!(credit_by_name("wine").unwrap().name, "Wine");
         // `KeyError` in Python; `None` here. The reference test is
         // `assertRaises(KeyError)` for both.

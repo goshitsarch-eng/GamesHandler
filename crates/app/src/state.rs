@@ -31,8 +31,8 @@ use cosmic::widget::toaster::Toasts;
 use gamehandler_core::models::{Game, Library, SYSTEM_WINE, UNCATEGORIZED};
 use gamehandler_core::netpaths::as_local_path;
 use gamehandler_core::plugins::{self, PluginEnv, PluginRow};
-use gamehandler_core::runners::families::ReleaseInfo;
 use gamehandler_core::runners::RunnerManager;
+use gamehandler_core::runners::families::ReleaseInfo;
 use gamehandler_core::settings::Settings;
 
 use crate::Message;
@@ -868,11 +868,7 @@ impl State {
     /// The two loads are the only filesystem work done here, and neither is
     /// fallible — `Settings.load` and `Library.load` both degrade to defaults
     /// rather than raising, which is what D-20 and `models.py` require.
-    pub fn new(
-        library: Library,
-        settings: Settings,
-        runners: RunnerManager,
-    ) -> Self {
+    pub fn new(library: Library, settings: Settings, runners: RunnerManager) -> Self {
         Self {
             library,
             settings,
@@ -1012,7 +1008,10 @@ mod tests {
     fn apply_unwraps_a_file_url_on_the_way_in() {
         let mut form = GameForm::new_template(&Settings::default(), "u6-save".to_string());
         form.set_field(FormField::Name, "Saved".to_string());
-        form.set_field(FormField::ExePath, "file:///tmp/My%20Game/setup.exe".to_string());
+        form.set_field(
+            FormField::ExePath,
+            "file:///tmp/My%20Game/setup.exe".to_string(),
+        );
         form.set_field(FormField::WorkingDirectory, "/tmp/plain".to_string());
 
         let game = form.apply(None).expect("a named form applies");
@@ -1181,7 +1180,11 @@ mod tests {
             .iter()
             .map(|field| field.form_key().to_string())
             .collect();
-        assert_eq!(ours.len(), 12, "a field is listed twice in `FormField::ALL`");
+        assert_eq!(
+            ours.len(),
+            12,
+            "a field is listed twice in `FormField::ALL`"
+        );
         ours.push("gameId".to_string());
         ours.push("isLinux".to_string());
         ours.sort();
@@ -1449,10 +1452,7 @@ mod tests {
         // (`bridge.py:429-432`), so spaces in it survive to the model and the
         // file it names does not exist.
         form.set_field(FormField::CoverPath, " /tmp/a.png ".to_string());
-        assert_eq!(
-            form.apply(None).expect("named").cover_path,
-            " /tmp/a.png "
-        );
+        assert_eq!(form.apply(None).expect("named").cover_path, " /tmp/a.png ");
     }
 
     /// An appid that is not a number is zero, not a refusal.
@@ -1475,7 +1475,9 @@ mod tests {
     fn the_form_supplies_the_id_and_an_edit_keeps_the_rest() {
         let original = Game::new_named("Doom");
         let form = GameForm::from_game(&original);
-        let saved = form.apply(Some(&original)).expect("the name is carried over");
+        let saved = form
+            .apply(Some(&original))
+            .expect("the name is carried over");
         assert_eq!(saved.id, original.id, "an edit cannot rename the identity");
         assert_eq!(saved.added, original.added, "nor restamp it");
         assert_eq!(saved, original, "and nothing else moved either");

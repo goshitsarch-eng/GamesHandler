@@ -60,9 +60,9 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use crate::installers::{url_parts, UrlParts};
+use crate::installers::{UrlParts, url_parts};
 use crate::paths::Env;
-use crate::runners::launch_opts::{python_trim, ShareResolver};
+use crate::runners::launch_opts::{ShareResolver, python_trim};
 
 /// Schemes GVFS exposes through its FUSE daemon (`netpaths.py:28`).
 ///
@@ -114,7 +114,11 @@ pub fn as_local_path_in(value: &str, env: &dyn Env) -> String {
     // report instead of a silent "no game here".
     if parts.scheme == "file" {
         let decoded = unquote(&parts.path);
-        return if decoded.is_empty() { raw.to_string() } else { decoded };
+        return if decoded.is_empty() {
+            raw.to_string()
+        } else {
+            decoded
+        };
     }
 
     if REMOTE_SCHEMES.contains(&parts.scheme.as_str()) && !parts.netloc.is_empty() {
@@ -208,10 +212,7 @@ pub fn gvfs_root_in(env: &dyn Env) -> Option<PathBuf> {
     if let Some(runtime) = env.var("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
         return Some(Path::new(&runtime).join("gvfs"));
     }
-    Some(PathBuf::from(format!(
-        "/run/user/{}/gvfs",
-        real_uid()?
-    )))
+    Some(PathBuf::from(format!("/run/user/{}/gvfs", real_uid()?)))
 }
 
 /// `os.getuid()` — the **real** uid, read from `/proc/self/status`.
@@ -704,15 +705,15 @@ mod tests {
 
         // Without it, the runtime dir with `gvfs` appended.
         let env = FakeEnv::new(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
-        assert_eq!(gvfs_root_in(&env), Some(PathBuf::from("/run/user/1000/gvfs")));
+        assert_eq!(
+            gvfs_root_in(&env),
+            Some(PathBuf::from("/run/user/1000/gvfs"))
+        );
 
         // **An empty value is falsy to Python**, so each of these falls
         // through rather than becoming a relative path. This is the pair that
         // makes `if override:` mean "non-empty" instead of "present".
-        let env = FakeEnv::new(&[
-            ("GAMEHANDLER_GVFS_ROOT", ""),
-            ("XDG_RUNTIME_DIR", ""),
-        ]);
+        let env = FakeEnv::new(&[("GAMEHANDLER_GVFS_ROOT", ""), ("XDG_RUNTIME_DIR", "")]);
         let root = gvfs_root_in(&env).expect("/proc is readable on this host");
         if let Some(uid) = real_uid() {
             assert_eq!(root, PathBuf::from(format!("/run/user/{uid}/gvfs")));
@@ -877,15 +878,24 @@ mod tests {
         }
         // The directory that would match if the scheme were remote.
         mount(&root, "smb-share:server=server,share=share", "x.exe");
-        assert_eq!(as_local_path_in("http://server/share/x.exe", &env), "http://server/share/x.exe");
+        assert_eq!(
+            as_local_path_in("http://server/share/x.exe", &env),
+            "http://server/share/x.exe"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn a_file_url_is_unwrapped_and_percent_decoded() {
         let (env, root) = gvfs("netpaths-file");
-        assert_eq!(as_local_path_in("file:///home/user/My%20Game/x.exe", &env), "/home/user/My Game/x.exe");
-        assert_eq!(as_local_path_in("file:///home/user/x.exe", &env), "/home/user/x.exe");
+        assert_eq!(
+            as_local_path_in("file:///home/user/My%20Game/x.exe", &env),
+            "/home/user/My Game/x.exe"
+        );
+        assert_eq!(
+            as_local_path_in("file:///home/user/x.exe", &env),
+            "/home/user/x.exe"
+        );
         // `unquote(path) or raw` — a `file://` URL with no path at all keeps the
         // raw value rather than resolving to the empty string. Empty would be
         // indistinguishable from "no game was ever set".
@@ -899,11 +909,7 @@ mod tests {
         let (env, root) = gvfs("netpaths-mounted");
         // `smb://server/Share/dir/game.exe` -> the mount directory named for
         // the server *and* the share, with the path after the share appended.
-        let expected = mount(
-            &root,
-            "smb-share:server=server,share=Share",
-            "dir/game.exe",
-        );
+        let expected = mount(&root, "smb-share:server=server,share=Share", "dir/game.exe");
         assert_eq!(
             as_local_path_in("smb://server/Share/dir/game.exe", &env),
             expected.to_string_lossy()
@@ -1102,7 +1108,10 @@ mod tests {
             message.starts_with("  smb://server/Share/game.exe is a network location"),
             "{message:?}"
         );
-        assert!(message.contains("Open server in your file manager"), "{message:?}");
+        assert!(
+            message.contains("Open server in your file manager"),
+            "{message:?}"
+        );
 
         // **The rows that actually separate the two.** Here the whitespace is
         // *inside the netloc*, at the end of the value, so it lands in the

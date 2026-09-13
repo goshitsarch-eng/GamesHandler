@@ -591,7 +591,11 @@ impl Library {
     /// duplicated id while taking the *last* value, which is what the
     /// `duplicate_ids` fixture pins.
     fn upsert(&mut self, game: Game) {
-        match self.games.iter_mut().find(|existing| existing.id == game.id) {
+        match self
+            .games
+            .iter_mut()
+            .find(|existing| existing.id == game.id)
+        {
             Some(slot) => *slot = game,
             None => self.games.push(game),
         }
@@ -761,7 +765,10 @@ mod tests {
         let id = new_id();
         assert_eq!(id.len(), 32);
         assert_eq!(&id[12..13], "4", "version nibble");
-        assert!(matches!(&id[16..17], "8" | "9" | "a" | "b"), "variant nibble");
+        assert!(
+            matches!(&id[16..17], "8" | "9" | "a" | "b"),
+            "variant nibble"
+        );
         assert_ne!(new_id(), id, "ids must not repeat");
     }
 
@@ -960,7 +967,10 @@ mod tests {
         );
         assert_eq!(padded.display_category(), "roguelike");
 
-        let empty = Game::from_dict_at(&object(json!({"name": "Empty", "category": ""})), FROZEN_NOW);
+        let empty = Game::from_dict_at(
+            &object(json!({"name": "Empty", "category": ""})),
+            FROZEN_NOW,
+        );
         assert_eq!(empty.display_category(), UNCATEGORIZED);
     }
 
@@ -1073,7 +1083,13 @@ mod tests {
             .map(|game| game.name.as_str())
             .collect();
         assert_eq!(added_order, ["Second", "Middle"]);
-        assert_eq!(library.get("tttttttttttttttttttttttttttttttt").unwrap().name, "Second");
+        assert_eq!(
+            library
+                .get("tttttttttttttttttttttttttttttttt")
+                .unwrap()
+                .name,
+            "Second"
+        );
     }
 
     #[test]

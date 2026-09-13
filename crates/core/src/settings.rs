@@ -211,7 +211,7 @@ impl Settings {
 
 /// Same preferences, same value — wherever each was loaded from.
 ///
- /// A manual impl rather than a derive, because the derive would compare
+/// A manual impl rather than a derive, because the derive would compare
 /// [`Settings::path`] and two values holding the same preferences from
 /// different files would be unequal. The store is not the value (compare
 /// [`Library`](crate::models::Library), which excludes its path from identity
@@ -431,11 +431,11 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
 
         let cases: [(&str, &str); 5] = [
-            ("missing", ""),                // never written
-            ("empty", ""),                  // zero bytes
-            ("malformed", "{not json"),     // unparseable
-            ("trailing", "{}\ngarbage"),    // extra data
-            ("notdict", "[1,2,3]"),         // parses, wrong shape
+            ("missing", ""),             // never written
+            ("empty", ""),               // zero bytes
+            ("malformed", "{not json"),  // unparseable
+            ("trailing", "{}\ngarbage"), // extra data
+            ("notdict", "[1,2,3]"),      // parses, wrong shape
         ];
         for (label, source) in cases {
             let path = directory.join(format!("{label}.json"));
@@ -484,7 +484,8 @@ mod tests {
             ),
         ];
 
-        let directory = std::env::temp_dir().join(format!("gh-settings-utf8-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("gh-settings-utf8-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).unwrap();
 
@@ -526,7 +527,8 @@ mod tests {
         // that forgets itself. This is a deliberate divergence; the oracle's
         // `encoding_and_shape.bom` case records Python's outcome, and
         // `oracle_tests.rs` asserts the port's.
-        let directory = std::env::temp_dir().join(format!("gh-settings-bom-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("gh-settings-bom-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("settings.json");
@@ -559,7 +561,8 @@ mod tests {
 
     #[test]
     fn save_round_trips_and_stays_atomic() {
-        let directory = std::env::temp_dir().join(format!("gh-settings-save-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("gh-settings-save-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         let path = directory.join("settings.json");
 
@@ -674,7 +677,10 @@ mod tests {
 
         // And the wire format carries no trace of it.
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(!text.contains("path"), "the store is not on the wire: {text}");
+        assert!(
+            !text.contains("path"),
+            "the store is not on the wire: {text}"
+        );
 
         assert_eq!(
             Settings::default().path(),

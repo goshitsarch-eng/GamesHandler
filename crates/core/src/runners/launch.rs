@@ -23,12 +23,12 @@ use rustix::io::Errno;
 
 use super::env::LaunchEnv;
 use super::launch_opts::{
-    apply_launch_options, build_linux_command, install_bundled_dxvk, parse_env_block,
-    resolve_game_paths, ShareResolver,
+    ShareResolver, apply_launch_options, build_linux_command, install_bundled_dxvk,
+    parse_env_block, resolve_game_paths,
 };
 use super::{
-    failure_message, readable_error, uses_proton_runtime, Command, RunnerError, RunnerManager,
-    DXVK_ROOT, DXVK_ROOT_ENV,
+    Command, DXVK_ROOT, DXVK_ROOT_ENV, RunnerError, RunnerManager, failure_message, readable_error,
+    uses_proton_runtime,
 };
 use crate::models::Game;
 use crate::paths;
@@ -118,7 +118,11 @@ impl ErrorTail {
     /// Wine's output is not reliably UTF-8 and a decode failure here would
     /// discard the very message this exists to carry.
     pub fn text(&self) -> String {
-        let chunks = self.shared.chunks.lock().unwrap_or_else(|error| error.into_inner());
+        let chunks = self
+            .shared
+            .chunks
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         String::from_utf8_lossy(&chunks).into_owned()
     }
 
@@ -155,7 +159,10 @@ fn drain(mut stream: ChildStderr, state: Arc<TailState>, limit: usize, nonblocki
     let stop_requested = || state.stop.load(Ordering::SeqCst);
 
     let append = |bytes: &[u8]| {
-        let mut chunks = state.chunks.lock().unwrap_or_else(|error| error.into_inner());
+        let mut chunks = state
+            .chunks
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         chunks.extend_from_slice(bytes);
         // Trim from the front, keeping at least one chunk so a single write
         // larger than the limit is not discarded entirely. Python's loop has
@@ -252,10 +259,13 @@ impl LaunchedGame {
         if status == 0 {
             return None;
         }
-        let captured = self.errors.take().map(ErrorTail::finish).unwrap_or_default();
+        let captured = self
+            .errors
+            .take()
+            .map(ErrorTail::finish)
+            .unwrap_or_default();
         failure_message(status, &readable_error(&captured))
     }
-
 }
 
 /// Wait up to `timeout` for `child`, returning its exit code or `None`.
@@ -324,7 +334,10 @@ pub fn launch(
     } else {
         let runner = manager.get(&game.runner, env);
         let command = runner.build_command(&game, env)?;
-        let Command { argv, env: mut environment } = command;
+        let Command {
+            argv,
+            env: mut environment,
+        } = command;
 
         // Applied early *and* last — see this function's note.
         environment.extend(parse_env_block(&game.environment));
@@ -359,7 +372,10 @@ pub fn launch(
     };
 
     let command = apply_launch_options(&game, &argv, &environment, uses_proton, env)?;
-    let Command { argv, env: environment } = command;
+    let Command {
+        argv,
+        env: environment,
+    } = command;
 
     let extra = game.additional_app.trim();
     if !extra.is_empty() {
@@ -504,7 +520,7 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runners::env::tests::{scratch, FakeLaunchEnv};
+    use crate::runners::env::tests::{FakeLaunchEnv, scratch};
     use std::io::Write as _;
 
     /// A `Game` that launches `/bin/sh -c <script>` as a native Linux title.
@@ -868,9 +884,7 @@ mod tests {
     /// blocking join cannot pass it even by luck.
     #[test]
     fn a_descendant_holding_stderr_neither_deadlocks_the_drain_nor_loses_the_text() {
-        let game = scripted(
-            "echo 'err: could not find the executable' >&2; (sleep 30) & exit 7",
-        );
+        let game = scripted("echo 'err: could not find the executable' >&2; (sleep 30) & exit 7");
         let mut running = launched(&game);
 
         let started = Instant::now();
@@ -957,7 +971,10 @@ mod tests {
             !message.contains("fixme:"),
             "noise prefixes are dropped: {message:?}"
         );
-        assert!(!message.contains("warn:"), "noise prefixes are dropped: {message:?}");
+        assert!(
+            !message.contains("warn:"),
+            "noise prefixes are dropped: {message:?}"
+        );
     }
 
     // -----------------------------------------------------------------
@@ -1238,8 +1255,7 @@ mod tests {
         // `FakeLaunchEnv` exists to prevent.
         let home = root.join("home");
         std::fs::create_dir_all(&home).unwrap();
-        let host = FakeLaunchEnv::new()
-            .with_vars(&[("XDG_DATA_HOME", home.to_str().unwrap())]);
+        let host = FakeLaunchEnv::new().with_vars(&[("XDG_DATA_HOME", home.to_str().unwrap())]);
         let command = tool_command(&game, &manager, "winecfg", &host).unwrap();
         let prefix = command.env.get("WINEPREFIX").expect("WINEPREFIX is set");
         assert!(
@@ -1365,7 +1381,10 @@ mod tests {
         )
         .err()
         .expect("an unreachable share must be refused");
-        assert_eq!(error.to_string(), "Mount the share for smb://host/share/x.exe");
+        assert_eq!(
+            error.to_string(),
+            "Mount the share for smb://host/share/x.exe"
+        );
     }
 
     /// A game with no executable configured is `No executable is configured`,

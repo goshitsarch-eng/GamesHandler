@@ -352,7 +352,10 @@ mod tests {
         assert_eq!(shade(0), COVER_GRADIENTS[0]);
         assert_eq!(shade(COVER_ACCENTS - 1), COVER_GRADIENTS[COVER_ACCENTS - 1]);
         assert_eq!(shade(COVER_ACCENTS), COVER_GRADIENTS[0]);
-        assert_eq!(shade(usize::MAX), COVER_GRADIENTS[usize::MAX % COVER_ACCENTS]);
+        assert_eq!(
+            shade(usize::MAX),
+            COVER_GRADIENTS[usize::MAX % COVER_ACCENTS]
+        );
     }
 
     /// Every entry must be a real two-stop gradient. A zero-filled row would

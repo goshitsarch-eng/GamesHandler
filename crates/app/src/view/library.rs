@@ -42,9 +42,11 @@
 //! own argument, and the tests drive all three cases, including a **non-empty**
 //! library whose filter matches nothing.
 
-use cosmic::iced::Length;
-use cosmic::widget::{Column, Row, button, container, context_menu, menu, scrollable, text, text_input};
 use cosmic::Element;
+use cosmic::iced::Length;
+use cosmic::widget::{
+    Column, Row, button, container, context_menu, menu, scrollable, text, text_input,
+};
 use gamehandler_core::models::{Game, Library, format_last_played};
 use gamehandler_core::runners::RunnerManager;
 
@@ -155,7 +157,10 @@ pub fn category_options(categories: &[String]) -> Vec<String> {
 
 /// The labels the sort selector shows, in [`SORT_OPTIONS`] order.
 pub fn sort_labels() -> Vec<String> {
-    SORT_OPTIONS.iter().map(|(_, label)| label.to_string()).collect()
+    SORT_OPTIONS
+        .iter()
+        .map(|(_, label)| label.to_string())
+        .collect()
 }
 
 /// Which sort entry the selector shows.
@@ -218,11 +223,7 @@ pub fn clear_filters() -> Message {
 /// one", so the message names the destination and this function is where that
 /// is decided — rather than in the button, where it would be untestable.
 pub fn toggled_mode(view_mode: &str) -> &'static str {
-    if view_mode == LIST {
-        GRID
-    } else {
-        LIST
-    }
+    if view_mode == LIST { GRID } else { LIST }
 }
 
 // ---------------------------------------------------------------------------
@@ -373,11 +374,7 @@ pub fn view<'a>(page: LibraryPage<'a>) -> Element<'a, Message> {
 /// [`grid_body`]'s twin: `LibraryPage.qml` draws the two delegates with
 /// different text, and only the row carries the timestamp (`:269` against the
 /// card's `:192`).
-fn list_body<'a>(
-    games: &[&'a Game],
-    runners: &'a RunnerManager,
-    now: f64,
-) -> Element<'a, Message> {
+fn list_body<'a>(games: &[&'a Game], runners: &'a RunnerManager, now: f64) -> Element<'a, Message> {
     let mut body = Column::new().spacing(6).width(Length::Fill);
     for game in games {
         // Both strings are resolved here, where the row data is assembled, and
@@ -394,11 +391,7 @@ fn list_body<'a>(
         // inside the builder would also move the emission off this page, where
         // `tests/dispatch_coverage.rs` can see it.
         body = body.push(context_menu(
-            widgets::row(
-                game,
-                &labels,
-                Message::LaunchGame(game.id.clone()),
-            ),
+            widgets::row(game, &labels, Message::LaunchGame(game.id.clone())),
             Some(game_menu_trees(game)),
         ));
     }
@@ -448,11 +441,7 @@ fn grid_body<'a>(games: &[&'a Game], runners: &'a RunnerManager) -> Element<'a, 
         let label = widgets::resolved_runner_label(runners, game);
         // Built here rather than in the builder; see `list_body`.
         row = row.push(context_menu(
-            widgets::card(
-                game,
-                &label,
-                Message::LaunchGame(game.id.clone()),
-            ),
+            widgets::card(game, &label, Message::LaunchGame(game.id.clone())),
             Some(game_menu_trees(game)),
         ));
     }
@@ -553,8 +542,18 @@ pub fn game_menu_spec(game: &Game) -> Vec<MenuEntry> {
         }
     };
     vec![
-        item("Play", Some(crate::icons::Icon::Play), true, GameMenuKind::Play),
-        item("Edit", Some(crate::icons::Icon::Edit), true, GameMenuKind::Edit),
+        item(
+            "Play",
+            Some(crate::icons::Icon::Play),
+            true,
+            GameMenuKind::Play,
+        ),
+        item(
+            "Edit",
+            Some(crate::icons::Icon::Edit),
+            true,
+            GameMenuKind::Edit,
+        ),
         item(
             "Find cover art",
             Some(crate::icons::Icon::Image),
@@ -712,9 +711,7 @@ mod tests {
             .iter()
             .filter_map(|entry| match entry {
                 MenuEntry::Divider => None,
-                MenuEntry::Item {
-                    label, enabled, ..
-                } => Some((*label, *enabled)),
+                MenuEntry::Item { label, enabled, .. } => Some((*label, *enabled)),
             })
             .collect();
         assert_eq!(
@@ -774,9 +771,7 @@ mod tests {
                 if game_id == "had-es" && matches!(tool, PrefixTool::Winetricks))
         );
         assert!(matches!(message(OpenPrefix), Message::OpenPrefixFolder(id) if id == "had-es"));
-        assert!(
-            matches!(message(Shortcut), Message::CreateDesktopShortcut(id) if id == "had-es")
-        );
+        assert!(matches!(message(Shortcut), Message::CreateDesktopShortcut(id) if id == "had-es"));
         assert!(matches!(message(Remove), Message::ConfirmDeleteGame(id) if id == "had-es"));
     }
 
@@ -1017,5 +1012,4 @@ mod tests {
     fn clearing_the_filters_is_a_single_message() {
         assert!(matches!(clear_filters(), Message::ClearFilters));
     }
-
 }

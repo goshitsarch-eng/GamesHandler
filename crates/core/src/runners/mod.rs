@@ -46,10 +46,8 @@ use crate::paths;
 pub use archive::METADATA_NAME;
 pub use archive::{ArchiveError, Limits};
 pub use env::{LaunchEnv, SystemLaunchEnv};
-pub use launch_opts::{
-    DXVK_DLL_OVERRIDES, VKD3D_DLL_OVERRIDES, WINED3D_DLL_OVERRIDES,
-};
-pub use shell::{split_posix, ShellError};
+pub use launch_opts::{DXVK_DLL_OVERRIDES, VKD3D_DLL_OVERRIDES, WINED3D_DLL_OVERRIDES};
+pub use shell::{ShellError, split_posix};
 
 /// The built-in Wine runner's id.
 ///
@@ -246,12 +244,8 @@ impl fmt::Display for RunnerError {
                 f.write_str("Wayland mode requires a Proton runner through UMU")
             }
             RunnerError::NoExecutable => f.write_str("No executable is configured"),
-            RunnerError::DxvkNeedsPrefix => {
-                f.write_str("DXVK requires a configured Wine prefix")
-            }
-            RunnerError::DxvkUnavailable => {
-                f.write_str("Bundled DXVK runtime is unavailable")
-            }
+            RunnerError::DxvkNeedsPrefix => f.write_str("DXVK requires a configured Wine prefix"),
+            RunnerError::DxvkUnavailable => f.write_str("Bundled DXVK runtime is unavailable"),
             RunnerError::WinetricksMissing => f.write_str("winetricks is not installed"),
             RunnerError::UnknownTool { tool } => write!(f, "Unknown tool: {tool}"),
             RunnerError::AlreadyInstalled { id } => {
@@ -718,7 +712,10 @@ impl Runner for ProtonRunner {
         let mut command_env = env.environ();
         // Unlike raw Wine, this is the *parent* — Proton appends `pfx` itself
         // when it is reached through umu.
-        command_env.insert("WINEPREFIX".to_string(), prefix.to_string_lossy().into_owned());
+        command_env.insert(
+            "WINEPREFIX".to_string(),
+            prefix.to_string_lossy().into_owned(),
+        );
         command_env
             .entry("WINEDLLOVERRIDES".to_string())
             .or_insert_with(|| DEFAULT_DLL_OVERRIDES.to_string());
@@ -806,14 +803,7 @@ const NOISE_PREFIXES: [&str; 4] = ["fixme:", "warn:", "trace:", "info:"];
 /// form feed between two errors — Wine's own output does contain `\x0c` — would
 /// otherwise be read as one long line instead of two.
 const PYTHON_LINE_BREAKS: [char; 8] = [
-    '\u{0b}',
-    '\u{0c}',
-    '\u{1c}',
-    '\u{1d}',
-    '\u{1e}',
-    '\u{85}',
-    '\u{2028}',
-    '\u{2029}',
+    '\u{0b}', '\u{0c}', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}', '\u{2029}',
 ];
 
 /// Python's `str.splitlines()`, including the breaks Rust does not treat as
@@ -884,7 +874,11 @@ pub fn readable_error(text: &str) -> String {
     // reusing `lines`: Python's `or` picks the non-noise list only when it is
     // non-empty, and the alternative is the empty-stripped list.
     let tail: Vec<&str> = if useful.is_empty() {
-        lines.iter().copied().filter(|line| !line.is_empty()).collect()
+        lines
+            .iter()
+            .copied()
+            .filter(|line| !line.is_empty())
+            .collect()
     } else {
         useful
     };
@@ -1173,10 +1167,7 @@ mod tests {
     /// `GAMEHANDLER_DATA_HOME` at a scratch directory is enough to make
     /// `prefixes_dir()` and `runners_dir()` land there.
     fn env_at(root: &Path) -> FakeLaunchEnv {
-        FakeLaunchEnv::new().with_vars(&[(
-            "GAMEHANDLER_DATA_HOME",
-            root.to_str().unwrap(),
-        )])
+        FakeLaunchEnv::new().with_vars(&[("GAMEHANDLER_DATA_HOME", root.to_str().unwrap())])
     }
 
     /// A game that will not be launched, only turned into a command line.
@@ -1260,10 +1251,7 @@ mod tests {
         let env = env_at(&root);
         let runner = WineRunner::with_binary(None);
         let error = runner.build_command(&game("App"), &env).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "Runner 'System Wine' is not available"
-        );
+        assert_eq!(error.to_string(), "Runner 'System Wine' is not available");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1352,7 +1340,10 @@ mod tests {
         let manager = RunnerManager::at(&root);
 
         let choices = manager.choices();
-        assert_eq!(choices[0], (SYSTEM_WINE.to_string(), "System Wine".to_string()));
+        assert_eq!(
+            choices[0],
+            (SYSTEM_WINE.to_string(), "System Wine".to_string())
+        );
         assert!(choices.iter().any(|(id, _)| id == "GE-Proton9-5"));
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1656,10 +1647,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(read_family_id(&root), "proton-ge");
-        assert_eq!(
-            ProtonRunner::discovered(&root).family_label(),
-            "Proton-GE"
-        );
+        assert_eq!(ProtonRunner::discovered(&root).family_label(), "Proton-GE");
 
         // Every unusable shape returns an empty map rather than raising: a
         // metadata file must never be the reason the runners page fails.
@@ -1736,7 +1724,10 @@ mod tests {
         let root = scratch("metadata-system");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join(METADATA_NAME), r#"{"family": "system"}"#).unwrap();
-        assert_eq!(ProtonRunner::discovered(&root).family_label(), "System Wine");
+        assert_eq!(
+            ProtonRunner::discovered(&root).family_label(),
+            "System Wine"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1751,7 +1742,7 @@ mod tests {
         assert_eq!(stripped_var(&env, "WINEPREFIX"), None);
         env.insert("WINEPREFIX".to_string(), " /prefix ".to_string());
         assert_eq!(stripped_var(&env, "WINEPREFIX").as_deref(), Some("/prefix"));
-         assert_eq!(stripped_var(&env, "ABSENT"), None);
+        assert_eq!(stripped_var(&env, "ABSENT"), None);
     }
 
     // -----------------------------------------------------------------------
@@ -1778,7 +1769,9 @@ mod tests {
     /// ordering directly rather than trusting that a combined call orders it
     /// correctly — the whole of B-07 is that the ordering is easy to get
     /// wrong, so the test for it does not delegate the thing under test.
-    fn capture_stderr_joined(child: &mut std::process::Child) -> (std::process::ExitStatus, String) {
+    fn capture_stderr_joined(
+        child: &mut std::process::Child,
+    ) -> (std::process::ExitStatus, String) {
         use std::io::Read;
 
         let mut pipe = child.stderr.take().expect("stderr was piped");

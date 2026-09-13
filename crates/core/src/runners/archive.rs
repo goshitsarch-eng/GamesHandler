@@ -107,9 +107,16 @@ impl Default for Limits {
 #[derive(Debug)]
 pub enum ArchiveError {
     Io(io::Error),
-    TooManyMembers { limit: u64 },
-    PayloadTooLarge { limit: u64, seen: u64 },
-    DecompressedTooLarge { limit: u64 },
+    TooManyMembers {
+        limit: u64,
+    },
+    PayloadTooLarge {
+        limit: u64,
+        seen: u64,
+    },
+    DecompressedTooLarge {
+        limit: u64,
+    },
     /// A member that resolves outside the destination.
     OutsideDestination(String),
     /// A member type the filter refuses: fifo, socket, char or block device.
@@ -150,7 +157,10 @@ impl std::fmt::Display for ArchiveError {
                 write!(f, "Runner archive member escapes the destination: {name}")
             }
             Self::SpecialFile(name) => {
-                write!(f, "Runner archive contains an unsupported special file: {name}")
+                write!(
+                    f,
+                    "Runner archive contains an unsupported special file: {name}"
+                )
             }
             Self::AbsoluteLink(name) => {
                 write!(f, "Runner archive link has an absolute target: {name}")
@@ -305,7 +315,12 @@ struct BoundedReader<R> {
 
 impl<R: Read> BoundedReader<R> {
     fn new(inner: R, limit: u64) -> Self {
-        Self { inner, limit, consumed: 0, tripped: false }
+        Self {
+            inner,
+            limit,
+            consumed: 0,
+            tripped: false,
+        }
     }
 }
 
@@ -494,8 +509,7 @@ fn plan_member<R: Read>(
         .into_owned();
     let relative = destination_path(destination, &name)?;
     let kind = entry.header().entry_type();
-    let resolved_root =
-        fs::canonicalize(destination).unwrap_or_else(|_| destination.to_path_buf());
+    let resolved_root = fs::canonicalize(destination).unwrap_or_else(|_| destination.to_path_buf());
 
     // `member.size < 0` has no Rust equivalent — the tar header's size field is
     // unsigned here where Python's is a signed int — so the check Python makes
@@ -507,7 +521,11 @@ fn plan_member<R: Read>(
         // Python ignores the mode of directories and symlinks entirely
         // (`mode = None`), so the extracted tree gets default permissions. A
         // `./` member is the destination itself, which already exists.
-        return Ok(Planned { relative, mode: None, link: None });
+        return Ok(Planned {
+            relative,
+            mode: None,
+            link: None,
+        });
     }
     if kind.is_symlink() || kind.is_hard_link() {
         let Some(relative) = relative else {
@@ -545,7 +563,11 @@ fn plan_member<R: Read>(
         } else {
             LinkTarget::Hardlink(normalised)
         };
-        return Ok(Planned { relative: Some(relative), mode: None, link: Some(link) });
+        return Ok(Planned {
+            relative: Some(relative),
+            mode: None,
+            link: Some(link),
+        });
     }
     if !kind.is_file() {
         // Fifo, socket, char/block device: refused, as `data_filter` does.
@@ -565,7 +587,11 @@ fn plan_member<R: Read>(
         mode &= !0o111;
     }
     mode |= 0o600;
-    Ok(Planned { relative, mode: Some(mode), link: None })
+    Ok(Planned {
+        relative,
+        mode: Some(mode),
+        link: None,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -613,7 +639,9 @@ pub fn extract_archive_with(
         // surfaces both as `io::Error`.
         Err(error) if reader.tripped => {
             let _ = error;
-            Err(ArchiveError::DecompressedTooLarge { limit: limits.decompressed_bytes })
+            Err(ArchiveError::DecompressedTooLarge {
+                limit: limits.decompressed_bytes,
+            })
         }
         Err(error) => Err(error),
     }
@@ -635,7 +663,9 @@ fn extract_members<R: Read>(
         let mut entry = entry?;
         *members += 1;
         if *members > limits.members {
-            return Err(ArchiveError::TooManyMembers { limit: limits.members });
+            return Err(ArchiveError::TooManyMembers {
+                limit: limits.members,
+            });
         }
 
         let size = entry.size();
@@ -883,8 +913,7 @@ mod tests {
     }
 
     fn gzip(bytes: &[u8]) -> Vec<u8> {
-        let mut encoder =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(bytes).unwrap();
         encoder.finish().unwrap()
     }
@@ -971,7 +1000,10 @@ mod tests {
 
         let error = extract_archive(&archive, &destination).unwrap_err();
         assert!(
-            matches!(error, ArchiveError::EscapingLink(_) | ArchiveError::OutsideDestination(_)),
+            matches!(
+                error,
+                ArchiveError::EscapingLink(_) | ArchiveError::OutsideDestination(_)
+            ),
             "expected a link refusal, got {error}"
         );
     }
@@ -1081,7 +1113,10 @@ mod tests {
         let error = extract_archive_with(
             &archive,
             &destination,
-            Limits { decompressed_bytes: 1024, ..Limits::default() },
+            Limits {
+                decompressed_bytes: 1024,
+                ..Limits::default()
+            },
         )
         .unwrap_err();
         assert!(
@@ -1111,7 +1146,10 @@ mod tests {
         let error = extract_archive_with(
             &archive,
             &destination,
-            Limits { members: 1, ..Limits::default() },
+            Limits {
+                members: 1,
+                ..Limits::default()
+            },
         )
         .unwrap_err();
         assert!(
@@ -1135,7 +1173,10 @@ mod tests {
         let error = extract_archive_with(
             &archive,
             &destination,
-            Limits { uncompressed_bytes: 3, ..Limits::default() },
+            Limits {
+                uncompressed_bytes: 3,
+                ..Limits::default()
+            },
         )
         .unwrap_err();
         assert!(
@@ -1178,10 +1219,8 @@ mod tests {
                 encoder.finish().unwrap()
             }),
             ("bz2", {
-                let mut encoder = bzip2::write::BzEncoder::new(
-                    Vec::new(),
-                    bzip2::Compression::default(),
-                );
+                let mut encoder =
+                    bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::default());
                 encoder.write_all(&inner).unwrap();
                 encoder.finish().unwrap()
             }),
@@ -1206,15 +1245,24 @@ mod tests {
 
     #[test]
     fn asset_names_are_reduced_to_a_bare_filename() {
-        assert_eq!(safe_archive_name("GE-Proton9-5.tar.gz", "runner.tar.gz"), "GE-Proton9-5.tar.gz");
-        assert_eq!(safe_archive_name("../../etc/cron.d/x", "runner.tar.gz"), "x");
+        assert_eq!(
+            safe_archive_name("GE-Proton9-5.tar.gz", "runner.tar.gz"),
+            "GE-Proton9-5.tar.gz"
+        );
+        assert_eq!(
+            safe_archive_name("../../etc/cron.d/x", "runner.tar.gz"),
+            "x"
+        );
         assert_eq!(safe_archive_name("/etc/passwd", "runner.tar.gz"), "passwd");
         assert_eq!(safe_archive_name("..", "runner.tar.gz"), "runner.tar.gz");
         assert_eq!(safe_archive_name("", "runner.tar.gz"), "runner.tar.gz");
         assert_eq!(safe_archive_name("", "fallback.tgz"), "fallback.tgz");
         // Windows separators are normalised before the basename is taken, so a
         // backslash path cannot smuggle a directory through.
-        assert_eq!(safe_archive_name(r"C:\Users\evil.exe", "runner.tar.gz"), "evil.exe");
+        assert_eq!(
+            safe_archive_name(r"C:\Users\evil.exe", "runner.tar.gz"),
+            "evil.exe"
+        );
     }
 
     #[test]
@@ -1261,10 +1309,16 @@ mod tests {
             slash.starts_with("release-v1~h") && slash.len() == "release-v1~h".len() + 12,
             "got {slash:?}"
         );
-        assert_eq!(parent, format!("relocated~h{}", &parent[parent.len() - 12..]));
+        assert_eq!(
+            parent,
+            format!("relocated~h{}", &parent[parent.len() - 12..])
+        );
         // A tag that survives unchanged is returned as-is, so common upstream
         // tags keep their familiar directory names.
-        assert_eq!(sanitise_release_tag("GE-Proton9-5").unwrap(), "GE-Proton9-5");
+        assert_eq!(
+            sanitise_release_tag("GE-Proton9-5").unwrap(),
+            "GE-Proton9-5"
+        );
     }
 
     #[test]
@@ -1309,7 +1363,10 @@ mod tests {
         fs::write(tree.join(METADATA_NAME), b"{}").unwrap();
 
         let error = validate_staged_runner(&tree, &root).unwrap_err();
-        assert!(matches!(error, ArchiveError::ReservedMetadata), "got {error}");
+        assert!(
+            matches!(error, ArchiveError::ReservedMetadata),
+            "got {error}"
+        );
     }
 
     #[test]
@@ -1364,7 +1421,10 @@ mod tests {
         std::os::unix::fs::symlink("/etc/passwd", tree.join("passwd")).unwrap();
 
         let error = validate_staged_runner(&tree, &root).unwrap_err();
-        assert!(matches!(error, ArchiveError::EscapingLink(_)), "got {error}");
+        assert!(
+            matches!(error, ArchiveError::EscapingLink(_)),
+            "got {error}"
+        );
     }
 
     #[test]

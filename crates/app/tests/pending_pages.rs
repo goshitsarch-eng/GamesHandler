@@ -357,8 +357,16 @@ fn pending_pages_match_the_pinned_set() {
     }
 
     let mut report = String::new();
-    let landed: Vec<&str> = pinned.iter().copied().filter(|p| !actual.contains(p)).collect();
-    let new: Vec<&str> = actual.iter().copied().filter(|a| !pinned.contains(a)).collect();
+    let landed: Vec<&str> = pinned
+        .iter()
+        .copied()
+        .filter(|p| !actual.contains(p))
+        .collect();
+    let new: Vec<&str> = actual
+        .iter()
+        .copied()
+        .filter(|a| !pinned.contains(a))
+        .collect();
     if !landed.is_empty() {
         report.push_str("\n  PORTED, but still listed in PINNED_PENDING — delete the line: ");
         for page in &landed {
@@ -378,7 +386,9 @@ fn pending_pages_match_the_pinned_set() {
                 .find(|arm| arm.page.as_str() == *page)
                 .and_then(Arm::task)
                 .unwrap_or("<no task recorded>");
-            report.push_str(&format!("\n    {page} (renders the placeholder for {task})"));
+            report.push_str(&format!(
+                "\n    {page} (renders the placeholder for {task})"
+            ));
         }
     }
 

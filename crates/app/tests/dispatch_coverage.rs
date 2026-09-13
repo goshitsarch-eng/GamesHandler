@@ -214,8 +214,7 @@ fn repo_root() -> PathBuf {
 
 fn read(rel: &str) -> String {
     let path = repo_root().join(rel);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
 }
 
 /// One source line with its line comments and string literals removed.
@@ -389,7 +388,9 @@ fn update_arms(src: &str) -> Vec<Arm> {
         });
     let match_line = (fn_line..lines.len())
         .find(|&i| lines[i].trim_start().starts_with("match message"))
-        .unwrap_or_else(|| panic!("no `match message` inside the fn update body at line {fn_line}"));
+        .unwrap_or_else(|| {
+            panic!("no `match message` inside the fn update body at line {fn_line}")
+        });
 
     let base = indent(lines[match_line]);
     let mut arms = Vec::new();
@@ -472,9 +473,7 @@ fn page_dispatch(src: &str) -> Vec<Dispatch> {
             let mut body = String::from(lines[i]);
             body.push('\n');
             let mut j = i + 1;
-            while j < lines.len()
-                && (lines[j].trim().is_empty() || indent(lines[j]) > arm_indent)
-            {
+            while j < lines.len() && (lines[j].trim().is_empty() || indent(lines[j]) > arm_indent) {
                 body.push_str(lines[j]);
                 body.push('\n');
                 j += 1;
@@ -986,7 +985,10 @@ fn empty_arm(src: &str, variant: &str) -> String {
         .expect("arm_from accepted the arm, so it has a `=>`")
         .0;
 
-    let mut out: Vec<String> = lines[..arm.first_line].iter().map(|l| (*l).to_string()).collect();
+    let mut out: Vec<String> = lines[..arm.first_line]
+        .iter()
+        .map(|l| (*l).to_string())
+        .collect();
     out.push(format!("{} => {{}}", pattern.trim_end()));
     out.extend(lines[arm.last_line + 1..].iter().map(|l| (*l).to_string()));
     let mut mutated = out.join("\n");
@@ -1101,8 +1103,7 @@ fn the_guard_covers_a_control_outside_the_page_dispatch() {
             // Only if *nothing* that is a root emits it, or the dispatch-only
             // guard would have seen it and this test would prove nothing.
             let also_from_a_root = guard.covered.iter().filter(|c| c.page.is_some()).any(|c| {
-                let (p, _) =
-                    production_src(&read(&format!("crates/app/src/view/{}.rs", c.module)));
+                let (p, _) = production_src(&read(&format!("crates/app/src/view/{}.rs", c.module)));
                 emissions(&p).contains(&variant)
             });
             if !also_from_a_root {
@@ -1120,7 +1121,11 @@ fn the_guard_covers_a_control_outside_the_page_dispatch() {
              handled. Either the coverage closure has stopped reaching those modules, or every \
              such variant is unhandled — in which case the first test above is already red and \
              this one has nothing to stage. Covered modules: {:#?}",
-            guard.covered.iter().map(|c| (&c.module, &c.reached)).collect::<Vec<_>>()
+            guard
+                .covered
+                .iter()
+                .map(|c| (&c.module, &c.reached))
+                .collect::<Vec<_>>()
         )
     });
 
@@ -1404,8 +1409,7 @@ fn the_guard_notices_a_re_emptied_arm() {
     let mut button_emissions: BTreeSet<String> = BTreeSet::new();
     let mut any_emission: BTreeSet<String> = BTreeSet::new();
     for p in &guard.covered {
-        let (src, _) =
-            production_src(&read(&format!("crates/app/src/view/{}.rs", p.module)));
+        let (src, _) = production_src(&read(&format!("crates/app/src/view/{}.rs", p.module)));
         let found = emissions(&src);
         any_emission.extend(found.iter().cloned());
         for line in src.lines() {

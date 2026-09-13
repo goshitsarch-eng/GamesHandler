@@ -24,11 +24,11 @@
 //! `bridge.py:264-269`) and a name-addressed accessor is the only shape that
 //! makes the table the single place the set is written down.
 
+use cosmic::Element;
 use cosmic::iced::Length;
 use cosmic::widget::{Column, Row, container, scrollable, text, toggler};
-use cosmic::Element;
-use gamehandler_core::settings::{COLOR_SCHEMES, Settings, VIEW_MODES};
 use gamehandler_core::runners::RunnerManager;
+use gamehandler_core::settings::{COLOR_SCHEMES, Settings, VIEW_MODES};
 
 use crate::Message;
 
@@ -45,8 +45,11 @@ use crate::Message;
 /// nothing more, so "Match system" is not *more* honest than "Dark" — both are
 /// inert. It is listed first because the QML lists it first, not because it does
 /// anything.
-pub const COLOR_SCHEME_OPTIONS: [(&str, &str); 3] =
-    [("system", "Match system"), ("light", "Light"), ("dark", "Dark")];
+pub const COLOR_SCHEME_OPTIONS: [(&str, &str); 3] = [
+    ("system", "Match system"),
+    ("light", "Light"),
+    ("dark", "Dark"),
+];
 
 /// The library-layout selector's pairs, in `SettingsPage.qml:58-61` order.
 pub const VIEW_MODE_OPTIONS: [(&str, &str); 2] = [("grid", "Grid"), ("list", "List")];
@@ -79,8 +82,16 @@ pub const DEFAULT_TOGGLES: [(&str, &str, &str); 13] = [
         "Enable Fsync by default",
         "Futex-based Wine sync. Preferred when the kernel supports it.",
     ),
-    ("dxvk", "Enable DXVK by default", "Direct3D 8–11 through Vulkan."),
-    ("vkd3d", "Enable VKD3D by default", "Direct3D 12 through Vulkan."),
+    (
+        "dxvk",
+        "Enable DXVK by default",
+        "Direct3D 8–11 through Vulkan.",
+    ),
+    (
+        "vkd3d",
+        "Enable VKD3D by default",
+        "Direct3D 12 through Vulkan.",
+    ),
     (
         "nvapi",
         "Enable DXVK-NVAPI / DLSS by default",
@@ -233,7 +244,9 @@ pub fn runner_labels(choices: &[(String, String)]) -> Vec<String> {
 /// than a panic or a silently-wrong highlight, the same shape as
 /// [`super::library::sort_index`].
 pub fn color_scheme_index(scheme: &str) -> Option<usize> {
-    COLOR_SCHEME_OPTIONS.iter().position(|(key, _)| *key == scheme)
+    COLOR_SCHEME_OPTIONS
+        .iter()
+        .position(|(key, _)| *key == scheme)
 }
 
 /// Which entry of the layout selector the stored value selects; `None` as above.
@@ -457,7 +470,10 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
         "Default runner:",
         cosmic::widget::dropdown(
             runner_labels(&choices),
-            Some(default_runner_index(&choices, &page.settings.default_runner)),
+            Some(default_runner_index(
+                &choices,
+                &page.settings.default_runner,
+            )),
             {
                 let choices = choices.clone();
                 move |index| default_runner_selection(&choices, index)
@@ -752,7 +768,7 @@ mod tests {
     /// and draws nothing; it is asked only to lay the tree out.
     fn drawn_strings(element: cosmic::Element<'_, Message>) -> Vec<String> {
         use cosmic::iced::advanced::widget::{Operation, Tree};
-        use cosmic::iced::advanced::{layout::Limits, Layout};
+        use cosmic::iced::advanced::{Layout, layout::Limits};
         use cosmic::iced::{Font, Pixels, Rectangle, Size};
 
         #[derive(Default)]
@@ -770,7 +786,9 @@ mod tests {
         let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
         let mut tree = Tree::new(element.as_widget());
         let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        let node = element.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
         let mut texts = Texts::default();
         element
             .as_widget_mut()
@@ -862,7 +880,11 @@ mod tests {
         let ours: Vec<(String, String, String)> = DEFAULT_TOGGLES
             .iter()
             .map(|(key, label, subtitle)| {
-                ((*key).to_string(), (*label).to_string(), (*subtitle).to_string())
+                (
+                    (*key).to_string(),
+                    (*label).to_string(),
+                    (*subtitle).to_string(),
+                )
             })
             .collect();
 
@@ -1164,7 +1186,11 @@ mod tests {
             0,
             "a default runner the user has removed degrades to System Wine"
         );
-        assert_eq!(default_runner_index(&[], "anything"), 0, "and does not panic on an empty list");
+        assert_eq!(
+            default_runner_index(&[], "anything"),
+            0,
+            "and does not panic on an empty list"
+        );
     }
 
     /// Every selector index the page can draw maps to a message whose payload is
@@ -1187,7 +1213,10 @@ mod tests {
         for index in 0..VIEW_MODE_OPTIONS.len() {
             let (kind, value) = payload_of(view_mode_selection(index));
             assert_eq!(kind, "SetViewMode");
-            assert!(VIEW_MODES.contains(&value.as_str()), "{value:?} is not a view mode");
+            assert!(
+                VIEW_MODES.contains(&value.as_str()),
+                "{value:?} is not a view mode"
+            );
         }
     }
 }
