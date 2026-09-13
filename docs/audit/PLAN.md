@@ -62,7 +62,7 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 36 | 34 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
+| `BUGS.md` | 48 | 37 | 35 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 19 | 18 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 20 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 10 | 9 `FIXED`, 1 `PARTIAL` |
@@ -135,18 +135,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 17 | 0 | 32 |
-| **Total** | **130** | **92** | **0** | **38** |
+| P3 | 49 | 18 | 0 | 31 |
+| **Total** | **130** | **93** | **0** | **37** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 18 | 0 | 7 |
-| `BUG-xx` | `BUGS.md` | 46 | 34 | 0 | 12 |
+| `BUG-xx` | `BUGS.md` | 46 | 35 | 0 | 11 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 9 | 0 | 2 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 17 | 0 | 12 |
-| **Total** | | **130** | **92** | **0** | **38** |
+| **Total** | | **130** | **93** | **0** | **37** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -314,7 +314,7 @@ across families, not within them.
 | `BUG-24` | The rolling stderr buffer trims to exactly limit bytes where Python keeps the trailing chunk, and the port's chunks.len() > 1 clause is dead code: Python compares *chunk counts* and keeps the last chunk even when it overshoots, while the Rust buffer is one flat Vec<u8> where the same expression is a byte count, subsumed by chunks.len() > limit. The test pins the port's behaviour and its docstring describes Python's guard | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-25` | Two functions apply opposite policies to the same input | S1 | — | `08da989` — both joins validate through `install_directory`; two tests, and the mutation that matters is on `install_directory` itself, because no production input reaches the guard.| FIXED |
 | `BUG-26` | The archive's containment root falls back to an unresolved path: if canonicalize(destination) fails, the root stays unresolved while the member path goes through resolve_missing, which resolves as far as it can — so a resolved member is starts_with-compared against an unresolved root. Members are lexically stripped of .. first, so the reachable outcome is a *false rejection* rather than an accepted escape; I could not construct the accepting case and am not claiming one | S1 | — | `b3ad80b` — `containment_root` refuses (`DestinationUnresolvable`) instead of comparing against an unresolved root; both call sites use it. Mutation-checked both ways.| FIXED |
-| `BUG-27` | A typo in the Steam AppID field is silent: "abc" or "12 34" parses to 0, i.e | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-27` | A typo in the Steam AppID field is silent: "abc" or "12 34" parses to 0, i.e | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** `apply` reports an unreadable appid through the `Err` arm it already had, reading it with `python_int` so `int()`'s own tolerance comes along; a deliberate divergence from `saveGame`'s silent `0`, recorded as one. The old `an_unparseable_appid_is_zero` **asserted the defect**; the replacement fails on the pre-fix body with `left: Ok(0)`, `right: Err("refused")` for `"half"`. | FIXED |
 | `BUG-28` | Six worker-to-UI sends discard their message with let _ =, including the two that carry *why* a launch failed | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-29` | One production expect on a value a future page addition invalidates: activate_page runs on every nav-bar click and panics if a Page variant is absent from Page::ALL | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-30` | Two tests in the suite are tautologies — they compare a value against the expression that defines it, so they can only fail if the delegation they are made of is edited | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
