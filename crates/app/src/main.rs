@@ -23,6 +23,7 @@ use clap::Parser;
 use cosmic::app::ApplicationExt;
 use cosmic::iced::futures::StreamExt;
 use cosmic::iced::futures::channel::mpsc::{UnboundedSender, unbounded as unbounded_channel};
+use cosmic::widget::toaster::ToastId;
 use cosmic::widget::{icon, nav_bar, toaster};
 use gamehandler_core::installers::{
     Installer, SystemClock, build_installer_command, download_installer, game_from_install,
@@ -681,7 +682,7 @@ pub enum Message {
     /// The cover chooser closed. `None` means it was cancelled.
     CoverFileChosen(Option<String>),
     /// A toast expired or was dismissed.
-    DismissToast(cosmic::widget::toaster::ToastId),
+    DismissToast(ToastId),
     /// Close the main window. `quit()`.
     Quit,
 
@@ -1016,6 +1017,11 @@ pub enum Message {
     EasyInstallFailed { message: String },
     /// The install produced a game. The `gameInstalled` signal.
     EasyInstallFinished { game_id: GameId, message: String },
+    /// The EasyInstall toast's Play action, which dismisses the toast and then
+    /// launches (`BUG-33`). Two fields rather than one because a `Message` is
+    /// the only thing `Toast::action`'s closure can return, and the reference's
+    /// behaviour is two effects.
+    PlayInstalled { game_id: GameId, toast_id: ToastId },
 
     // ---- Plugins ----------------------------------------------------------
     /// Re-read the plugin list and recompute the rows. `refreshPlugins()`.
@@ -1448,6 +1454,34 @@ fn page_entry_task(state: &mut State, page: Page) -> cosmic::app::Task<Message> 
 }
 
 impl Shell {
+    /// `playGame()` (`bridge.py:461-485`), as a method so the two entry points
+    /// that mean it — `Message::LaunchGame` and the EasyInstall toast's Play
+    /// action — cannot drift apart.
+    ///
+    /// The lookup and its sentence are the reference's first two lines: an id
+    /// the library does not hold is "Select a game first", not silence — this is
+    /// the one entry point of the four that says so.
+    ///
+    /// Choosing an action closes the layer it was chosen from (**UX-16**): the
+    /// layer stands in for the reference's `gameMenu`, and a menu that stayed
+    /// open after an item was chosen is the one thing a menu never does.
+    fn play_game(&mut self, game_id: &str) -> cosmic::app::Task<Message> {
+        self.state.game_menu = None;
+        let Some(game) = self.state.library.get(game_id).cloned() else {
+            return self.state.toast_task("Select a game first".to_string());
+        };
+        let runners = self.state.runner_manager();
+        // One worker for both messages, so the "Launching…" report cannot
+        // overtake the launch that justifies it and the grace cannot begin
+        // before the process exists. The shape is
+        // `view::runners::install_runner_task`'s — a thread and a channel,
+        // because the work is blocking and there is more than one thing to say
+        // — and the receiver's drop ends the stream.
+        let (sender, receiver) = unbounded_channel::<Message>();
+        std::thread::spawn(move || launch_and_watch(&game, &runners, &sender));
+        cosmic::app::Task::stream(receiver.map(cosmic::Action::App))
+    }
+
     /// A shell over a real library, settings and runner manager, the way
     /// [`App::init`] builds one — but with no window, so a test can have one.
     ///
@@ -2536,24 +2570,25 @@ impl Shell {
             // is "Select a game first", not silence — this is the one entry
             // point of the four that says so.
             Message::LaunchGame(game_id) => {
-                // Choosing an action closes the layer it was chosen from
-                // (**UX-16**): the layer stands in for the reference's
-                // `gameMenu`, and a menu that stayed open after an item was
-                // chosen is the one thing a menu never does.
-                self.state.game_menu = None;
-                let Some(game) = self.state.library.get(&game_id).cloned() else {
-                    return self.state.toast_task("Select a game first".to_string());
-                };
-                let runners = self.state.runner_manager();
-                // One worker for both messages, so the "Launching…" report
-                // cannot overtake the launch that justifies it and the grace
-                // cannot begin before the process exists. The shape is
-                // `view::runners::install_runner_task`'s — a thread and a
-                // channel, because the work is blocking and there is more than
-                // one thing to say — and the receiver's drop ends the stream.
-                let (sender, receiver) = unbounded_channel::<Message>();
-                std::thread::spawn(move || launch_and_watch(&game, &runners, &sender));
-                return cosmic::app::Task::stream(receiver.map(cosmic::Action::App));
+                return self.play_game(&game_id);
+            }
+            // The EasyInstall toast's Play action (`BUG-33`).
+            //
+            // QQC2's notification action **dismisses and then runs**; here the
+            // action was `Message::LaunchGame` alone, so the game launched and a
+            // "Installed … ▶ Play" toast sat over the Library the user had just
+            // been moved to, for up to `Duration::Long`. The closure is handed a
+            // `ToastId` and this is what to do with it.
+            //
+            // A variant rather than a `Task::batch` inside the action closure:
+            // the closure returns one `Message`, so "dismiss, then launch" has
+            // to be one message that means both. The dismissal is first and
+            // unconditional — a launch that fails still leaves the toast gone,
+            // which is what the reference does, because QQC2 dismissed it
+            // before the slot ran.
+            Message::PlayInstalled { game_id, toast_id } => {
+                self.state.toasts.remove(toast_id);
+                return self.play_game(&game_id);
             }
             // Everything `playGame` does *after* a successful `launch()`:
             // `mark_played`, the "Launching…" toast, and the close-on-launch
@@ -2979,17 +3014,21 @@ impl Shell {
             // `state.page`: `Shell::new`'s `debug_assert!(self.pages_agree())`
             // is the check that a second writer would break.
             //
-            // # The one thing the reference does that this does not
+            // # Dismiss-then-run, as QQC2 does it
             //
             // Clicking the toast's action in QQC2 **dismisses the
-            // notification** and then runs it. Here the action is
-            // `Message::LaunchGame` and the toast stays until its own duration
-            // expires; the action button is real, the game launches, and the
-            // difference is that the toast can sit there for up to
-            // `Duration::Long` afterwards. Closing it too needs a variant
-            // carrying both the game id and the `ToastId` the action closure is
-            // handed — not built, and named here rather than left as a
-            // difference a reader would have to find by launching something.
+            // notification** and then runs it (`Main.qml:158-161`). The port's
+            // action used to be `Message::LaunchGame` alone, so the game
+            // launched and the toast stayed until its own duration expired, up
+            // to `State::TOAST_DURATION` later. It is now
+            // [`Message::PlayInstalled`], which carries the `ToastId` the
+            // action closure is handed alongside the game id — two fields
+            // rather than one because a `Message` is the only thing
+            // `Toast::action`'s closure can return, and the dismissal and the
+            // launch are two effects (`BUG-33`).
+            //
+            // The dismissal is first and unconditional: a launch that fails
+            // still leaves the toast gone, which is what QQC2 does.
             Message::EasyInstallFinished { game_id, message } => {
                 let navigate = self.show_page(Page::Library);
                 // The one site whose duration was already `Long` before UX-14:
@@ -3005,8 +3044,8 @@ impl Shell {
                     .push(
                         toaster::Toast::new(message)
                             .duration(State::TOAST_DURATION)
-                            .action("Play".to_string(), move |_| {
-                                installed_play_message(&game_id)
+                            .action("Play".to_string(), move |toast_id| {
+                                installed_play_message(&game_id, toast_id)
                             }),
                     )
                     .map(cosmic::Action::App);
@@ -4006,8 +4045,11 @@ fn cover_choice_message(answer: Result<url::Url, cosmic::dialog::file_chooser::E
 /// drive the button; this pins the value the button *would* carry. What this
 /// does not close: the arm could stop calling this and build the message
 /// itself — the same call-site gap `remove_press`'s doc names.
-fn installed_play_message(game_id: &str) -> Message {
-    Message::LaunchGame(game_id.to_string())
+fn installed_play_message(game_id: &str, toast_id: ToastId) -> Message {
+    Message::PlayInstalled {
+        game_id: game_id.to_string(),
+        toast_id,
+    }
 }
 
 fn easy_install_wizard_finished(
@@ -5838,6 +5880,17 @@ mod tests {
         // write out of the test process — and it is why the samples can name a
         // real game without any of the four touching the disk.
         Message::LaunchGame(_) => ("LaunchGame", Message::LaunchGame("g".to_string())),
+        // `"install-6"` rather than a placeholder, per the rule stated above
+        // `InstallPlugin`'s sample: `play_game` answers an id the library does
+        // not hold with a "Select a game first" toast, so a sample like `"g"`
+        // would drive the refusal branch and report a working arm as a stub.
+        // The id need not resolve for *this* macro — it only pairs names with
+        // patterns — but the same samples are driven through `Shell::update`
+        // elsewhere, and a sample has to be a value its handler acts on.
+        Message::PlayInstalled { .. } => ("PlayInstalled", Message::PlayInstalled {
+                            game_id: "install-6".to_string(),
+                            toast_id: ToastId::default(),
+                        }),
         // `result: Ok(())`, not `Err`: the `Ok` arm is the one that writes state
         // (`mark_played`) *and* returns a task, so it is the arm a regression to
         // `{}` would hide. The `Err` arm's only effect is a toast, which the
@@ -6188,6 +6241,13 @@ mod tests {
     ///   was a second number describing the first and went stale at T-11
     ///   without anything failing; the sentence a reviewer trusts to know what
     ///   is live is the list, so there is no longer a number beside it.
+    /// - **`PlayInstalled`** is listed, and it is listed for its *second* half
+    ///   only. Its body is `toasts.remove(id)` — invisible, for the reason the
+    ///   `DismissToast` bullet gives — followed by the launch, which is what
+    ///   changes the state here: the fixture's library holds no `install-6`, so
+    ///   the launch path answers with its "Select a game first" toast. The row
+    ///   is `BUG-33`, and the arm would leave this list the moment its launch
+    ///   half were dropped, which is the failure mode that fix invites.
     ///
     /// `Message::LaunchWatchTick` is neither excluded nor listed, and that is
     /// the honest place for it: it is measured like every other message, it has
@@ -6251,6 +6311,9 @@ mod tests {
             // here (see the picker tests for the `None` half).
             "PickExeFile",
             "ExeFileChosen",
+            // BUG-33's. Listed for its launch half; its dismissal half is
+            // invisible for the reason `DismissToast`'s bullet gives.
+            "PlayInstalled",
             "PickCoverFile",
             "CoverFileChosen",
             "Notify",
@@ -7181,6 +7244,94 @@ mod tests {
              `showPassiveNotification`'s third argument, and without it the user \
              has to find the entry themselves; toasts: {toasts}"
         );
+    }
+
+    /// **`BUG-33`: the toast's Play action dismisses the toast, and then
+    /// launches.**
+    ///
+    /// QQC2's notification action removes the notification and *then* runs its
+    /// slot (`showPassiveNotification`'s `function()`, `Main.qml:158-161`). The
+    /// port's action was `Message::LaunchGame` alone, so a game launched and an
+    /// "Installed … ▶ Play" toast stayed over the Library the user had just been
+    /// moved to, for up to `State::TOAST_DURATION`.
+    ///
+    /// **What is asserted here is the launch half only**, and that is not
+    /// laziness: the dismissal half is not observable from a test, for the
+    /// reason [`a_test_cannot_observe_which_toast_was_dismissed`] exists to
+    /// record. The arm calls `self.state.toasts.remove(toast_id)`, the only
+    /// `ToastId` a test can build is `Default::default()` whose key names no
+    /// slot, and `Toasts` exposes neither the slot map nor its queue. So the
+    /// removal below is a no-op against the live toast, on the assertion that
+    /// the toast is *still* there afterwards — which is `DismissToast`'s own
+    /// measured gap, hit by a second handler.
+    ///
+    /// What the launch half buys: it fails if the arm ever becomes
+    /// dismissal-only, which is the mistake this fix invites (removing the
+    /// toast is the visible half and the tempting place to stop).
+    #[test]
+    fn the_installed_toasts_play_action_launches_the_game() {
+        let mut shell = shell_for_installs();
+        let game_id = "install-6".to_string();
+        let mut game = gamehandler_core::models::Game::new_named("Steam");
+        game.id = game_id.clone();
+        // Saved into the fixture's own temp library, as the doc on
+        // `shell_for_installs` requires: a shell over the real `games.json`
+        // would write the running user's library from a test.
+        shell.state.library.add(game).unwrap();
+
+        // A live toast, so the null-key no-op below is not "nothing to remove".
+        let _ = shell.update(Message::Notify("Installed “Steam”".to_string()));
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("num_elems: 1"),
+            "the fixture should have exactly one live toast"
+        );
+
+        let effect = observe(
+            &mut shell,
+            Message::PlayInstalled {
+                game_id: game_id.clone(),
+                toast_id: ToastId::default(),
+            },
+        );
+        assert!(
+            effect.task_units > 0,
+            "the Play action has to *play*: an arm that only dismisses the toast \
+             is a Play button that deletes itself, and the reference launches \
+             (`Main.qml:159-161`)"
+        );
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("num_elems: 1"),
+            "the toast survives the dismissal here, and that is the recorded \
+             gap rather than a passing test: see \
+             `a_test_cannot_observe_which_toast_was_dismissed`. If this ever \
+             fails, `Toasts` grew an accessor and the removal can be asserted \
+             for real"
+        );
+    }
+
+    /// **The action the toast carries is `PlayInstalled`, not `LaunchGame`.**
+    ///
+    /// This is the killing test for `BUG-33`. The launch arm above can be right
+    /// while nothing reaches it, and that is exactly how the defect existed:
+    /// the toast's closure built `LaunchGame`, so the game launched and the
+    /// toast stayed. `installed_play_message` is the one place that mapping
+    /// lives, and the `Play` button is otherwise undrivable — `Toast` keeps its
+    /// action private with no accessor — so this pins the value the button
+    /// carries.
+    #[test]
+    fn the_installed_toasts_action_carries_the_toast_id() {
+        let id = ToastId::default();
+        match installed_play_message("install-6", id) {
+            Message::PlayInstalled { game_id, toast_id } => {
+                assert_eq!(game_id, "install-6");
+                assert_eq!(toast_id, id);
+            }
+            other => panic!(
+                "the Play action must dismiss the toast it was pressed on; \
+                 {other:?} launches and leaves a stale toast over the Library, \
+                 which is the defect this closes"
+            ),
+        }
     }
 
     /// **The failure branch clears the guard, resets the bar, and says why.**
@@ -11016,21 +11167,6 @@ mod tests {
                 ),
             }
         }
-    }
-
-    /// The installed toast's Play action launches the installed game: the value
-    /// [`installed_play_message`] carries into the toast's closure. The button
-    /// itself is undrivable — `Toast` keeps its action private — so this pins
-    /// the mapping and the arm's call site is read (see the function's doc).
-    #[test]
-    fn the_installed_toasts_play_action_launches_the_installed_game() {
-        assert!(
-            matches!(
-                installed_play_message("install-6"),
-                Message::LaunchGame(id) if id == "install-6"
-            ),
-            "Play must launch the entry the install just made"
-        );
     }
 
     /// Every `notify.emit` in `bridge.py`, and the port fragment that voices
