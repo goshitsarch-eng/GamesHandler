@@ -567,9 +567,48 @@ pub enum InstallerError {
     /// (`installers.py:594`). `tail` is the last eight lines, joined with
     /// newlines, whichever the tool chose to print.
     SignatureInvalid { name: String, tail: String },
+    /// The chain verified, but the signature's own PKCS#7 blob could not be
+    /// pulled out of the file (SEC-11), so there is no certificate to read a
+    /// publisher out of.
+    ///
+    /// Its own variant rather than [`InstallerError::SignatureInvalid`],
+    /// because the two say different things: `SignatureInvalid` means the
+    /// verifier **rejected** the signature, and this means the signature was
+    /// accepted and then could not be *read*. It is also not a missing tool —
+    /// `osslsigncode` ran and failed, and `tail` says why (`No signature
+    /// found`, `Failed to open file`, …).
+    ///
+    /// Fail-closed by construction: the publisher check needs the certificates,
+    /// so a blob that cannot be extracted is a refusal and never a pass. There
+    /// is deliberately no fallback to the verifier's printed output, which is
+    /// the text the signer chooses (that was SEC-03, then SEC-11).
+    SignatureUnreadable { name: String, tail: String },
+    /// `openssl` is not on `PATH`, or is not executable.
+    ///
+    /// `openssl` is the **reader** the publisher check uses to get the
+    /// certificate's subject, and it is a different dependency from the
+    /// verifier: a host can have one without the other. It is not a new
+    /// packaging requirement — the Flatpak runtime this app ships on provides
+    /// it (`/usr/bin/openssl` in `org.freedesktop.Platform`, mounted from the
+    /// runtime rather than the host) — but a host without it gets this named
+    /// error rather than a panic or a silent pass.
+    ///
+    /// Reached **after** the chain gate, so a host with no `openssl` still
+    /// reports a bad signature as bad: this variant is only about the
+    /// certificates of a signature that already verified.
+    CertificateReaderMissing,
+    /// The reader ran and could not produce subjects for the signature's
+    /// certificates: it exited non-zero on the blob, printed no certificates,
+    /// or failed on a certificate it did print. `tail` carries that output.
+    ///
+    /// Fail-closed for the same reason as [`Self::SignatureUnreadable`]: an
+    /// empty certificate list is refused rather than read as "no constraint".
+    CertificateReadFailed { name: String, tail: String },
     /// The signature verified but names a publisher the recipe does not
     /// approve (`installers.py:595`). The comparison is a case-folded
-    /// substring test against the whole output.
+    /// substring test, against the RFC2253 subject of each certificate the
+    /// signature carries — not against the verifier's output, which the signer
+    /// chooses (`SEC-03`, `SEC-11`).
     PublisherUnapproved { name: String },
     /// `_authenticode_root_path` found the bundled Microsoft root in none of
     /// its four candidate locations (`installers.py:548`).
@@ -648,6 +687,22 @@ impl fmt::Display for InstallerError {
                 write!(
                     formatter,
                     "{name} has an invalid Authenticode signature\n{tail}"
+                )
+            }
+            InstallerError::SignatureUnreadable { name, tail } => {
+                write!(
+                    formatter,
+                    "{name}'s Authenticode signature could not be read\n{tail}"
+                )
+            }
+            InstallerError::CertificateReaderMissing => write!(
+                formatter,
+                "openssl is required to read a downloaded installer's signing certificates"
+            ),
+            InstallerError::CertificateReadFailed { name, tail } => {
+                write!(
+                    formatter,
+                    "{name}'s signing certificates could not be read\n{tail}"
                 )
             }
             InstallerError::PublisherUnapproved { name } => {
@@ -1501,10 +1556,11 @@ const SIGNATURE_TIMEOUT: Duration = Duration::from_secs(90);
 ///
 /// # The two independent conditions
 ///
-/// The output must contain `Signature verification: ok` **and** one of the
-/// recipe's publisher strings must appear in the value of a `Subject:` field.
+/// The chain must verify — the output must contain `Signature verification:
+/// ok` **and** the exit status must be 0 — and one of the recipe's publisher
+/// strings must appear in the subject of a certificate the signature carries.
 ///
-/// # Why the publisher test names the field it reads (SEC-03)
+/// # Where the publisher string is read from (SEC-03, SEC-11)
 ///
 /// The reference tests the publisher against the *whole* merged output
 /// (`installers.py:594-595`: `any(publisher.casefold() in folded ...)` where
@@ -1516,22 +1572,56 @@ const SIGNATURE_TIMEOUT: Duration = Duration::from_secs(90);
 /// `-n "Valve Corp."` produced an output containing `Text description: Valve
 /// Corp.` under a `Subject:` of `CN=Totally Unrelated Signer,O=Evil Example
 /// Ltd`, so the reference's predicate accepted a certificate that has nothing
-/// to do with Valve. Reading the field and nothing else is the same shape
-/// [`validate_download_origin`] uses, and for the same reason.
+/// to do with Valve.
 ///
-/// **This is a deliberate divergence from the reference**, on the brief's
+/// Reading the `Subject:` *field* was this port's first answer to that
+/// (`SEC-03`), and it is not enough: `subject_values` tested
+/// `line.trim().strip_prefix("Subject:")`, so the prefix test ran **after** the
+/// trim and accepted any line that trims to a `Subject:`. The signer's own
+/// `-n` value is printed verbatim and may contain newlines, so `-n "$(printf
+/// 'Totally Unrelated\n\t\tSubject: C=US,O=Valve Corp.,CN=Valve Corp.')"`
+/// appends a line that is indistinguishable from a certificate subject — and
+/// the trimmed shape it needs is exactly what `verify`'s own indentation
+/// provides. Measured on the bundled 2.14: that command signs a payload with a
+/// certificate whose subject is `C=US, O=Evil Example Ltd, CN=Totally Unrelated
+/// Signer`, `verify -CAfile` exits 0, prints the forged `Subject: C=US,O=Valve
+/// Corp.,CN=Valve Corp.` line, and the gate returned `Ok(())` for it.
+///
+/// So the publisher is now read from the **certificates themselves** and never
+/// from the verifier's report: [`signed_subject_values`] pulls the signature's
+/// PKCS#7 blob out of the file and asks `openssl` for the RFC2253 subject of
+/// every certificate in it. Nothing the signer types can reach that path — the
+/// only bytes parsed out of it are the certificate extensions the signature
+/// covers.
+///
+/// **Both are deliberate divergences from the reference**, on the brief's
 /// decision order: `installers.py:594-595` folds the output and searches all of
-/// it, and a port that reproduced that would reproduce the hole. The message
+/// it, and a port that reproduced that would reproduce both holes. The message
 /// the user sees is unchanged, so no P-item is affected.
 ///
-/// What that does **not** change is the shape of the catalog strings. The
-/// comparison is still a case-folded substring test, now against the `Subject:`
-/// value rather than against the whole output — and `osslsigncode` prints a
-/// distinguished name in reverse order with no space after each comma
-/// (`C=US,O=Valve Corp.,CN=Valve Corp.`), which is why
-/// `CN=GOG  sp. z o.o,O=GOG  sp. z o.o` is the string the catalog has to carry
-/// and why "tidying" its double space or its field order stops matching a
-/// signature that is genuinely GOG's.
+/// # The catalog strings are written in `osslsigncode`'s rendering
+///
+/// What the divergence above does **not** change is the shape of the catalog
+/// strings, because they were authored against the `Subject:` lines the
+/// reference's own verifier printed. That rendering is
+/// `X509_NAME_print_ex(…, XN_FLAG_RFC2253)`: fields in reverse order,
+/// `+`/`,`-joined, no space after each comma, and `\,` inside a value that
+/// contains one. `C=US,O=Valve Corp.,CN=Valve Corp.` is that form.
+///
+/// The consequence is measured, not assumed, on the **GOG recipe's own
+/// installer**: its signer's certificate is `CN=GOG  sp. z o.o,O=GOG  sp. z
+/// o.o,L=WARSZAWA,C=PL` in that rendering, and the catalog's
+/// `CN=GOG  sp. z o.o,O=GOG  sp. z o.o` is a substring of it. The one-call
+/// shortcut that `openssl pkcs7 -print_certs -noout` offers renders the *same*
+/// certificate as `C=PL, L=WARSZAWA, O=GOG  sp. z o.o, CN=GOG  sp. z o.o` —
+/// field order, space after each comma — of which the catalog string is **not**
+/// a substring, so that shortcut would refuse a signature that is genuinely
+/// GOG's. `openssl x509 -nameopt RFC2253` reproduces the verifier's rendering
+/// byte for byte (checked on the real Steam, Amazon and GOG certificates,
+/// including one with `\,`-escaped commas and a twelve-field DN), which is why
+/// the extraction below pays for one call per certificate. "Tidying" the
+/// catalog's double space or its field order still stops matching a signature
+/// that is genuinely GOG's, exactly as before.
 ///
 /// # The trust anchor is `osslsigncode`'s, not this function's
 ///
@@ -1571,30 +1661,20 @@ pub fn verify_installer_authenticity(
         );
     }
 
-    let output = match run_capturing(&command, SIGNATURE_TIMEOUT) {
-        Ok(output) => output,
-        Err(RunFailure::TimedOut) => {
-            return Err(InstallerError::SignatureTimedOut {
-                name: installer.name.to_string(),
-            });
-        }
-        Err(RunFailure::Failed(error)) => return Err(error.into()),
-    };
+    let output = run_signature_tool(&command, installer.name)?;
 
     let text = output.text;
     if output.status != Some(0) || !text.contains("Signature verification: ok") {
-        let lines: Vec<&str> = text.lines().collect();
-        let tail = lines[lines.len().saturating_sub(8)..].join("\n");
         return Err(InstallerError::SignatureInvalid {
             name: installer.name.to_string(),
-            tail,
+            tail: output_tail(&text),
         });
     }
-    // Every `Subject:` the verifier printed, and nothing else it printed. See
-    // the doc comment: the point of naming the field is that the rest of the
-    // output carries `Text description:`/`URL description:`, which the signer
-    // chooses.
-    let subjects = subject_values(&text);
+    // The certificates themselves, and nothing the verifier printed about
+    // them. See the doc comment: naming the `Subject:` field is not enough,
+    // because the signer's `-n` value can contain a newline and a line that
+    // trims to a `Subject:`.
+    let subjects = signed_subject_values(installer, path, &verifier, launch_env)?;
     if !installer.publishers.iter().any(|publisher| {
         let publisher = publisher.to_lowercase();
         subjects.iter().any(|subject| subject.contains(&publisher))
@@ -1606,24 +1686,290 @@ pub fn verify_installer_authenticity(
     Ok(())
 }
 
-/// The case-folded value of every `Subject:` line in a verifier's output.
+/// The case-folded subject of every certificate the installer's signature
+/// carries (`SEC-11`).
 ///
-/// `osslsigncode` 2.14 prints a certificate's subject as `\t\tSubject: <dn>`
-/// (`X509_NAME_print_ex` with `XN_FLAG_RFC2253`, so the opening line has no
-/// slash, unlike `/O=…/CN=…`), and it prints one for the signer, again under
-/// each signed timestamp's own signer, and again for every chain certificate
-/// including the ones **it** names from its trust store. All of them are
-/// genuine subjects of genuine certificates, so matching any of them is the
-/// property the publisher test is trying to establish.
+/// Three steps, none of which reads the verifier's human-readable report:
 ///
-/// The value is taken from the *first* `Subject:` on the line and to the end of
-/// it. A line with two colons therefore contributes everything after the first
-/// one, which can only make a match stricter than taking the whole line.
-fn subject_values(text: &str) -> Vec<String> {
+/// 1. `osslsigncode extract-signature -in <installer> -out <p7b>` — the
+///    Authenticode signature as the PKCS#7 blob it is, with no rendering in
+///    between. Fails (exit 255, `No signature found`) when the file carries no
+///    signature at all.
+/// 2. `openssl pkcs7 -inform DER -in <p7b> -print_certs` — the certificates
+///    that blob carries, as a PEM bundle. The "catalog strings are written in
+///    `osslsigncode`'s rendering` section of [`verify_installer_authenticity`]
+///    has the measurement for why the per-certificate step that follows is
+///    worth its subprocesses.
+/// 3. `openssl x509 -in <one certificate> -noout -subject -nameopt RFC2253`,
+///    once per certificate, because **`openssl x509` reads exactly one
+///    certificate from its input**: handed a bundle it prints the first one and
+///    stops (measured — a six-certificate bundle yields one `subject=` line).
+///
+/// Every failure is a refusal, never a pass, and none of them is a panic: the
+/// bytes come from a downloaded file and the tools come from the host, so both
+/// are treated as untrusted input and as a dependency that may be absent.
+fn signed_subject_values(
+    installer: &Installer,
+    path: &Path,
+    verifier: &Path,
+    launch_env: &dyn LaunchEnv,
+) -> Result<Vec<String>, InstallerError> {
+    let name = installer.name;
+
+    // Looked up before the scratch directory exists, because a host without
+    // `openssl` has nothing to extract *for*. `openssl` is the reader, a
+    // different dependency from the verifier: a host can have one without the
+    // other, so a missing reader is its own error rather than
+    // `SignatureToolMissing`, which means the verifier is absent.
+    let Some(reader) = launch_env.which("openssl") else {
+        return Err(InstallerError::CertificateReaderMissing);
+    };
+
+    // `path` is the downloaded file, and this is the one place in this module
+    // that writes next to it rather than into the destination directory: the
+    // blob is derived data, is read once, and must not be visible to another
+    // local user while it exists.
+    let scratch = SignatureScratch::create().map_err(InstallerError::Io)?;
+    let signature = scratch.path().join("signature.p7b");
+    let certificate = scratch.path().join("certificate.pem");
+    let signature_arg = signature.to_string_lossy().into_owned();
+    let certificate_arg = certificate.to_string_lossy().into_owned();
+    let installer_arg = path.to_string_lossy().into_owned();
+
+    // 1. The signature blob, as PKCS#7.
+    let command = tool_argv(
+        verifier,
+        &[
+            "extract-signature",
+            "-in",
+            &installer_arg,
+            "-out",
+            &signature_arg,
+        ],
+    );
+    let output = run_signature_tool(&command, name)?;
+    if output.status != Some(0) || !signature.is_file() {
+        // The `is_file` half is not redundant: the check is that there is a
+        // blob to read, and a tool that reports success without writing one
+        // would otherwise hand `openssl` a path that does not exist — a
+        // different error than the one the user needs to see.
+        return Err(InstallerError::SignatureUnreadable {
+            name: name.to_string(),
+            tail: output_tail(&output.text),
+        });
+    }
+
+    // 2. The certificates the blob carries, as PEM.
+    let command = tool_argv(
+        &reader,
+        &[
+            "pkcs7",
+            "-inform",
+            "DER",
+            "-in",
+            &signature_arg,
+            "-print_certs",
+        ],
+    );
+    let output = run_signature_tool(&command, name)?;
+    let blocks = pem_certificates(&output.text);
+    if output.status != Some(0) || blocks.is_empty() {
+        return Err(InstallerError::CertificateReadFailed {
+            name: name.to_string(),
+            tail: output_tail(&output.text),
+        });
+    }
+
+    // 3. Each certificate's subject, in the one rendering the catalog strings
+    //    are written in (see [`verify_installer_authenticity`]). One
+    //    `openssl x509` per certificate, and the file it reads is rewritten
+    //    rather than duplicated: `openssl x509` will not read past the first
+    //    certificate of a multi-certificate file, so handing it the whole
+    //    bundle is not an option.
+    let mut subjects = Vec::with_capacity(blocks.len());
+    for block in &blocks {
+        std::fs::write(&certificate, block).map_err(InstallerError::Io)?;
+        let command = tool_argv(
+            &reader,
+            &[
+                "x509",
+                "-in",
+                &certificate_arg,
+                "-noout",
+                "-subject",
+                "-nameopt",
+                "RFC2253",
+            ],
+        );
+        let output = run_signature_tool(&command, name)?;
+        if output.status != Some(0) {
+            return Err(InstallerError::CertificateReadFailed {
+                name: name.to_string(),
+                tail: output_tail(&output.text),
+            });
+        }
+        subjects.extend(x509_subject_values(&output.text));
+    }
+
+    if subjects.is_empty() {
+        // Every certificate read cleanly and none of them had a subject, which
+        // is not a certificate subject at all. Refused rather than returned as
+        // an empty list, so "no subjects" can never read as "no constraint".
+        return Err(InstallerError::CertificateReadFailed {
+            name: name.to_string(),
+            tail: String::new(),
+        });
+    }
+    Ok(subjects)
+}
+
+/// The argv of a signature tool: the program, then its arguments.
+///
+/// The same shape [`run_capturing`] takes, built here rather than at each call
+/// site because the three calls in [`signed_subject_values`] mix an owned path
+/// with borrowed flags and none of them is more readable for spelling that out.
+fn tool_argv(program: &Path, arguments: &[&str]) -> Vec<String> {
+    let mut argv = vec![program.to_string_lossy().into_owned()];
+    argv.extend(arguments.iter().map(|argument| (*argument).to_string()));
+    argv
+}
+
+/// Run one of the signature tools, mapping its failure modes onto the errors
+/// this module already reports.
+///
+/// The bound is the verifier's own [`SIGNATURE_TIMEOUT`], reused rather than
+/// given a constant of its own: this is the same work on the same file, and a
+/// second number would be a second thing to justify. A spawn that fails is
+/// [`InstallerError::Io`], as it is for the verifier itself.
+fn run_signature_tool(argv: &[String], name: &str) -> Result<CommandOutput, InstallerError> {
+    match run_capturing(argv, SIGNATURE_TIMEOUT) {
+        Ok(output) => Ok(output),
+        Err(RunFailure::TimedOut) => Err(InstallerError::SignatureTimedOut {
+            name: name.to_string(),
+        }),
+        Err(RunFailure::Failed(error)) => Err(error.into()),
+    }
+}
+
+/// The last eight lines a tool printed, joined with newlines — what
+/// [`InstallerError::SignatureInvalid`] has always carried, now shared with the
+/// two errors the extraction can raise.
+fn output_tail(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(8)..].join("\n")
+}
+
+/// Every certificate in a PEM bundle, as its own PEM block.
+///
+/// `openssl pkcs7 -print_certs` writes one `-----BEGIN CERTIFICATE-----` block
+/// per certificate, and this splits on those markers rather than on a line
+/// count or a byte length — the bundle is whatever the file's signature
+/// carries, so its size is not knowable in advance. A `BEGIN` seen before the
+/// previous `END` means the output is not the bundle this expects, and the
+/// partial block is dropped rather than concatenated onto the next one; a
+/// truncated trailing block is dropped the same way, and
+/// [`signed_subject_values`] then has one certificate fewer to match, never one
+/// forged certificate more.
+fn pem_certificates(text: &str) -> Vec<String> {
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+    let mut blocks = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if line == BEGIN {
+            current.clear();
+            current.push(line);
+        } else if !current.is_empty() {
+            current.push(line);
+            if line == END {
+                blocks.push(current.join("\n"));
+                current.clear();
+            }
+        }
+    }
+    blocks
+}
+
+/// The case-folded value of every `subject=` line in `openssl x509`'s output.
+///
+/// `-noout -subject` makes that the whole of its stdout: one `subject=<dn>` line
+/// per certificate read, in the `KEY=VALUE` spelling `-nameopt RFC2253` gives
+/// (`subject=CN=Valve Corp.,O=Valve Corp.,…`, no space around the `=`). The
+/// split is on the **first** `=` and the label is matched case-insensitively,
+/// so a value that itself contains an `=` keeps all of it, and a future spelling
+/// change to the label is a mismatch rather than a silently empty list — which
+/// is the failure that would matter, because "no subjects" must never read as
+/// "no constraint".
+///
+/// A value is taken to the end of its line. `openssl` never wraps one: it
+/// escapes a newline inside a name as `\0A` rather than printing it (measured
+/// with a certificate whose CN contains one), so unlike the verifier's report —
+/// whose `-n` continuation lines are what `SEC-11` was — an `openssl x509`
+/// subject line cannot be continued by data the signer chose.
+fn x509_subject_values(text: &str) -> Vec<String> {
     text.lines()
-        .filter_map(|line| line.trim().strip_prefix("Subject:"))
-        .map(|value| value.trim().to_lowercase())
+        .filter_map(|line| line.trim().split_once('='))
+        .filter(|(label, _)| label.trim().eq_ignore_ascii_case("subject"))
+        .map(|(_, value)| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
         .collect()
+}
+
+/// The scratch directory the extracted signature is written to, removed when it
+/// goes out of scope.
+///
+/// A directory rather than a single file, and `0700` rather than the default,
+/// for the reason [`create_partial`] gives about the download's `.part`: the
+/// contents are attacker-influenced bytes that a later step parses, so no other
+/// local user should be able to read or replace them. It is created under
+/// `std::env::temp_dir()` — `$TMPDIR` or `/tmp`, the same choice the tests'
+/// `Scratch` makes — and named with this process's id and a counter, so two
+/// concurrent verifications cannot collide and a leftover from a crashed run
+/// cannot be opened as if it were ours (`create` is `O_EXCL`-equivalent: it
+/// fails on a path that already exists, including a symlink).
+///
+/// The [`Drop`] is what makes "cleaned up on every path" true rather than
+/// repeated three times: every return in [`signed_subject_values`] is an
+/// ordinary `?`/`return`, so the guard runs on success and on all three of the
+/// failures alike — including the one where a tool timed out and the caller is
+/// unwinding.
+struct SignatureScratch(PathBuf);
+
+impl SignatureScratch {
+    fn create() -> std::io::Result<Self> {
+        use std::os::unix::fs::DirBuilderExt;
+        /// `TMP_MAX`-ish: `mkstemp` gives up after a bounded number of attempts.
+        const ATTEMPTS: u32 = 1_000;
+        let parent = std::env::temp_dir();
+        let process = std::process::id();
+        let mut builder = std::fs::DirBuilder::new();
+        builder.mode(0o700);
+        for attempt in 0..ATTEMPTS {
+            let path = parent.join(format!("gh-signature-{process}-{attempt}"));
+            match builder.create(&path) {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not create a temporary directory for the signature",
+        ))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for SignatureScratch {
+    fn drop(&mut self) {
+        // Best effort: a failure here must not mask the error that caused the
+        // drop (`StagingDirectory` in `runners::proton` makes the same choice
+        // for the same reason).
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// What running a child produced.
@@ -3863,7 +4209,65 @@ mod tests {
     /// against every other case. The record file is the evidence that the
     /// verifier ran at all, which is what the reference asserts with
     /// `verify.assert_not_called()`.
+    ///
+    /// **Two subcommands**, because the publisher check reads the signature's
+    /// own PKCS#7 blob since `SEC-11`: `verify` prints `output` and exits
+    /// `exit`, and `extract-signature` writes a stand-in blob at its `-out`
+    /// argument and exits 0. The blob's *contents* are never parsed — the fake
+    /// `openssl` beside this answers for the certificates — but the file has to
+    /// exist, which is the one thing [`signed_subject_values`] checks about it.
+    /// A test that needs the extraction itself to fail uses
+    /// [`fake_osslsigncode_refusing_extraction`] instead.
     fn fake_osslsigncode(directory: &Path, record: &Path, output: &str, exit: i32) -> PathBuf {
+        fake_osslsigncode_with_extract(directory, record, output, exit, extract_signature_arm())
+    }
+
+    /// The `extract-signature` arm of a fake that succeeds: write a stand-in
+    /// blob wherever its `-out` points, then exit 0.
+    ///
+    /// The `-out` value is the argument after `-out`, and the loop is POSIX `sh`
+    /// with no external commands, because the child has no `PATH`.
+    fn extract_signature_arm() -> &'static str {
+        "  while [ $# -gt 0 ]; do\n\
+         \x20   if [ \"$1\" = '-out' ]; then printf '%s\\n' 'signature-stub' > \"$2\"; fi\n\
+         \x20   shift\n\
+         \x20 done\n\
+         \x20 exit 0\n"
+    }
+
+    /// A fake `osslsigncode` whose `extract-signature` fails, as the real one
+    /// does on a file with no signature at all (`No signature found`,
+    /// `Unable to extract existing signature`, exit 255).
+    ///
+    /// Its own constructor rather than a flag on [`fake_osslsigncode`], so the
+    /// two behaviours cannot be confused at a call site: every case that gets
+    /// as far as the publisher check needs the successful one, and only the
+    /// failure-mode cases want this.
+    fn fake_osslsigncode_refusing_extraction(
+        directory: &Path,
+        record: &Path,
+        output: &str,
+        exit: i32,
+    ) -> PathBuf {
+        let arm = "  printf '%s\\n' 'No signature found' 'Unable to extract existing signature'\n\
+                   \x20 exit 255\n";
+        fake_osslsigncode_with_extract(directory, record, output, exit, arm)
+    }
+
+    /// A fake `osslsigncode` whose `extract-signature` arm is `extract_arm`.
+    ///
+    /// One script with two arms rather than two scripts, because the recording
+    /// and the `verify` answer have to be identical in both: `SEC-11` moved
+    /// part of the gate into a second subcommand of the same tool, so a fake
+    /// that answered only one of them would make every case that reaches the
+    /// publisher test look like a missing tool.
+    fn fake_osslsigncode_with_extract(
+        directory: &Path,
+        record: &Path,
+        output: &str,
+        exit: i32,
+        extract_arm: &str,
+    ) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let path = directory.join("osslsigncode");
         std::fs::create_dir_all(directory).unwrap();
@@ -3872,10 +4276,15 @@ mod tests {
         // bare shebang would leave the kernel to resolve `sh` through a `PATH`
         // the child no longer has.
         let body = format!(
-            "#!{}\nprintf '%s\\n' \"$@\" >> '{}'\nprintf '%s\\n' '{}'\nexit {exit}\n",
-            fake_shell(),
-            record.display(),
-            output
+            "#!{shell}\n\
+             printf '%s\\n' \"$@\" >> '{record}'\n\
+             if [ \"$1\" = 'extract-signature' ]; then\n\
+             {extract_arm}\
+             fi\n\
+             printf '%s\\n' '{output}'\n\
+             exit {exit}\n",
+            shell = fake_shell(),
+            record = record.display(),
         );
         std::fs::write(&path, body).unwrap();
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
@@ -3895,8 +4304,132 @@ mod tests {
     }
 
     /// A launch environment whose `osslsigncode` is `script`.
+    ///
+    /// **No `openssl`**, which is what the refusals need: every case whose
+    /// chain gate fails — a bad signature, a missing verifier, an origin or
+    /// size refusal that never reaches the verifier — is decided before the
+    /// certificates are read, so it must not be able to depend on a reader
+    /// being present. A case that expects the *publisher* test to be reached
+    /// needs [`verifier_env_with_certificates`], and this one reaching
+    /// `CertificateReaderMissing` is itself asserted by a test.
     fn verifier_env(script: &Path) -> FakeLaunchEnv {
         FakeLaunchEnv::new().with_which("osslsigncode", &script.to_string_lossy())
+    }
+
+    /// A launch environment with a fake `osslsigncode` **and** a fake `openssl`,
+    /// which is what every case that reaches the publisher test needs since
+    /// `SEC-11`: the publisher is read from the signature's certificates, so a
+    /// case that means "this signature is approved" has to say what the
+    /// certificates say.
+    ///
+    /// `subjects` are those certificates, in the RFC2253 rendering the real
+    /// `openssl x509 -nameopt RFC2253` prints — which is also the rendering the
+    /// catalog strings are written in, so `CN=Valve Corp.,O=Valve Corp.,…` is
+    /// the form a Steam case wants. The verifier records its argv to `record`
+    /// and the reader records beside it with an `.openssl` suffix.
+    fn verifier_env_with_certificates(
+        directory: &Path,
+        record: &Path,
+        output: &str,
+        exit: i32,
+        subjects: &[&str],
+    ) -> FakeLaunchEnv {
+        let verifier = fake_osslsigncode(directory, record, output, exit);
+        let reader_record = PathBuf::from(format!("{}.openssl", record.display()));
+        let reader = fake_openssl(directory, &reader_record, subjects, 0);
+        verifier_env_with_reader(&verifier, &reader)
+    }
+
+    /// A launch environment whose verifier is `verifier` and whose reader is
+    /// `reader`, for the cases that need each of the two tools configured
+    /// differently — the failure modes of the extraction, where the whole point
+    /// is that one of them fails while the other would have answered.
+    fn verifier_env_with_reader(verifier: &Path, reader: &Path) -> FakeLaunchEnv {
+        FakeLaunchEnv::new()
+            .with_which("osslsigncode", &verifier.to_string_lossy())
+            .with_which("openssl", &reader.to_string_lossy())
+    }
+
+    /// The real Steam signer's subject, as the real installer's certificate
+    /// prints it (`osslsigncode verify` and `openssl x509 -nameopt RFC2253`
+    /// agree byte for byte; measured on the downloaded `SteamSetup.exe`).
+    ///
+    /// A named constant because several cases need a subject the Steam recipe
+    /// approves, and the point of `SEC-11` is that only the certificate's own
+    /// text can satisfy it.
+    const VALVE_CERTIFICATE: &str = "CN=Valve Corp.,O=Valve Corp.,L=Bellevue,ST=Washington,C=US";
+
+    /// A fake `openssl` that answers the two calls the publisher check makes.
+    ///
+    /// `subjects` are the certificates the "signature" carries. The `pkcs7`
+    /// branch emits them as one PEM block per subject — the block body *is* the
+    /// subject text, because nothing here parses it as DER and a body a test can
+    /// read makes a failure legible — and the `x509` branch reads the single
+    /// block it was handed and prints that one `subject=` line. So the fake is
+    /// per-certificate the way the real pair is: three subjects mean three
+    /// blocks and three reads, and a case cannot match on a certificate that
+    /// was never in the blob.
+    ///
+    /// `exit` is the status of the `pkcs7` call, so "the reader cannot read this
+    /// blob" is a case a test can set up; an empty `subjects` list is how a
+    /// reader that succeeds and finds nothing is set up.
+    ///
+    /// A real script, for the reasons [`fake_osslsigncode`] gives, and with the
+    /// same constraint on its data: a subject containing a `'` would close the
+    /// quoting, so subjects here are distinguished names as `openssl` prints
+    /// them and never carry one.
+    ///
+    /// Its `pkcs7` arm also dumps its own environment to `<record>.env`, the way
+    /// [`fake_osslsigncode_dumping_env`] does for the verifier: a second spawn
+    /// site is a second chance for the launcher's environment to leak (`SEC-09`),
+    /// and an observation of the child is worth more than "it goes through the
+    /// same helper". The dump goes to its own file so nothing this fake prints
+    /// to stdout changes for the cases that read the subjects.
+    fn fake_openssl(directory: &Path, record: &Path, subjects: &[&str], exit: i32) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(directory).unwrap();
+        let bundle: String = subjects
+            .iter()
+            .map(|subject| {
+                format!(
+                    "printf '%s\\n' '-----BEGIN CERTIFICATE-----' '{subject}' '-----END CERTIFICATE-----'\n"
+                )
+            })
+            .collect();
+        let path = directory.join("openssl");
+        let body = format!(
+            "#!{shell}\n\
+             printf '%s\\n' \"$@\" >> '{record}'\n\
+             if [ \"$1\" = 'pkcs7' ]; then\n\
+             {bundle}\
+             export -p > '{record}.env'\n\
+             exit {exit}\n\
+             fi\n\
+             if [ \"$1\" = 'x509' ]; then\n\
+             shift\n\
+             certificate=''\n\
+             while [ $# -gt 0 ]; do\n\
+             \x20 if [ \"$1\" = '-in' ]; then certificate=\"$2\"; fi\n\
+             \x20 shift\n\
+             done\n\
+             while IFS= read -r line; do\n\
+             \x20 case \"$line\" in\n\
+             \x20   -----BEGIN*) ;;\n\
+             \x20   -----END*) ;;\n\
+             \x20   *) printf 'subject=%s\\n' \"$line\" ;;\n\
+             \x20 esac\n\
+             done < \"$certificate\"\n\
+             exit 0\n\
+             fi\n\
+             exit 2\n",
+            shell = fake_shell(),
+            record = record.display(),
+        );
+        std::fs::write(&path, body).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        path
     }
 
     /// A fake verifier that prints an approving line and then dumps its own
@@ -3923,11 +4456,17 @@ mod tests {
         // Note what this *cannot* show: `sh` sets `PWD`, `SHLVL` and `OLDPWD`
         // itself, so those three appear even in a completely empty environment.
         // The test excludes them by name rather than assuming an empty dump.
+        //
+        // The extraction arm is the same one every other fake answers with: the
+        // publisher check drives it since `SEC-11`, so a fake that could only
+        // dump its environment would leave this test refusing at the extraction
+        // instead of reaching the environment it is about.
         let body = format!(
-            "#!{}\nprintf '%s\\n' '{}'\nexport -p > '{}'\nexit {exit}\n",
-            fake_shell(),
-            output,
-            env_record.display()
+            "#!{shell}\nif [ \"$1\" = 'extract-signature' ]; then\n{arm}fi\nprintf '%s\\n' '{output}'\nexport -p > '{env_record}'\nexit {exit}\n",
+            shell = fake_shell(),
+            arm = extract_signature_arm(),
+            output = output,
+            env_record = env_record.display(),
         );
         std::fs::write(&path, body).unwrap();
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
@@ -3969,11 +4508,17 @@ mod tests {
         let scratch = Scratch::new("part-mode");
         let dest = scratch.path().join("downloads");
         let record = scratch.path().join("verifier-argv");
-        let script = fake_osslsigncode(
+        // The report carries no `Subject:` line at all, and the approved
+        // publisher is in the *certificates* the fake `openssl` answers with:
+        // a case that could pass by reading the verifier's text would be
+        // testing the hole `SEC-11` closed. `CN=Valve Corp.` is the real
+        // signer's subject, measured on the downloaded `SteamSetup.exe`.
+        let env = verifier_env_with_certificates(
             scratch.path(),
             &record,
-            "Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+            "Signature verification: ok",
             0,
+            &[VALVE_CERTIFICATE],
         );
         let steam = installer_by_id("steam").unwrap();
 
@@ -4006,7 +4551,7 @@ mod tests {
             Some(&progress),
             Duration::from_secs(60),
             &FakeResponse::at(steam.download_url, PE_BODY),
-            &verifier_env(&script),
+            &env,
         )
         .expect("an authenticated download");
 
@@ -4118,35 +4663,46 @@ mod tests {
         let scratch = Scratch::new("download-ok");
         let dest = scratch.path().join("downloads");
         let record = scratch.path().join("verifier-argv");
-        let script = fake_osslsigncode(
+        let env = verifier_env_with_certificates(
             scratch.path(),
             &record,
-            "Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+            "Signature verification: ok",
             0,
+            &[VALVE_CERTIFICATE],
         );
         let steam = installer_by_id("steam").unwrap();
         let client = FakeResponse::at(steam.download_url, PE_BODY);
 
-        let target = download_installer(
-            steam,
-            &dest,
-            None,
-            Duration::from_secs(60),
-            &client,
-            &verifier_env(&script),
-        )
-        .unwrap();
+        let target =
+            download_installer(steam, &dest, None, Duration::from_secs(60), &client, &env).unwrap();
 
         assert_eq!(target, dest.join("SteamSetup.exe"));
         assert_eq!(std::fs::read(&target).unwrap(), PE_BODY);
         assert!(part_files(&dest).is_empty(), "a .part file was left behind");
         // The verifier ran, and it ran on the temporary file — so the
         // signature was checked before anything existed at the target path.
+        //
+        // The record holds two calls since `SEC-11`, because the publisher
+        // check drives a second subcommand of the same tool: `verify` on the
+        // `.part` file, then `extract-signature` on **the same** `.part` file.
+        // The second half is the load-bearing one to assert — an extraction
+        // that read the installed path, or a path of its own, would be reading
+        // bytes no chain check ever covered.
         let recorded = std::fs::read_to_string(&record).unwrap();
         let lines: Vec<&str> = recorded.lines().collect();
         assert_eq!(lines[0], "verify");
-        assert_eq!(lines[lines.len() - 2], "-in");
-        assert!(lines[lines.len() - 1].ends_with(".part"), "{lines:?}");
+        assert_eq!(lines[1], "-in");
+        assert!(lines[2].ends_with(".part"), "{lines:?}");
+        assert_eq!(
+            &lines[3..7],
+            &["extract-signature", "-in", lines[2], "-out"],
+            "{lines:?}"
+        );
+        assert!(
+            lines[7].ends_with("signature.p7b"),
+            "the extraction wrote somewhere other than its own scratch file: {lines:?}"
+        );
+        assert_eq!(lines.len(), 8, "the tool ran more than twice: {lines:?}");
     }
 
     /// `test_untrusted_redirect_is_rejected_and_removed`
@@ -4169,25 +4725,19 @@ mod tests {
         let scratch = Scratch::new("redirect");
         let dest = scratch.path().join("downloads");
         let record = scratch.path().join("verifier-argv");
-        let script = fake_osslsigncode(
+        let env = verifier_env_with_certificates(
             scratch.path(),
             &record,
-            "Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+            "Signature verification: ok",
             0,
+            &[VALVE_CERTIFICATE],
         );
         let steam = installer_by_id("steam").unwrap();
         let client = FakeResponse::at(steam.download_url, b"MZpayload")
             .redirected_to("https://evil.example/SteamSetup.exe");
 
-        let error = download_installer(
-            steam,
-            &dest,
-            None,
-            Duration::from_secs(60),
-            &client,
-            &verifier_env(&script),
-        )
-        .unwrap_err();
+        let error = download_installer(steam, &dest, None, Duration::from_secs(60), &client, &env)
+            .unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -4222,24 +4772,18 @@ mod tests {
         let scratch = Scratch::new("not-pe");
         let dest = scratch.path().join("downloads");
         let record = scratch.path().join("verifier-argv");
-        let script = fake_osslsigncode(
+        let env = verifier_env_with_certificates(
             scratch.path(),
             &record,
-            "Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+            "Signature verification: ok",
             0,
+            &[VALVE_CERTIFICATE],
         );
         let steam = installer_by_id("steam").unwrap();
         let client = FakeResponse::at(steam.download_url, b"not-an-executable");
 
-        let error = download_installer(
-            steam,
-            &dest,
-            None,
-            Duration::from_secs(60),
-            &client,
-            &verifier_env(&script),
-        )
-        .unwrap_err();
+        let error = download_installer(steam, &dest, None, Duration::from_secs(60), &client, &env)
+            .unwrap_err();
 
         assert_eq!(error.to_string(), "Steam download is not a valid EXE file");
         assert!(!record.exists(), "the signature verifier was run anyway");
@@ -4256,21 +4800,20 @@ mod tests {
         let scratch = Scratch::new("not-ole");
         let dest = scratch.path().join("downloads");
         let record = scratch.path().join("verifier-argv");
-        let script = fake_osslsigncode(scratch.path(), &record, "Signature verification: ok", 0);
+        let env = verifier_env_with_certificates(
+            scratch.path(),
+            &record,
+            "Signature verification: ok",
+            0,
+            &["CN=Epic Games Inc.,O=Epic Games Inc.,C=US"],
+        );
         let epic = installer_by_id("epic").unwrap();
         assert_eq!(epic.kind, Kind::Msi);
         // An `MZ` payload for an MSI recipe is the cross-wired case.
         let client = FakeResponse::at(epic.download_url, PE_BODY);
 
-        let error = download_installer(
-            epic,
-            &dest,
-            None,
-            Duration::from_secs(60),
-            &client,
-            &verifier_env(&script),
-        )
-        .unwrap_err();
+        let error = download_installer(epic, &dest, None, Duration::from_secs(60), &client, &env)
+            .unwrap_err();
         assert_eq!(
             error.to_string(),
             "Epic Games Launcher download is not a valid MSI file"
@@ -4281,24 +4824,19 @@ mod tests {
         let mut ole = vec![0xD0u8, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
         ole.extend_from_slice(b"payload");
         let good = FakeResponse::at(epic.download_url, &ole);
-        let script = fake_osslsigncode(
+        // The recipe's own publisher string is `Epic Games Inc.` — no comma,
+        // and the difference matters because the check is a substring test.
+        // It is in the certificate now rather than in the verifier's report,
+        // which is the whole of `SEC-11`.
+        let env = verifier_env_with_certificates(
             scratch.path(),
             &scratch.path().join("argv-2"),
-            // The recipe's own publisher string, which is `Epic Games Inc.` —
-            // no comma, and the difference matters because the check is a
-            // substring test against the whole output.
-            "Signature verification: ok\nSubject: /O=Epic Games Inc./CN=Epic Games Inc.",
+            "Signature verification: ok",
             0,
+            &["CN=Epic Games Inc.,O=Epic Games Inc.,C=US"],
         );
-        let target = download_installer(
-            epic,
-            &dest,
-            None,
-            Duration::from_secs(60),
-            &good,
-            &verifier_env(&script),
-        )
-        .unwrap();
+        let target =
+            download_installer(epic, &dest, None, Duration::from_secs(60), &good, &env).unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), ole);
     }
 
@@ -4307,31 +4845,39 @@ mod tests {
     /// `test_signature_accepts_verified_approved_publisher` (`:147-155`).
     ///
     /// Both arms in one test because they are one mechanism: the *only*
-    /// difference between them is the publisher string the verifier prints, so
-    /// a test with one arm cannot tell "checks the publisher" from "rejects
+    /// difference between them is the publisher the signature names, so a test
+    /// with one arm cannot tell "checks the publisher" from "rejects
     /// everything" or from "accepts everything".
+    ///
+    /// What the signature names is now read from its **certificates** rather
+    /// than from the verifier's report, so every arm states it in
+    /// `verifier_env_with_certificates`'s `subjects` and the report carries only
+    /// the success line. That is deliberate: an arm that could pass by reading
+    /// the report would be testing the hole `SEC-11` closed, and the third arm
+    /// below is the one that pins the comparison's substring nature.
     #[test]
     fn the_signature_must_name_a_publisher_the_recipe_approves() {
         let scratch = Scratch::new("publisher");
         let steam = installer_by_id("steam").unwrap();
         let path = touch(&scratch.path().join("SteamSetup.exe"));
 
-        let approved = fake_osslsigncode(
+        let approved = verifier_env_with_certificates(
             scratch.path(),
             &scratch.path().join("argv-approved"),
-            "Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+            "Signature verification: ok",
             0,
+            &[VALVE_CERTIFICATE],
         );
-        assert!(verify_installer_authenticity(steam, &path, &verifier_env(&approved)).is_ok());
+        assert!(verify_installer_authenticity(steam, &path, &approved).is_ok());
 
-        let impostor = fake_osslsigncode(
+        let impostor = verifier_env_with_certificates(
             scratch.path(),
             &scratch.path().join("argv-impostor"),
-            "Signature verification: ok\nSubject: /O=Impostor Corp./CN=Impostor Corp.",
+            "Signature verification: ok",
             0,
+            &["CN=Impostor Corp.,O=Impostor Corp.,C=US"],
         );
-        let error =
-            verify_installer_authenticity(steam, &path, &verifier_env(&impostor)).unwrap_err();
+        let error = verify_installer_authenticity(steam, &path, &impostor).unwrap_err();
         assert_eq!(
             error.to_string(),
             "Steam is not signed by an approved publisher"
@@ -4340,101 +4886,331 @@ mod tests {
         // The substring nature of the publisher test, spelled out: a name that
         // merely *contains* an approved one is approved, and that is the
         // reference's behaviour rather than an accident of this port.
-        let padded = fake_osslsigncode(
+        let padded = verifier_env_with_certificates(
             scratch.path(),
             &scratch.path().join("argv-padded"),
-            "Signature verification: ok\nSubject: /O=NotValve Corp./CN=NotValve Corp.",
+            "Signature verification: ok",
             0,
+            &["CN=NotValve Corp.,O=NotValve Corp.,C=US"],
         );
-        assert!(verify_installer_authenticity(steam, &path, &verifier_env(&padded)).is_ok());
+        assert!(verify_installer_authenticity(steam, &path, &padded).is_ok());
     }
 
-    /// **SEC-03.** The publisher must be the certificate's, not the signer's.
+    /// **SEC-11** (and `SEC-03`'s subject, kept). The publisher must be the
+    /// certificate's, so that signer-chosen text cannot supply one.
     ///
-    /// The fixture below reproduces, field for field, the output the bundled
-    /// `osslsigncode` 2.14 actually printed when a payload was signed with a
-    /// self-signed certificate whose subject is `O=Evil Example Ltd,CN=Totally
-    /// Unrelated Signer` and `-n "Valve Corp."`: the recipe's approved
-    /// publisher appears only in `Text description:`, an authenticated
-    /// attribute **the signer chose at signing time**, while every `Subject:`
-    /// line names a certificate Valve has nothing to do with. The reference's
-    /// whole-output substring test (`installers.py:594-595`) accepts that; so
-    /// did this port before the `Subject:`-scoped test replaced it.
+    /// The fixture reproduces, line for line, what the bundled `osslsigncode`
+    /// 2.14 actually printed when a payload was signed with a certificate whose
+    /// subject is `C=US, O=Evil Example Ltd, CN=Totally Unrelated Signer` and
     ///
-    /// The three arms isolate one variable each. The control arm differs from
-    /// the attack arm in nothing but the *value* of `Text description:` — same
-    /// exit status, same success line, same subjects — so a port that refused
-    /// every output carrying a `Text description:` line would fail it, and a
-    /// port that scoped the test to `Subject:` but broke the accepted syntax
-    /// would fail the third.
+    /// ```text
+    /// -n "$(printf 'Totally Unrelated\n\t\tSubject: C=US,O=Valve Corp.,CN=Valve Corp.')"
+    /// ```
+    ///
+    /// The `Text description:` value and the `Subject:` line below it are
+    /// **one** authenticated attribute: the signer's text, continued on a line
+    /// indented exactly as a certificate subject is. `subject_values` — the
+    /// `line.trim().strip_prefix("Subject:")` that replaced `SEC-03`'s
+    /// whole-output test — accepted that line, so the gate returned `Ok(())`
+    /// for a binary signed by a certificate that has nothing to do with Valve.
+    ///
+    /// The `SEC-03` fixture could not see it: it put `Text description: {text}`
+    /// on a single line, so the multi-line shape never occurred, and the
+    /// verifier it drove was a fake whose report was the only thing it read.
+    /// The multi-line shape *is* the attack, which is why it is spelled out
+    /// here rather than described.
+    ///
+    /// The three arms isolate one variable each. The control differs from the
+    /// attack in nothing but the forged line's **value** — same exit status,
+    /// same success line, same genuine certificate — so a port that refused
+    /// every report carrying a `Subject:`-shaped continuation would fail it. The
+    /// third differs only in the **certificate**, and is the accepted-syntax
+    /// arm: a report full of signer-chosen text is accepted when the
+    /// certificate genuinely names an approved publisher, so the fix is not
+    /// "refuse anything with a newline in it" either.
     #[test]
-    fn the_publisher_must_be_the_certificates_not_a_field_the_signer_chose() {
-        let scratch = Scratch::new("sec03-description");
+    fn a_signer_chosen_newline_cannot_forge_a_certificate_subject() {
+        let scratch = Scratch::new("sec11-newline");
         let steam = installer_by_id("steam").unwrap();
         let path = touch(&scratch.path().join("SteamSetup.exe"));
-        // Printed by `osslsigncode verify`, trimmed to the lines that matter:
-        // the signer's own subject, the `Text description:` attribute beneath
-        // it, and the chain certificate the tool reprints below. (The headings
-        // around them are omitted because the fake is a shell script and
-        // `Signer's certificate:` carries an apostrophe that would close its
-        // quoting.)
-        let measured = |description: &str| {
+        /// The subject of the certificate the payload is really signed with.
+        const UNRELATED: &str = "CN=Totally Unrelated Signer,O=Evil Example Ltd,C=US";
+
+        // Printed by `osslsigncode verify`, trimmed to the lines that matter.
+        // (The headings around them are omitted because the fake is a shell
+        // script and `Signer's certificate:` carries an apostrophe that would
+        // close its quoting.)
+        let measured = |certificate: &str, forged: &str| {
             format!(
                 "Signature Index: 0  (Primary Signature)\n\
-                 \t\tSubject: CN=Totally Unrelated Signer,O=Evil Example Ltd\n\
-                 \t\tIssuer : CN=Totally Unrelated Signer,O=Evil Example Ltd\n\
+                 \t\tSubject: {certificate}\n\
+                 \t\tIssuer : CN=Totally Unrelated Signer,O=Evil Example Ltd,C=US\n\
                  Authenticated attributes:\n\
-                 \tText description: {description}\n\
+                 \tText description: Totally Unrelated\n\
+                 \t\tSubject: {forged}\n\
                  \tMessage digest: EB9375AEDB7BC4E6CCF12645DC65BA23A4883FC22E0D27FC80ED2504922F938F\n\
                  Signature verification: ok\n\
                  Number of verified signatures: 1\n\
                  Signing certificate chain verified using:\n\
-                 \t\tSubject: CN=Totally Unrelated Signer,O=Evil Example Ltd\n"
+                 \t\tSubject: {certificate}\n"
             )
         };
 
-        // The attack: an approved publisher the certificate does not have.
-        let attack = fake_osslsigncode(
+        // The attack: an approved publisher that exists in the signer's text
+        // and in no certificate. RFC2253 order with no space after the comma,
+        // which is the form 2.14 prints and the form the catalog matches.
+        let attack = verifier_env_with_certificates(
             scratch.path(),
-            &scratch.path().join("argv-description"),
-            &measured("Valve Corp."),
+            &scratch.path().join("argv-attack"),
+            &measured(UNRELATED, "C=US,O=Valve Corp.,CN=Valve Corp."),
             0,
+            &[UNRELATED],
         );
-        let error =
-            verify_installer_authenticity(steam, &path, &verifier_env(&attack)).unwrap_err();
+        let error = verify_installer_authenticity(steam, &path, &attack).unwrap_err();
         assert_eq!(
             error.to_string(),
             "Steam is not signed by an approved publisher"
         );
+        // The *variant*, not only the sentence: a refusal for a missing reader
+        // or an unreadable blob would carry a different message and still fail
+        // the assertion above, so the arm has to say which refusal it expects.
+        assert!(matches!(error, InstallerError::PublisherUnapproved { .. }));
 
         // The control: the same output with an unrelated description, still
         // refused — so the arm above is not passing for the wrong reason.
-        let control = fake_osslsigncode(
+        let control = verifier_env_with_certificates(
             scratch.path(),
             &scratch.path().join("argv-control"),
-            &measured("Totally Unrelated Installer"),
+            &measured(
+                UNRELATED,
+                "C=US,O=Totally Unrelated Ltd,CN=Totally Unrelated Ltd",
+            ),
             0,
+            &[UNRELATED],
         );
-        let error =
-            verify_installer_authenticity(steam, &path, &verifier_env(&control)).unwrap_err();
+        let error = verify_installer_authenticity(steam, &path, &control).unwrap_err();
         assert_eq!(
             error.to_string(),
             "Steam is not signed by an approved publisher"
         );
 
-        // And a genuine Valve signature — described as something else — is
-        // still accepted: the field the signer controls is not read in either
-        // direction. RFC2253 order, no space after the comma, which is the
-        // form 2.14 prints.
-        let genuine = fake_osslsigncode(
+        // And a genuine Valve signature — described as something else, with a
+        // forged subject line in that description too — is still accepted: the
+        // text the signer controls is not read in either direction, and the
+        // certificate the catalog names is. `VALVE_CERTIFICATE` is the real
+        // signer's subject from the downloaded installer.
+        let genuine = verifier_env_with_certificates(
             scratch.path(),
             &scratch.path().join("argv-genuine"),
-            "Signature verification: ok\n\
-             \t\tSubject: C=US,O=Valve Corp.,CN=Valve Corp.\n\
-             \tText description: Totally Unrelated Installer\n",
+            &measured(VALVE_CERTIFICATE, "C=US,O=Impostor Corp.,CN=Impostor Corp."),
+            0,
+            &[VALVE_CERTIFICATE],
+        );
+        verify_installer_authenticity(steam, &path, &genuine).unwrap();
+    }
+
+    /// The publisher check reads the **certificates**, so the three ways that
+    /// can fail are refusals with their own names rather than passes: a
+    /// signature that cannot be extracted, a host with no reader, and a blob
+    /// the reader cannot make certificates out of.
+    ///
+    /// All three are fail-closed by construction, which is the property that
+    /// makes them worth asserting: the publisher test needs the certificates, so
+    /// "no certificates" must never read as "no constraint". Every arm here
+    /// would be a `Ok(())` for a port that fell back to the verifier's printed
+    /// output when the extraction failed — which is exactly the fallback that
+    /// would reinstate `SEC-11`, and the reason there is none.
+    #[test]
+    fn a_publisher_cannot_be_read_from_a_signature_that_cannot_be_read() {
+        let scratch = Scratch::new("sec11-unreadable");
+        let steam = installer_by_id("steam").unwrap();
+        let path = touch(&scratch.path().join("SteamSetup.exe"));
+        let approved_report = "Signature verification: ok";
+        // Each arm gets its own directory, so the two fakes — which both write
+        // a script named after their tool — cannot be overwritten by a later
+        // arm's setup.
+        let dir = |label: &str| scratch.path().join(label);
+
+        // 1. `extract-signature` fails: the file carries no signature, as the
+        //    real tool reports for an unsigned payload. The reader is installed
+        //    and would answer, so the refusal cannot be a missing `openssl`.
+        let verifier = fake_osslsigncode_refusing_extraction(
+            &dir("no-signature"),
+            &dir("no-signature").join("argv"),
+            approved_report,
             0,
         );
-        verify_installer_authenticity(steam, &path, &verifier_env(&genuine)).unwrap();
+        let reader = fake_openssl(
+            &dir("no-signature"),
+            &dir("no-signature").join("argv.openssl"),
+            &[VALVE_CERTIFICATE],
+            0,
+        );
+        let env = verifier_env_with_reader(&verifier, &reader);
+        let error = verify_installer_authenticity(steam, &path, &env).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Steam's Authenticode signature could not be read\n\
+             No signature found\nUnable to extract existing signature"
+        );
+        assert!(matches!(error, InstallerError::SignatureUnreadable { .. }));
+
+        // 2. No reader at all. The chain verified, so this is not a bad
+        //    signature and not a missing verifier: it is the reader the
+        //    publisher check needs, and it has a name of its own.
+        let env = verifier_env(&fake_osslsigncode(
+            &dir("no-reader"),
+            &dir("no-reader").join("argv"),
+            approved_report,
+            0,
+        ));
+        let error = verify_installer_authenticity(steam, &path, &env).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "openssl is required to read a downloaded installer's signing certificates"
+        );
+        assert!(matches!(error, InstallerError::CertificateReaderMissing));
+
+        // 3. The reader exits non-zero on the blob — what the real
+        //    `openssl pkcs7` does with a garbage `.p7b` (exit 1, an ASN.1
+        //    error). A verifier that would otherwise pass, so the arm cannot be
+        //    passing on the chain gate.
+        let verifier = fake_osslsigncode(
+            &dir("garbage"),
+            &dir("garbage").join("argv"),
+            approved_report,
+            0,
+        );
+        let reader = fake_openssl(
+            &dir("garbage"),
+            &dir("garbage").join("argv.openssl"),
+            &[],
+            1,
+        );
+        let env = verifier_env_with_reader(&verifier, &reader);
+        let error = verify_installer_authenticity(steam, &path, &env).unwrap_err();
+        assert!(matches!(
+            error,
+            InstallerError::CertificateReadFailed { .. }
+        ));
+        assert!(
+            error
+                .to_string()
+                .starts_with("Steam's signing certificates could not be read"),
+            "{error}"
+        );
+
+        // 4. The reader exits **zero** and produces no certificate — a blob
+        //    that parses and carries none. Its own arm because it is the shape
+        //    a "the reader exited 0, so trust it" port would let through with an
+        //    empty subject list, which would make every publisher test vacuous
+        //    rather than refused.
+        let env = verifier_env_with_certificates(
+            &dir("empty"),
+            &dir("empty").join("argv"),
+            approved_report,
+            0,
+            &[],
+        );
+        let error = verify_installer_authenticity(steam, &path, &env).unwrap_err();
+        assert!(matches!(
+            error,
+            InstallerError::CertificateReadFailed { .. }
+        ));
+    }
+
+    /// The extracted signature is a file with attacker-influenced bytes in it,
+    /// and it is removed on every path — success, a failed extraction, and a
+    /// failed read.
+    ///
+    /// The path is not guessed: it is the `-out` argument the fake verifier
+    /// recorded, so this asserts about the directory the code actually created.
+    /// A `Drop` guard is what makes it true for all three paths at once; the
+    /// three arms are here because "all three" is the claim.
+    #[test]
+    fn the_extracted_signature_is_removed_from_disk_on_every_path() {
+        let scratch = Scratch::new("sec11-scratch");
+        let steam = installer_by_id("steam").unwrap();
+        let path = touch(&scratch.path().join("SteamSetup.exe"));
+        let approved_report = "Signature verification: ok";
+
+        // Where the extraction wrote, according to the extraction itself.
+        let extraction_directory = |record: &Path| -> PathBuf {
+            let recorded = std::fs::read_to_string(record).unwrap();
+            let lines: Vec<&str> = recorded.lines().collect();
+            let out = lines
+                .iter()
+                .position(|line| *line == "-out")
+                .expect("the extraction was asked for an output file");
+            let blob = Path::new(lines[out + 1]);
+            assert!(
+                blob.ends_with("signature.p7b"),
+                "the recorded output is not the extraction's blob: {blob:?}"
+            );
+            let directory = blob.parent().unwrap().to_path_buf();
+            assert!(directory.is_absolute(), "{directory:?}");
+            directory
+        };
+
+        // The success path.
+        let record = scratch.path().join("argv-ok");
+        let env = verifier_env_with_certificates(
+            scratch.path(),
+            &record,
+            approved_report,
+            0,
+            &[VALVE_CERTIFICATE],
+        );
+        verify_installer_authenticity(steam, &path, &env).unwrap();
+        let directory = extraction_directory(&record);
+        assert!(!directory.exists(), "{directory:?} outlived the call");
+
+        // A failed extraction (the blob is written by the tool that then
+        // reports failure only in the arm below, so this arm's tool never
+        // writes one — the directory still has to go).
+        let record = scratch.path().join("argv-refused");
+        let verifier =
+            fake_osslsigncode_refusing_extraction(scratch.path(), &record, approved_report, 0);
+        let reader = fake_openssl(
+            scratch.path(),
+            &scratch.path().join("argv-refused.openssl"),
+            &[VALVE_CERTIFICATE],
+            0,
+        );
+        let error = verify_installer_authenticity(
+            steam,
+            &path,
+            &verifier_env_with_reader(&verifier, &reader),
+        )
+        .unwrap_err();
+        assert!(matches!(error, InstallerError::SignatureUnreadable { .. }));
+        let directory = extraction_directory(&record);
+        assert!(!directory.exists(), "{directory:?} outlived the refusal");
+
+        // A failed read: the extraction wrote a blob, and the reader could not
+        // read it.
+        let record = scratch.path().join("argv-unreadable");
+        let verifier = fake_osslsigncode(scratch.path(), &record, approved_report, 0);
+        let reader = fake_openssl(scratch.path(), &record.with_extension("openssl"), &[], 1);
+        let error = verify_installer_authenticity(
+            steam,
+            &path,
+            &verifier_env_with_reader(&verifier, &reader),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            InstallerError::CertificateReadFailed { .. }
+        ));
+        let directory = extraction_directory(&record);
+        assert!(!directory.exists(), "{directory:?} outlived the refusal");
+
+        // And the guard's name is not shared with another case's: every
+        // directory it creates is under the process's temp directory and is
+        // named for this process, which is what keeps two concurrent
+        // verifications — and a leftover from a crashed run — from being read
+        // as each other's.
+        assert!(directory.starts_with(std::env::temp_dir()), "{directory:?}");
     }
 
     /// The success line is required as well as the exit status, and the failure
@@ -4480,65 +5256,90 @@ mod tests {
     /// `PWD`, `SHLVL` and `OLDPWD` for itself, so they appear in the dump even
     /// when the environment it was given is empty. Asserting an empty dump
     /// instead would fail for a reason that has nothing to do with this fix.
+    ///
+    /// **Both children are asked**, not only the verifier: the publisher check
+    /// spawns a second tool — the certificate reader — since `SEC-11`, and a
+    /// second spawn site is a second chance for the same leak. The reader dumps
+    /// its environment in its `pkcs7` arm, which is the arm the publisher test
+    /// drives.
     #[test]
     fn the_verifier_is_spawned_without_the_launcher_s_environment() {
         let scratch = Scratch::new("env-clear");
         let steam = installer_by_id("steam").unwrap();
         let path = touch(&scratch.path().join("SteamSetup.exe"));
         let env_record = scratch.path().join("verifier-env");
-        let script = fake_osslsigncode_dumping_env(
+        let reader_record = scratch.path().join("reader-env");
+        let verifier = fake_osslsigncode_dumping_env(
             scratch.path(),
             &env_record,
-            "Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+            "Signature verification: ok",
             0,
         );
+        // The report carries only the success line and the publisher comes from
+        // the certificates, so no part of this test can pass by reading the
+        // verifier's text (`SEC-11`) — and the call reaches both spawns.
+        let reader = fake_openssl(scratch.path(), &reader_record, &[VALVE_CERTIFICATE], 0);
+        let env = verifier_env_with_reader(&verifier, &reader);
 
-        verify_installer_authenticity(steam, &path, &verifier_env(&script)).unwrap();
+        verify_installer_authenticity(steam, &path, &env).unwrap();
 
-        let dumped = std::fs::read_to_string(&env_record).unwrap();
-        let names: Vec<&str> = dumped
-            .lines()
-            .filter_map(|line| line.strip_prefix("export "))
-            .filter_map(|rest| rest.split('=').next())
-            .collect();
-        assert!(
-            !names.is_empty(),
-            "the fake verifier wrote no environment at all — the dump, not the \
-             environment, is what failed here"
-        );
         const SET_BY_THE_SHELL_ITSELF: [&str; 4] = ["PWD", "SHLVL", "OLDPWD", "_"];
-        let leaked: Vec<String> = std::env::vars()
-            .map(|(name, _)| name)
-            .filter(|name| !SET_BY_THE_SHELL_ITSELF.contains(&name.as_str()))
-            .filter(|name| names.contains(&name.as_str()))
-            .collect();
-        let sample: Vec<&String> = leaked.iter().take(5).collect();
-        assert!(
-            leaked.is_empty(),
-            "the verifier inherited {} variable(s) from the launcher, including {sample:?}",
-            leaked.len()
+        let inherited = |dump: &Path, child: &str| {
+            let dumped = std::fs::read_to_string(dump).unwrap();
+            let names: Vec<&str> = dumped
+                .lines()
+                .filter_map(|line| line.strip_prefix("export "))
+                .filter_map(|rest| rest.split('=').next())
+                .collect();
+            assert!(
+                !names.is_empty(),
+                "the fake {child} wrote no environment at all — the dump, not the \
+                 environment, is what failed here"
+            );
+            let leaked: Vec<String> = std::env::vars()
+                .map(|(name, _)| name)
+                .filter(|name| !SET_BY_THE_SHELL_ITSELF.contains(&name.as_str()))
+                .filter(|name| names.contains(&name.as_str()))
+                .collect();
+            let sample: Vec<&String> = leaked.iter().take(5).collect();
+            assert!(
+                leaked.is_empty(),
+                "the {child} inherited {} variable(s) from the launcher, including {sample:?}",
+                leaked.len()
+            );
+        };
+        inherited(&env_record, "verifier");
+        inherited(
+            &PathBuf::from(format!("{}.env", reader_record.display())),
+            "certificate reader",
         );
 
         // The two conditions that make clearing safe, each asserted where it can
-        // be: the program is resolved to an absolute path before the spawn, so
-        // an empty `PATH` is not a problem for reaching it — asserted here by
-        // the fact that the script above ran at all, since it is only reachable
-        // by its own path.
-        assert!(script.is_absolute(), "{script:?}");
+        // be: the programs are resolved to absolute paths before the spawn, so
+        // an empty `PATH` is not a problem for reaching them — asserted here by
+        // the fact that the scripts above ran at all, since they are only
+        // reachable by their own paths.
+        assert!(verifier.is_absolute(), "{verifier:?}");
+        assert!(reader.is_absolute(), "{reader:?}");
         // ...and everything the verifier needs is in the argv. The trust root is
         // the one input this could have got wrong, so it is checked rather than
         // argued: the pinned-root recipe passes an absolute `-CAfile`.
         let ubisoft = installer_by_id("ubisoft").unwrap();
         let root = touch(&scratch.path().join("microsoft-root.pem"));
         let argv_record = scratch.path().join("argv");
-        let script = fake_osslsigncode(
+        let verifier = fake_osslsigncode(
             scratch.path(),
             &argv_record,
-            "Signature verification: ok\nSubject: /CN=UBISOFT ENTERTAINMENT.",
+            "Signature verification: ok",
             0,
         );
-        let env = FakeLaunchEnv::new()
-            .with_which("osslsigncode", &script.to_string_lossy())
+        let reader = fake_openssl(
+            scratch.path(),
+            &scratch.path().join("argv.openssl"),
+            &["CN=UBISOFT ENTERTAINMENT,O=UBISOFT ENTERTAINMENT,C=FR"],
+            0,
+        );
+        let env = verifier_env_with_reader(&verifier, &reader)
             .with_vars(&[("GAMEHANDLER_AUTHENTICODE_ROOT", &root.to_string_lossy())]);
         verify_installer_authenticity(ubisoft, &path, &env).unwrap();
         let recorded = std::fs::read_to_string(&argv_record).unwrap();
@@ -4575,14 +5376,17 @@ mod tests {
         assert!(ubisoft.microsoft_trust_root);
         let root = touch(&scratch.path().join("microsoft-root.pem"));
         let record = scratch.path().join("argv");
-        let script = fake_osslsigncode(
+        let script = fake_osslsigncode(scratch.path(), &record, "Signature verification: ok", 0);
+        // The publisher lives in this certificate and not in the report, which
+        // is why the two halves of the argv assertion below are made on a call
+        // that gets past the publisher test (`SEC-11`).
+        let reader = fake_openssl(
             scratch.path(),
-            &record,
-            "Signature verification: ok\nSubject: /O=UBISOFT ENTERTAINMENT./CN=UBISOFT ENTERTAINMENT.",
+            &scratch.path().join("argv.openssl"),
+            &["CN=UBISOFT ENTERTAINMENT,O=UBISOFT ENTERTAINMENT,C=FR"],
             0,
         );
-        let env = FakeLaunchEnv::new()
-            .with_which("osslsigncode", &script.to_string_lossy())
+        let env = verifier_env_with_reader(&script, &reader)
             .with_vars(&[("GAMEHANDLER_AUTHENTICODE_ROOT", &root.to_string_lossy())]);
         let path = touch(&scratch.path().join("UbisoftConnectInstaller.exe"));
 
@@ -4758,11 +5562,15 @@ mod tests {
     fn progress_is_reported_as_a_fraction_and_ends_at_one() {
         let scratch = Scratch::new("progress");
         let dest = scratch.path().join("downloads");
-        let script = fake_osslsigncode(
+        // The success line only: the publisher is in the certificates since
+        // `SEC-11`, so a case that reached the publisher test on the verifier's
+        // text would be the hole this port closed.
+        let env = verifier_env_with_certificates(
             scratch.path(),
             &scratch.path().join("argv"),
-            "Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+            "Signature verification: ok",
             0,
+            &[VALVE_CERTIFICATE],
         );
         let steam = installer_by_id("steam").unwrap();
         let client = FakeResponse::at(steam.download_url, PE_BODY);
@@ -4775,7 +5583,7 @@ mod tests {
             Some(&progress),
             Duration::from_secs(60),
             &client,
-            &verifier_env(&script),
+            &env,
         )
         .unwrap();
 
@@ -4799,12 +5607,13 @@ mod tests {
             Some(&progress),
             Duration::from_secs(60),
             &client,
-            &verifier_env(&fake_osslsigncode(
+            &verifier_env_with_certificates(
                 scratch.path(),
                 &scratch.path().join("argv-undeclared"),
-                "Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+                "Signature verification: ok",
                 0,
-            )),
+                &[VALVE_CERTIFICATE],
+            ),
         )
         .unwrap();
         assert_eq!(seen.into_inner(), vec![1.0]);
