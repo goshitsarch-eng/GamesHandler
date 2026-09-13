@@ -63,7 +63,7 @@ those rows contain `Status:`:
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
 | `BUGS.md` | 48 | 28 | 26 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
-| `ARCHITECTURE.md` | 26 | 13 | 13 `FIXED` |
+| `ARCHITECTURE.md` | 26 | 14 | 14 `FIXED` |
 | `COSMIC-UX.md` | 30 | 14 | 12 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 7 `FIXED` |
 | `PACKAGING.md` | 10 | 6 | 5 `FIXED`, 1 `PARTIAL` |
@@ -129,18 +129,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 51 | 36 | 0 | 15 |
-| P3 | 50 | 4 | 0 | 46 |
-| **Total** | **130** | **69** | **0** | **61** |
+| P3 | 50 | 5 | 0 | 45 |
+| **Total** | **130** | **70** | **0** | **60** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 26 | 13 | 0 | 13 |
+| `ARCH-xx` | `ARCHITECTURE.md` | 26 | 14 | 0 | 12 |
 | `BUG-xx` | `BUGS.md` | 46 | 26 | 0 | 20 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 12 | 0 | 17 |
-| **Total** | | **130** | **69** | **0** | **61** |
+| **Total** | | **130** | **70** | **0** | **60** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -282,7 +282,7 @@ across families, not within them.
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
-| `ARCH-19` | Three Python citations land on a blank line | S5 | — | Re-point the three citations; verify each lands on the code it names. | OPEN |
+| `ARCH-19` | Three Python citations land on a blank line | S5 | — | Re-point the three citations; verify each lands on the code it names. | FIXED |
 | `ARCH-20` | Two comments record the size of a mutation-testing result, the two numbers disagree with each other, and neither matches the current suite | S5 | — | Re-measure the mutation result and record the method with the number; verify by re-running the measurement. | OPEN |
 | `ARCH-21` | The shortcut guard test is not enforced by the gate that is supposed to enforce it | S5 | — | Delete one of the two constants and observe the gate stay green (pre-fix), then fail (post-fix) once the guard is wired into a stage. | OPEN |
 | `ARCH-22` | A 58-line dialog docblock describes the runner dialog but sits above the game dialog, leaving the runner dialog undocumented | S5 | — | Move the docblock onto the runner dialog and write one for the game dialog; verify both dialogs have a doc comment naming them. | OPEN |

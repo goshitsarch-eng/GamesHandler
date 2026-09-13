@@ -40,7 +40,7 @@ pub fn runner_label(is_linux: bool, manager_label: &str) -> String {
 /// there is nothing to show rather than left as a dangling separator.
 ///
 /// `display_category` is [`Game::display_category`], i.e. already folded — but
-/// a blank is *also* treated as absent here. `bridge.py:323` compares against
+/// a blank is *also* treated as absent here. `bridge.py:319` compares against
 /// the literal `"Uncategorized"` and so would render `" · Proton"` for a blank
 /// it was handed directly; folding blanks too is the same answer for every
 /// input the reference can actually produce, and one fewer way to get a stray

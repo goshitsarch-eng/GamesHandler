@@ -59,7 +59,7 @@ use cosmic::iced::ContentFit;
 /// [`super::widgets`], so the distinction is pinned by a test there.
 pub const NO_COVER_LABEL: &str = "No cover yet";
 
-/// How many placeholder shades there are. `covers.py:95` (`COVER_ACCENTS`).
+/// How many placeholder shades there are. `covers.py:94` (`COVER_ACCENTS`).
 ///
 /// Re-exported from `core` rather than declared here, so the count and
 /// [`accent_index`]'s bucketing cannot drift apart — they are two halves of one

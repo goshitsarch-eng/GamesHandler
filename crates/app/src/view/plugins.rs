@@ -123,12 +123,12 @@ pub fn card_action(row: &PluginRow) -> Option<Message> {
     button_enabled(row.state).then(|| install_message(row))
 }
 
-/// The message shown while the install runs (`bridge.py:1009`).
+/// The message shown while the install runs (`bridge.py:1012`).
 pub fn installing_message(name: &str) -> String {
     format!("Installing {name}…")
 }
 
-/// The success message (`bridge.py:1016`).
+/// The success message (`bridge.py:1020`).
 pub fn installed_message(name: &str) -> String {
     format!("{name} is installed")
 }

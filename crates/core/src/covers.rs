@@ -177,7 +177,7 @@ pub struct AppDetails {
     pub category: String,
 }
 
-/// How many placeholder shades there are. `covers.py:95`.
+/// How many placeholder shades there are. `covers.py:94`.
 pub const COVER_ACCENTS: usize = 8;
 
 /// The built-in category list, `covers.py:75-89`.

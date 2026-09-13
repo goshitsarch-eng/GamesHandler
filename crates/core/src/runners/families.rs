@@ -85,7 +85,7 @@ impl RunnerFamily {
 
 /// Families ProtonPlus exposes that ship public tarball releases we can install
 /// into a standalone launcher (wrappers like Luxtorpeda/Boxtron are Steam-only).
-/// `runners.py:90`.
+/// `runners.py:93`.
 ///
 /// Order is load-bearing: it is the order the Runners page lists them in, and
 /// `pick_asset`'s first-match rule is only meaningful because of it.
@@ -230,7 +230,7 @@ pub struct RunnerGuide {
 }
 
 /// Guide rows including who maintains each build and where it lives.
-/// `runners.py:231`.
+/// `runners.py:232`.
 ///
 /// The system Wine row is first and is not a family — it has no GitHub repo and
 /// no downloadable release, so it cannot be derived from the catalogue.
@@ -261,7 +261,7 @@ pub fn runner_guides() -> Vec<(String, String, String)> {
 }
 
 /// Whether a name looks like one of the archive formats we can extract.
-/// `runners.py:260`.
+/// `runners.py:261`.
 pub fn looks_like_archive(name: &str) -> bool {
     let lowered = name.to_lowercase();
     [".tar.gz", ".tar.xz", ".tgz", ".tar.bz2"]
@@ -569,7 +569,7 @@ impl ReleaseInfo {
         install_id_for(&self.tag, &self.family_id)
     }
 
-    /// The family this release belongs to. `runners.py:343`.
+    /// The family this release belongs to. `runners.py:341-342`.
     pub fn family(&self) -> Result<&'static RunnerFamily, String> {
         family_by_id(&self.family_id)
     }

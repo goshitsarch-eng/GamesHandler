@@ -122,7 +122,7 @@ pub fn escape_desktop_value(value: &str) -> String {
 }
 
 /// Escape a command for `Exec=`, which reserves `%` for field codes
-/// (`runners.py:1443-1446`).
+/// (`runners.py:1444-1446`).
 pub fn desktop_exec(command: &str) -> String {
     escape_desktop_value(command).replace('%', "%%")
 }
