@@ -1097,7 +1097,16 @@ pub fn plate_stops(accent: usize) -> [(f32, Color); 2] {
 /// The hover half is deliberately absent: hovering needs a message, and this
 /// module emits none. The theme lookup is here rather than at the call site so
 /// that adding the hover state later is a change in one place.
-fn card_style(theme: &cosmic::Theme) -> container::Style {
+///
+/// **This is the single home for the card surface** (ARCH-17, UX-19). It was
+/// three copies — here, `view::installers` and `view::runners` — and the two
+/// copies' own comments named three as the threshold for moving to one place,
+/// by which point the threshold had already been reached. Both of those copies
+/// hardcoded `14.0` where this one read [`metrics::CARD_RADIUS`], so changing
+/// the constant silently left two pages at the old radius. `pub(super)` rather
+/// than `pub`: the surface is a `view`-internal idiom, and a page outside this
+/// module taking it from here is the thing the copies were each warned against.
+pub(super) fn card_style(theme: &cosmic::Theme) -> container::Style {
     let cosmic = theme.cosmic();
     container::Style {
         background: Some(Background::Color(cosmic.background(false).base.into())),
@@ -2373,6 +2382,63 @@ mod tests {
         // constant moves or the style stops reading it.
         assert_eq!(style.border.radius, Radius::from(14.0));
         assert_eq!(metrics::CARD_RADIUS, 14.0);
+    }
+
+    /// No page builds the card surface itself; they all call the one above.
+    ///
+    /// The radius test above proves the *constant* reaches the renderer. It
+    /// cannot notice a page that stops calling this function, and neither can
+    /// any runtime assertion: a fourth `card_style` with `14.0` typed into it
+    /// satisfies every behavioural test in this file on the day it is written
+    /// and keeps satisfying them right up until someone moves the constant. That
+    /// is not hypothetical — it is exactly what happened to the second and third
+    /// copies (ARCH-17), and both carried a comment claiming they were in sync.
+    ///
+    /// So this reads the source. It is a text check, and it is honest about what
+    /// that costs: it cannot tell a real copy from one written inside a comment
+    /// or a string, and it would need widening if the surface ever gains a
+    /// second legitimate definition. The alternative — the check that shipped —
+    /// was no check at all, which is how the duplication survived two audits.
+    ///
+    /// Each page is named with its own path so a failure says which one left.
+    #[test]
+    fn only_one_page_defines_the_card_surface() {
+        const PAGES: [(&str, &str); 3] = [
+            ("widgets.rs", include_str!("widgets.rs")),
+            ("installers.rs", include_str!("installers.rs")),
+            ("runners.rs", include_str!("runners.rs")),
+        ];
+
+        // The definition text itself, not the name: `card_style` is also a
+        // value at the call sites, and counting those would fail on the fix.
+        const DEFINITION: &str = "fn card_style(theme: &cosmic::Theme) -> container::Style {";
+
+        let mut pages_defining = PAGES
+            .iter()
+            .filter(|(_, source)| source.contains(DEFINITION))
+            .map(|(name, _)| *name);
+
+        assert_eq!(
+            pages_defining.next(),
+            Some("widgets.rs"),
+            "the card surface's single definition should be in widgets.rs"
+        );
+        assert_eq!(
+            pages_defining.collect::<Vec<_>>(),
+            Vec::<&str>::new(),
+            "a second page defines the card surface again — call \
+             `super::widgets::card_style` instead; a copy hardcodes the radius \
+             and goes stale the moment `metrics::CARD_RADIUS` moves (ARCH-17)"
+        );
+
+        // And the call sites that must exist, so deleting the surface outright
+        // fails here rather than silently removing the background from a page.
+        for (name, source) in PAGES {
+            assert!(
+                name == "widgets.rs" || source.contains("\nuse super::widgets::card_style;"),
+                "{name} no longer imports the shared card surface"
+            );
+        }
     }
 
     /// A plate's corners are the radius its spec asks for — the tile's radius

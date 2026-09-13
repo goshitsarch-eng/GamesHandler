@@ -82,7 +82,7 @@
 
 use cosmic::Element;
 use cosmic::app::Task;
-use cosmic::iced::{Alignment, Background, Border, Length};
+use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{Column, Row, Space, button, container, progress_bar, text};
 use gamehandler_core::installers::{INSTALLER_CATEGORIES, Installer, search_installers};
 use gamehandler_core::runners::RunnerManager;
@@ -95,6 +95,7 @@ use crate::state::State;
 use super::GUTTER;
 use super::a11y;
 use super::badge::badge;
+use super::widgets::card_style;
 
 /// The filter value that means "do not filter", which the reference writes as
 /// a literal in two places (`installers.py:244`, `bridge.py:806`).
@@ -703,25 +704,6 @@ fn installer_card<'a>(row: &'a InstallerRow, busy: bool, runner_id: &str) -> Ele
     .padding(12)
     .style(card_style)
     .into()
-}
-
-/// The card surface, matching [`super::runners`]' and `super::widgets`'.
-///
-/// Three copies is the point at which this should move to one place; it is
-/// T-14's `widgets.rs` that owns it, and a move is a two-line edit in three
-/// files rather than a redesign. Until then the numbers are the same, which is
-/// what keeps the two pages looking like one application.
-fn card_style(theme: &cosmic::Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(
-            theme.cosmic().background(false).base.into(),
-        )),
-        border: Border {
-            radius: 14.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -68,7 +68,7 @@
 
 use cosmic::Element;
 use cosmic::app::Task;
-use cosmic::iced::{Alignment, Background, Border, Length};
+use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{Column, Row, Space, button, container, divider, icon, progress_bar, text};
 use gamehandler_core::runners::families::{
     ReleaseInfo, RunnerFamily, RunnerGuide, families, runner_guide_details,
@@ -87,6 +87,7 @@ use crate::state::{ReleasesStatus, State};
 
 use super::a11y;
 use super::badge::badge;
+use super::widgets::card_style;
 
 /// The toolbar's re-fetch action. `RunnersPage.qml:21-26`.
 ///
@@ -689,31 +690,21 @@ pub fn guide_press(guide: &GuideRow) -> Option<Message> {
     }
 }
 
-/// The card surface, matching `super::widgets`' `card_style`.
+/// A card: the surface plus the width and padding every card in this page uses.
 ///
-/// Repeated rather than shared because that one is a private function of a
-/// module over `&Game`, and T-14 owns it. If a third page needs it, it moves;
-/// two is not yet a pattern worth a module of its own, and a card whose surface
-/// came from somewhere else would be the second visual idiom.
+/// The surface itself is [`super::widgets::card_style`] — the single home, since
+/// ARCH-17. This wrapper is about *this page's* use of it, which is why it stays
+/// here: the wrapper is layout, the surface is the idiom. Before that fix this
+/// doc said the surface was "repeated rather than shared" and that two copies
+/// were "not yet a pattern worth a module of its own" — both of which stopped
+/// being true when a third page needed it, and the third copy had hardcoded the
+/// radius where `widgets.rs` read `metrics::CARD_RADIUS`.
 fn card<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     container(content)
         .width(Length::Fill)
         .padding(12)
         .style(card_style)
         .into()
-}
-
-fn card_style(theme: &cosmic::Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(
-            theme.cosmic().background(false).base.into(),
-        )),
-        border: Border {
-            radius: 14.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
 }
 
 // ---------------------------------------------------------------------------
