@@ -1024,6 +1024,25 @@ pub fn save_cover_from_urls(
     Err(CoverError::DownloadFailed { reason: last_error })
 }
 
+/// The suffixes a picked image can be stored under.
+///
+/// This is the **closed set of names a custom cover write can produce**, and
+/// therefore the exact set of names a later pick can replace:
+/// [`copy_custom_cover`] stores one of these four suffixes verbatim and folds
+/// every other suffix to `jpg`, so no other file in the covers directory can
+/// belong to this game. That exactness is what
+/// [`preserve_replaced_covers`] scans on, rather than a `<id>.*` prefix, which
+/// would also claim a game whose id merely *starts* with this one's.
+const CUSTOM_COVER_SUFFIXES: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+
+/// How many covers a single pick may find already preserved before it refuses.
+///
+/// A bound rather than an unbounded search so that the failure is expressible
+/// instead of unreachable: a thousand preserved covers for one game means
+/// something has gone wrong with the directory, and the write is refused (with
+/// the user told) rather than allowed to overwrite one of them silently.
+const MAX_PRESERVED_COVERS: u32 = 1000;
+
 /// Copy a user-selected image into the covers directory.
 ///
 /// Port of `copy_custom_cover` (`covers.py:295-304`): a missing source is a
@@ -1032,6 +1051,55 @@ pub fn save_cover_from_urls(
 /// suffix — everything else is stored as `.jpg`. One deliberate divergence:
 /// `shutil.copy2` also copies timestamps, `std::fs::copy` does not, and
 /// nothing reads a cover file's timestamps.
+///
+/// # The second divergence, and why this one matters (`UX-13`)
+///
+/// **The reference destroys the cover it replaces; this port keeps it.**
+/// `shutil.copy2(src, destination)` (`covers.py:303`) — and `std::fs::copy`,
+/// which does the same thing — writes straight over
+/// `{covers_dir}/{game_id}.{suffix}`. Pick a second cover for a game whose
+/// first one is a `.png` and the first file is gone, with no existence check, no
+/// confirmation and no undo, and the only notice is the same
+/// `"Custom cover added"` toast the first pick produced (`bridge.py:597`).
+/// It was the one irreversible action in the application that asked nothing
+/// first, and both of this application's *delete* paths do ask.
+///
+/// The reference's behaviour is therefore deliberate-looking parity, and this is
+/// where the port parts company with it. `docs/audit/PLAN.md`'s decision order
+/// puts data loss above correctness, and above parity with it: an operation that
+/// silently discards the file the user chose last time is the class this port
+/// refuses, so the replaced cover is **renamed aside rather than overwritten**
+/// and the pick still lands where it always did:
+///
+/// ```text
+/// {id}.png                  the cover this pick replaces
+/// {id}.preserved-1.png      where it goes, beside its own name
+/// ```
+///
+/// Nothing is deleted and nothing is asked. The kept file keeps the image bytes,
+/// it cannot be mistaken for a cover of this game — `.preserved-N` is not one of
+/// [`CUSTOM_COVER_SUFFIXES`], so no reader of the covers directory resolves to
+/// it, and nothing in either implementation enumerates that directory
+/// (`bridge.py:606-609` resolves a stored path and falls back to `<id>.jpg`) —
+/// and the destination name is unchanged, so the record the picker writes still
+/// points at the artwork the user just picked and a library shared with the
+/// Python app still resolves.
+///
+/// # The order of the three steps is load-bearing
+///
+/// The source is copied **to a `.tmp` sibling first**, then the old cover is
+/// renamed aside, then the temporary is renamed into place. Reading the source
+/// before disturbing anything is what makes the operation safe when the picked
+/// file *is* the current cover — a user who navigates the picker to the covers
+/// directory and chooses the file already there. The reference's shape cannot
+/// do this: `fs::copy` opens the destination for writing and truncates it, so
+/// copying a file onto itself reads back an empty file, and the old code here
+/// would have left a zero-byte cover. And if a step before the last one fails
+/// — the source is unreadable, the directory is read-only, the rename aside is
+/// refused — the failure is returned with the previous cover still at its own
+/// name, which is also the atomicity the two other writers in this file already
+/// have (`download_image`, `save_exe_icon_to`: a `.tmp` sibling renamed into
+/// place, so an interrupted write leaves the previous cover, never half a file).
 pub fn copy_custom_cover(
     source: &Path,
     game_id: &str,
@@ -1051,17 +1119,63 @@ pub fn copy_custom_cover(
     let stem = cover_stem(game_id).map_err(|_| CoverError::UnsafeId {
         id: game_id.to_string(),
     })?;
-    let file_name = if ["png", "jpg", "jpeg", "webp"].contains(&extension.as_str()) {
+    let file_name = if CUSTOM_COVER_SUFFIXES.contains(&extension.as_str()) {
         format!("{stem}.{extension}")
     } else {
         format!("{stem}.jpg")
     };
-    let destination = covers_dir.join(file_name);
+    let destination = covers_dir.join(&file_name);
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::copy(source, &destination)?;
+    // The new bytes land beside the target and are read back from the source
+    // before the old cover is touched — see "the order of the three steps".
+    let temporary = covers_dir.join(format!("{file_name}.tmp"));
+    std::fs::copy(source, &temporary)?;
+    preserve_replaced_covers(stem, covers_dir)?;
+    std::fs::rename(&temporary, &destination)?;
     Ok(destination)
+}
+
+/// Rename every cover `stem` already has out of the way, so the write that
+/// follows replaces nothing.
+///
+/// The names scanned are exactly the ones [`copy_custom_cover`] can produce for
+/// this game — `<stem>.<suffix>` for each of [`CUSTOM_COVER_SUFFIXES`] — and the
+/// name each is moved to is `<stem>.preserved-<n>.<suffix>` for the first `n`
+/// that is free, so a second preservation of the same name cannot clobber the
+/// first and the extension the file is recognised by is preserved.
+///
+/// # Failing here fails the pick, on purpose
+///
+/// A rename that cannot be done — a read-only directory, a filesystem that will
+/// not rename — propagates as an error and the caller does not go on to write.
+/// Writing anyway is precisely the silent destruction this function exists to
+/// prevent, so the choice between "refuse" and "destroy" is made here, and it is
+/// refuse. [`MAX_PRESERVED_COVERS`] is the same decision at the other end: a
+/// directory already carrying that many preserved covers is not written to.
+fn preserve_replaced_covers(stem: &str, covers_dir: &Path) -> Result<(), CoverError> {
+    for suffix in CUSTOM_COVER_SUFFIXES {
+        let replaced = covers_dir.join(format!("{stem}.{suffix}"));
+        if !replaced.is_file() {
+            continue;
+        }
+        let kept = (1..=MAX_PRESERVED_COVERS)
+            .map(|attempt| covers_dir.join(format!("{stem}.preserved-{attempt}.{suffix}")))
+            .find(|candidate| !candidate.exists())
+            .ok_or_else(|| {
+                CoverError::Io(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!(
+                        "{} already has {MAX_PRESERVED_COVERS} preserved covers; \
+                         refusing to replace it without somewhere to keep it",
+                        replaced.display()
+                    ),
+                ))
+            })?;
+        std::fs::rename(&replaced, &kept)?;
+    }
+    Ok(())
 }
 
 /// Build a [`CoverHit`] from a Windows executable's own icon.
@@ -1993,6 +2107,204 @@ mod tests {
             .expect_err("missing source");
         assert_eq!(error.to_string(), root.join("gone.png").to_string_lossy());
         assert!(matches!(error, CoverError::Io(_)));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Every file in `dir`, as `(name, bytes)`.
+    ///
+    /// Used by the two tests below instead of `std::fs::read` on a name they
+    /// expect, because what they assert is *where the artwork ended up* and
+    /// naming the file in the assertion would make it a check on the naming
+    /// scheme rather than on the bytes surviving.
+    fn files_in(dir: &Path) -> Vec<(String, Vec<u8>)> {
+        let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(dir)
+            .expect("read the covers directory")
+            .filter_map(Result::ok)
+            .map(|entry| {
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(entry.path()).expect("read a cover file"),
+                )
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    /// **The cover a second pick replaces is kept, not destroyed** (`UX-13`).
+    ///
+    /// `covers.py:295-304` writes straight over
+    /// `{covers_dir}/{game_id}.{suffix}` with `shutil.copy2`, so picking a
+    /// second cover for a game destroys the first one — silently, with the same
+    /// `"Custom cover added"` toast, and with no undo. That is the reference's
+    /// behaviour and it is what this test refuses.
+    ///
+    /// # What is measured, and why it is the bytes
+    ///
+    /// The assertion is that the **first pick's bytes are still in the
+    /// directory** after the second pick, read off the directory rather than
+    /// named. Two weaker forms would pass while destroying the file, and both
+    /// are the mistake this check exists to avoid:
+    ///
+    /// * "a file whose name contains `preserved` exists" — a rename that then
+    ///   wrote a zero-byte or placeholder stand-in satisfies it;
+    /// * "the destination holds the new bytes" — true of the reference too, and
+    ///   true of an implementation that refuses nothing.
+    ///
+    /// The two sources hold **different** bytes for the same reason: with one
+    /// source picked twice, "the old bytes are still present" is satisfied by
+    /// the new file.
+    #[test]
+    fn a_second_pick_keeps_the_cover_it_replaces() {
+        let root = scratch_dir("repick");
+        let covers = root.join("covers");
+        let first = root.join("first.png");
+        let second = root.join("second.png");
+        std::fs::write(&first, b"\x89PNG first pick").expect("write the first source");
+        std::fs::write(&second, b"\x89PNG second pick").expect("write the second source");
+
+        let destination = copy_custom_cover(&first, "abc123", &covers).expect("the first pick");
+        assert_eq!(destination, covers.join("abc123.png"));
+        let destination = copy_custom_cover(&second, "abc123", &covers).expect("the second pick");
+
+        // The pick landed: the record's name carries what the user chose. This
+        // is the half that a fix of "refuse the second pick" would fail, and
+        // without it the test would pass against an implementation that keeps
+        // every cover by never writing one.
+        assert_eq!(destination, covers.join("abc123.png"));
+        assert_eq!(
+            std::fs::read(&destination).expect("read the destination"),
+            b"\x89PNG second pick"
+        );
+
+        let files = files_in(&covers);
+        assert!(
+            files
+                .iter()
+                .any(|(_, bytes)| bytes == b"\x89PNG first pick"),
+            "the second pick destroyed the cover the first one wrote. The \
+             reference does this (`covers.py:303`) and silently; `UX-13` is \
+             that this port does not. Files now: {:?}",
+            files
+                .iter()
+                .map(|(name, bytes)| (name.as_str(), bytes.len()))
+                .collect::<Vec<_>>()
+        );
+        // And the invariant the naming rests on: one canonically-named cover,
+        // so every reader of this directory — this port and the Python app —
+        // resolves to the artwork the user last chose rather than to whichever
+        // of two files its own preference order happens to find first.
+        assert_eq!(
+            files
+                .iter()
+                .filter(|(name, _)| name == "abc123.png")
+                .count(),
+            1,
+            "the game has more than one cover at its own name: {:?}",
+            files.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **A pick whose suffix differs keeps the old cover too, and does not
+    /// leave two files the game answers to** (`UX-13`).
+    ///
+    /// `copy_custom_cover` folds an unrecognised suffix to `.jpg` and stores
+    /// `png`/`jpg`/`jpeg`/`webp` verbatim, so picking a `.jpg` for a game whose
+    /// cover is a `.png` is the one route in the reference that does *not*
+    /// overwrite: `shutil.copy2` writes a second file beside the first. The old
+    /// one survives by luck rather than by design and becomes unreachable —
+    /// nothing points at it once the form's `cover_path` moves — and the game
+    /// now has two covers under its own id, so which one a reader shows depends
+    /// on that reader's order rather than on the user's last choice.
+    ///
+    /// This is the case the preserved *set* rather than the preserved *file*
+    /// exists for, and it is asserted separately because a fix that only guarded
+    /// the same-name collision would pass the test above and fail here.
+    #[test]
+    fn a_pick_that_changes_the_suffix_keeps_the_old_cover_beside_it() {
+        let root = scratch_dir("resuffix");
+        let covers = root.join("covers");
+        let png = root.join("art.png");
+        let jpg = root.join("art.jpg");
+        std::fs::write(&png, b"\x89PNG the png pick").expect("write the png source");
+        std::fs::write(&jpg, b"\xff\xd8\xff the jpg pick").expect("write the jpg source");
+
+        assert_eq!(
+            copy_custom_cover(&png, "abc123", &covers).expect("the png pick"),
+            covers.join("abc123.png")
+        );
+        assert_eq!(
+            copy_custom_cover(&jpg, "abc123", &covers).expect("the jpg pick"),
+            covers.join("abc123.jpg")
+        );
+
+        let files = files_in(&covers);
+        assert!(
+            files
+                .iter()
+                .any(|(_, bytes)| bytes == b"\x89PNG the png pick"),
+            "the png cover is gone after a jpg pick: {:?}",
+            files.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
+        assert!(
+            files
+                .iter()
+                .any(|(_, bytes)| bytes == b"\xff\xd8\xff the jpg pick"),
+            "the jpg pick did not land: {:?}",
+            files.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
+        // `<id>.<suffix>` for each of the four suffixes this write can produce:
+        // exactly one may exist after the pick, whichever the order.
+        let canonical = CUSTOM_COVER_SUFFIXES
+            .iter()
+            .filter(|suffix| covers.join(format!("abc123.{suffix}")).exists())
+            .count();
+        assert_eq!(
+            canonical,
+            1,
+            "the game answers to {canonical} covers at its own name: {:?}",
+            files.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **Picking the cover the game already has is not a way to lose it.**
+    ///
+    /// The picker's directory is not restricted, so a user can navigate to the
+    /// covers directory and choose the file that is already their game's cover.
+    /// The reference's shape cannot survive that: `fs::copy` opens the
+    /// destination for writing and truncates it, so a file copied onto itself is
+    /// read back as an empty one — and the previous code here would have left a
+    /// zero-byte cover at the canonical name.
+    ///
+    /// The fix reads the source into a `.tmp` sibling *before* it moves
+    /// anything, so this pick lands with the artwork intact. Measured on the
+    /// bytes rather than on "no error was returned", because a zero-byte file is
+    /// a successful copy of nothing.
+    #[test]
+    fn picking_the_cover_that_is_already_there_does_not_empty_it() {
+        let root = scratch_dir("selfpick");
+        let covers = root.join("covers");
+        let source = root.join("art.png");
+        std::fs::write(&source, b"\x89PNG the only cover").expect("write the source");
+        let destination = copy_custom_cover(&source, "abc123", &covers).expect("the first pick");
+
+        copy_custom_cover(&destination, "abc123", &covers).expect("re-picking the same file");
+
+        assert_eq!(
+            std::fs::read(&destination).expect("read the destination"),
+            b"\x89PNG the only cover",
+            "re-picking the file that is already the cover emptied it"
+        );
+        let files = files_in(&covers);
+        assert!(
+            files
+                .iter()
+                .any(|(_, bytes)| bytes == b"\x89PNG the only cover"),
+            "the artwork is gone: {:?}",
+            files.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
