@@ -647,6 +647,30 @@ pub enum CoverError {
     /// what surfaces. Verbatim by construction — it is the [`fmt::Display`]
     /// of the error Steam returned.
     SteamFailed { message: String },
+    /// Steam failed **and** the executable's own icon could not be *written* to
+    /// the covers directory.
+    ///
+    /// **Deliberate divergence from `covers.py:379-381`** (`BUGS.md` `BUG-13`,
+    /// `FEATURES.md` `P-61`). The reference's bare `pass` folds a full disk, a
+    /// read-only `covers_dir` and a `covers` path that is not a directory into
+    /// "the icon fallback did not apply", and then reports the Steam failure —
+    /// so the user is told the artwork could not be *found* when it was found
+    /// and could not be *saved*. Two different subsystems, one message, and the
+    /// one that names a fixable condition is the one discarded. The reference
+    /// has no value to express this with; this port has
+    /// [`SaveIconError::Io`], and this variant is what carries it.
+    ///
+    /// Only [`SaveIconError::Io`] reaches here — see [`fetch_cover`] for why a
+    /// genuinely absent icon stays at the reference's message.
+    IconWriteFailed {
+        /// The Steam failure's message, exactly as [`Self::SteamFailed`]
+        /// carries it.
+        steam_error: String,
+        /// The directory the icon was to be written into. The `io::Error`
+        /// carries no path, and this is the one the user has to act on.
+        covers_dir: PathBuf,
+        icon_error: SaveIconError,
+    },
     /// The injected client refused the transfer: a transport failure or a
     /// non-success status, which the [`HttpClient`] contract reports as `Err`.
     Http(RunnerError),
@@ -687,6 +711,15 @@ impl fmt::Display for CoverError {
             CoverError::InvalidResponse { message } | CoverError::SteamFailed { message } => {
                 formatter.write_str(message)
             }
+            CoverError::IconWriteFailed {
+                steam_error,
+                covers_dir,
+                icon_error,
+            } => write!(
+                formatter,
+                "{steam_error}; the executable's own icon could not be written to {}: {icon_error}",
+                covers_dir.display()
+            ),
             CoverError::Http(error) => error.fmt(formatter),
             CoverError::Io(error) => error.fmt(formatter),
         }
@@ -698,6 +731,9 @@ impl std::error::Error for CoverError {
         match self {
             CoverError::Http(error) => Some(error),
             CoverError::Io(error) => Some(error),
+            // The write is the *cause* of this variant, so it is the source —
+            // the Steam error is a peer, not a parent.
+            CoverError::IconWriteFailed { icon_error, .. } => Some(icon_error),
             _ => None,
         }
     }
@@ -1030,9 +1066,29 @@ pub fn steam_cover(
 /// has real portrait library art for the games it sells; the executable's own
 /// icon is second because it is offline, unambiguous, and belongs to the thing
 /// being launched. Any Steam failure is kept as `steam_error`, the icon is
-/// tried when `exe_path` names a real file, an icon failure is swallowed —
-/// the reference's bare `pass` — and the Steam failure's message is what
-/// surfaces as [`CoverError::SteamFailed`].
+/// tried when `exe_path` names a real file, and the Steam failure's message is
+/// what surfaces as [`CoverError::SteamFailed`].
+///
+/// # Where this diverges: a *write* failure is not a missing icon
+///
+/// `covers.py:379-381` swallows whatever the icon path raised
+/// (`except (OSError, RuntimeError): pass`) and re-raises `steam_error`
+/// unchanged, so a full disk, a read-only `covers_dir` and an executable that
+/// carries no icon at all are one outcome to the user, and the message names
+/// Steam. This port keeps them apart (`BUGS.md` `BUG-13`, `FEATURES.md`
+/// `P-61`):
+///
+/// * [`SaveIconError::Io`] — the artwork was there and could not be saved —
+///   becomes [`CoverError::IconWriteFailed`], which carries both messages. The
+///   filesystem refused a write the lookup had already earned, and that is the
+///   one fact in this pair the user can act on; reporting it as a failed
+///   *search* discards it. Failure paths in this port are not allowed to
+///   discard the reason a user-visible step did not happen.
+/// * [`SaveIconError::NoIcon`] stays silent, exactly as the reference leaves
+///   it. The executable has no icon; nothing failed and nothing is fixable,
+///   and the Steam message is accurate about the outcome. The same is true
+///   when `exe_path` names a file that is not there, which is the case
+///   `tests/test_covers.py:186-190` pins against Python.
 pub fn fetch_cover(
     client: &dyn HttpClient,
     query: &str,
@@ -1045,11 +1101,21 @@ pub fn fetch_cover(
         Ok(hit) => return Ok(hit),
         Err(error) => error.to_string(),
     };
-    let icon_hit = exe_path
-        .filter(|exe| exe.is_file())
-        .and_then(|exe| icon_cover(query, exe, game_id, covers_dir).ok());
-    if let Some(hit) = icon_hit {
-        return Ok(hit);
+    // `exe_path and Path(exe_path).is_file()` — the icon is a candidate only
+    // when the caller named a real file, so the `NoIcon` arm below is reached
+    // only for an executable that exists and has no icon.
+    if let Some(exe) = exe_path.filter(|exe| exe.is_file()) {
+        match icon_cover(query, exe, game_id, covers_dir) {
+            Ok(hit) => return Ok(hit),
+            Err(SaveIconError::NoIcon { .. }) => {}
+            Err(icon_error) => {
+                return Err(CoverError::IconWriteFailed {
+                    steam_error,
+                    covers_dir: covers_dir.to_path_buf(),
+                    icon_error,
+                });
+            }
+        }
     }
     Err(CoverError::SteamFailed {
         message: steam_error,
@@ -1989,7 +2055,11 @@ mod tests {
             "No Steam cover found for \u{201c}X\u{201d}"
         );
         // A bare executable (no icon) fails the fallback the same way: the
-        // icon error is swallowed and the steam message surfaces.
+        // icon error is swallowed and the steam message surfaces. Kept as the
+        // reference has it, and as the divergence note on `fetch_cover`
+        // argues: nothing was found *and* nothing failed, so there is nothing
+        // for the user to act on. The write failure is the half that does not
+        // stay silent — `a_cover_write_failure_is_not_reported_as_a_steam_...`.
         let bare = root.join("bare.exe");
         std::fs::write(&bare, b"MZ").expect("write the fixture");
         let error = fetch_cover(&client, "X", "abc123", Some(&bare), &root, TIMEOUT)
@@ -1999,5 +2069,80 @@ mod tests {
             "No Steam cover found for \u{201c}X\u{201d}"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_cover_write_failure_is_not_reported_as_a_steam_search_failure() {
+        // The covers directory is an ordinary *file*, so `create_dir_all`
+        // fails with `EEXIST` whatever the process umask and whatever uid the
+        // suite runs as — a `0500` directory would be writable to a root
+        // runner and this fixture would then pass vacuously.
+        let root = scratch_dir("fetchwritefail");
+        let covers = root.join("covers");
+        std::fs::write(&covers, b"not a directory").expect("write the blocker");
+        let exe = windows_executable(&root.join("app.exe"));
+        // The search succeeds and matches nothing, so Steam's own failure is a
+        // real message rather than "no route": both halves of the outcome are
+        // observable.
+        let client = FakeClient::new(vec![(
+            "storesearch",
+            FakeRoute::Body(search_payload(), None),
+        )]);
+        let error = fetch_cover(&client, "X", "abc123", Some(&exe), &covers, TIMEOUT)
+            .expect_err("the icon was found and could not be saved");
+        let message = error.to_string();
+
+        let CoverError::IconWriteFailed {
+            steam_error,
+            covers_dir,
+            icon_error,
+        } = &error
+        else {
+            panic!("a cover *write* failure was reported as: {message}");
+        };
+        assert_eq!(steam_error, "No Steam cover found for \u{201c}X\u{201d}");
+        assert_eq!(covers_dir, &covers);
+        assert!(
+            matches!(icon_error, SaveIconError::Io(_)),
+            "a directory that cannot be created is an io failure, not a missing icon: {icon_error}"
+        );
+        // The rendered message carries both, and the directory the user has to
+        // fix — the `io::Error` alone names neither the path nor the cause.
+        let SaveIconError::Io(io) = icon_error else {
+            unreachable!("asserted above");
+        };
+        assert!(
+            message.contains("No Steam cover found for \u{201c}X\u{201d}"),
+            "the Steam failure is still named: {message}"
+        );
+        assert!(
+            message.contains(&covers.display().to_string()),
+            "the directory the icon could not be written to is named: {message}"
+        );
+        assert!(
+            message.contains(&io.to_string()),
+            "the io failure itself is named, not just its absence: {message}"
+        );
+
+        // The paired case, differing only in whether the write can succeed:
+        // the same fixture with a real directory falls back to the icon. This
+        // is what makes the assertion above about the *write* and not about
+        // the exe.
+        let saved_root = scratch_dir("fetchwriteok");
+        let saved_covers = saved_root.join("covers");
+        let saved_exe = windows_executable(&saved_root.join("app.exe"));
+        let hit = fetch_cover(
+            &client,
+            "X",
+            "abc123",
+            Some(&saved_exe),
+            &saved_covers,
+            TIMEOUT,
+        )
+        .expect("a writable covers directory takes the icon");
+        assert_eq!(hit.source, ICON_SOURCE);
+        assert!(hit.cover_path.is_file());
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&saved_root);
     }
 }

@@ -91,7 +91,7 @@ use super::archive::{
 use super::families::{
     ReleaseInfo, RunnerFamily, family_by_id, find_wine_binary, is_truthy, pick_asset, python_str,
 };
-use super::{RunnerError, SYSTEM_WINE, USER_AGENT, read_metadata};
+use super::{MetadataRead, RunnerError, SYSTEM_WINE, USER_AGENT, read_metadata};
 
 /// The default family, matching Python's `family_by_id("proton-ge")` default
 /// on every entry point that takes a family. A release with no family named is
@@ -594,6 +594,15 @@ pub fn fetch_available(
 /// matching metadata — a half-removed install, an unrelated folder that happens
 /// to hold a copied metadata file — is not reported as installed.
 ///
+/// A build whose metadata is **damaged** — unreadable, not UTF-8, not JSON, not
+/// an object — is assumed to be the release being asked about rather than read
+/// as *not* installed: a non-namespaced directory can be recognised by its
+/// metadata alone, so damage to that file must not turn an install that is on
+/// disk into an offer to install it again. This is a deliberate divergence from
+/// `runners.py:849-856`, which cannot see the difference (`BUGS.md` `BUG-14`);
+/// the false positive it buys is pinned by
+/// `a_legacy_install_with_damaged_metadata_reads_as_installed`.
+///
 /// `family_id` being absent means the caller is asking about a bare tag with no
 /// family, so only the un-namespaced name is tried and the metadata scan is
 /// skipped: with no family to match on, the scan has nothing to compare.
@@ -631,16 +640,41 @@ pub fn is_installed(runners_directory: &Path, tag: &str, family_id: Option<&str>
     for entry in entries.flatten() {
         let child = entry.path();
         let metadata = read_metadata(&child);
-        // `metadata.get("family") == family_id` — Python's `==`, so only a
-        // *string* equal to the id matches, which is why this is not a
-        // `python_str` comparison: that would make the number `5` match the
-        // family id `"5"`, which Python does not. A metadata file written by
-        // this app always holds strings, so the difference is only reachable
-        // from a hand-edited or foreign one.
-        let matches_family =
-            matches!(metadata.get("family"), Some(Value::String(text)) if *text == family_id);
-        let matches_tag = matches!(metadata.get("tag"), Some(Value::String(text)) if *text == tag);
-        if matches_family && matches_tag && is_staged_runner(&child) {
+        let matched = match &metadata {
+            MetadataRead::Object(map) => {
+                // `metadata.get("family") == family_id` — Python's `==`, so only
+                // a *string* equal to the id matches, which is why this is not a
+                // `python_str` comparison: that would make the number `5` match
+                // the family id `"5"`, which Python does not. A metadata file
+                // written by this app always holds strings, so the difference is
+                // only reachable from a hand-edited or foreign one.
+                let matches_family =
+                    matches!(map.get("family"), Some(Value::String(text)) if *text == family_id);
+                let matches_tag =
+                    matches!(map.get("tag"), Some(Value::String(text)) if *text == tag);
+                matches_family && matches_tag
+            }
+            // **Deliberate divergence from `runners.py:849-856`** (`BUGS.md`
+            // `BUG-14`). Python reads a damaged metadata file as `{}`, so a
+            // legacy install whose metadata is merely damaged fails every field
+            // comparison and reads as *not installed* — the outcome this scan
+            // exists to prevent (the port's own rationale above: without this,
+            // "the UI would offer to install a build that is already on disk",
+            // which is what `runners.py:846-847` means by "authoritative
+            // metadata"). A damaged file cannot be matched on, so the build is
+            // assumed to be the one being asked about. The assumption is
+            // content-blind, and that is its cost, recorded here rather than
+            // discovered later: this directory also answers for a tag it may not
+            // be, and the UI offers Remove where it would otherwise offer
+            // Install. The `is_staged_runner` gate below keeps the assumption
+            // inside real runner trees, so only a directory that would otherwise
+            // be a legitimate install can claim it.
+            MetadataRead::Damaged { .. } => true,
+            // No metadata file is not a damaged one: nothing claims this build
+            // is the release being asked about.
+            MetadataRead::Missing => false,
+        };
+        if matched && is_staged_runner(&child) {
             return true;
         }
     }
@@ -2030,23 +2064,23 @@ mod tests {
         .unwrap();
         assert!(!is_installed(root, "v9.9", Some("wine-staging")));
 
-        // A metadata file that is not valid JSON reads as no metadata, rather
-        // than as a match or a crash. This needs its own root: in the root
-        // above, the *legitimate* `v1.0` directory also records this tag and
-        // family, so the assertion would pass without the garbage file telling
-        // us anything.
+        // A metadata file that is *there but unusable* is not "no metadata" —
+        // see `a_legacy_install_with_damaged_metadata_reads_as_installed` for
+        // the whole rule. This assertion used to read `!is_installed`: a
+        // damaged file answers for the release being asked about, because the
+        // alternative is offering to install a build that is already on disk.
         let garbage_root = scratch("proton-garbage");
         let garbage_root = garbage_root.as_path();
         let garbage = garbage_root.join("v1.0");
         usable(&garbage);
         fs::write(garbage.join(crate::runners::METADATA_NAME), "{not json").unwrap();
-        assert!(!is_installed(garbage_root, "v1.0", Some("proton-cachyos")));
+        assert!(is_installed(garbage_root, "v1.0", Some("proton-cachyos")));
 
-        // The paired case, differing only in whether the metadata parses. Both
-        // directories are named `v1.0`, which is not the namespaced install id,
-        // so the metadata is the only path that could succeed — and it does
-        // exactly when it is readable. Without this twin the assertion above
-        // would hold for a directory name that never matches.
+        // The paired case, differing only in whether the metadata *is*
+        // readable. Both directories are named `v1.0`, which is not the
+        // namespaced install id, so the metadata is the only path that could
+        // succeed — and a readable one matches on its contents rather than by
+        // assumption, which is why it does not answer for the other family.
         let twin_root = scratch("proton-garbage-twin");
         let twin_root = twin_root.as_path();
         let twin = twin_root.join("v1.0");
@@ -2057,6 +2091,64 @@ mod tests {
         )
         .unwrap();
         assert!(is_installed(twin_root, "v1.0", Some("proton-cachyos")));
+        assert!(!is_installed(twin_root, "v9.9", Some("wine-staging")));
+    }
+
+    /// A legacy install whose metadata is *damaged* is not the same fact as one
+    /// with no metadata, and the difference decides whether the UI offers an
+    /// install of a build that is already on disk. `BUGS.md` `BUG-14`;
+    /// divergence from `runners.py:849-856`, which collapses both into `{}`.
+    #[test]
+    fn a_legacy_install_with_damaged_metadata_reads_as_installed() {
+        let root = scratch("proton-damaged");
+        let root = root.as_path();
+        let legacy = root.join("v1.0");
+        usable(&legacy);
+        let metadata = legacy.join(crate::runners::METADATA_NAME);
+
+        // With no metadata file at all there is no match: `v1.0` is not the
+        // namespaced install id, and nothing claims this build is the release
+        // being asked about. This is the assertion that keeps the rest
+        // honest — a "fix" that treated *missing* as damaged would satisfy
+        // every assertion below and fail here.
+        assert!(!is_installed(root, "v1.0", Some("proton-cachyos")));
+
+        // Damaged is one fact however it got that way: unparsable, not an
+        // object, and not UTF-8 all read as "present, unusable".
+        for bytes in [
+            &b"{not json"[..],
+            &b"[]"[..],
+            &b"{\"family\": \"\xff\"}"[..],
+        ] {
+            fs::write(&metadata, bytes).unwrap();
+            assert!(
+                is_installed(root, "v1.0", Some("proton-cachyos")),
+                "{:?} is damaged, not absent",
+                String::from_utf8_lossy(bytes)
+            );
+        }
+
+        // The price of the assumption, asserted rather than left implicit: a
+        // damaged file cannot be matched on, so this directory answers for tags
+        // and families it may not be, and the UI offers Remove where it would
+        // otherwise offer Install. The alternative — reporting a build that is
+        // on disk as absent — is the outcome this scan exists to prevent, so
+        // the false positive is the cheaper of the two.
+        assert!(is_installed(root, "v9.9", Some("wine-staging")));
+
+        // The assumption stays inside real runner trees: a directory with
+        // damaged metadata that is not a usable runner is not an install, which
+        // is what keeps a half-removed tree or an unrelated folder carrying a
+        // stray `.gamehandler.json` from answering at all.
+        let non_runner = scratch("proton-damaged-nonrunner");
+        let non_runner = non_runner.as_path();
+        let empty = non_runner.join("v1.0");
+        fs::create_dir_all(&empty).unwrap();
+        fs::write(empty.join(crate::runners::METADATA_NAME), "{not json").unwrap();
+        assert!(!is_installed(non_runner, "v1.0", Some("proton-cachyos")));
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(non_runner);
     }
 
     #[test]

@@ -952,45 +952,98 @@ fn is_noise(line: &str) -> bool {
 // Runner metadata
 // ---------------------------------------------------------------------------
 
-/// Read `<root>/.gamehandler.json`, or an empty map when it is unusable.
+/// What reading a build's `.gamehandler.json` found.
 ///
-/// Port of `_read_metadata` (`runners.py:692-702`). Three guards, each
-/// deliberate:
+/// Three outcomes rather than the reference's bare map, because "there is no
+/// metadata" and "there is metadata and it is unusable" are different facts
+/// about a build and exactly one caller acts on the difference:
+/// [`proton::is_installed`]'s legacy scan must not read a *damaged* file as
+/// "not installed" (`BUGS.md` `BUG-14`). Python has one outcome for both
+/// (`runners.py:692-702` returns `{}` for every unusable shape), so the caller
+/// that needs the distinction cannot be written against it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MetadataRead {
+    /// The file was read and holds a JSON object — the only outcome that can be
+    /// matched on.
+    Object(serde_json::Map<String, serde_json::Value>),
+    /// There is nothing to read: a symlinked root, or no metadata file.
+    Missing,
+    /// The file is there and could not be used: unreadable, not valid UTF-8,
+    /// not JSON, or JSON that is not an object. `reason` names which, with the
+    /// path, so the distinction is diagnosable — nothing user-facing renders it
+    /// (a metadata file is read on every listing and every `is_installed`
+    /// probe, so logging here would be the per-render spam the logging
+    /// standard forbids).
+    Damaged { reason: String },
+}
+
+/// Read `<root>/.gamehandler.json`.
+///
+/// Port of `_read_metadata` (`runners.py:692-702`). **Deliberate divergence**
+/// (`BUGS.md` `BUG-14`): the outcomes the reference collapses into `{}` are
+/// kept apart, because [`proton::is_installed`] treats a damaged file as an
+/// install it cannot rule out while a missing one is simply not a match.
+/// [`read_family_id`] gives `""` for both — a family that cannot be read is not
+/// one to guess at.
+///
+/// Three guards, each from the reference:
 ///
 /// * A **symlinked root** is not followed at all — the metadata is read from a
 ///   real build directory or not at all.
-/// * A missing or unparseable file is not an error, and a JSON document that is
-///   not an object is discarded. `json.loads("[]")` succeeds and has no
-///   `.get`, so Python's `isinstance(data, dict)` check is load-bearing.
+/// * A missing file is not an error, and a JSON document that is not an object
+///   is unusable. `json.loads("[]")` succeeds and has no `.get`, so Python's
+///   `isinstance(data, dict)` check is load-bearing. A non-object document is
+///   [`MetadataRead::Damaged`] rather than [`MetadataRead::Missing`]: the file
+///   is there, it is the *use* of it that fails.
 /// * A file that is not valid UTF-8 is treated as unreadable. Python's
 ///   `read_text(encoding="utf-8")` raises `UnicodeDecodeError`, which is a
 ///   `ValueError` and so is **not** caught by the `except (JSONDecodeError,
 ///   OSError)` — it escapes and takes down whatever called `is_installed`.
 ///   This is the same divergence D-20 settles for `Settings.load`, for the same
 ///   reason: a metadata file we wrote is not a reason to crash.
-pub fn read_metadata(root: &Path) -> serde_json::Map<String, serde_json::Value> {
+pub fn read_metadata(root: &Path) -> MetadataRead {
     if root.is_symlink() {
-        return serde_json::Map::new();
+        return MetadataRead::Missing;
     }
     let meta = root.join(METADATA_NAME);
     if !meta.exists() {
-        return serde_json::Map::new();
+        return MetadataRead::Missing;
     }
-    let Ok(bytes) = std::fs::read(&meta) else {
-        return serde_json::Map::new();
+    let bytes = match std::fs::read(&meta) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return MetadataRead::Damaged {
+                reason: format!("{}: {error}", meta.display()),
+            };
+        }
     };
     let Ok(text) = String::from_utf8(bytes) else {
-        return serde_json::Map::new();
+        return MetadataRead::Damaged {
+            reason: format!("{}: not valid UTF-8", meta.display()),
+        };
     };
     match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(serde_json::Value::Object(map)) => map,
-        _ => serde_json::Map::new(),
+        Ok(serde_json::Value::Object(map)) => MetadataRead::Object(map),
+        Ok(_) => MetadataRead::Damaged {
+            reason: format!("{}: not a JSON object", meta.display()),
+        },
+        Err(error) => MetadataRead::Damaged {
+            reason: format!("{}: {error}", meta.display()),
+        },
     }
 }
 
 /// The `family` recorded in a build's metadata, or `""`.
+///
+/// Both unusable outcomes give `""`: the family is unrecoverable from a damaged
+/// file, and the label it produces — `"Downloaded runner"` — claims only that
+/// this port cannot name the family, not that the build has none. Acting on the
+/// damage is [`proton::is_installed`]'s job.
 fn read_family_id(root: &Path) -> String {
-    match read_metadata(root).get("family") {
+    let MetadataRead::Object(map) = read_metadata(root) else {
+        return String::new();
+    };
+    match map.get("family") {
         // `str(... or "")` — a falsy `family` (0, false, null) becomes "".
         Some(value) if crate::runners::families::is_truthy(value) => {
             crate::runners::families::python_str(value)
@@ -1649,8 +1702,10 @@ mod tests {
         assert_eq!(read_family_id(&root), "proton-ge");
         assert_eq!(ProtonRunner::discovered(&root).family_label(), "Proton-GE");
 
-        // Every unusable shape returns an empty map rather than raising: a
-        // metadata file must never be the reason the runners page fails.
+        // Every unusable shape is *damaged* rather than missing, and none of
+        // them raises: a metadata file must never be the reason the runners
+        // page fails. The distinction is not cosmetic — `is_installed`'s legacy
+        // scan acts on it (`BUG-14`) — so it is pinned here as well as there.
         for (label, bytes) in [
             ("not_json", &b"{{{"[..]),
             ("not_an_object", &b"[]"[..]),
@@ -1659,12 +1714,42 @@ mod tests {
             ("invalid_utf8", &b"{\"family\": \"\xff\"}"[..]),
         ] {
             std::fs::write(root.join(METADATA_NAME), bytes).unwrap();
+            let read = read_metadata(&root);
             assert!(
-                read_metadata(&root).is_empty(),
-                "{label} should not parse to a map"
+                matches!(read, MetadataRead::Damaged { .. }),
+                "{label} is present and unusable, not absent: {read:?}"
+            );
+            let MetadataRead::Damaged { reason } = &read else {
+                unreachable!("asserted immediately above");
+            };
+            assert!(
+                reason.contains(METADATA_NAME),
+                "{label}: the reason names the file it could not use: {reason}"
             );
             assert_eq!(read_family_id(&root), "", "{label}");
         }
+
+        // A file that is not there is a different fact: *missing*, which claims
+        // nothing about the build. If this case were collapsed into `Damaged`
+        // the assertions in `a_legacy_install_with_damaged_metadata_...` would
+        // still pass, so it is pinned here.
+        std::fs::remove_file(root.join(METADATA_NAME)).unwrap();
+        assert_eq!(read_metadata(&root), MetadataRead::Missing);
+        assert_eq!(read_family_id(&root), "");
+
+        // "Unreadable" is not the same arm as "unparsable" and has a reason of
+        // its own: the path is a *directory*, so the read fails with `EISDIR`
+        // under any uid and any umask. A mode-000 file would be readable to a
+        // root test runner and this case would pass vacuously.
+        let unreadable = root.join(METADATA_NAME);
+        std::fs::create_dir(&unreadable).unwrap();
+        let read = read_metadata(&root);
+        assert!(
+            matches!(read, MetadataRead::Damaged { .. }),
+            "a metadata name that cannot be read is damaged: {read:?}"
+        );
+        assert_eq!(read_family_id(&root), "", "unreadable");
+        std::fs::remove_dir(&unreadable).unwrap();
 
         // A falsy `family` is `str(... or "")`, so 0 and false are "" too.
         std::fs::write(root.join(METADATA_NAME), r#"{"family": 0}"#).unwrap();
@@ -1686,7 +1771,11 @@ mod tests {
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
         assert_eq!(read_family_id(&real), "proton-ge");
-        assert!(read_metadata(&link).is_empty());
+        // *Missing*, not *Damaged*: the metadata is intact, the path asked
+        // about is simply not a build directory. That keeps a symlinked child
+        // out of the legacy scan's damaged-assumption, which would otherwise
+        // make one link answer for every release.
+        assert_eq!(read_metadata(&link), MetadataRead::Missing);
         assert_eq!(read_family_id(&link), "");
         let _ = std::fs::remove_dir_all(&root);
     }
