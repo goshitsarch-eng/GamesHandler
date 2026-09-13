@@ -8,8 +8,14 @@ how the fix will be verified, and where it stands. The six specialist documents
 its root cause and its impact. This file holds the *plan*. It does not restate the
 evidence; it schedules it. Read the specialist row before acting on a plan row.
 
-**Baseline.** Every finding was raised against `d56782d`, the last commit before
-`audit-hardening` was branched. That branch is where the fixes land.
+**Baseline.** Every finding was raised against `d56782d`, the tip of `main` when
+the audit's reconnaissance began. That branch is where the fixes land.
+
+`audit-hardening` was cut three commits later, at `93b6278`. Those three commits
+touch only the walk harness — `scripts/parity-walk.sh` and the new files under
+`scripts/walk/` — and no application code, so no finding here is invalidated by
+them. Stated because this file cites a commit, and a citation that was exact
+when written and quietly drifted is the failure this audit is about.
 
 ## Severity
 
@@ -37,6 +43,19 @@ rows. A summary that drifts from the rows it summarises is this project's own na
 defect class — a statement that stops being inspected — so `REPORT.md` is generated
 from those tails rather than written beside them.
 
+**Where the tails actually live, measured rather than assumed.** `BUGS.md` is the
+only specialist document whose rows carry `Status:` tails: **26 of its 47 rows** —
+23 `FIXED`, 1 `CLOSED`, 2 `PARTIAL`. The other 21 rows are the 20 open `P3` rows
+and `BUG-11`, whose withdrawal is recorded in its ID cell rather than as a tail.
+`SECURITY.md` carries one tail, inside `SEC-01`'s suggested-fix cell.
+`ARCHITECTURE.md`, `COSMIC-UX.md`, `PERFORMANCE.md` and `PACKAGING.md` carry
+**none** — `grep -c 'Status: [A-Z]*'` returns 0 for all four — so for those
+families the status column in the tables below is the only record. That is the
+reverse of the arrangement this section describes, and a real gap rather than a
+formatting choice: the tails were scheduled and not written, so those rows were
+corrected by hand from the commits. Closing this is the first item of the
+documentation pass.
+
 ## Owners
 
 The seven specialist roles the brief specifies. Each row names one. The devil's
@@ -58,18 +77,18 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
 | P1 | 23 | 12 | 0 | 11 |
-| P2 | 52 | 4 | 1 | 47 |
-| P3 | 48 | 0 | 0 | 48 |
-| **Total** | **127** | **20** | **1** | **106** |
+| P2 | 53 | 12 | 2 | 39 |
+| P3 | 49 | 0 | 0 | 49 |
+| **Total** | **129** | **28** | **2** | **99** |
 
 | Family | Document | Findings |
 |---|---|---|
-| `BUG-xx` | `BUGS.md` | 46 |
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 |
-| `UX-xx` | `COSMIC-UX.md` | 30 |
+| `BUG-xx` | `BUGS.md` | 47 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 |
-| `SEC-xx` | `SECURITY.md` | 9 |
 | `PKG-xx` | `PACKAGING.md` | 9 |
+| `SEC-xx` | `SECURITY.md` | 10 |
+| `UX-xx` | `COSMIC-UX.md` | 30 |
 
 ## Findings
 
@@ -114,7 +133,7 @@ across families, not within them.
 | `UX-04` | The application configures no minimum window size, so the window can be dragged to 1×1 and every page becomes unusable | S2 | — | Set the window minimum and assert it is at least what the narrowest page layout needs (`UX-08`, `UX-09`, `UX-21`). | OPEN |
 | `UX-05` | "Add Game" has no always-visible control | S2 | duplicate of `BUG-07` | As `BUG-07`; the toolbar button is the always-visible control. | FIXED with `BUG-07` |
 
-### P2 — 52
+### P2 — 53
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
@@ -131,18 +150,18 @@ across families, not within them.
 | `ARCH-17` | Three copies of the card surface, two of which hardcode the radius that a comment says is what keeps them in sync | S5 | — | One card surface in one place, or three that cannot drift; verify with a grep for the hardcoded radius outside the definition. | OPEN |
 | `ARCH-18` | Six comments across four files cite the settings-validation fallback at line numbers that do not contain it, and the citations are ambiguous in a workspace with two settings.rs files | S5 | — | Re-point each of the six citations at the line that holds the fallback and disambiguate the two `settings.rs` files by path; verify each citation lands. | OPEN |
 | `BUG-12` | The Settings page advertises four keyboard shortcuts; three of them do not fire while a text field has focus, which is the state a user is most often in when reaching for one | S1 | — | Guard must assert the caveat is *rendered*, not that a word occurs in `main.rs`. The behavioural half needs a raw-event subscription and is not attempted. | PARTIAL with `BUG-21` |
-| `BUG-13` | A cover-art write failure is reported to the user as "no Steam cover found" | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-14` | read_metadata collapses four distinct failures into an empty map, and the consequences are silent | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-15` | An unknown runner family id silently becomes the default family instead of erroring, so fetch_available fetches and returns *a different family's releases* | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | WITHDRAWN — not a defect |
-| `BUG-16` | Both desktop-metainfo and the cargo-sources coverage half pass without inspecting what they claim | S1 | — | Strengthen the guard so it fails on the input it claims to reject; demonstrate the pre-fix pass first. | OPEN |
-| `BUG-17` | The placeholder guard cannot see a renamed placeholder, and the "no-results" test for the installers page asserts nothing about what is drawn | S1 | — | Strengthen the guard so it fails on the input it claims to reject; demonstrate the pre-fix pass first. | OPEN |
-| `BUG-18` | The notify-voice guard's haystack contains its own needle: read_crates walks back in the same #[cfg(test)] mod tests that holds the NOTIFY_VOICES literal table, so port.contains(voice) is satisfied by the table itself and cannot fail | S1 | — | Strengthen the guard so it fails on the input it claims to reject; demonstrate the pre-fix pass first. | OPEN |
+| `BUG-13` | A cover-art write failure is reported to the user as "no Steam cover found" | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
+| `BUG-14` | read_metadata collapses four distinct failures into an empty map, and the consequences are silent | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
+| `BUG-15` | An unknown runner family id silently becomes the default family instead of erroring, so fetch_available fetches and returns *a different family's releases* | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | WITHDRAWN — **not a defect.** the recorded behaviour does not occur. `resolve_family` applies `unwrap_or` to the `Option` *inside* a call returning `Result`, so `None` takes the default and `Some("nonsense")` propagates Python's text byte-identically. The function had no test at all, which is how the row was written without the measurement to settle it; it now pins default, named and unknown as three separate assertions |
+| `BUG-16` | Both desktop-metainfo and the cargo-sources coverage half pass without inspecting what they claim | S1 | — | Strengthen the guard so it fails on the input it claims to reject; demonstrate the pre-fix pass first. | FIXED |
+| `BUG-17` | The placeholder guard cannot see a renamed placeholder, and the "no-results" test for the installers page asserts nothing about what is drawn | S1 | — | Strengthen the guard so it fails on the input it claims to reject; demonstrate the pre-fix pass first. | FIXED |
+| `BUG-18` | The notify-voice guard's haystack contains its own needle: read_crates walks back in the same #[cfg(test)] mod tests that holds the NOTIFY_VOICES literal table, so port.contains(voice) is satisfied by the table itself and cannot fail | S1 | — | Strengthen the guard so it fails on the input it claims to reject; demonstrate the pre-fix pass first. | FIXED |
 | `BUG-36` | SystemLaunchEnv::environ() panics on any non-UTF-8 environment variable, aborting the process on the way into a launch | S1 | — | A non-UTF-8 variable in the environment: pre-fix the process panics with rc 101, post-fix it launches (rc 0) and passes the rest of the environment through. | FIXED `0c0b3ff` |
 | `BUG-37` | which_in answers /bin:/usr/bin when PATH is set but empty, where CPython returns None — so the port finds and injects wrapper programs the reference refuses to find | S1 | — | Both halves asserted: `PATH=""` must miss (probed on `sh`, which is on the default path, so the assertion separates the two readings), and `PATH=":"` must find the cwd. | FIXED `192be4f` |
 | `BUG-38` | in_flatpak short-circuits on an empty FLATPAK_ID where Python falls through to the marker file, so inside a sandbox that sets the variable empty the app does not believe it is sandboxed and offers the host's package manager | S1 | — | Empty `FLATPAK_ID` **with** the `/.flatpak-info` marker present: pre-fix the app does not believe it is sandboxed, post-fix it does. | FIXED `192be4f` |
-| `BUG-39` | create_partial names the mode it does not set: the doc argues the temp file is 0600 "which mkstemp gives and create_new does not — and it is set explicitly below", but nothing below sets it | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-40` | bounded_attempt's "a bounded parse that yields an icon is final" claim is false, and the result it returns is silently the wrong icon | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
-| `BUG-41` | file_offset's EOF check rejects a whole resource the reference reads by clamping, so a truncated executable loses an icon Python recovers | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
+| `BUG-39` | create_partial names the mode it does not set: the doc argues the temp file is 0600 "which mkstemp gives and create_new does not — and it is set explicitly below", but nothing below sets it | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
+| `BUG-40` | bounded_attempt's "a bounded parse that yields an icon is final" claim is false, and the result it returns is silently the wrong icon | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | FIXED |
+| `BUG-41` | file_offset's EOF check rejects a whole resource the reference reads by clamping, so a truncated executable loses an icon Python recovers | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | FIXED |
 | `BUG-46` | Navigating away from the open game form leaves the form on screen | S1 | — | Two tests: `navigating_away_closes_the_layers_the_page_was_covering`, and `clear_overlays_names_every_overlay_field_on_state`, which holds the method against the fields it must cover (verified by deleting one assignment). | FIXED `d9d6863` |
 | `BUG-47` | A card's and a row's title and subtitle have no ellipsis marker, so a name too long for its column is cut mid-glyph with nothing to say it was truncated | S2 | — | The comment half is fixed; the wiring cannot be asserted because iced offers no downcast and `Text::format` is private. Recorded rather than papered over. | PARTIAL `ff26a50` |
 | `PERF-04` | The project's claim that startup performs only two filesystem reads is false, and the comment asserting it sits three lines above the calls that contradict it | S3 | — | Correct the comment and the README claim, and enumerate the reads that actually happen; verify by counting the syscalls at startup (`strace -c -e trace=openat,statx`). | OPEN |
@@ -171,7 +190,9 @@ across families, not within them.
 | `UX-19` | Card surfaces are hand-built three times as a local card_style closure, and two of the three hardcode the radius their own comment says is kept in sync | S2 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `UX-20` | libcosmic's purpose-built settings widgets are used nowhere in the app | S2 | — | Adopt `settings::section`/`item`/`item_row`, or record why the hand-built rows are kept; verify by reading the settings view. | OPEN |
 
-### P3 — 48
+| ~~`BUG-11`~~ | Case-variant categories are lost by `dedup` after the sort, where Python's `set` keeps them | S1 | — | Refuted by measurement: both implementations return 39 entries on a 40-game fixture, with the same ten fold-groups. The regression the finding was reaching for is real and *is* guarded — changing the sort's primary term to `a.cmp(b)` reproduces the symptom exactly (28 groups instead of 10) and `case_variant_categories_fold_into_the_same_groups_as_python` fails on it | WITHDRAWN |
+
+### P3 — 49
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
@@ -223,6 +244,7 @@ across families, not within them.
 | `UX-28` | The Plugins page has no empty-state branch, unlike the other three list pages | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-29` | A dead Option<()> field and a stale comment about theme inertness | S2 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `UX-30` | A page body's scrollable does not put the page's own primary action within reach, and the page reports this as a layout failure twice | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `SEC-10` | Dependency hygiene: five live RustSec advisories against the locked graph, none reachable from the shipped binary, and no unused or duplicated direct dependency | S4 | — | Controls for the advisory matcher (it flags `time 0.1.0` and `openssl 0.10.0`; it clears `time 0.3.44` and `openssl 0.10.99`), plus `strings` over the shipped binary for the renderer reachability claim (44,912 `tiny_skia` matches, 0 `wgpu`) and a `grep` over `xkbcommon`'s source for the six affected `memmap2` functions | OPEN |
 
 ## Cross-referenced pairs
 
