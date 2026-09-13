@@ -371,7 +371,7 @@ impl<'a, Message: Clone + 'a> Accessible<'a, Message> {
 ///
 /// It is correct for exactly one shape — a control the toolkit has wrapped in a
 /// `Tooltip` — because such a control publishes nothing for the child tree
-/// [`Accessible::a11y_nodes`] appends to duplicate. Applied to a bare `Button`
+/// `Widget::a11y_nodes` appends to duplicate. Applied to a bare `Button`
 /// it would publish **two** nodes for one control, the child carrying the
 /// toolkit's own name, and a screen reader would meet one button twice.
 ///

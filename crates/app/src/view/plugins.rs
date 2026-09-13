@@ -145,7 +145,8 @@ pub fn not_installed_message(name: &str) -> String {
 
 /// Why an install produced no result (`ARCH-10`).
 ///
-/// This is the app layer's counterpart to [`InstallError`], and the reason it
+/// This is the app layer's counterpart to
+/// [`InstallError`](gamehandler_core::plugins::InstallError), and the reason it
 /// exists is that the layer used to carry a `String`: [`run_install`] called
 /// `.to_string()` on the core error one frame after `core` produced it, so the
 /// plugin page's whole error surface was text and nothing above it could ever

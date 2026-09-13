@@ -625,7 +625,7 @@ pub enum Message {
     /// reply below. That subscription delivers only events whose status is
     /// `Ignored` (`src/keyboard_nav.rs:20-23`), so it is silent exactly while a
     /// text field has focus — the state `BUG-12` is about — and
-    /// [`shortcuts::search_the_framework_cannot_reach`] answers the key there
+    /// `shortcuts::search_the_framework_cannot_reach` answers the key there
     /// instead. Both routes end in the same [`Shell::focus_library_search`], and
     /// they are exclusive by construction, so one press navigates once.
     FocusLibrarySearch,
