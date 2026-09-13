@@ -1466,8 +1466,18 @@ mod tests {
         let _element: Element<'_, Message> = view(page);
     }
 
-    /// The empty catalog still renders — the placeholder path is not a panic,
-    /// and the page keeps its header, selector and explanation.
+    /// The empty catalog still renders — the placeholder path is not a panic, it
+    /// keeps the page's own furniture, and **the two strings it is named for are
+    /// drawn**.
+    ///
+    /// The last clause is BUG-17(b). This test built the element and dropped it
+    /// (`let _element: Element<'_, Message> = view(page);`), so the only property
+    /// it observed was "does not panic" — under a name that claims what is
+    /// drawn. Replace the empty-catalog branch with a blank column and the test
+    /// passed unchanged. The strings are read back out of the built element now,
+    /// the way `view/settings.rs` and `crates/app/src/main.rs` read theirs:
+    /// `iced` exposes no downcast, so the text a widget draws is reachable only
+    /// through `Widget::operate`.
     #[test]
     fn an_empty_catalog_renders_the_placeholder_rather_than_nothing() {
         let page = InstallersView {
@@ -1480,6 +1490,77 @@ mod tests {
             busy: false,
             progress: None,
         };
-        let _element: Element<'_, Message> = view(page);
+        let drawn = drawn_strings(view(page));
+
+        assert!(
+            drawn.iter().any(|text| text == EMPTY_TEXT),
+            "the empty catalog must draw the placeholder's heading; drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == EMPTY_EXPLANATION),
+            "and its explanation, which is the half that says what to do about \
+             it; drawn: {drawn:?}"
+        );
+
+        // The placeholder is a branch *inside* the body, not an early return
+        // that replaces the page. Asserted, because "rather than nothing" is the
+        // other half of the test's name and a `view` that returned the
+        // placeholder on its own would satisfy the two assertions above.
+        assert!(
+            drawn.iter().any(|text| text == INTRO),
+            "the page's explainer is drawn even with nothing to list; drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == "Catalog"),
+            "and the section heading the placeholder sits under; drawn: {drawn:?}"
+        );
+        assert!(
+            !drawn.iter().any(|text| text == "Install"),
+            "no card is drawn for an empty catalog, so no Install button is \
+             either; drawn: {drawn:?}"
+        );
+    }
+
+    /// The strings **this page**, as actually built, hands the operation
+    /// traversal.
+    ///
+    /// A deliberate second copy of the helper in `crates/app/src/main.rs`'s test
+    /// module and in `view/settings.rs`/`view/credits.rs`, beside the claim it
+    /// serves rather than shared with them: those are private to their own test
+    /// modules, so a shared helper would mean promoting a test-only item into
+    /// the crate. If a fifth caller ever appears, that promotion is the right
+    /// move and this is where it should be reconsidered.
+    ///
+    /// The renderer is `iced_tiny_skia`, pure software, so this needs no display
+    /// and draws nothing; it is asked only to lay the tree out.
+    fn drawn_strings(mut element: Element<'_, Message>) -> Vec<String> {
+        use cosmic::iced::advanced::widget::{Operation, Tree};
+        use cosmic::iced::advanced::{Layout, layout::Limits};
+        use cosmic::iced::{Font, Pixels, Rectangle, Size};
+
+        #[derive(Default)]
+        struct Texts(Vec<String>);
+        impl Operation for Texts {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
+                self.0.push(text.to_string());
+            }
+        }
+
+        // `layout` and `operate` take the renderer by shared reference; passing
+        // it by `&mut` is `clippy::unnecessary_mut_passed`.
+        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
+        let mut tree = Tree::new(element.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
+        let mut texts = Texts::default();
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
+        texts.0
     }
 }

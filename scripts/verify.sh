@@ -1352,6 +1352,21 @@ stage_cargo_sources() {
     # can add one silently, and the failure it causes (an offline fetch error
     # deep inside flatpak-builder) is otherwise hard to attribute. See
     # packaging.md §2.1 and PLAN.md risk R-2.
+    #
+    # The count is a *floor*, not a report (BUG-16b). This half decides on
+    # `missing` alone, and `missing` can only be non-zero for a URL the loop
+    # actually read: make the lock registry-only, or change the shape
+    # `source = "git+…"` is written in, and the `sed` yields nothing, the loop
+    # body never runs, `count=0 missing=0`, and the stage prints
+    # `ok cargo-sources` having compared the committed file against a
+    # regenerated one and covered **no source at all**. The count was printed
+    # and never required, which is the same shape as BUG-10: an exit status
+    # standing in for a check on what ran. So it is required, and zero is a
+    # failure rather than a pass — the `sed` above is the load-bearing read here,
+    # and a `sed` that stopped matching must not be indistinguishable from a lock
+    # file with no git sources in it. (A lock with none is not a state this
+    # project can be in: libcosmic is a git dependency, which is why
+    # build-aux/flatpak/wrap-cargo-sources.py exists at all.)
     local urls url missing=0 count=0
     urls="$(sed -n 's/^source = "git+\([^?#]*\).*/\1/p' "$ROOT/Cargo.lock" | sort -u)"
     while IFS= read -r url; do
@@ -1365,6 +1380,14 @@ stage_cargo_sources() {
         fi
     done <<<"$urls"
     echo "git sources in Cargo.lock: $count, missing: $missing"
+    if [ "$count" -eq 0 ]; then
+        echo "FAIL Cargo.lock yielded no 'source = \"git+…\"' lines, so this half covered"
+        echo "     nothing. That is either a lock file with no git dependencies (not a"
+        echo "     state this project can be in — libcosmic is one) or the read above"
+        echo "     having stopped matching, and the two are indistinguishable here."
+        echo "     Fix the read: the pattern is anchored to the start of the line."
+        return 1
+    fi
     [ "$missing" -eq 0 ] || return 1
     return 0
 }
@@ -1409,10 +1432,37 @@ stage_desktop_metainfo() {
     local share="$BUILD_DIR/files/share"
     local desktop="$share/applications/$APP_ID.desktop"
     local metainfo="$share/metainfo/$APP_ID.metainfo.xml"
-    [ -f "$desktop" ] || desktop="$ROOT/data/$APP_ID.desktop"
-    [ -f "$metainfo" ] || metainfo="$ROOT/data/$APP_ID.metainfo.xml"
+
+    # Which copy gets validated is part of the *verdict*, not a line above it
+    # (BUG-16a). The fallback below used to run silently and the stage still
+    # returned 0, so a run in which `flatpak-build` failed under `--keep-going`
+    # — or in which build-flatpak/ is a leftover from an earlier revision —
+    # printed `ok desktop-metainfo` after validating the repository's *sources*.
+    # A reader takes "the installed copies validate" from that line, and nothing
+    # in the run produced it: the label survived the change of subject, which is
+    # the whole of the defect.
+    #
+    # So the subject is tracked. A fallback still validates the sources — that
+    # check is real and the sub-check lines say which files they read — but the
+    # stage cannot then report ok, because the thing it exists to validate (the
+    # desktop entry and the metainfo *as installed*) was not looked at. It
+    # returns the same pair of skip codes `flatpak-contents` uses for the same
+    # situation (98 when the caller asked for the missing tree with
+    # --skip-flatpak, 99 when a prerequisite is missing), so the run's exit
+    # status distinguishes "you asked not to build" from "the build is not
+    # there".
+    local installed=1
+    [ -f "$desktop" ] || { desktop="$ROOT/data/$APP_ID.desktop"; installed=0; }
+    [ -f "$metainfo" ] || { metainfo="$ROOT/data/$APP_ID.metainfo.xml"; installed=0; }
     echo "desktop:  ${desktop#"$ROOT"/}"
     echo "metainfo: ${metainfo#"$ROOT"/}"
+    if [ "$installed" -eq 0 ]; then
+        echo "NOT the installed copies: no"
+        echo "  ${share#"$ROOT"/}/applications/$APP_ID.desktop or"
+        echo "  ${share#"$ROOT"/}/metainfo/$APP_ID.metainfo.xml."
+        echo "The repository's sources are validated below; the installed copies"
+        echo "were NOT read, so this stage is a SKIP and not a pass."
+    fi
 
     local rc=0 missing=0
     if require_tool desktop-file-validate "from desktop-file-utils"; then
@@ -1430,6 +1480,10 @@ stage_desktop_metainfo() {
     # it must report SKIP rather than ok. Silence would be a fake pass.
     if [ "$rc" -ne 0 ]; then return 1; fi
     if [ "$missing" -ne 0 ]; then return 99; fi
+    if [ "$installed" -eq 0 ]; then
+        [ "${SKIP_FLATPAK:-0}" -eq 1 ] && return 98
+        return 99
+    fi
     return 0
 }
 

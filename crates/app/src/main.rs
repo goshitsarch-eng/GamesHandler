@@ -9665,10 +9665,310 @@ mod tests {
         calls
     }
 
-    /// Every Rust source file under `crates/`, concatenated: the haystack the
-    /// port fragments are read out of.
+    /// `source` as chars, with every comment blanked to spaces and — when
+    /// `blank_strings` — every string and char literal with it. Offsets are
+    /// preserved, so a range found in one pass indexes the other; the two-pass
+    /// use is [`without_test_code`].
+    ///
+    /// The same lexer as `crate::view::form.rs`'s, and for the same reason: the
+    /// cut below is a *brace* walk, and a `{` or `}` inside a string literal or
+    /// a comment is not a brace. `char_literal_at`'s rule about lifetimes is
+    /// load-bearing here too — every view signature in this crate is
+    /// `Element<'a, Message>`, and a lexer that reads that `'` as a literal
+    /// opener blanks the rest of the line and silently loses whatever was on it.
+    fn lex(source: &str, blank_strings: bool) -> Vec<char> {
+        let chars: Vec<char> = source.chars().collect();
+        let mut out = chars.clone();
+        // Bounds-checked because an unterminated literal has to leave the
+        // scanner running to the end rather than panicking on the way.
+        let blank = |out: &mut Vec<char>, index: usize| {
+            if blank_strings && index < out.len() && out[index] != '\n' {
+                out[index] = ' ';
+            }
+        };
+        let mut index = 0;
+        while index < chars.len() {
+            let current = chars[index];
+            if current == '/' && chars.get(index + 1) == Some(&'/') {
+                while index < chars.len() && chars[index] != '\n' {
+                    out[index] = ' ';
+                    index += 1;
+                }
+            } else if current == '/' && chars.get(index + 1) == Some(&'*') {
+                out[index] = ' ';
+                out[index + 1] = ' ';
+                index += 2;
+                while index < chars.len()
+                    && !(chars[index] == '*' && chars.get(index + 1) == Some(&'/'))
+                {
+                    out[index] = ' ';
+                    index += 1;
+                }
+                for _ in 0..2 {
+                    if index < chars.len() {
+                        out[index] = ' ';
+                        index += 1;
+                    }
+                }
+            } else if current == '"' {
+                blank(&mut out, index);
+                index += 1;
+                while index < chars.len() && chars[index] != '"' {
+                    if chars[index] == '\\' {
+                        blank(&mut out, index);
+                        index += 1;
+                    }
+                    blank(&mut out, index);
+                    index += 1;
+                }
+                blank(&mut out, index);
+                index += 1;
+            } else if let Some(length) = char_literal_at(&chars, index) {
+                for _ in 0..length {
+                    blank(&mut out, index);
+                    index += 1;
+                }
+            } else {
+                index += 1;
+            }
+        }
+        out
+    }
+
+    /// The length of the char literal starting at `index`, or `None` when
+    /// `chars[index]` is not a quote or the `'` opens a lifetime (`&'a str`).
+    ///
+    /// Transcribed from `crate::view::form.rs`, which is where the rule and its
+    /// measured failure were worked out; the note there is the record.
+    fn char_literal_at(chars: &[char], index: usize) -> Option<usize> {
+        if chars.get(index) != Some(&'\'') {
+            return None;
+        }
+        match (
+            chars.get(index + 1),
+            chars.get(index + 2),
+            chars.get(index + 3),
+        ) {
+            (Some('\\'), Some(_), Some('\'')) => Some(4),
+            (Some(_), Some('\''), _) => Some(3),
+            _ => None,
+        }
+    }
+
+    /// The first `needle` at or after `from`.
+    fn find_chars(haystack: &[char], needle: &[char], from: usize) -> Option<usize> {
+        if needle.is_empty() || haystack.len() < needle.len() {
+            return None;
+        }
+        (from..=haystack.len() - needle.len())
+            .find(|start| haystack[*start..*start + needle.len()] == *needle)
+    }
+
+    /// The index of the brace that closes the one at `open`.
+    ///
+    /// All three bracket kinds share a depth, as `view/form.rs`'s `matching`
+    /// does: a `)` inside a `[...]` or a `{...}` must not close an earlier
+    /// `(`. Strings and comments are not consulted — the caller passes text
+    /// that [`lex`] has already handled.
+    fn matching(chars: &[char], open: usize) -> Option<usize> {
+        let mut depth = 0i32;
+        for (offset, character) in chars[open..].iter().enumerate() {
+            match character {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(open + offset);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// The ranges of this file's **test code**, as `(start, end)` char indices:
+    /// every `#[cfg(test)]` module body, and every `#[test]` item.
+    ///
+    /// Two markers, because this tree spells test code both ways.
+    /// `#[cfg(test)] mod tests { … }` is the common one, and
+    /// `crates/core/src/hash.rs:106` is a bare `#[test] fn` with no attribute
+    /// covering it — `#[test]` carries its own `cfg(test)` for the item it is
+    /// on, so that file is test code from that line down and the module rule
+    /// never sees it. Missing it is not cosmetic: the assertion in
+    /// `every_reference_notify_has_a_port_voice` requires the haystack to
+    /// contain no `#[test]`, and it is what fails when a spelling goes
+    /// unhandled — which is how `pub(crate) mod tests` and this one were both
+    /// found.
+    fn test_code_ranges(chars: &[char]) -> Vec<(usize, usize)> {
+        let mut ranges = Vec::new();
+        for (marker, opener) in [
+            (
+                "#[cfg(test)]",
+                module_body_open as fn(&[char], usize) -> Option<usize>,
+            ),
+            ("#[test]", braced_item_open),
+        ] {
+            let marker: Vec<char> = marker.chars().collect();
+            let mut from = 0usize;
+            while let Some(start) = find_chars(chars, &marker, from) {
+                let after = start + marker.len();
+                match opener(chars, after) {
+                    Some(open) => {
+                        let end = matching(chars, open).unwrap_or(chars.len());
+                        ranges.push((start, end));
+                        from = end;
+                    }
+                    None => from = after,
+                }
+            }
+        }
+        ranges.sort_unstable();
+        ranges
+    }
+
+    /// The index of the `{` that opens the body of the module declared at or
+    /// after `from`, or `None` when the item there is not a module with a braced
+    /// body.
+    ///
+    /// The **visibility is skipped rather than assumed absent**, and that is the
+    /// one place this differs from `view/form.rs`'s function of the same name,
+    /// which checks the three characters after the attribute against `mod`.
+    /// `crates/core/src/paths.rs:214` is `pub(crate) mod tests {` — measured, the
+    /// copied rule reads that as not-a-module and leaves the whole module in the
+    /// haystack, which is the same defect one spelling over. A `;`-declared
+    /// module (`#[cfg(test)] mod oracle_tests;`) returns `None` too: its body is
+    /// another file, `test_only_modules` is what removes it, and cutting at the
+    /// next `{` in this file would swallow whatever item followed.
+    fn module_body_open(chars: &[char], from: usize) -> Option<usize> {
+        let mut at = from;
+        while at < chars.len() && chars[at].is_whitespace() {
+            at += 1;
+        }
+        for keyword in ["pub(crate) mod ", "pub(super) mod ", "pub mod ", "mod "] {
+            if !starts_with_at(chars, at, keyword) {
+                continue;
+            }
+            let mut scan = at + keyword.chars().count();
+            while scan < chars.len()
+                && chars[scan] != '{'
+                && chars[scan] != ';'
+                && chars[scan] != '\n'
+            {
+                scan += 1;
+            }
+            return (chars.get(scan) == Some(&'{')).then_some(scan);
+        }
+        None
+    }
+
+    /// The index of the `{` that opens the first braced item at or after `from`
+    /// — the body of a `#[test] fn`.
+    ///
+    /// The `;` guard is what keeps it from reaching past a test item into
+    /// whatever the next braced item happens to be: `#[test]` is always on a
+    /// function here, and a `;` before any `{` means this attribute is not on
+    /// one and nothing should be cut.
+    fn braced_item_open(chars: &[char], from: usize) -> Option<usize> {
+        let mut at = from;
+        while at < chars.len() {
+            match chars[at] {
+                '{' => return Some(at),
+                ';' => return None,
+                _ => at += 1,
+            }
+        }
+        None
+    }
+
+    /// Whether `needle` begins at char index `at`.
+    fn starts_with_at(chars: &[char], at: usize, needle: &str) -> bool {
+        let needle: Vec<char> = needle.chars().collect();
+        chars.len() >= at + needle.len() && chars[at..at + needle.len()] == needle[..]
+    }
+
+    /// One file's **production** text: its `#[cfg(test)] mod` blocks blanked.
+    ///
+    /// This is the repair for BUG-18. The guard below asks
+    /// `port.contains(voice)` for every notice the reference emits, and
+    /// `crates/app/src/main.rs` was in the haystack *with this test module in
+    /// it* — whose `NOTIFY_VOICES` table is a list of exactly those voices. So
+    /// the table satisfied every lookup for itself, and deleting the port of any
+    /// notice left the assertion green. A haystack that contains its own needle
+    /// is not a check. `crates/app/tests/dispatch_coverage.rs`'s `production_src`
+    /// makes the same cut for the same reason, and states it as this project's
+    /// dominant defect class.
+    ///
+    /// Two passes over one lexer, as `view/form.rs` does it: the *structural*
+    /// pass blanks strings too, because the braces must be counted without the
+    /// ones inside literals; the *readable* pass keeps them, because the voices
+    /// **are** string literals and a haystack with the strings blanked would
+    /// find nothing at all. Both are the same length, so a range computed on one
+    /// indexes the other.
+    fn without_test_code(source: &str) -> String {
+        let structural = lex(source, true);
+        let readable = lex(source, false);
+        let mut readable = readable;
+        for (start, end) in test_code_ranges(&structural) {
+            for character in &mut readable[start..end] {
+                if *character != '\n' {
+                    *character = ' ';
+                }
+            }
+        }
+        readable.into_iter().collect()
+    }
+
+    /// The module names `dir`'s own module file declares under `#[cfg(test)]`
+    /// with a `;` — files that are test code from their first line, wherever the
+    /// file itself carries no attribute.
+    ///
+    /// `crates/core/src/oracle_tests.rs` is the live case: `lib.rs:56-57` says
+    /// `#[cfg(test)] mod oracle_tests;`, so the file is reached through `mod`
+    /// and never through an attribute of its own. Without this it would be
+    /// walked like production code — its 31 `#[test]`s and all their fixture
+    /// strings back in the haystack, which is the same defect one file over.
+    ///
+    /// Only the two files that declare modules in this tree are read
+    /// (`lib.rs`/`main.rs`/`mod.rs`); a module declared from anywhere else would
+    /// go unnoticed, which is named rather than implied.
+    fn test_only_modules(dir: &std::path::Path) -> Vec<String> {
+        let mut names = Vec::new();
+        for candidate in ["mod.rs", "lib.rs", "main.rs"] {
+            let path = dir.join(candidate);
+            if !path.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("{} should be readable: {err}", path.display()));
+            let chars = lex(&text, true);
+            let marker: Vec<char> = "#[cfg(test)]".chars().collect();
+            let mut from = 0usize;
+            while let Some(start) = find_chars(&chars, &marker, from) {
+                let after = start + marker.len();
+                let rest: String = chars[after..].iter().take(64).collect();
+                if let Some(rest) = rest.trim_start().strip_prefix("mod ") {
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    // `;` and not `{`: a braced module is cut by
+                    // `test_module_ranges`, a `;` one lives in another file.
+                    if !name.is_empty() && rest[name.len()..].trim_start().starts_with(';') {
+                        names.push(name);
+                    }
+                }
+                from = after;
+            }
+        }
+        names
+    }
+
+    /// Every Rust source file under `crates/` that holds **production** code,
+    /// concatenated: the haystack the port fragments are read out of.
     fn read_crates(root: &std::path::Path) -> String {
         fn visit(dir: &std::path::Path, out: &mut String) {
+            let test_only = test_only_modules(dir);
             let entries = std::fs::read_dir(dir)
                 .unwrap_or_else(|err| panic!("{} should be readable: {err}", dir.display()));
             for entry in entries {
@@ -9678,9 +9978,17 @@ mod tests {
                 if path.is_dir() {
                     visit(&path, out);
                 } else if path.extension().is_some_and(|ext| ext == "rs") {
-                    out.push_str(&std::fs::read_to_string(&path).unwrap_or_else(|err| {
+                    let stem = path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or_default();
+                    if test_only.iter().any(|name| name == stem) {
+                        continue;
+                    }
+                    let text = std::fs::read_to_string(&path).unwrap_or_else(|err| {
                         panic!("{} should be readable: {err}", path.display())
-                    }));
+                    });
+                    out.push_str(&without_test_code(&text));
                     out.push('\n');
                 }
             }
@@ -9706,6 +10014,16 @@ mod tests {
     /// comment while the arm is deleted would pass here — and fail the arm
     /// test that asserts the toast — which is why the two halves stay
     /// separate.
+    ///
+    /// **The haystack is production code only, and that is asserted** (BUG-18).
+    /// It used to be `read_crates`' raw concatenation, which included this very
+    /// test module — so `port.contains(voice)` was satisfied by the
+    /// `NOTIFY_VOICES` table above, and deleting the port of any notice left
+    /// this green. The two assertions after `port` are the instrument checking
+    /// itself: the table and the test attributes must both be *absent* from what
+    /// it searches, or the search proves nothing. They are not decoration — a
+    /// cut that stops one item early puts the needle straight back, and this is
+    /// what fails when it does.
     #[test]
     fn every_reference_notify_has_a_port_voice() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../");
@@ -9729,6 +10047,31 @@ mod tests {
             NOTIFY_VOICES.len()
         );
         let port = read_crates(&root);
+
+        // The instrument, checked before it is used. `NOTIFY_VOICES` is the
+        // needle: it is a list of every voice, so a haystack that still holds
+        // it satisfies every lookup below by itself. A `#[test]` in the
+        // haystack means the cut did not reach a test module — this file's own
+        // ends the file, so one that survives it is a *second* module the walk
+        // missed. Both are hard errors rather than warnings: an assertion whose
+        // haystack contains its needle cannot fail, which is worse than no
+        // assertion at all.
+        assert!(
+            !port.contains("NOTIFY_VOICES"),
+            "read_crates' haystack still contains this test module's own NOTIFY_VOICES \
+             table, so every `port.contains(voice)` below is satisfied by the table its \
+             own rows are listed in and cannot fail (BUG-18). The `#[cfg(test)] mod` cut \
+             in `without_test_code` did not reach it."
+        );
+        assert!(
+            !port.contains("#[test]"),
+            "read_crates' haystack still contains a `#[test]` attribute, so a test \
+             module survived the cut — and the strings those tests assert on are in the \
+             haystack the production lookup below is made against, which is the defect \
+             per file rather than per module (BUG-18). Check `test_only_modules`, which \
+             is what removes a file reached through `#[cfg(test)] mod name;`."
+        );
+
         for (site, voice) in NOTIFY_VOICES {
             assert!(
                 calls.iter().any(|call| call.contains(site)),

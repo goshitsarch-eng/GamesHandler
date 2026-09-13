@@ -30,15 +30,26 @@
 //! # What this does and does not establish
 //!
 //! It reads `crates/app/src/main.rs` — the file the Flatpak is compiled from —
-//! and classifies each arm of the page dispatch by whether it calls
-//! `pending_page`. So it pins the *mechanism*: a page is "ported" here if its
-//! arm no longer calls `pending_page`. A page landed as a second placeholder
-//! mechanism, under another name, would be classified as ported and this test
-//! would not notice. Two things bound that: `pending_page` is the single
-//! generator of every placeholder body, and
-//! `scripts/verify.sh` asserts against the *shipped* binary that its
-//! placeholder marker is present if and only if the source has pending call
-//! sites, which is the artifact-side half of the same claim.
+//! and asks two questions of each arm of the page dispatch: does it call
+//! `pending_page`, and does it call one of this crate's view modules.
+//!
+//! The first is the *pin*. It reads one spelling — `pending_page` was the single
+//! generator of every placeholder body — and a page re-stubbed under another
+//! name (`todo_page(Page::Library)`, `container(text::body("Coming soon"))`) has
+//! no `pending_page(` in it. That is a claim that was true only for the spelling
+//! the guard knew, which is BUG-17: an absence is a check only if the thing
+//! absent cannot change its name. It *has* changed names once already — the
+//! placeholder function is gone from `main.rs` entirely — and a property of the
+//! present would have survived that.
+//!
+//! So the second question is the repair, and it is asked as a property of the
+//! arm rather than as the absence of a spelling: every arm of the dispatch must
+//! contain a `view::<module>::view(` call whose module `view/mod.rs` declares
+//! ([`every_page_arm_draws_a_view_module`]). A placeholder is then nothing this
+//! file has to recognise — it is anything that fails to be a page. The pin above
+//! is kept beside it, because the two are different claims: the pin reports
+//! *which* pages are placeholders against a hand-edited list, and the property
+//! reports that none of them is.
 //!
 //! # Why it reads the file rather than counting in it
 //!
@@ -49,15 +60,24 @@
 //! directory. This one never counts strings: it finds the page dispatch, walks
 //! its arms, and asks what each arm calls. Comments cannot contribute an arm,
 //! and a match arm that mentions `pending_page` in prose without calling it is
-//! not an arm either.
+//! not an arm either — and neither does prose count as a *call* inside an arm,
+//! because the arm's body is blanked before it is searched ([`blank`]).
 //!
-//! Two further guards, because a parser that silently finds nothing is the
+//! Three further guards, because a parser that silently finds nothing is the
 //! defect class this whole file exists to catch:
 //!
 //! - the arms found are compared against `Page::ALL` in `state.rs`, so a parse
 //!   that loses arms fails loudly instead of asserting over a shorter list;
 //! - `file!()` is asserted not to end in `main.rs`, so moving this test into
-//!   the file it scans is an error rather than a self-fulfilling pass.
+//!   the file it scans is an error rather than a self-fulfilling pass;
+//! - an arm's body is the arm's *own* body — brace-matched, not the remainder
+//!   of its first line and not everything up to the next arm — because five of
+//!   the six arms bind their page into a local and call `view::…::view(page)`
+//!   at the end of a block. Read from the first line, every one of those arms
+//!   has the body `{`, and a placeholder one line further down is invisible.
+//!   That is the half of BUG-17 the property check above cannot reach on its
+//!   own: it would still find no `view::<module>::view(` and fail, but for the
+//!   wrong reason and without naming the arm.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -159,22 +179,80 @@ fn assert_right_tree(root: &Path) {
 /// renders.
 struct Arm {
     page: String,
+    /// The arm's whole body: everything after its `=>`, to the arm's own closing
+    /// brace for a block arm and to the end of the line otherwise.
+    ///
+    /// It used to be the remainder of the `Page::X =>` **line**, which made
+    /// every block arm's body the single character `{` — the shape BUG-17(a)
+    /// records. The body is brace-matched now ([`arm_body`]) for the reason the
+    /// module doc gives.
     body: String,
 }
 
 impl Arm {
+    /// The arm's body with every comment, string and char literal blanked.
+    ///
+    /// Searches run over this rather than over [`Arm::body`] because a *mention*
+    /// is not a call: the doc comment above `view_body` in `main.rs` quotes
+    /// `pending_page`, and the same body contains `"Pending pages"`-style
+    /// literals in places. Only blanked text can tell the two apart, and
+    /// `view/form.rs` and `tests/dispatch_coverage.rs` keep lexers for the same
+    /// reason.
+    fn code(&self) -> String {
+        blank(&self.body)
+    }
+
     /// Whether this arm renders the not-yet-ported placeholder.
     ///
-    /// The whole point of the test: `pending_page` is the single generator of
-    /// every placeholder body, so "does this arm call it" is the question.
+    /// The whole point of the test: `pending_page` was the single generator of
+    /// every placeholder body, so "does this arm call it" is the question. It is
+    /// searched for anywhere in the arm rather than at its start — see
+    /// [`Arm::body`] — which is what makes a placeholder one line into a block
+    /// arm visible.
+    ///
+    /// **This cannot see a placeholder under another name**, which is BUG-17(a)
+    /// and is not something a wider search here could fix: an absence is a check
+    /// only for the spellings it knows. [`every_page_arm_draws_a_view_module`]
+    /// is the repair, and it is a separate test because it asks a separate
+    /// question.
     fn is_pending(&self) -> bool {
-        self.body.starts_with("pending_page(")
+        self.code().contains("pending_page(")
+    }
+
+    /// The module of the `view::<module>::view(` call this arm makes, if any.
+    ///
+    /// The whole arm is searched, not its head: five of the six arms bind their
+    /// page into a local and call `view::…::view(page)` at the end of the block,
+    /// so a check on the opening line finds nothing in any of them.
+    fn rendered_module(&self) -> Option<String> {
+        let code = self.code();
+        let mut rest = code.as_str();
+        while let Some(at) = rest.find("view::") {
+            rest = &rest[at + "view::".len()..];
+            let Some((module, _)) = rest.split_once("::view(") else {
+                continue;
+            };
+            // The *last* path segment before `::view(`: `crate::view::library::view(`
+            // must read as `library`, not as `view::library`.
+            let module = module.rsplit("::").next().unwrap_or(module);
+            if !module.is_empty() && module.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return Some(module.to_string());
+            }
+        }
+        None
     }
 
     /// The task id, when the arm is a placeholder and names one.
+    ///
+    /// Read out of the *raw* body at the placeholder call's own offset, because
+    /// the id is a string literal and [`Arm::code`] has blanked those. The
+    /// offsets agree: [`blank`] replaces a blanked character with as many spaces
+    /// as it occupied, so a byte offset found in the blanked text indexes the
+    /// same place in the original.
     fn task(&self) -> Option<&str> {
-        self.body
-            .split_once('"')
+        let at = self.code().find("pending_page(")?;
+        let rest = &self.body[at..];
+        rest.split_once('"')
             .and_then(|(_, rest)| rest.split_once('"'))
             .map(|(task, _)| task)
     }
@@ -182,16 +260,23 @@ impl Arm {
 
 /// The arms of the page dispatch in `main.rs`, in source order.
 ///
-/// Finds the match on `self.state.page` and takes the lines under it until the
-/// indentation drops back out of the match. Indentation, not brace counting:
-/// the arms are Rust and may contain braces, string literals with braces in
-/// them, and nested `match`es, and a brace counter that does not also lex
-/// strings would drift the moment a page landed — which is the edit this test
-/// has to survive.
+/// Finds the match on `self.state.page` and takes the arms under it until the
+/// indentation drops back out of the match. Indentation, not brace counting, is
+/// what finds the *arms*: the match may contain nested `match`es and blocks, and
+/// a depth counter started at the wrong brace would drift. Each arm's *body* is
+/// then brace-matched from its own `{` ([`arm_body`]), which is a bounded
+/// problem — the arm's own braces are balanced — and is what makes a placeholder
+/// anywhere inside a block arm visible.
+///
+/// Everything is done on a blanked copy of the source ([`blank`]), so a `{`
+/// inside a string literal cannot end an arm early and a `pending_page(` quoted
+/// in a comment cannot be read as a call. Byte offsets are preserved, so a range
+/// found there is cut out of the original.
 fn page_dispatch(source: &str) -> Vec<Arm> {
+    let code = blank(source);
     let anchor = ["match self.state.page", "match self.page"]
         .into_iter()
-        .find(|needle| source.contains(needle));
+        .find(|needle| code.contains(needle));
     let Some(anchor) = anchor else {
         panic!(
             "could not find the page dispatch (a `match self.state.page` or \
@@ -201,7 +286,18 @@ fn page_dispatch(source: &str) -> Vec<Arm> {
         );
     };
 
-    let lines: Vec<&str> = source.lines().collect();
+    let lines: Vec<&str> = code.lines().collect();
+    // The byte offset each line starts at, found from the text rather than
+    // assumed to be `line.len() + 1`: `str::lines` strips a `\r` it finds, and a
+    // computed offset that is one short per line would drift into the middle of
+    // the file by the bottom of the match.
+    let mut starts = vec![0usize];
+    for (index, byte) in code.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(index + 1);
+        }
+    }
+
     let start = lines
         .iter()
         .position(|line| line.contains(anchor))
@@ -210,7 +306,7 @@ fn page_dispatch(source: &str) -> Vec<Arm> {
     let match_indent = indent(lines[start]);
 
     let mut arms = Vec::new();
-    for line in &lines[start + 1..] {
+    for (index, line) in lines.iter().enumerate().skip(start + 1) {
         if line.trim().is_empty() {
             continue;
         }
@@ -221,16 +317,177 @@ fn page_dispatch(source: &str) -> Vec<Arm> {
         }
         if let Some(rest) = line.trim().strip_prefix("Page::") {
             let page: String = rest.chars().take_while(|c| c.is_alphanumeric()).collect();
-            let Some((_, body)) = rest.split_once("=>") else {
+            if rest.split_once("=>").is_none() {
                 panic!("a `Page::{page}` line in the dispatch is not a match arm: {line}");
-            };
+            }
+            let (from, to) = arm_body(&code, starts[index]);
             arms.push(Arm {
                 page,
-                body: body.trim().to_string(),
+                body: source[from..to].trim().to_string(),
             });
         }
     }
     arms
+}
+
+/// The byte range, in `code`'s coordinates, of the body of the arm that begins
+/// on the line at `line_start`: from just after the `=>` to and including the
+/// arm's own closing brace, or to the end of the line for a body that is a
+/// single expression.
+///
+/// `code` must be **blanked** ([`blank`]): the brace walk below counts every `{`
+/// it sees, and a brace inside a string literal or a comment is not a brace.
+/// That is the whole reason this is a walk over blanked text rather than a scan
+/// of the raw arm.
+fn arm_body(code: &str, line_start: usize) -> (usize, usize) {
+    let rest = &code[line_start..];
+    let arrow = rest
+        .find("=>")
+        .expect("`page_dispatch` only calls this for a line it has seen a `=>` on");
+    let body_start = line_start + arrow + 2;
+
+    // The end of the line, which is where a single-expression arm stops.
+    let line_end = rest
+        .find('\n')
+        .map(|at| line_start + at)
+        .unwrap_or(code.len());
+
+    let bytes = code.as_bytes();
+    let mut at = body_start;
+    while at < code.len() && bytes[at].is_ascii_whitespace() {
+        at += 1;
+    }
+    if bytes.get(at) != Some(&b'{') {
+        return (body_start, line_end);
+    }
+
+    let mut depth = 0i32;
+    while at < code.len() {
+        match bytes[at] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return (body_start, at + 1);
+                }
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    panic!(
+        "the arm body starting at byte {body_start} of crates/app/src/main.rs is \
+         not closed with a `}}`. An unterminated literal in the arm would do this: \
+         `blank` leaves an unterminated string running to the end of the file."
+    );
+}
+
+/// `source` with every comment, string literal and char literal blanked to
+/// spaces. Newlines are kept, and **byte offsets are preserved** — a blanked
+/// character becomes as many spaces as it occupied — so a range found in the
+/// result indexes the original.
+///
+/// Two things here are load-bearing, and both are traps this file has to hold
+/// off:
+///
+/// - **literals and comments are blanked** because arm bodies are found by
+///   counting braces, and a `}` inside a string would end an arm early; and
+///   because the prose in `main.rs` above the dispatch *names* both
+///   `pending_page` and `view::…::view(`, so a scanner reading raw text finds
+///   its own documentation first. `view/form.rs` and `tests/dispatch_coverage.rs`
+///   each keep a lexer for the same reason.
+/// - **lifetimes are not char literals.** Every view signature in this crate is
+///   `Element<'a, Message>`; a lexer that takes every `'` for an opener blanks
+///   the rest of the line and the parse silently loses arms.
+///   `view/form.rs`'s `char_literal_at` is the same rule, and its doc records
+///   the measured failure that put it there.
+fn blank(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = String::with_capacity(source.len());
+    let mut index = 0;
+    while index < chars.len() {
+        let current = chars[index];
+        if current == '/' && chars.get(index + 1) == Some(&'/') {
+            while index < chars.len() && chars[index] != '\n' {
+                push_blank(&mut out, chars[index]);
+                index += 1;
+            }
+        } else if current == '/' && chars.get(index + 1) == Some(&'*') {
+            // The terminator is consumed with the body, so a `*/` that never
+            // arrives leaves the scanner running to the end rather than
+            // panicking.
+            while index < chars.len()
+                && !(chars[index] == '*' && chars.get(index + 1) == Some(&'/'))
+            {
+                push_blank(&mut out, chars[index]);
+                index += 1;
+            }
+            for _ in 0..2 {
+                if index < chars.len() {
+                    push_blank(&mut out, chars[index]);
+                    index += 1;
+                }
+            }
+        } else if current == '"' {
+            push_blank(&mut out, current);
+            index += 1;
+            while index < chars.len() && chars[index] != '"' {
+                if chars[index] == '\\' {
+                    push_blank(&mut out, chars[index]);
+                    index += 1;
+                }
+                if index < chars.len() {
+                    push_blank(&mut out, chars[index]);
+                    index += 1;
+                }
+            }
+            if index < chars.len() {
+                push_blank(&mut out, chars[index]);
+                index += 1;
+            }
+        } else if let Some(length) = char_literal_at(&chars, index) {
+            for _ in 0..length {
+                push_blank(&mut out, chars[index]);
+                index += 1;
+            }
+        } else {
+            out.push(current);
+            index += 1;
+        }
+    }
+    out
+}
+
+/// One blanked character: spaces of the same byte length, or the newline — a
+/// newline has to survive or the line structure the caller walks is gone.
+fn push_blank(out: &mut String, character: char) {
+    if character == '\n' {
+        out.push('\n');
+    } else {
+        for _ in 0..character.len_utf8() {
+            out.push(' ');
+        }
+    }
+}
+
+/// The length of the char literal starting at `index`, or `None` when
+/// `chars[index]` is not a quote or the `'` opens a lifetime (`&'a str`).
+///
+/// Transcription of `view/form.rs`'s function of the same name, which is where
+/// the rule and its failure were worked out; the note there is the record.
+fn char_literal_at(chars: &[char], index: usize) -> Option<usize> {
+    if chars.get(index) != Some(&'\'') {
+        return None;
+    }
+    match (
+        chars.get(index + 1),
+        chars.get(index + 2),
+        chars.get(index + 3),
+    ) {
+        (Some('\\'), Some(_), Some('\'')) => Some(4),
+        (Some(_), Some('\''), _) => Some(3),
+        _ => None,
+    }
 }
 
 /// The page variants `state.rs` declares, from `Page::ALL`.
@@ -267,8 +524,26 @@ fn declared_pages(state_rs: &str) -> Vec<String> {
     pages
 }
 
-/// The checkout's `crates/app/src/main.rs` and `state.rs`.
-fn sources() -> (String, String) {
+/// The view modules `crates/app/src/view/mod.rs` declares.
+///
+/// Read rather than listed, for the reason `tests/dispatch_coverage.rs` gives
+/// for its own copy of this parse: a hand-kept list of module names would have
+/// to be edited by the same person who forgot to edit it, and the guard would
+/// read a module that no longer exists as one that does.
+fn view_modules(mod_rs: &str) -> Vec<String> {
+    mod_rs
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("pub mod ")
+                .and_then(|rest| rest.strip_suffix(';'))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// The checkout's `crates/app/src/main.rs`, `state.rs` and `view/mod.rs`.
+fn sources() -> (String, String, String) {
     assert!(
         !file!().ends_with("main.rs"),
         "this test now lives in {} — the file it scans. Any literal written into \
@@ -280,8 +555,8 @@ fn sources() -> (String, String) {
     let root = repo_root();
     assert_right_tree(&root);
     let src = root.join("crates/app/src");
-    let read = |name: &str| {
-        let path = src.join(name);
+    let read = |relative: &str| {
+        let path = src.join(relative);
         fs::read_to_string(&path).unwrap_or_else(|err| {
             panic!(
                 "cannot read {}: {err}. `assert_right_tree` has already established \
@@ -292,14 +567,14 @@ fn sources() -> (String, String) {
             )
         })
     };
-    (read("main.rs"), read("state.rs"))
+    (read("main.rs"), read("state.rs"), read("view/mod.rs"))
 }
 
 /// The parser finds one arm per page. A regression here means the test below
 /// would be asserting over a list that lost entries.
 #[test]
 fn the_page_dispatch_has_one_arm_per_page() {
-    let (main_rs, state_rs) = sources();
+    let (main_rs, state_rs, _) = sources();
     let arms = page_dispatch(&main_rs);
     let found: Vec<String> = arms.iter().map(|arm| arm.page.clone()).collect();
     let declared = declared_pages(&state_rs);
@@ -317,7 +592,7 @@ fn the_page_dispatch_has_one_arm_per_page() {
 /// in [`PINNED_PENDING`].
 #[test]
 fn pending_pages_match_the_pinned_set() {
-    let (main_rs, _) = sources();
+    let (main_rs, _, _) = sources();
     let arms = page_dispatch(&main_rs);
 
     // At T-19 both sides of the comparison below are empty — `PINNED_PENDING`
@@ -406,4 +681,91 @@ fn pending_pages_match_the_pinned_set() {
          is the fix.",
         file!()
     );
+}
+
+/// **Every page arm draws one of this crate's view modules.**
+///
+/// The *positive* half of the pin above, and BUG-17(a)'s repair.
+/// [`Arm::is_pending`] asks whether an arm calls `pending_page`, which is an
+/// absence — and an absence is a check only for the spellings the reader already
+/// knows. `PINNED_PENDING` and `is_pending` between them knew one, and the same
+/// page body written `todo_page(Page::Library)` or
+/// `container(text::body("Coming soon"))` has no `pending_page(` in it, so the
+/// pin classified it as **ported** and passed. The function itself is gone from
+/// `main.rs` now, which does not retire the shape: a re-stubbed page has no
+/// spelling to reuse and would be written as something new.
+///
+/// So this asks what an arm *does* render. Every arm of the dispatch must
+/// contain a `view::<module>::view(` call whose module `view/mod.rs` declares,
+/// which makes a placeholder nothing this test has to recognise — it is anything
+/// that fails to be a page.
+///
+/// What it does not establish, stated rather than implied:
+///
+/// - an arm that calls a real view and *also* draws a placeholder passes here.
+///   The pin above is what reads `pending_page`; this reads the property. They
+///   are separate tests so neither can be read as the other.
+/// - an arm that builds its page **inline**, without going through
+///   `view::<module>::view`, fails here — a false positive. That is the
+///   direction to fail in, and it is also the dispatch's own documented rule:
+///   every arm draws a view module.
+/// - a **name** is all that is checked. Whether `view::installers::view` is that
+///   page's view, or is a second placeholder wearing the module's name, is not
+///   something a text reader can settle. The rendered-body tests in `main.rs`
+///   (`the_installers_page_draws_the_catalog_and_not_the_placeholder` and its
+///   siblings) are what read that, one page at a time.
+/// - the module has to be *declared*, not *reachable*: `view/mod.rs` gains a
+///   `pub mod` for a file that does not exist and this stays green. The compiler
+///   is what fails on that.
+#[test]
+fn every_page_arm_draws_a_view_module() {
+    let (main_rs, _, view_mod_rs) = sources();
+    let modules = view_modules(&view_mod_rs);
+
+    // Both floors, for the reason the pin gives above: an empty list on either
+    // side turns the loop below into a statement about nothing. The view
+    // modules floor is the one that matters here — with `modules` empty, every
+    // arm would fail with a message claiming the module is not declared, which
+    // would send the reader to `main.rs` for a defect in `view/mod.rs`.
+    assert!(
+        !modules.is_empty(),
+        "parsed no `pub mod` out of crates/app/src/view/mod.rs, so the check below \
+         could not accept any arm even if it named a real module"
+    );
+    let arms = page_dispatch(&main_rs);
+    assert!(
+        !arms.is_empty(),
+        "parsed no arms out of the page dispatch in crates/app/src/main.rs, so the \
+         check below asserts nothing"
+    );
+
+    for arm in &arms {
+        let Some(module) = arm.rendered_module() else {
+            panic!(
+                "{page} does not call `view::<module>::view(`, so it draws no page \
+                 this crate has a module for. Every arm of the dispatch draws a real \
+                 page — that is the dispatch's own rule, and it is asserted rather \
+                 than the absence of one spelling because a placeholder under a new \
+                 name has exactly this shape.\n\
+                 \n\
+                 arm: {page} => {body}\n\
+                 \n\
+                 modules declared by view/mod.rs: {modules:?}",
+                page = arm.page,
+                body = arm.body,
+            );
+        };
+        assert!(
+            modules.contains(&module),
+            "{page} renders `view::{module}::view(`, but `view/mod.rs` declares no \
+             module {module:?} — so the arm calls something that is not a view \
+             module of this crate.\n\
+             \n\
+             arm: {page} => {body}\n\
+             \n\
+             modules declared by view/mod.rs: {modules:?}",
+            page = arm.page,
+            body = arm.body,
+        );
+    }
 }
