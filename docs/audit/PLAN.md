@@ -62,14 +62,14 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 31 | 29 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
+| `BUGS.md` | 48 | 32 | 30 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 17 | 16 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 15 | 13 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 7 `FIXED` |
 | `PACKAGING.md` | 10 | 8 | 6 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
-`BUGS.md`'s 17 tail-less rows are its sixteen open `P3` rows plus the withdrawn
+`BUGS.md`'s 16 tail-less rows are its fifteen open `P3` rows plus the withdrawn
 `BUG-11`, which carries no severity because it is not a defect. That sentence read
 "20 … nineteen" until this revision, and was wrong twice over: the row count was
 measurable from the table above it, and the sentence explaining the number agreed
@@ -132,18 +132,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 51 | 39 | 0 | 12 |
-| P3 | 49 | 9 | 0 | 40 |
-| **Total** | **129** | **77** | **0** | **52** |
+| P3 | 49 | 10 | 0 | 39 |
+| **Total** | **129** | **78** | **0** | **51** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 16 | 0 | 9 |
-| `BUG-xx` | `BUGS.md` | 46 | 29 | 0 | 17 |
+| `BUG-xx` | `BUGS.md` | 46 | 30 | 0 | 16 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 6 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 13 | 0 | 16 |
-| **Total** | | **129** | **77** | **0** | **52** |
+| **Total** | | **129** | **78** | **0** | **51** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -306,7 +306,7 @@ across families, not within them.
 | `BUG-22` | merge_dll_overrides trims ; from both ends where Python rstrips only, so a leading ; survives the reference and is removed here | S1 | — | `b3ad80b` — `python_rstrip_char` where the reference `rstrip`s; a seventh merge case covers the leading `;` and fails under the old helper.| FIXED |
 | `BUG-23` | Three ways a launch failure is turned into a non-failure | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `BUG-24` | The rolling stderr buffer trims to exactly limit bytes where Python keeps the trailing chunk, and the port's chunks.len() > 1 clause is dead code: Python compares *chunk counts* and keeps the last chunk even when it overshoots, while the Rust buffer is one flat Vec<u8> where the same expression is a byte count, subsumed by chunks.len() > limit. The test pins the port's behaviour and its docstring describes Python's guard | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-25` | Two functions apply opposite policies to the same input | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-25` | Two functions apply opposite policies to the same input | S1 | — | `08da989` — both joins validate through `install_directory`; two tests, and the mutation that matters is on `install_directory` itself, because no production input reaches the guard.| FIXED |
 | `BUG-26` | The archive's containment root falls back to an unresolved path: if canonicalize(destination) fails, the root stays unresolved while the member path goes through resolve_missing, which resolves as far as it can — so a resolved member is starts_with-compared against an unresolved root. Members are lexically stripped of .. first, so the reachable outcome is a *false rejection* rather than an accepted escape; I could not construct the accepting case and am not claiming one | S1 | — | `b3ad80b` — `containment_root` refuses (`DestinationUnresolvable`) instead of comparing against an unresolved root; both call sites use it. Mutation-checked both ways.| FIXED |
 | `BUG-27` | A typo in the Steam AppID field is silent: "abc" or "12 34" parses to 0, i.e | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-28` | Six worker-to-UI sends discard their message with let _ =, including the two that carry *why* a launch failed | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
