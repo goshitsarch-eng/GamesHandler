@@ -34,15 +34,39 @@ Source sizes at baseline, for the architecture finding about oversized modules:
 
 ## `scripts/verify.sh`
 
-The single verification entry point, 2125 lines, 11 stages (build, clippy, doc,
+The single verification entry point, 2125 lines, covering build, clippy, doc,
 test, cli, oracle-freshness, python-tests, cargo-sources, flatpak-build,
-smoke-test, desktop-metainfo, flatpak-contents). It had never been run to
+smoke-test, desktop-metainfo and flatpak-contents. It had never been run to
 completion before this audit.
 
-First run on `audit-hardening`, in order: **build ok (13s)**, **clippy ok (3s)**,
-**doc ok (3s)**. The remaining stages are recorded in `PLAN.md`/`REPORT.md` as
-they complete; a stage that cannot run in this environment is recorded with the
-reason rather than silently skipped.
+**Run on `audit-hardening` at `eb2c47f`: all stages green.**
+
+```
+passed:  build clippy doc test cli oracle-freshness python-tests
+         cargo-sources flatpak-build smoke-test desktop-metainfo
+         flatpak-contents
+failed:  none
+skipped: none
+```
+
+Nothing was skipped, so nothing here rests on a stage that quietly declined to
+run. The timings are worth recording because they set the floor for any future
+run: `build` 13s, `clippy` 3s, `doc` 3s, `test` 80s (756 tests), `cli` 0s,
+`oracle-freshness` 1s, `python-tests` 2s, `cargo-sources` 1s, `flatpak-build`
+**255s** (from a cold `--force-clean`), then the smoke test and the two
+validator stages.
+
+The smoke test drives the *installed* Flatpak (`mode=installed
+app=/app/bin/gamehandler`), not a build-tree binary: CLI `--version`, `--list`
+with no display, the no-display diagnostic on exit 1, and then a headless
+weston compositor on which the GUI is required to stay alive for 8 s and to die
+cleanly on `SIGTERM`. `flatpak-contents` then confirms the artefact carries what
+no validator looks at — the licence text byte-identical to `LICENSE` (35149
+bytes), the Authenticode trust root, and the three metadata installs.
+
+This is the true baseline: **the tree is green before any finding is filed**, so
+every fix in this audit is measured against a passing gate rather than against a
+broken one.
 
 ## Harness defects found and fixed before any audit measurement
 
