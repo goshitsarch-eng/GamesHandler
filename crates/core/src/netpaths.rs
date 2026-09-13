@@ -48,14 +48,28 @@
 //!    is the reference's own behaviour on the `OSError` path at
 //!    `netpaths.py:114`.
 //!
-//! # One place this is stricter than the reference, on purpose
+//! # Where this is stricter than the reference, on purpose
 //!
 //! `scan_gvfs_for` matches a directory by `to_string_lossy().to_lowercase()`
 //! but **joins the real `OsString`** from the directory entry. Python keeps
 //! filenames as `str` with surrogate escapes and round-trips any byte sequence;
-//! a `to_string_lossy` filename would turn a non-UTF-8 byte into `U+FFFD` and
-//! then go looking for a path that does not exist. Only the returned
-//! [`String`] is lossy, and only because the signature is.
+//! matching on a `to_string_lossy` filename would turn a non-UTF-8 byte into
+//! U+FFFD and then look for a path under a directory that does not exist.
+//!
+//! That much was already right, and it was not enough. The *answer* was still
+//! put through `to_string_lossy` on the way out, so the join was real and the
+//! value returned was not: the same U+FFFD substitution reappeared one step
+//! later, in a value the caller hands to Wine. **The rule now holds at the
+//! boundary rather than at the join** — [`as_local_path_in`] returns a resolved
+//! path only when it exists *and* is valid UTF-8, and otherwise answers with the
+//! URL, which is the same answer it gives for a share that is not mounted. This
+//! is [`local_path_if_it_exists`]'s doc, and `BUG-42b` is the case that
+//! exposed it.
+//!
+//! The cost is recorded there too: Python returns the real path for such a
+//! share and this returns the URL, because this module's signature and
+//! `Game::exe_path` are `String`s. A false "not mounted yet" is the price of
+//! never handing over a path that does not exist.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -123,17 +137,57 @@ pub fn as_local_path_in(value: &str, env: &dyn Env) -> String {
 
     if REMOTE_SCHEMES.contains(&parts.scheme.as_str()) && !parts.netloc.is_empty() {
         for candidate in mount_candidates(&parts, env) {
-            if candidate.exists() {
-                return candidate.to_string_lossy().into_owned();
+            if let Some(path) = local_path_if_it_exists(&candidate) {
+                return path;
             }
         }
-        if let Some(found) = scan_gvfs_for(&parts, env) {
-            return found.to_string_lossy().into_owned();
+        if let Some(path) =
+            scan_gvfs_for(&parts, env).and_then(|found| local_path_if_it_exists(&found))
+        {
+            return path;
         }
         return raw.to_string();
     }
 
     raw.to_string()
+}
+
+/// The candidate as the [`String`] this API returns, or `None` when it is not
+/// one.
+///
+/// Two ways a path fails to be one, and the caller treats both alike — "try the
+/// next candidate, and if none of them is one, hand back the URL": it does not
+/// exist (the reference's own `candidate.exists()`, asked here so both loops ask
+/// it once), or its bytes are **not valid UTF-8**, which a `String` cannot carry
+/// at all.
+///
+/// The second is `BUG-42b`, and it is the difference between a wrong answer and
+/// no answer. `to_string_lossy` substitutes U+FFFD for every non-UTF-8 byte, so
+/// a mount directory named `sftp:host=server,user=j\xf6rg` was returned as
+/// `…/sftp:host=server,user=j\u{fffd}rg/pub/game.exe` — a path that does not
+/// exist, handed to Wine as though it did. That is the failure the module's own
+/// contract exists to prevent (see the module doc): a share that cannot be
+/// resolved comes back as the URL, so the caller can say something true about
+/// it.
+///
+/// `to_str` is asked rather than `exists()` on the lossy string. The two agree
+/// on every value reachable from `mount_candidates`, whose parts are UTF-8 by
+/// construction, and differ on the scan's non-UTF-8 names: `exists()` would
+/// accept the lossy string whenever a file literally named with a U+FFFD
+/// happened to exist beside it, which is a **different file's path** presented
+/// with the confidence of a real one. Representability is the property that is
+/// actually wanted, so it is the one tested.
+///
+/// The port cannot do what Python does here — return the real path — because
+/// this signature and [`Game::exe_path`](crate::models::Game::exe_path) are
+/// `String`s. That is recorded rather than papered over: the non-UTF-8 share
+/// comes back as `UnreachableShare`, a false negative for a share that *is*
+/// mounted, against the alternative of a path Wine cannot open.
+fn local_path_if_it_exists(candidate: &Path) -> Option<String> {
+    if !candidate.exists() {
+        return None;
+    }
+    candidate.to_str().map(str::to_string)
 }
 
 /// `netpaths.unreachable_share_message` (`netpaths.py:170-177`) — a user-facing
@@ -365,13 +419,30 @@ fn mount_candidates(url: &UrlParts, env: &dyn Env) -> Vec<PathBuf> {
 
 /// The reference's `root.joinpath(name, *parts)`.
 ///
-/// `Path::join` is not `joinpath` for every input — a component that is
-/// absolute *replaces* in both, which is the one surprising case, and neither
-/// side normalises `..`. Here every component comes from splitting a URL path
-/// on `/`, so none is empty and none is absolute, and the two agree.
+/// `Path::join` is not `joinpath` for every input, and the difference is not
+/// only the surprising one. A component that is absolute *replaces* in both,
+/// and neither side normalises `..` — but `PurePath.joinpath` **drops empty and
+/// `.` components** and `Path::join` keeps them (`BUG-42a`). Kept here meant a
+/// URL ending in `/.` produced `…/pub/game.exe/.`, which does not exist when
+/// `game.exe` is a file, so a share that *is* mounted came back as the URL and
+/// `resolve_game_paths` reported it unreachable.
+///
+/// The filter is here, in the one place both callers funnel through, rather
+/// than at the three call sites — and it is applied to the *unquoted* parts, as
+/// the row prescribes, because that is where a `.` can come from (`%2E`) and
+/// because `unquote` cannot produce an empty part from a non-empty one, so the
+/// pre-unquote filter on `/`-splits and this one on `.` are the same rule for
+/// two different characters.
+///
+/// The empty arm is unreachable from either caller today — both split on `/`
+/// and filter empties first — and is kept because it is the other half of
+/// `joinpath`'s rule and costs one comparison. `..` is deliberately **not**
+/// filtered: Python keeps it, and dropping it would be the "normalisation" the
+/// doc above says neither side performs.
 fn join_all(root: &Path, parts: &[String]) -> PathBuf {
     parts
         .iter()
+        .filter(|part| !part.is_empty() && part.as_str() != ".")
         .fold(root.to_path_buf(), |path, part| path.join(part))
 }
 
@@ -427,7 +498,9 @@ fn scan_gvfs_for(url: &UrlParts, env: &dyn Env) -> Option<PathBuf> {
 
     for (file_name, path) in entries {
         // Matched by the lossy lowercased name, **joined by the real one** — see
-        // this module's note. A non-UTF-8 directory name still has to resolve.
+        // this module's note. A non-UTF-8 directory name still has to resolve,
+        // and the result is checked for representability by the caller before it
+        // is handed back.
         let name = file_name.to_string_lossy().to_lowercase();
         if !name.starts_with(&dash) && !name.starts_with(&colon) {
             continue;
@@ -976,6 +1049,105 @@ mod tests {
     }
 
     // -- the scan fallback --------------------------------------------------
+
+    /// A URL ending in `/.` resolves to the file, not to a path that cannot
+    /// exist.
+    ///
+    /// `BUG-42a`. `PurePath.joinpath` drops `.` components, so the reference
+    /// builds `…/sftp:host=server/pub/game.exe` and finds a real file.
+    /// `Path::join` keeps it, so the port built `…/pub/game.exe/.` — which is
+    /// only a path when `game.exe` is a *directory* — missed, fell through the
+    /// scan, and returned the URL. `resolve_game_paths` then raised
+    /// `UnreachableShare` ("not mounted yet") for a share that is mounted.
+    ///
+    /// The file is a real file and not a `mkdir -p` directory, which is what
+    /// makes the trailing `/.` a miss: that is the reproduced case, and a
+    /// control arm built from a directory would pass against the old body.
+    #[test]
+    fn a_trailing_dot_component_is_dropped_like_joinpath() {
+        let (env, root) = gvfs("netpaths-dot-component");
+        let build = root.join("sftp:host=server").join("pub");
+        std::fs::create_dir_all(&build).unwrap();
+        let exe = build.join("game.exe");
+        std::fs::write(&exe, b"#!stub\n").unwrap();
+
+        assert_eq!(
+            as_local_path_in("sftp://server/pub/game.exe/.", &env),
+            exe.to_string_lossy(),
+            "a `.` component is dropped, as `PurePath.joinpath` drops it"
+        );
+        // The same component in the middle, which `joinpath` drops too.
+        assert_eq!(
+            as_local_path_in("sftp://server/./pub/game.exe", &env),
+            exe.to_string_lossy()
+        );
+
+        // `..` is **not** dropped — neither side normalises it, and the
+        // filesystem resolves it. This is the control arm for the filter above:
+        // a fix that stripped every component `Path` treats specially would
+        // resolve this one differently from the reference.
+        let sibling = root.join("sftp:host=server").join("game.exe");
+        std::fs::write(&sibling, b"#!stub\n").unwrap();
+        assert_eq!(
+            as_local_path_in("sftp://server/pub/../game.exe", &env),
+            root.join("sftp:host=server")
+                .join("pub")
+                .join("..")
+                .join("game.exe")
+                .to_string_lossy()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A mount whose directory name is not valid UTF-8 comes back as the URL,
+    /// not as a `U+FFFD` string that names nothing.
+    ///
+    /// `BUG-42b`. Python round-trips the bytes and returns the real path;
+    /// `to_string_lossy` turned the `\xf6` in `user=j\xf6rg` into U+FFFD, and
+    /// the result was a path that does not `exists()` — handed to Wine as
+    /// though it did, which is the failure the module's doc says it exists to
+    /// prevent. The two assertions below are that pair: the real path exists,
+    /// and the port does not claim it.
+    ///
+    /// The port returns the URL rather than the real path because its signature
+    /// is a `String`, which cannot hold these bytes. That is a false "not
+    /// mounted yet" and it is recorded as one — see
+    /// [`local_path_if_it_exists`]. It is still strictly better than the answer
+    /// it replaces, which was a path no process could open.
+    #[test]
+    fn a_non_utf8_mount_name_is_not_returned_as_a_lossy_path() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let (env, root) = gvfs("netpaths-non-utf8-mount");
+        // `sftp:host=server,user=j<0xf6>rg` — a `str` in Python, bytes here.
+        // 0xF6 alone is invalid UTF-8, which is what makes this the case.
+        let name = OsStr::from_bytes(b"sftp:host=server,user=j\xf6rg");
+        let build = root.join(name).join("pub");
+        std::fs::create_dir_all(&build).unwrap();
+        let exe = build.join("game.exe");
+        std::fs::write(&exe, b"#!stub\n").unwrap();
+
+        // The share is mounted and the reference's answer is that path.
+        assert!(exe.exists(), "the fixture must be a real mounted file");
+        // The dir name must not be UTF-8, or this test has no subject.
+        assert!(root.join(name).to_str().is_none());
+
+        let resolved = as_local_path_in("sftp://server/pub/game.exe", &env);
+        assert_eq!(
+            resolved, "sftp://server/pub/game.exe",
+            "a path that cannot be carried as a String must not be invented"
+        );
+        assert!(
+            !resolved.contains('\u{fffd}'),
+            "the lossy string is the defect: {resolved:?}"
+        );
+        assert!(
+            !Path::new(&resolved).exists(),
+            "and what came back must not be presented as a resolved path"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn an_unmatched_mount_name_is_found_by_scanning_the_gvfs_root() {

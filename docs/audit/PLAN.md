@@ -62,7 +62,7 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 37 | 35 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
+| `BUGS.md` | 48 | 38 | 36 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 19 | 18 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 20 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 10 | 9 `FIXED`, 1 `PARTIAL` |
@@ -135,18 +135,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 18 | 0 | 31 |
-| **Total** | **130** | **93** | **0** | **37** |
+| P3 | 49 | 19 | 0 | 30 |
+| **Total** | **130** | **94** | **0** | **36** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 18 | 0 | 7 |
-| `BUG-xx` | `BUGS.md` | 46 | 35 | 0 | 11 |
+| `BUG-xx` | `BUGS.md` | 46 | 36 | 0 | 10 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 9 | 0 | 2 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 17 | 0 | 12 |
-| **Total** | | **130** | **93** | **0** | **37** |
+| **Total** | | **130** | **94** | **0** | **36** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -322,7 +322,7 @@ across families, not within them.
 | `BUG-32` | Two smaller unbounded checks | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-33` | The EasyInstall toast's Play action launches the game but does not dismiss the toast, so a stale "Installed … ▶ Play" toast (duration Long, 15 s) sits over the Library the user was just navigated to | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
 | `BUG-34` | The Library card's and row's "More actions" button and tooltip have no port equivalent | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-42` | Three path/identifier conversions that do not do what the code around them says | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-42` | Three path/identifier conversions that do not do what the code around them says | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED**, all three. (a) `join_all` drops `.`/empty components, so a trailing `/.` resolves; mutation gives `left: "sftp://server/pub/game.exe/."` — the URL `resolve_game_paths` reports as unmounted. (b) the lossy return is replaced by `local_path_if_it_exists` (exists **and** valid UTF-8, else the URL), which turns the invented path into a recorded false negative — the signature is a `String`; mutation gives the `j\u{fffd}rg` path. (c) `version` uses `pure_posix_name`; mutation gives `left: ""`, `right: ".."`. | FIXED |
 | `BUG-43` | Two more "the doc says the two agree" pairs, both verified sound-but-for-the-claim | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-44` | An unreadable runners directory renders as a normal, empty, system-Wine-only list | S1 | — | `c7d4299` — `scan_installed` answers `Complete`/`Partial`/`Unreadable`; a real `chmod 000` directory, and the entry-level half is recorded as untestable rather than mocked.| FIXED |
 | `BUG-45` | python_repr's string branch is not repr() and duplicates — incorrectly — the python_str_repr twelve lines above it | S1 | — | `1143aed` — the string arm delegates to `python_str_repr`; a regression test compares the two functions and fails on the old body.| FIXED |
