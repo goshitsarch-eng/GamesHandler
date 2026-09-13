@@ -146,10 +146,17 @@ fn easy_install_worker(
     sender: &UnboundedSender<Message>,
 ) {
     let launch_env = SystemLaunchEnv;
+    // `fail` goes through `crate::report`: it carries the reason the install
+    // failed, and a bare `let _ =` would let that reason vanish with a dropped
+    // receiver — a failure with no record at all (BUG-28). `progress` stays a
+    // bare send on purpose: it fires once per archive chunk, and a gone
+    // receiver logged once per chunk is spam, not a record.
     let fail = |message: String| {
-        let _ = sender.unbounded_send(Message::EasyInstallFailed { message });
+        crate::report(sender, Message::EasyInstallFailed { message });
     };
     let progress = |fraction: f64| {
+        // A send fails only when the receiver is gone — the window closed or
+        // the task was dropped — and a progress fraction has nobody to show.
         let _ = sender.unbounded_send(Message::EasyInstallProgress(fraction as f32));
     };
     let archive = match download_installer(
@@ -166,7 +173,9 @@ fn easy_install_worker(
     // `bridge.py:859-865`, emitted from the worker because it must arrive
     // *after* the download: the point of the sentence is that the vendor's
     // window is about to appear, and a notice that precedes a two-minute
-    // download says the opposite.
+    // download says the opposite. A bare `let _ =` is the honest send here —
+    // it fails only when the window is already gone, which is precisely when
+    // there is no wizard to announce (BUG-28).
     let _ = sender.unbounded_send(Message::Notify(format!(
         "Launching the {} installer… Finish the vendor wizard, then close it — \
          GameHandler adds it as soon as the install lands.",
@@ -205,7 +214,10 @@ fn easy_install_worker(
         &SystemClock,
         &|runner, env, seconds| wait_for_prefix_idle(runner, env, seconds, &SystemLaunchEnv),
     );
-    let _ = sender.unbounded_send(Message::EasyInstallWizardFinished { found, returncode });
+    crate::report(
+        sender,
+        Message::EasyInstallWizardFinished { found, returncode },
+    );
 }
 
 /// The vendor's wizard as a child process, inherited stdio and all.

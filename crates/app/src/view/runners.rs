@@ -988,7 +988,10 @@ fn install_runner_task(release: ReleaseInfo, runners_directory: PathBuf) -> Task
         .map_err(|error| rendered_message(&error));
         // The tag travels with both arms: `fail` names the release it could not
         // install (`bridge.py:760`), so it cannot be recovered from a `Err`.
-        let _ = sender.unbounded_send(Message::RunnerInstallFinished { tag, result });
+        // `report`, not a bare `let _ =`: this send carries the outcome —
+        // including the failure text — and a dropped one is a failure with no
+        // record (BUG-28).
+        crate::report(&sender, Message::RunnerInstallFinished { tag, result });
     });
 
     // Each report becomes `Action::App(message)` because a task built in a page

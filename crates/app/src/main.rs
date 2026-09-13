@@ -2949,23 +2949,31 @@ fn launch_grace() -> Duration {
 ///
 /// The two sends are ordered and both are best-effort: a send fails only when
 /// the receiver is gone, i.e. the task was dropped, and there is then nobody to
-/// report to.
+/// report to. They still go through [`report`], not a bare `let _ =`: the
+/// messages they carry are the *why* of a launch, and a dropped why is a
+/// failure with no record at all (BUG-28).
 fn launch_and_watch(game: &Game, runners: &RunnerManager, sender: &UnboundedSender<Message>) {
     let mut started = match launch_process(game, runners) {
         Err(error) => {
             // `f"Could not launch “{game.name}”: {exc}"` (`bridge.py:468`).
-            let _ = sender.unbounded_send(Message::LaunchStarted {
-                game_id: game.id.clone(),
-                result: Err(format!("Could not launch “{}”: {error}", game.name)),
-            });
+            report(
+                sender,
+                Message::LaunchStarted {
+                    game_id: game.id.clone(),
+                    result: Err(format!("Could not launch “{}”: {error}", game.name)),
+                },
+            );
             return;
         }
         Ok(started) => started,
     };
-    let _ = sender.unbounded_send(Message::LaunchStarted {
-        game_id: game.id.clone(),
-        result: Ok(()),
-    });
+    report(
+        sender,
+        Message::LaunchStarted {
+            game_id: game.id.clone(),
+            result: Ok(()),
+        },
+    );
     // `started.failure()` with `LaunchedGame.failure`'s own default — see
     // [`launch_grace`]. The `Err` arm is the wait itself failing, which
     // `bridge.py`'s `watch()` lets raise; it travels as its own value so the
@@ -2973,10 +2981,38 @@ fn launch_and_watch(game: &Game, runners: &RunnerManager, sender: &UnboundedSend
     let reason = started
         .failure(launch_grace())
         .map_err(|error| error.to_string());
-    let _ = sender.unbounded_send(Message::LaunchWatchFinished {
-        game_id: game.id.clone(),
-        reason,
-    });
+    report(
+        sender,
+        Message::LaunchWatchFinished {
+            game_id: game.id.clone(),
+            reason,
+        },
+    );
+}
+
+/// Deliver `message` to the UI, or — when the receiver is already gone — leave
+/// the message on stderr rather than nowhere.
+///
+/// `unbounded_send` fails only once the receiver has dropped, which means the
+/// window closed or the task was dropped mid-work: there is nobody to show the
+/// message to, so dropping it is the right outcome. What a bare `let _ =` also
+/// drops is the *record* — for the sends that carry why a launch or an install
+/// failed, a vanished message is a failure with no trace at all, not even the
+/// `eprintln!` the CLI reports through (BUG-28). The stderr line is that
+/// channel.
+///
+/// Progress sends are deliberately *not* routed here: they fire once per
+/// archive chunk, and a dead receiver would otherwise be logged once per
+/// chunk. They keep their `let _ =`, with a comment saying why.
+pub(crate) fn report(sender: &UnboundedSender<Message>, message: Message) {
+    // `TrySendError::into_inner` hands the message back, so the record can
+    // name what was dropped rather than just that something was.
+    if let Err(error) = sender.unbounded_send(message) {
+        eprintln!(
+            "{APP_NAME}: could not report to the window; dropping {:?}",
+            error.into_inner()
+        );
+    }
 }
 
 /// `runners::tool_command` followed by `subprocess.Popen` (`bridge.py:492-494`).
@@ -5012,6 +5048,34 @@ mod tests {
              excludes this variant because `App::update` owns it, so anything \
              done here is done where nothing looks"
         );
+    }
+
+    /// **`report` delivers to a live receiver and does not panic on a dead
+    /// one.**
+    ///
+    /// The dead-receiver half is the only part of the BUG-28 fallback that is
+    /// assertable in-process: the record it leaves is an `eprintln!`, which is
+    /// process-global and cannot be captured without racing every other test's
+    /// output. What *is* pinned here is the contract's two halves — a live
+    /// channel gets the message, a dead one is survived — and the rule that
+    /// callers actually route through `report` is pinned by
+    /// `tests/worker_sends.rs`, the scanner half this test cannot perform.
+    #[test]
+    fn report_delivers_to_a_live_receiver_and_survives_a_dead_one() {
+        let (sender, mut receiver) = unbounded_channel::<Message>();
+        report(&sender, Message::ClearFilters);
+        assert!(
+            matches!(receiver.try_recv(), Ok(Message::ClearFilters)),
+            "a message sent through `report` must arrive while the receiver \
+             lives — a send that cannot deliver is a worse silence than the \
+             one BUG-28 was about"
+        );
+
+        drop(receiver);
+        // Must not panic: the window-gone case is the whole reason `report`
+        // exists, and a panic on a worker thread is a dead thread where a log
+        // line was the ask.
+        report(&sender, Message::ClearFilters);
     }
 
     // -----------------------------------------------------------------------
