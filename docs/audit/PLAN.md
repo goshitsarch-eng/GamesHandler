@@ -64,8 +64,8 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 28 | 26 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 13 | 13 `FIXED` |
-| `COSMIC-UX.md` | 30 | 13 | 11 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
-| `SECURITY.md` | 11 | 6 | 6 `FIXED` |
+| `COSMIC-UX.md` | 30 | 14 | 12 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
+| `SECURITY.md` | 11 | 7 | 7 `FIXED` |
 | `PACKAGING.md` | 10 | 6 | 5 `FIXED`, 1 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
@@ -128,9 +128,9 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 51 | 35 | 0 | 16 |
-| P3 | 50 | 3 | 0 | 47 |
-| **Total** | **130** | **67** | **0** | **63** |
+| P2 | 51 | 36 | 0 | 15 |
+| P3 | 50 | 4 | 0 | 46 |
+| **Total** | **130** | **69** | **0** | **61** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -138,9 +138,9 @@ advocate reviews every row before it is called done and owns no row.
 | `BUG-xx` | `BUGS.md` | 46 | 26 | 0 | 20 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
-| `SEC-xx` | `SECURITY.md` | 11 | 6 | 0 | 5 |
-| `UX-xx` | `COSMIC-UX.md` | 29 | 11 | 0 | 18 |
-| **Total** | | **130** | **67** | **0** | **63** |
+| `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
+| `UX-xx` | `COSMIC-UX.md` | 29 | 12 | 0 | 17 |
+| **Total** | | **130** | **69** | **0** | **61** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -274,7 +274,7 @@ across families, not within them.
 | `UX-14` | Toasts are the app's universal error channel, and they are invisible to assistive technology and expire after 5 s | S2 | — | Give the toaster an accessibility node and make the duration reasonable for a screen reader; verify the node list from a built toaster. | OPEN |
 | `UX-15` | A cover-fetch failure surfaces as a bare, unprefixed error string with no game name and no indication that a cover lookup is what failed — e.g | S2 | — | Prefix the message with the game and the operation; verify the drawn toast string for a forced failure. | OPEN |
 | `UX-16` | Per-game context menus have no keyboard route | S2 | — | Add a keyboard route to the context menu (Menu key / Shift+F10) or duplicate its actions into the focused tile; verify by driving the key. | OPEN |
-| `UX-17` | Plate initials are drawn white-on-accent at roughly 3:1, below the 4.5:1 required at the size they are drawn | S2 | — | Raise the initials' contrast to 4.5:1 at the drawn size; verify the computed ratio against the darkest gradient stop. | OPEN |
+| `UX-17` | Plate initials are drawn white-on-accent at roughly 3:1, below the 4.5:1 required at the size they are drawn | S2 | — | Raise the initials' contrast to 4.5:1 at the drawn size; verify the computed ratio against the darkest gradient stop. | FIXED |
 | `UX-18` | No text_input in the app is ever given .label() or .helper_text(), and the visible labels are unassociated sibling text widgets in a Row, so they identify a field to a sighted user and to nothing else | S2 | — | Give each `text_input` a label or helper text; verify the field's accessible name. **Half done, half refuted, and the refuted half is the one the row proposed.** The verification half holds and is what closes the finding: `crates/app/src/view/a11y.rs::input`/`input_with_id` publish a `Role::TextInput` node whose `label` is the field's caption and whose `value` is its contents, read off the real page by `form.rs`'s `every_wrapped_control_on_the_real_form_is_a_tab_stop_and_a_named_node`. The `.label(...)` half is **refused on measurement**: the toolkit paints its label *inside* the widget in a layout child above the box (`.../a401af8/src/widget/text_input/input.rs:2606-2614`, `:2716-2732`), and a caption is already drawn at all four sites — `field_row`'s `text::body(row.label)` beside the control (`view/form.rs:602-609`, the reference's own beside-the-field arrangement at `gamehandler/qml/GameFormPage.qml:83`, `:111`, `:117`), `LABEL_CATEGORY` for the category field, and the search boxes' placeholders — so `.label(...)` would draw each string twice and the category field's three times. `TextInput::label` is also not what carries accessibility here: libcosmic's `src/` holds five `accesskit` occurrences, all in `button/widget.rs` and `wayland/tooltip/widget.rs`, so no node exists for a labelled input in this stack either way. **The defect that was actually here was in the test asserting the row**: `a_text_input_publishes_its_label_and_value` took `"Name"` for both placeholder and caption, so a wrapper forwarding the placeholder passed it — the audit's own recurring shape, inside a test written to close this row. Repaired to `text_input("Half-Life", "Half-Life")` against the caption `"Game name"`; mutation-proved by replacing the wrapper's caption with `String::new()`, which fails `left: Some("")`, `right: Some("Game name")`. | FIXED |
 | `UX-19` | Card surfaces are hand-built three times as a local card_style closure, and two of the three hardcode the radius their own comment says is kept in sync | S2 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `UX-20` | libcosmic's purpose-built settings widgets are used nowhere in the app | S2 | — | Adopt `settings::section`/`item`/`item_row`, or record why the hand-built rows are kept; verify by reading the settings view. | OPEN |
@@ -317,7 +317,7 @@ across families, not within them.
 | `PKG-08` | A comment in data/meson.build asserts a packaging regression that does not exist, and its cited evidence is falsified by the manifest | S6 | — | Correct or delete the comment; verify the cited evidence against the manifest. | OPEN |
 | `PKG-09` | flatpak-contents and cargo-sources both shell out to a bare python3 for their comparison helpers, independently of the interpreter chosen to run the generator | S6 | — | Use the same interpreter the generator was run with; verify by running both stages under a PATH without a bare `python3`. | OPEN |
 | `SEC-05` | The Proton runner archive is downloaded from a URL taken verbatim out of the releases JSON, with no scheme and no origin check — unlike the installer download path, which applies both | S4 | — | Apply the same scheme and origin check the installer path applies; verify with a releases payload naming a `file:` and an off-origin URL. | PARTIAL `8106f1e` — `validate_runner_download_url` requires `https` through the same `url_parts` the installer allowlist uses, called from `install_with` before anything is staged, and the new `RunnerError::UntrustedOrigin { url }` carries what it refused. Four mutations fire on four distinct named tests, the fourth being the positive control that the request goes to the URL that was checked. The host-pin half of the suggested fix was **dropped after measurement, not skipped**: every asset of the live Proton-GE listing is on `github.com` and each redirects once to `release-assets.githubusercontent.com`, so no host allowlist is writable, and `RunnerFamily` has no `allowed_hosts` field to port. The redirect target is judged by nothing, and that residue is recorded on the specialist row. |
-| `SEC-06` | RunnerManager::get joins a games.json-sourced runner_id onto the runners directory without validating it, where three other sites validate the same kind of string | S4 | — | Validate the `runner_id` the way the three other sites do; verify with a `games.json` carrying `../../etc`. | OPEN |
+| `SEC-06` | RunnerManager::get joins a games.json-sourced runner_id onto the runners directory without validating it, where three other sites validate the same kind of string | S4 | — | Validate the `runner_id` the way the three other sites do; verify with a `games.json` carrying `../../etc`. | FIXED |
 | `SEC-07` | open_url performs no scheme validation, and its message payload is a plain String rather than a catalogue-constant type | S4 | — | Validate the scheme in `open_url` itself and give the payload a catalogue-constant type; verify with a non-`http(s)` producer. | OPEN |
 | `SEC-08` | Three manifest permissions are justified only by the child process, with no direct launcher-code tie; the permissions that *do* tie to code are recorded here so the distinction is auditable | S4 | — | Record each permission's justification in the manifest beside it, or drop the ones with none; verify by reading the manifest against the code. | OPEN |
 | `SEC-09` | Two of the app's process spawns inherit the launcher's entire environment, and they are the two security-relevant ones: the package-manager install and the Authenticode verifier | S4 | — | Clear the environment at the two spawn sites and pass back only what the child needs; verify by dumping the child's environment. | FIXED |

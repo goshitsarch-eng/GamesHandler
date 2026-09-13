@@ -27,7 +27,7 @@ level up — and the fourth move is the proof of it: `88578db` marked `SEC-04`
 tables, so this file inherited a count that was three rows stale. That is now a
 `plan-counts` stage in `scripts/verify.sh` rather than an intention.
 
-**This is not a final report.** 63 of 130 defects are still open, most of them
+**This is not a final report.** 61 of 130 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -37,11 +37,11 @@ and the section *What remains, honestly* says which is which.
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 46 | 26 | 2 | 20 |
 | `ARCH-xx` | Architecture, code quality | 26 | 13 | 0 | 13 |
-| `UX-xx` | libcosmic / COSMIC UX | 29 | 11 | 1 | 18 |
+| `UX-xx` | libcosmic / COSMIC UX | 29 | 12 | 1 | 17 |
 | `PERF-xx` | Performance, resource | 8 | 6 | 0 | 2 |
-| `SEC-xx` | Security, robustness | 11 | 6 | 0 | 5 |
+| `SEC-xx` | Security, robustness | 11 | 7 | 0 | 4 |
 | `PKG-xx` | Packaging, platform, QA | 10 | 5 | 0 | 5 |
-| **Total** | | **130** | **67** | **3** | **63** |
+| **Total** | | **130** | **69** | **3** | **61** |
 
 The `Found` column is defects; the three refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
@@ -54,9 +54,9 @@ By severity:
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 51 | 35 | 0 | 16 |
-| P3 | 50 | 3 | 0 | 47 |
-| **Total** | **130** | **67** | **0** | **63** |
+| P2 | 51 | 36 | 0 | 15 |
+| P3 | 50 | 4 | 0 | 46 |
+| **Total** | **130** | **69** | **0** | **61** |
 
 `Not a defect` is not a euphemism for "wontfix": both rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`,
@@ -118,14 +118,14 @@ is **met for P0 and P1** and **not met for P2**, where the reason is that the
 work is unfinished rather than impossible. Stating that plainly is the point of
 this section.
 
-Where the 63 rows are:
+Where the 61 rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All five fixed and each verified by restoring the pre-fix body and watching the new test fail. |
 | P1 | 0 | **Closed.** `SEC-11` — the approved-publisher gate reading signer-chosen text as a certificate subject — was the last row here and is fixed; the recipe this report first sketched for it was measured wrong and corrected in the fix. `UX-01`–`UX-03` were the four upstream-widget accessibility gaps plus `ARCH-02`, all fixed, and the three widget rows each record the residue that is upstream's rather than this port's. |
-| P2 | 16 | Actionable. The largest concentration is `UX` (8) and `ARCH` (6); the rest are 1 `BUG` and 1 `PKG`. |
-| P3 | 47 | Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. The 19 open `BUG` rows are all here, along with 10 `UX`, 7 `ARCH`, 5 `SEC`, 4 `PKG` and 2 `PERF`. |
+| P2 | 15 | Actionable. The largest concentration is `UX` (7) and `ARCH` (6); the rest are 1 `BUG` and 1 `PKG`. |
+| P3 | 46 | Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. The 19 open `BUG` rows are all here, along with 10 `UX`, 7 `ARCH`, 4 `SEC`, 4 `PKG` and 2 `PERF`. |
 
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
 them for a backlog item:
