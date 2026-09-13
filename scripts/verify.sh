@@ -1847,6 +1847,93 @@ stage_flatpak_contents() {
         rc=1
     fi
 
+    # --- the installed binary actually runs (PKG-04) ------------------------
+    #
+    # Everything else in this stage READS the binary: the five-file loop below
+    # `cmp`s files, and the ELF check above greps the executable for a string.
+    # Nothing had ever executed it — `grep -n 'flatpak run\|flatpak build\|
+    # flatpak install\|flatpak info\|flatpak kill' scripts/verify.sh` returned
+    # nothing (PKG-04, re-checked 2026-09-13, rc 1) — so the chain could prove
+    # the binary landed at /app/bin/gamehandler with the right bytes and still
+    # ship one that does not start: a missing runtime, a bad Exec, an unresolved
+    # .so, a wrong base. None of those is visible to `cmp`. The one stage that
+    # did execute something — smoke-test, scripts/smoke-test.sh — could be
+    # executing a *previously installed* build instead of this tree's (PKG-01,
+    # fixed in the same pass, and the two are a pair: the execution, and the
+    # artefact it belongs to).
+    #
+    # `flatpak build <dir>`, not `flatpak run`: this stage reads build-flatpak/,
+    # which flatpak-builder produced and which nothing in this chain installs
+    # (`flatpak install` appears nowhere in it). `flatpak build` assembles a
+    # sandbox around the tree without installing it — the same way
+    # scripts/smoke-test.sh reaches this binary in its build-dir mode — and
+    # `/app/bin/gamehandler` under `<dir>` is `<dir>/files/bin/gamehandler`.
+    # Measured, not assumed: that file is 29470184 bytes in this tree, and
+    # `flatpak build build-flatpak /app/bin/gamehandler --version` printed
+    # `GameHandler 0.8.0` and exited 0.
+    #
+    # `--version` and `--list`, with the display variables unset. The unsets are
+    # the three smoke-test's `none` mode uses, for the reason it gives: a check
+    # must not pass because the caller's display leaked into the sandbox. The
+    # CLI is the right path to exercise that way because DECISIONS D-12
+    # dispatches it before any window or event loop, so it needs no compositor.
+    # Measured: `--list` printed `GameHandler: the library is empty` and exited
+    # 0. What `--list` prints is NOT examined, exactly as smoke-test's
+    # cli-list-exits-0 does not examine it; the assertion is that the verb is
+    # reachable and the process exits, not what it says.
+    #
+    # The version is matched as a SHAPE and not against `0.8.0`. The number
+    # lives in Cargo.toml, and a second copy here would be a pin that goes stale
+    # on the next bump — it would then fail a correct build, which is how a gate
+    # teaches its reader to ignore it. The shape is enough for what this half
+    # asserts: that the binary started and answered as GameHandler.
+    #
+    # What a FAIL here does NOT distinguish, said plainly because the output
+    # looks the same either way: a `flatpak build` that cannot create its
+    # sandbox at all (bwrap denied user namespaces, the runtime not installed
+    # locally) is reported as the binary failing to run. The captured output is
+    # printed with the failure and names which of the two happened; the exit
+    # status does not. The common case is out of reach here — a runtime missing
+    # locally fails smoke-test first, which runs earlier and needs the same
+    # sandbox.
+    local exec_missing=0 exec_rc=0 exec_out="" list_rc=0 list_out=""
+    if ! require_tool flatpak "to run the built gamehandler binary"; then
+        exec_missing=1
+    else
+        exec_out="$(flatpak build --unset-env=DISPLAY --unset-env=WAYLAND_DISPLAY \
+            --unset-env=WAYLAND_SOCKET "$BUILD_DIR" /app/bin/gamehandler \
+            --version 2>&1)" || exec_rc=$?
+        list_out="$(flatpak build --unset-env=DISPLAY --unset-env=WAYLAND_DISPLAY \
+            --unset-env=WAYLAND_SOCKET "$BUILD_DIR" /app/bin/gamehandler \
+            --list 2>&1)" || list_rc=$?
+
+        if [ "$exec_rc" -ne 0 ]; then
+            echo "FAIL the installed binary does not run: /app/bin/gamehandler"
+            echo "     --version exited $exec_rc"
+            printf '%s\n' "$exec_out" | tail -n 10 | sed 's/^/     | /'
+            rc=1
+        elif ! grep -qE '^GameHandler [0-9]+\.[0-9]+\.[0-9]+$' <<<"$exec_out"; then
+            echo "FAIL the installed binary ran but did not answer as GameHandler:"
+            echo "     /app/bin/gamehandler --version printed"
+            printf '%s\n' "$exec_out" | tail -n 10 | sed 's/^/     | /'
+            rc=1
+        elif [ "$list_rc" -ne 0 ]; then
+            echo "FAIL the installed binary runs, but /app/bin/gamehandler"
+            echo "     --list exited $list_rc"
+            printf '%s\n' "$list_out" | tail -n 10 | sed 's/^/     | /'
+            rc=1
+        else
+            echo "ok   the installed binary runs: /app/bin/gamehandler --version ->"
+            echo "     $(head -n1 <<<"$exec_out") (exit 0; --list also exited 0)"
+            echo "     sha256 $(sha256sum "$tree/bin/gamehandler" | cut -d' ' -f1)"
+            echo "     which is the artefact smoke-test executes in build-dir mode"
+            echo "     (PKG-01), so both stages' results belong to the same file."
+            echo "     A start check, not a behavioural one: it proves the binary"
+            echo "     loads, resolves its libraries and reaches its CLI. What the"
+            echo "     verbs do is the cli stage's, against a library it owns."
+        fi
+    fi
+
     local installed
     for entry in "${FLATPAK_CONTENTS[@]}"; do
         src="${entry%%|*}"
