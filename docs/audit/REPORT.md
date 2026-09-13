@@ -51,7 +51,7 @@ target has moved is a present-tense count of a moving target, which is the shape
 of error `PLAN.md` records against its own `BUGS.md` row. What is true at every
 revision is what the paragraph now says.
 
-**This is not a final report.** 29 of 130 defects are still open, most of them
+**This is not a final report.** 28 of 130 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -60,12 +60,12 @@ and the section *What remains, honestly* says which is which.
 | Category | Role | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 46 | 37 | 2 | 9 |
-| `ARCH-xx` | Architecture, code quality | 25 | 20 | 1 | 5 |
+| `ARCH-xx` | Architecture, code quality | 25 | 21 | 1 | 4 |
 | `UX-xx` | libcosmic / COSMIC UX | 29 | 20 | 1 | 9 |
 | `PERF-xx` | Performance, resource | 8 | 6 | 0 | 2 |
 | `SEC-xx` | Security, robustness | 11 | 10 | 0 | 1 |
 | `PKG-xx` | Packaging, platform, QA | 11 | 8 | 0 | 3 |
-| **Total** | | **130** | **101** | **4** | **29** |
+| **Total** | | **130** | **102** | **4** | **28** |
 
 The `Found` column is defects; the four refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
@@ -79,12 +79,12 @@ By severity:
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 26 | 0 | 23 |
-| **Total** | **130** | **101** | **0** | **29** |
+| P3 | 49 | 27 | 0 | 22 |
+| **Total** | **130** | **102** | **0** | **28** |
 
 `Not a defect` is not a euphemism for "wontfix": all four rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`, `BUG-15`,
-`UX-08`, `ARCH-24`). Seven of the rows counted as `Remaining` above are `PARTIAL` rather
+`UX-08`, `ARCH-24`). Nine of the rows counted as `Remaining` above are `PARTIAL` rather
 than untouched — the nine `PARTIAL` rows, which `scripts/plan-counts.py` prints
 by name on every run — and each names the half that is still missing: `ARCH-12`
 (the four dispatcher extractions landed in `3b6ee5a`, and the grouping half did
@@ -163,14 +163,14 @@ is **met for P0 and P1** and **not met for P2**, where the reason is that the
 work is unfinished rather than impossible. Stating that plainly is the point of
 this section.
 
-Where the 29 open rows are:
+Where the 28 open rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All five fixed and each verified by restoring the pre-fix body and watching the new test fail. |
 | P1 | 0 | **Closed.** `SEC-11` — the approved-publisher gate reading signer-chosen text as a certificate subject — was the last row here and is fixed; the recipe this report first sketched for it was measured wrong and corrected in the fix. `UX-01`–`UX-03` were the four upstream-widget accessibility gaps plus `ARCH-02`, all fixed, and the three widget rows each record the residue that is upstream's rather than this port's. |
 | P2 | 6 | 2 `ARCH`, 2 `UX`, 1 `BUG`, 1 `PKG`. Actionable. |
-| P3 | 23 | 8 `BUG`, 7 `UX`, 3 `ARCH`, 2 `PERF`, 2 `PKG`, 1 `SEC`. Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. |
+| P3 | 22 | 8 `BUG`, 7 `UX`, 2 `ARCH`, 2 `PERF`, 2 `PKG`, 1 `SEC`. Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. |
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
 them for a backlog item:
 

@@ -63,7 +63,7 @@ those rows contain `Status:`:
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
 | `BUGS.md` | 48 | 39 | 37 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
-| `ARCHITECTURE.md` | 26 | 23 | 20 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
+| `ARCHITECTURE.md` | 26 | 24 | 21 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 25 | 20 `FIXED`, 3 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
@@ -136,18 +136,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 26 | 0 | 23 |
-| **Total** | **130** | **101** | **0** | **29** |
+| P3 | 49 | 27 | 0 | 22 |
+| **Total** | **130** | **102** | **0** | **28** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 20 | 0 | 5 |
+| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 21 | 0 | 4 |
 | `BUG-xx` | `BUGS.md` | 46 | 37 | 0 | 9 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 20 | 0 | 9 |
-| **Total** | | **130** | **101** | **0** | **29** |
+| **Total** | | **130** | **102** | **0** | **28** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -300,7 +300,7 @@ across families, not within them.
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
 | `ARCH-19` | Three Python citations land on a blank line | S5 | — | Re-point the three citations; verify each lands on the code it names. | FIXED |
-| `ARCH-20` | Two comments record the size of a mutation-testing result, the two numbers disagree with each other, and neither matches the current suite | S5 | — | Re-measure the mutation result and record the method with the number; verify by re-running the measurement. | OPEN |
+| `ARCH-20` | Two comments record the size of a mutation-testing result, the two numbers disagree with each other, and neither matches the current suite | S5 | — | Re-measure the mutation result and record the method with the number; verify by re-running the measurement. **Status: FIXED.** Re-measured, and the two halves are not the same finding: **the `form.rs` half has closed** — its mutation now fails `both_installers_selectors_are_routed_through_their_own_mapping` (`a719972`), so its number is deleted rather than renumbered — and **the `main.rs` half is live**, measured at 504 green. The `main.rs` paragraph's proposed fix (a `remove_press`-style helper) was measured insufficient by `remove_press`'s own doc (`runners.rs:795-798`), so the gap is closed by a source scan instead: `the_runner_prompt_s_remove_button_sends_the_confirmed_removal_and_not_the_direct_one`, mutation-verified both ways and anti-vacuity-probed. The game dialog's identical button is named as out of scope rather than silently covered. | FIXED |
 | `ARCH-21` | The shortcut guard test is not enforced by the gate that is supposed to enforce it | S5 | — | Delete one of the two constants and observe the gate stay green (pre-fix), then fail (post-fix) once the guard is wired into a stage. | OPEN |
 | `ARCH-22` | A 58-line dialog docblock describes the runner dialog but sits above the game dialog, leaving the runner dialog undocumented | S5 | — | Move the docblock onto the runner dialog and write one for the game dialog; verify both dialogs have a doc comment naming them. **Status: FIXED.** The row understated it: **three** blocks were tangled, not two, and the merged comment is **107** lines, not 58. `page_entry_task`'s block ran into `remove_runner_dialog`'s with no blank `///`, and that into `remove_game_dialog`'s, so all of it attached to the last function in the chain — `remove_game_dialog` was documented with two other functions' prose and the two dialogs the block was written for had none. Each block is now re-homed above the function it describes. The guard is `every_dialog_docblock_names_the_dialog_it_sits_above` in `main.rs`, and it grades the two-way claim the finding actually made: every dialog has a comment (no orphans) **and** each comment names its own subject (no mis-attachment), with the phrase for each taken from the reference's own QML name (`removeDialog`, `removeRunnerDialog`, `page.openGameMenu`). The weaker "there is a `///` above each `fn`" test passes on the broken file, which is why it is not the one written. Mutation-verified in both directions: re-merging the blocks fails on the length check, and stripping one block fails on the orphan check. `cargo fmt --check`, clippy `-D warnings`, the `doc` stage and `cargo test --workspace` (1130 passing) are clean. | FIXED |
 | `ARCH-23` | The page-handler convention is inconsistent: two page modules own an update, the third does not | S5 | — | Adopt one convention across the three page modules, or record why Plugins differs; verify by reading the three signatures. | OPEN |

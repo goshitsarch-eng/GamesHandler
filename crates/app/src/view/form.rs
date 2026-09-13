@@ -3055,10 +3055,24 @@ mod tests {
     /// reaches the right message, with a value no runner answers to, on that one
     /// row; `RunnerManager::get` (`mod.rs:1087`) answers an unknown id with System
     /// Wine **silently**, which is the runner the user picked, so the wrong value
-    /// and the right one produce the same install. Measured: replacing the runner
-    /// call site with `Message::SetInstallRunner(runner_choices[index].1.clone())`
-    /// leaves this binary's 312 tests green — the value is never a runner id in
-    /// any test that reads the call site, because no test reads the call site.
+    /// and the right one produce the same install. Measured when the gap was
+    /// open: replacing the runner call site with
+    /// `Message::SetInstallRunner(runner_choices[index].1.clone())` left the
+    /// whole binary green — the value was never a runner id in any test that read
+    /// the call site, because no test read the call site.
+    ///
+    /// **That hole is closed, and not by the test this block predicted.** The
+    /// paragraph used to end by proposing "a source scan over
+    /// `view/installers.rs`" and naming `install_runner_selection`'s callers;
+    /// what actually landed is `both_installers_selectors_are_routed_through_their_own_mapping`
+    /// below, in `a719972`, which reads `view/installers.rs` out of the tree and
+    /// requires each `widget::dropdown` callback there to name exactly one of the
+    /// two mappings. Re-measured at HEAD: the swap above now fails that scan
+    /// (`the callback ... does not go through exactly one of the two mappings`),
+    /// where it previously left the binary green. The count the block used to
+    /// carry — "312 tests" — is gone with the gap rather than renumbered, since a
+    /// number in a comment is evidence only beside the commit and the method that
+    /// produced it (ARCH-20).
     ///
     /// The mapping is a named function so that both halves become checkable, and
     /// this is the second half: the page's own tests pin what

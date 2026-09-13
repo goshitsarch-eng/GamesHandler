@@ -820,22 +820,23 @@ fn game_menu_dialog<'a>(
 /// removal, both actions are drawn, Cancel closes without removing, and Remove
 /// removes the pending id and then closes.
 ///
-/// # The Remove button's message, and the gap beside it
+/// # The Remove button's message
 ///
 /// Remove sends [`Message::RemoveRunnerConfirmed`], not
 /// [`Message::UninstallRunner`] — and the choice is load-bearing rather than
 /// nominal: the confirmed arm clears the pending removal before removing, and
 /// a button sending the direct route would remove while leaving the dialog
-/// open. **No test here sees that choice**: a built `Button`'s message is
-/// opaque (the sources are cited at `installed_card`'s call site), so
+/// open. A built `Button`'s message is opaque (the sources are cited at
+/// `installed_card`'s call site), so
 /// `the_runner_dialog_is_a_modal_over_the_page_it_names` photographs the
-/// *label* "Remove" and cannot tell which of the two variants it carries —
-/// mutating one into the other leaves all 322 green, measured. This paragraph
-/// is the record of that gap, and the fix is the same one the codebase
-/// already uses for it: a named press helper carrying the value, as
-/// `remove_press` does for the delete
-/// button — except the helper would live in this file, beside the button,
-/// rather than across the page boundary.
+/// *label* "Remove" and cannot tell which of the two variants it carries.
+///
+/// The source is the only place the choice is written down, so
+/// `the_runner_prompt_s_remove_button_sends_the_confirmed_removal_and_not_the_direct_one`
+/// — a `#[cfg(test)]` item, named in prose rather than linked — scans this
+/// function's body for it. That test's own docblock carries the measurement and
+/// the reason the named-helper fix this header used to propose was wrong
+/// (ARCH-20).
 fn remove_runner_dialog<'a>(
     body: cosmic::Element<'a, Message>,
     pending: &crate::state::PendingRunnerRemoval,
@@ -8497,6 +8498,152 @@ mod tests {
                 block.len()
             );
         }
+    }
+
+    /// The runner prompt's Remove button carries a message no render can see, so
+    /// this reads the source to pin which one — the gap `remove_runner_dialog`'s
+    /// header records, measured rather than assumed (ARCH-20).
+    ///
+    /// # Why a source scan is the instrument
+    ///
+    /// A built `Button`'s message is opaque to every instrument this file has —
+    /// the sources are at `installed_card`'s call site, and they are the
+    /// reason `the_runner_dialog_is_a_modal_over_the_page_it_names` photographs
+    /// the *label* "Remove" and cannot tell [`Message::RemoveRunnerConfirmed`]
+    /// from [`Message::UninstallRunner`]. Measured at HEAD: swapping the two in
+    /// the dialog's `primary_action` leaves all 503 tests green. The source is
+    /// the only place the choice is written down, so reading it is a weaker
+    /// instrument than a call and it is the strongest one available — the same
+    /// argument `every_dialog_docblock_names_the_dialog_it_sits_above` makes.
+    ///
+    /// # Why not the helper the header used to propose
+    ///
+    /// The header said the fix was "the same one the codebase already uses for
+    /// it: a named press helper carrying the value, as `remove_press` does".
+    /// That helper's own doc (`runners.rs:795-798`) says it does **not** close
+    /// its call site — `installed_card` could stop calling it and build the
+    /// message itself, "and that mutation survives", the third of three such
+    /// gaps it names. A helper makes the value readable; it does not make the
+    /// *call* unswappable. So the header was proposing a fix the codebase has
+    /// already measured as insufficient for this exact gap class, which is why
+    /// this scan exists instead.
+    ///
+    /// # What this does not cover
+    ///
+    /// The game dialog's Remove button, which has the same shape one function
+    /// up. It is not covered because the mutation above was measured against the
+    /// runner prompt and the game prompt's twin has not been measured — a scan
+    /// written for the unmeasured one would be a check whose coverage is an
+    /// assumption. Named here so the omission is a stated scope rather than a
+    /// gap a reader has to find.
+    #[test]
+    fn the_runner_prompt_s_remove_button_sends_the_confirmed_removal_and_not_the_direct_one() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
+        )
+        .expect("this file must be readable");
+        let tests_at = source
+            .find("\nmod tests {")
+            .expect("this file has a test module; the split below depends on it");
+        let production = &source[..tests_at];
+
+        // Column 0, as `fn`, which is how this file's dialog scans address a
+        // definition — the indentation is the assertion that it is a top-level
+        // function rather than a nested one that happens to share the name.
+        let at = production.find("\nfn remove_runner_dialog<'a>(").expect(
+            "`remove_runner_dialog` is not defined at column 0 in this file, so \
+                 this scan found nothing to grade — the scan is stale rather than \
+                 the button being right",
+        );
+
+        // The dialog's own body: up to its closing brace at column 0. Reading the
+        // whole file instead would let the game dialog's identical button satisfy
+        // this one, which is the failure mode a length-free scan has. The nested
+        // braces are indented, so the first `\n}` is this function's own end.
+        let rest = &production[at + 1..];
+        let body = match rest.find("\n}\n") {
+            Some(end) => &rest[..end],
+            None => rest,
+        };
+
+        assert!(
+            body.contains("fn remove_runner_dialog") && body.contains(".into();"),
+            "the dialog's body was cut before it was read, so this scan is grading \
+             the wrong region: {body}"
+        );
+
+        // Anti-vacuity, in the shape the rest of this audit uses: the body must
+        // contain the button this test is about, or its silence below is the
+        // silence of an empty haystack.
+        let remove = body
+            .find("button::destructive(\"Remove\")")
+            .unwrap_or_else(|| {
+                panic!(
+                    "the runner prompt no longer draws a destructive \"Remove\" button, \
+                 so this scan has no subject: {body}"
+                )
+            });
+        let after = &body[remove..];
+        let press = after.find(".on_press(").expect(
+            "the runner prompt's Remove button has no `.on_press`, so it cannot \
+             send a message at all and the ARCH-20 gap is closed by the button \
+             being inert rather than by the message being right",
+        ) + ".on_press".len();
+
+        // The argument, by matching parentheses rather than by looking for a
+        // newline: `on_press` here takes a single expression, and a mutation that
+        // nested one would otherwise truncate the window at its inner close — the
+        // first draft of this scan looked for `)\n` and read `.on_press(`'s own
+        // nested call as the boundary, which the `))` in it then tripped over.
+        let arguments = &after[press..];
+        let mut depth = 0usize;
+        let mut end = None;
+        for (offset, ch) in arguments.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(offset);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let call = match end {
+            Some(end) => &arguments[..=end],
+            None => panic!(
+                "the Remove button's `on_press` never closes its parentheses, so \
+                 this scan cannot tell what it carries: {arguments}"
+            ),
+        };
+        assert!(
+            call.starts_with('(') && call.ends_with(')'),
+            "the paren walk over the Remove button's `on_press` did not bracket the \
+             call it reads: {call}"
+        );
+
+        assert!(
+            call.contains("Message::RemoveRunnerConfirmed("),
+            "the runner prompt's Remove button does not send \
+             `Message::RemoveRunnerConfirmed`. The confirmed arm clears the pending \
+             removal *before* removing; the direct route removes while leaving the \
+             dialog open. This is the choice `remove_runner_dialog`'s header calls \
+             load-bearing, and it is unobservable from any render — which is why \
+             the header recorded the gap and why this scan reads the source \
+             instead. Found: {call}"
+        );
+
+        // The negative half, so the assertion above is not satisfied by a call
+        // that carries both: this file has no reason for the direct variant at
+        // this button, and a `match` or a builder would put it here.
+        assert!(
+            !call.contains("Message::UninstallRunner("),
+            "the runner prompt's Remove button sends `Message::UninstallRunner` as \
+             well as the confirmed route, so which one it carries depends on the \
+             expression rather than on the source a reader is looking at: {call}"
+        );
     }
 
     #[test]
