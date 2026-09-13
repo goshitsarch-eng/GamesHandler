@@ -130,7 +130,7 @@ Each release note is a promise to a user who upgrades. Read against `crates/`:
 | `P-26` Runner picker + optional prefix | `docs/migration/PLAN.md:165` | `crates/app/src/view/form.rs:445-470` (`runner_index`/`runner_selection`), `crates/core/src/runners/mod.rs:365-371` (`game_prefix`) | Complete |
 | `P-27` All 15 per-game toggles | `docs/migration/PLAN.md:166` | `crates/app/src/state.rs:266` (15 names), `crates/app/src/view/form.rs:286`+`:341` (8+7 rows) | Complete |
 | `P-28` Virtual-desktop size, validated, default 1920x1080 | `docs/migration/PLAN.md:167` | `crates/app/src/state.rs:476-484`, `:513` (`DEFAULT_DESKTOP_SIZE`), `crates/core/src/runners/launch_opts.rs:532-560` (`is_desktop_size`) | Complete |
-| `P-29` Additional app launched alongside | `docs/migration/PLAN.md:168` | `crates/core/src/runners/launch.rs:366-381` | **Partial** — the helper is spawned, but a spawn failure is discarded, so a helper that never started is indistinguishable from one that did. See `BUGS.md` `BUG-05` |
+| `P-29` Additional app launched alongside | `docs/migration/PLAN.md:168` | `crates/core/src/runners/launch.rs:366-381` | **Complete** — `BUG-05` is fixed: a helper argv that names a nonexistent program now fails the launch, naming the helper, instead of reporting a launch that honoured the configuration. |
 | `P-30` Custom `KEY=value` env, overrides toggles, quoting/`;` | `docs/migration/PLAN.md:169` | `crates/core/src/runners/launch_opts.rs:211-244` (`parse_env_block`), `:762` (block re-applied last) | Complete — verified against `python3 shlex` semantics; test at `:989` pins the `A=1 B` case |
 | `P-31` Auto cover fetch on save when empty | `docs/migration/PLAN.md:170` | `crates/app/src/main.rs:359-368` (`FetchCover` batched into `SaveGameForm`) | Complete |
 
@@ -141,10 +141,10 @@ Each release note is a promise to a user who upgrades. Read against `crates/`:
 | `P-32` Installed list: System Wine + downloaded builds | `docs/migration/PLAN.md:176` | `crates/core/src/runners/mod.rs:1045-1068` (`installed_protons`), `crates/app/src/view/runners.rs:172` | Complete |
 | `P-33` 8 families + System Wine guide row | `docs/migration/PLAN.md:177` | `crates/core/src/runners/families.rs` (catalogue + guide rows), `crates/app/src/view/runners.rs` | Complete |
 | `P-34` Per-family release list (≤12) | `docs/migration/PLAN.md:178` | `crates/app/src/view/runners.rs:755` (`RELEASES_LIMIT = 12`, from `gamehandler/bridge.py:702`) | Complete |
-| `P-35` Download with progress, busy guard, completion toast | `docs/migration/PLAN.md:179` | `crates/app/src/view/runners.rs:974-1025` (`runner_busy`, `progress`, `RunnerInstallFinished`) | **Partial** — the download, its progress and its guards are all real, but what it downloads cannot be installed: the validation that runs next rejects every real Proton archive (`BUG-35`), so the progress bar ends in a refusal |
+| `P-35` Download with progress, busy guard, completion toast | `docs/migration/PLAN.md:179` | `crates/app/src/view/runners.rs:974-1025` (`runner_busy`, `progress`, `RunnerInstallFinished`) | **Complete** — `BUG-35` is fixed. The symlink walk computed each link's parent against the scan directory instead of the candidate root, so it refused 1,818 of 2,068 symlinks in a real Proton tree where Python refuses 0; the download now ends in an install. |
 | `P-36` Release asset filtering per family (CachyOS excludes `v3`/`znver4`) | `docs/migration/PLAN.md:180` | `crates/core/src/runners/families.rs:127` (`exclude: &["v3", "znver4", "native"]`), `:296` (`asset_matches_tokens`) | Complete |
-| `P-37` Removal with confirm; games fall back to System Wine | `docs/migration/PLAN.md:181` | `crates/app/src/view/runners.rs:1052-1068` (`ConfirmRemoveRunner`/`RemoveRunnerConfirmed`), `:1120-1127` (`remove_runner`) | **Partial** — the fallback works, but a *symlinked* build is listed as installed and its removal reports success without deleting. See `BUGS.md` `BUG-03` |
-| `P-38` Secure extraction: traversal/symlink confinement, caps, no-replace rename | `docs/migration/PLAN.md:182` | `crates/core/src/runners/archive.rs` | **Partial** — the confinement checks are sound and the extraction filter is correct, but the post-extraction symlink walk mis-computes each link's parent as `""`, so it refuses every `..`-relative link and **no real Proton archive can be installed at all** (`BUG-35`); the containment root also degrades to a lexical comparison when `canonicalize` fails (`BUG-26`) |
+| `P-37` Removal with confirm; games fall back to System Wine | `docs/migration/PLAN.md:181` | `crates/app/src/view/runners.rs:1052-1068` (`ConfirmRemoveRunner`/`RemoveRunnerConfirmed`), `:1120-1127` (`remove_runner`) | **Complete** — `BUG-03` is fixed: a symlinked build is unlinked, and the `Removed {runner}` toast is no longer printed for a removal that did not happen. |
+| `P-38` Secure extraction: traversal/symlink confinement, caps, no-replace rename | `docs/migration/PLAN.md:182` | `crates/core/src/runners/archive.rs` | **Partial** — the mis-computed parent directory (`BUG-35`) is fixed and the real-Proton-tree rejection is gone. What remains is the containment root degrading to a lexical comparison when `canonicalize` fails (`BUG-26`), which is still open. |
 | `P-39` Tags sanitised to collision-resistant install ids | `docs/migration/PLAN.md:183` | `crates/core/src/runners/families.rs:557-590` (`install_id`, `~i{digest[..12]}` fallback), `crates/core/src/runners/archive.rs:232-242` (`safe_install_id`) | Complete |
 
 ### 3D. Launch semantics (`P-40`…`P-50`)
@@ -156,11 +156,11 @@ Each release note is a promise to a user who upgrades. Read against `crates/`:
 | `P-42` Esync/Fsync/DXVK-off/VKD3D-off env + dll overrides | `docs/migration/PLAN.md:191` | `crates/core/src/runners/launch_opts.rs:636-764` | Complete — with a cosmetic `;`-trim divergence (`BUG-22`) |
 | `P-43` MangoHud/GameMode/Gamescope wrapping; gamescope-missing error | `docs/migration/PLAN.md:192` | `crates/core/src/runners/launch_opts.rs:738-749` | Complete — note that `gamemode`/anticheat missing binaries are silently ignored where gamescope raises — and that is Python's behaviour too (`gamehandler/runners.py:1240-1253`, `:1220-1228`), so this row is Complete and the asymmetry is a note rather than a defect |
 | `P-44` Anti-cheat runtimes auto-located | `docs/migration/PLAN.md:193` | `crates/core/src/runners/env.rs:216-224` (seven roots incl. Flatpak Steam) | Complete |
-| `P-45` Bundled DXVK installed into raw-Wine prefixes once per version | `docs/migration/PLAN.md:194` | `crates/core/src/runners/launch_opts.rs:420-436`, `crates/core/src/runners/launch.rs:355` | **Partial** — an empty `GAMEHANDLER_DXVK_ROOT` silently skips the install where the reference aborts. See `BUGS.md` `BUG-06` |
+| `P-45` Bundled DXVK installed into raw-Wine prefixes once per version | `docs/migration/PLAN.md:194` | `crates/core/src/runners/launch_opts.rs:420-436`, `crates/core/src/runners/launch.rs:355` | **Complete** — `BUG-06` is fixed: an empty `GAMEHANDLER_DXVK_ROOT` now refuses the launch where the reference aborts, rather than silently skipping the DXVK install. |
 | `P-46` Immediate-failure detection: grace, stderr tail, toast + window restore | `docs/migration/PLAN.md:195` | `crates/core/src/runners/launch.rs:102-200`, `:252-287`; `crates/app/src/main.rs:2689` (`launch_grace`), `:2718` (`launch_and_watch`) | Complete |
 | `P-47` `mark_played` + "Launching…" toast | `docs/migration/PLAN.md:196` | `crates/app/src/main.rs:2099` (`mark_played`), `:2100+` (toast) | Complete |
 | `P-48` Winecfg/Winetricks use the game's own WINE/WINESERVER | `docs/migration/PLAN.md:197` | `crates/app/src/main.rs:2748` (`start_prefix_tool`), `crates/core/src/runners/launch.rs:468-480` (`tool_command`) | Complete |
-| `P-49` Open prefix folder (Proton `pfx` aware) | `docs/migration/PLAN.md:198` | `crates/app/src/main.rs:2788-2810` (`prefix_drive_c`, `open_prefix_folder`) | **Partial** — the `pfx` awareness is right, but the spawn result is discarded so a failure is reported as success. See `BUGS.md` `BUG-04` |
+| `P-49` Open prefix folder (Proton `pfx` aware) | `docs/migration/PLAN.md:198` | `crates/app/src/main.rs:2788-2810` (`prefix_drive_c`, `open_prefix_folder`) | **Complete** — `BUG-04` is fixed: `open_prefix_folder` propagates the spawn error instead of discarding it, so a prefix folder that did not open is reported. |
 | `P-50` Linux-native launch (no Wine env) | `docs/migration/PLAN.md:199` | `crates/core/src/runners/mod.rs` (`is_linux` short-circuit), `crates/core/src/runners/launch.rs` | Complete |
 
 ### 3E. Easy installers (`P-51`…`P-59`)
@@ -182,7 +182,7 @@ Each release note is a promise to a user who upgrades. Read against `crates/`:
 | Feature | Where advertised | Where implemented | Status |
 |---|---|---|---|
 | `P-60` Steam search → scored match → portrait cover, CDN fallbacks | `docs/migration/PLAN.md:219` | `crates/core/src/covers.rs:367` (`parse_store_search`), `:430-487` (`pick_best_match`), `:489` (`cover_urls_for_app`), `:51-67` (`CDN_ROOTS`) | Complete |
-| `P-61` Offline exe-icon fallback; launchers get vendor icon | `docs/migration/PLAN.md:220` | `crates/core/src/covers.rs:590` (`save_exe_icon`), `crates/core/src/exe_icons.rs` | **Partial** — a *write* failure in the icon path is discarded and the user is shown the Steam error instead. See `BUGS.md` `BUG-13` |
+| `P-61` Offline exe-icon fallback; launchers get vendor icon | `docs/migration/PLAN.md:220` | `crates/core/src/covers.rs:590` (`save_exe_icon`), `crates/core/src/exe_icons.rs` | **Complete** — `BUG-13` is fixed: a cover-art *write* failure is reported as itself, not as "no Steam cover found". |
 | `P-62` Initials plate, 8 stable gradients, letterboxed icons | `docs/migration/PLAN.md:221` | `crates/core/src/covers.rs:224` (`initials`), `:520`/`:1059` (`accent_index`/`accent_index_in`) | Complete |
 | `P-63` Download size caps, empty-download rejection, atomic writes | `docs/migration/PLAN.md:222` | `crates/core/src/covers.rs:71` (`MAX_RESPONSE_BYTES`), `:73` (`MIN_COVER_BYTES`), `:590-620` (tmp + rename) | Complete |
 
@@ -322,11 +322,24 @@ Each is a one-line correction; none is a code defect.
 
 | Status | Rows |
 |---|---|
-| Complete | 94 |
-| Partial | 10 (`P-29`, `P-35`, `P-37`, `P-38`, `P-45`, `P-49`, `P-61`, `P-68`, plus the two §4.1/§4.2 comment-accuracy items) |
+| Complete | 100 |
+| Partial | 4 (`P-38`, `P-68`, plus the two §4.1/§4.2 comment-accuracy items) |
 | Missing | 0 |
 | Stub | 1 (`State::theme_manager`, §4.3) |
 | Stale documentation | 5 (§6) |
+
+**Re-synced against `PLAN.md` at `da3c4d5`.** Six rows above read `Partial`
+while the finding they cited was `FIXED` in `PLAN.md`: `P-29`/`BUG-05`,
+`P-35`/`BUG-35`, `P-37`/`BUG-03`, `P-45`/`BUG-06`, `P-49`/`BUG-04`,
+`P-61`/`BUG-13`. Each is now `Complete` and names what fixed it. `P-38` stays
+`Partial` for a real reason — its citation `BUG-35` is fixed, but its second
+citation `BUG-26` is not — and `P-68` stays `Partial` on `BUG-12`.
+
+This is the same drift `PLAN.md` records between its own summary and the
+specialist rows (`DECISIONS.md` D-59), in the other direction: a document that
+kept describing as broken something that had been repaired. Both errors come
+from the same cause — a status maintained by hand in two places. The columns
+here now cite the ID so the next reader can check the claim in one step.
 
 **Nothing advertised is unimplemented.** Nearly every gap is of one shape: a
 feature that works on the happy path and reports or degrades wrongly on a
@@ -337,14 +350,19 @@ follows it closely, including into its bugs — while the *failure reporting* is
 where the two diverge, sometimes deliberately better (the `B-07` drain fix) and
 sometimes just missing.
 
-**One row breaks that pattern, and it is the most important line in either
-document.** `P-35`/`P-38` do not merely mis-report: the runner install cannot
-complete at all. The post-extraction symlink check computes each link's parent
-directory relative to the directory it is scanning rather than the candidate
-root, so its escape test sees a structurally empty parent and refuses every
-link that climbs — 1,818 of the 2,068 symlinks in a real Proton build
-(`BUGS.md` `BUG-35`). The feature is advertised at `docs/migration/PLAN.md:179`
-and `:182` as working, is drawn in the UI, downloads the archive, and then
-fails with a message that blames the user's file. Everything else in this
-document is a reporting or fidelity gap; this one is a broken feature, and it
-is why the Runners page should not be called verified until it is fixed.
+**One row broke that pattern, and it was the most important line in either
+document.** `P-35`/`P-38` did not merely mis-report: the runner install could
+not complete at all. The post-extraction symlink check computed each link's
+parent directory relative to the directory it was scanning rather than the
+candidate root, so its escape test saw a structurally empty parent and refused
+every link that climbs — 1,818 of the 2,068 symlinks in a real Proton build
+(`BUGS.md` `BUG-35`). The feature was advertised at `docs/migration/PLAN.md:179`
+and `:182` as working, was drawn in the UI, downloaded the archive, and then
+failed with a message that blamed the user's file. Everything else in this
+document is a reporting or fidelity gap; that one was a broken feature.
+
+**It is fixed** (`0622f93`), verified by re-running the real-Proton-tree
+measurement post-fix, and both rows above now say so. The paragraph is kept
+rather than deleted because it is the reason the Runners page was not called
+verified at `d56782d`, and a reader deserves to see that the reason is gone
+rather than have it quietly disappear.
