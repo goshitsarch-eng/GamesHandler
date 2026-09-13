@@ -203,17 +203,99 @@ Four other frame readings this session were also wrong and were caught by
 measurement, including a frame-identity map recorded backwards in two earlier
 sessions.
 
+### The "the Add Game form takes no keyboard focus" verdict is withdrawn
+
+Recorded in the two places below as a finding, on the evidence "`Tab` cycles the
+top nav bar only (measured Tab-focus boxes at y 32..69), so there is no keyboard
+route into the form's fields, and with the form open `type zz` changes **0 of
+1024000 pixels**". **Re-measured this session, the strong claim is false.**
+
+The measurement that settles it is not a pixel count — it is **growth with input
+length**, because every empty focused text field also returns ~50 px between two
+captures (a 13–19 px caret box) and that confound nearly produced a false
+negative in both directions:
+
+| Experiment | Changed pixels | Reading |
+|---|---|---|
+| Empty focused field, two captures, no input | **~50 px**, fixed 13–19 px box | the caret blink — *not* text |
+| 8 characters typed into that field | **~92 px** | text; ~12 px/char |
+| 19 characters typed | **~229 px** | text; grows with length, a caret does not |
+| `Tab`×12 from a fresh `Ctrl+N`, then `KeyboardTest` | **248 px**, bbox `x 464..583 y 286..305` | text entered by keyboard alone |
+| Tab stops 12 / 14 / 15, 12-character string | **496 / 512 / 530 px** | independent repeats, all text |
+
+The Tab ring is **20 stops** and cycles (`Tab`#23 ≡ `Tab`#3). Stops 1 and 21 sit
+at `x 7..60 y 32..69` — the boxes that produced the original claim — but they are
+two stops out of twenty; stops 12–20 are inside the form body down to `y 676`.
+Typing 0 px at stops 1–4 and 8–11 identifies the non-text widgets in the ring.
+Finally, a form was completed **entirely by keyboard** (`down` → `up` →
+`chord ctrl n` → `Tab`×12 → `type` → `scroll`×8) and the scrolled frame showed
+the typed string with a caret after it. The `scroll` verb used for that frame was
+itself verified this session: the form was already at the bottom, so further
+scroll-down gave **0 px** while scroll-up gave **320992 px** — i.e. the wheel
+moves the form and the frame is not a still.
+
+**The narrower claim that survives, and replaces it:** the form does not take
+focus *when it opens* (so `type zz` immediately after `Ctrl+N` is genuinely
+0 px — measured), and Tab is not a *practical* route into it (20 stops, a dozen
+presses to reach a text field), and the form's dropdowns and togglers are not
+keyboard-operable at all — not because of anything app-side, but because
+libcosmic's `Dropdown` has `operate` and `a11y_nodes` commented out and iced's
+toggler implements no `operate`. That is `COSMIC-UX.md` UX-01/02/03, and it is
+the real finding. "There is no keyboard route into the form's fields" is false.
+
+A source reading I had used to *justify* the withdrawn claim was also wrong and
+is corrected here: I had concluded the form's fields are unfocusable because
+`view/form.rs` carries no `.id(..)` on them while `view/library.rs:304` does.
+iced's `focusable::focus_next()` ignores the id parameter outright
+(`iced/core/src/widget/operation/focusable.rs`: `fn focusable(&mut self, _id:
+Option<&Id>, …)`) and `TextInput::new` sets `id: None`
+(`iced/widget/src/text_input.rs:137`). Ids are irrelevant to Tab traversal; the
+search box's id is load-bearing for a different call, `focus(SEARCH_INPUT_ID)`
+in `main.rs:1319`.
+
 ## Open at baseline
 
 Recorded honestly; these are what the audit then works through.
 
 1. `docs/migration/REPORT.md`'s F-ADD entry still asserts the withdrawn verdict.
-2. The Add Game form takes no keyboard focus: `Tab` cycles the top nav bar only,
-   so there is no keyboard route into the form's fields.
-3. With a full-page overlay open, `Ctrl+F`/`Ctrl+,` are still answered and mutate
-   navigation state underneath it. `Ctrl+,` visibly moves the rail highlight
-   while the body still shows the Add Game form.
-4. The long-title grid overflow — a game named "The Curious Expedition of a Very
-   Long Game Title That Wraps" renders beyond its tile.
+2. ~~The Add Game form takes no keyboard focus: `Tab` cycles the top nav bar
+   only, so there is no keyboard route into the form's fields.~~ **Withdrawn
+   above.** Replaced by the narrower, toolkit-attributed finding in
+   `COSMIC-UX.md` UX-01/02/03.
+3. **Confirmed from source this session**, and now stated precisely: with the
+   form open, `Ctrl+F` and `Ctrl+,` are still answered and change `state.page`
+   *underneath* it. `Ctrl+F` → `App::on_search` → `Shell::focus_library_search`
+   → `show_page(Page::Library)`; `Ctrl+,` →
+   `shortcuts::shortcut_for` → `Message::NavigateTo(Page::Settings)`. **Neither
+   path clears `state.game_form`**, and `view_with_overlays`
+   (`crates/app/src/main.rs:1466`) returns the form *before* consulting the
+   page, so the form stays drawn while the sidebar highlight moves. The port's
+   own comment there records the intended model — "the reference has no such
+   state — each QML layer closes the other" — and that mutual clear is
+   implemented only for the two confirm dialogs, not for navigation. Filed as
+   `BUGS.md` BUG-46.
+4. ~~The long-title grid overflow — a game named "The Curious Expedition of a Very
+   Long Game Title That Wraps" renders beyond its tile.~~ **Resolved and
+   corrected.** The *overflow* half is false and the measurement that refutes it
+   is now a test: a card laid out at the cell's width draws its name at ≤ the
+   available 188 px with an anti-vacuity check that the name fills more than half
+   of it (`crates/app/src/view/widgets.rs`,
+   `a_long_name_does_not_squeeze_the_play_control`). `Wrapping::None` clamps the
+   run to the limits it is given, so a name cannot spill into its neighbour. Two
+   things behind this row were wrong: it was first justified by a capture, and
+   the retraction was argued against an archived screenshot —
+   `docs/images/t19-long-title-tile.png` — **which does not exist**; there is no
+   `docs/images/` directory in this tree. What was real underneath the row is a
+   different defect, and it has been fixed: the name was clipped at the tile's
+   edge with **no ellipsis marker**, where the reference draws `…`
+   (`LibraryPage.qml:186`, `:195`, `:265`, `:272` — `elide: Text.ElideRight`).
+   The port's own comment had recorded that as unreachable, on the claim "this
+   iced has no ellipsis … there is no truncation-with-marker mode in this
+   version". **That claim was false** and it talked the fix out of existing:
+   `Text::ellipsize` is real (`iced/core/src/widget/text.rs:166`), wired through
+   `iced/graphics/src/text/paragraph.rs:92` to
+   `Buffer::set_ellipsize(cosmic_text::Ellipsize)`, and honoured under
+   `Wrap::None` (`cosmic-text-0.19.0/src/shape.rs:2316`, `:1741`). Fixed in
+   `fix(ui): ellipsize a card's and a row's name at the end`.
 5. `cargo fmt --check` dirtiness, carried as `PLAN.md` T-07.
 6. `docs/audit/` did not exist; no branch had been cut.

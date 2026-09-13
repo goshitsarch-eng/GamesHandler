@@ -79,19 +79,57 @@ deferral — the row itself is the Lead's, D-05). Re-run after R1 is
 2. Close-on-launch restore (`minimize(false)` no-op + `gain_focus`)
    is unwitnessed on any compositor.
 3. B-06/B-01-class silent coercions hide errors as empty libraries.
-4. Long grid titles overflow into the neighbour tile (cosmetic).
-   **Re-confirmed and characterised under this audit** — see
-   `../audit/BUGS.md`; the library holds a 59-character name for exactly
-   this case.
+4. **CORRECTED and FIXED under this audit.** This report said "long grid
+   titles overflow into the neighbour tile (cosmetic)". The *overflow*
+   is false: measured, a card laid out at the cell's width draws its
+   name at ≤ the available 188 px
+   (`crates/app/src/view/widgets.rs`,
+   `a_long_name_does_not_squeeze_the_play_control`, with an
+   anti-vacuity check that the name fills more than half the cell).
+   `Wrapping::None` clamps the run to its limits, so it cannot spill.
+   The real defect underneath was different and is now fixed: the name
+   was **clipped with no ellipsis marker** where the reference draws
+   `…` (`LibraryPage.qml:186`, `:195`, `:265`, `:272`,
+   `elide: Text.ElideRight`). The port had recorded that as
+   unreachable — "this iced has no ellipsis" — which was **false**:
+   `Text::ellipsize` is real and honoured under `Wrap::None`. Also
+   withdrawn: the archived screenshot this row was argued against
+   (`docs/images/t19-long-title-tile.png`) **does not exist**; there is
+   no `docs/images/` directory. See `../audit/BASELINE.md` item 4.
 5. ~~`scripts/verify.sh` carries uncommitted `--stage-timeout` work.~~
    **Resolved under this audit** — committed on `audit-hardening`, and
    `scripts/verify.sh` has since been run to completion.
-6. **New under this audit:** the Add Game form takes no keyboard focus.
-   `Tab` cycles the top nav bar only (measured Tab-focus boxes at
-   y 32..69), so there is no keyboard route into the form's fields, and
-   with the form open `type zz` changes **0 of 1024000 pixels**.
-7. **New under this audit:** with a full-page overlay open (the game
-   form), `Ctrl+F` and `Ctrl+,` are still answered and mutate navigation
-   state underneath it. `Ctrl+,` visibly moves the rail highlight to
-   Settings while the body still shows the Add Game form, so the rail and
-   the body disagree. Both measured; see `../audit/COSMIC-UX.md`.
+6. **WITHDRAWN under this audit.** This report claimed "the Add Game
+   form takes no keyboard focus. `Tab` cycles the top nav bar only
+   (measured Tab-focus boxes at y 32..69), so there is no keyboard
+   route into the form's fields, and with the form open `type zz`
+   changes **0 of 1024000 pixels**." **The strong claim is false.**
+   The y 32..69 boxes are 2 stops out of a 20-stop Tab ring; stops
+   12–20 are inside the form body. The measurement that settles it is
+   **growth with input length**, not a pixel count, because an empty
+   focused field also returns ~50 px (a caret blink) and that confound
+   nearly produced a false negative: 8 characters gave ~92 px and 19
+   characters ~229 px against that ~50 px caret; Tab stops 12/14/15
+   gave 496/512/530 px for a 12-character string; and a form was
+   completed **entirely by keyboard** — `Ctrl+N`, `Tab`×12, `type`,
+   `scroll` — the scrolled frame showing the typed text with a caret
+   after it. What survives is narrower and is not this report's
+   finding: the form does not take focus *when it opens*, Tab is not a
+   *practical* route (20 stops), and the form's dropdowns and togglers
+   are not keyboard-operable because libcosmic's `Dropdown` has
+   `operate`/`a11y_nodes` commented out and iced's toggler has no
+   `operate` — `../audit/COSMIC-UX.md` UX-01/02/03. See
+   `../audit/BASELINE.md` for the full withdrawal.
+7. **New under this audit:** with the game form open, `Ctrl+F` and
+   `Ctrl+,` are still answered and change `state.page` underneath it —
+   `Ctrl+F` via `App::on_search` → `Shell::focus_library_search` →
+   `show_page(Page::Library)` (`main.rs:3775`, `:1303`), `Ctrl+,` via
+   `shortcuts.rs:149`. Neither clears `state.game_form`, and
+   `view_with_overlays` (`main.rs:1466`) returns the form *before*
+   consulting the page, so the body keeps drawing the form while the
+   sidebar highlight moves. `Ctrl+,`'s rail move was measured (a
+   sidebar-region-only capture delta). The port's own comment there
+   records the intended model — "each QML layer closes the other" — and
+   that mutual clear is implemented only for the two confirm dialogs,
+   not for navigation. Source-confirmed; **not** reproduced live
+   through to a close. Filed as `../audit/BUGS.md` BUG-46.
