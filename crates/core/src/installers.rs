@@ -1695,14 +1695,18 @@ fn run_capturing(argv: &[String], timeout: Duration) -> Result<CommandOutput, Ru
 /// exclusive create is the load-bearing one: `create_new` is `O_CREAT|O_EXCL`,
 /// which fails on an existing path *including* a symlink, so a `.part` name an
 /// attacker guessed cannot be used to redirect the write. The other is 0600
-/// permissions, which `mkstemp` gives and `create_new` does not — the file is
-/// renamed onto the target afterwards, so the mode is visible only for the
-/// duration of the download, and it is set explicitly below rather than left to
-/// the umask. The part that does not matter is the *unpredictability* of the
-/// name, which `mkstemp` gets from random bytes; exclusivity is what makes the
-/// name safe, so this counts up from the process id instead, which is also what
-/// makes a leftover file nameable in a bug report.
+/// permissions, which `mkstemp` gives and `create_new` does not: `create_new`
+/// is bounded by the process umask, so under the usual 022 the download sits
+/// at 0644 for the length of the transfer, readable by every local user. That
+/// is the file the mode is set on below — an explicit `0o600` on the handle
+/// `create_new` just returned, which is the mode the file has from the instant
+/// it exists rather than from the instant the download finishes, and which no
+/// umask can widen. The part that does not matter is the *unpredictability* of
+/// the name, which `mkstemp` gets from random bytes; exclusivity is what makes
+/// the name safe, so this counts up from the process id instead, which is also
+/// what makes a leftover file nameable in a bug report.
 fn create_partial(directory: &Path, filename: &str) -> std::io::Result<(std::fs::File, PathBuf)> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     /// `TMP_MAX`-ish: `mkstemp` gives up after a bounded number of attempts.
     const ATTEMPTS: u32 = 1_000;
     let process = std::process::id();
@@ -1711,9 +1715,25 @@ fn create_partial(directory: &Path, filename: &str) -> std::io::Result<(std::fs:
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
+            // `mkstemp`'s own mode argument: the file is never wider than
+            // 0600 even for the instant between the create and the chmod below.
+            .mode(0o600)
             .open(&path)
         {
-            Ok(file) => return Ok((file, path)),
+            Ok(file) => {
+                // A umask with owner bits in it would narrow the create's mode,
+                // so the 0600 is then made exact. A failure here removes the
+                // file, so a caller that got an `Err` has nothing to reason
+                // about but the error.
+                if let Err(error) =
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                {
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(error);
+                }
+                return Ok((file, path));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
         }
@@ -3753,6 +3773,161 @@ mod tests {
                     .is_some_and(|name| name.to_string_lossy().ends_with(".part"))
             })
             .collect()
+    }
+
+    /// The `.part` file is `0600` from the moment it exists, as `mkstemp`'s is
+    /// (`installers.py:612-614`), and it is `create_new` that makes the name
+    /// unguessable-in-effect: `O_CREAT|O_EXCL` refuses a path that already
+    /// exists *including* one that is a symlink, so a `.part` name an attacker
+    /// planted cannot redirect the write.
+    ///
+    /// Both halves are asserted against the file the real download uses, not
+    /// against a re-created temp file: the mode is read from inside the
+    /// transfer's own progress callback, which is the only moment the `.part`
+    /// exists, and the symlinks are planted at the names this process's own id
+    /// generates, so they are the names `create_partial` actually reaches for.
+    #[test]
+    fn a_partial_download_is_private_to_its_owner_and_cannot_be_redirected() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = Scratch::new("part-mode");
+        let dest = scratch.path().join("downloads");
+        let record = scratch.path().join("verifier-argv");
+        let script = fake_osslsigncode(
+            scratch.path(),
+            &record,
+            "Signature verification: ok\nSubject: /O=Valve Corp./CN=Valve Corp.",
+            0,
+        );
+        let steam = installer_by_id("steam").unwrap();
+
+        let observed: std::cell::RefCell<Vec<u32>> = std::cell::RefCell::new(Vec::new());
+        let progress = |_value: f64| {
+            for entry in std::fs::read_dir(&dest).into_iter().flatten().flatten() {
+                if entry.file_name().to_string_lossy().ends_with(".part") {
+                    let mode = entry
+                        .metadata()
+                        .expect("the temporary file is statable")
+                        .permissions()
+                        .mode()
+                        & 0o777;
+                    observed.borrow_mut().push(mode);
+                }
+            }
+        };
+
+        // A symlink at the *target* path is the store-installer case the
+        // recipe catalogue cannot rule out, and the reason the install is a
+        // rename: `rename` replaces it rather than writing through it.
+        let target = dest.join("SteamSetup.exe");
+        std::fs::create_dir_all(&dest).expect("the destination directory");
+        std::os::unix::fs::symlink(scratch.path().join("sentinel"), &target)
+            .expect("plant the target symlink");
+
+        download_installer(
+            steam,
+            &dest,
+            Some(&progress),
+            Duration::from_secs(60),
+            &FakeResponse::at(steam.download_url, PE_BODY),
+            &verifier_env(&script),
+        )
+        .expect("an authenticated download");
+
+        let observed = observed.into_inner();
+        assert!(
+            !observed.is_empty(),
+            "no .part file was observed during the transfer"
+        );
+        assert!(
+            observed.iter().all(|mode| *mode == 0o600),
+            "the .part file was readable by more than its owner: {observed:?}"
+        );
+        assert!(
+            !target.is_symlink(),
+            "the rename wrote through the target symlink"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), PE_BODY);
+    }
+
+    /// A hostile `.part` name cannot make `create_partial` panic, escape the
+    /// destination, or open something it did not create.
+    ///
+    /// The name reaches it from the recipe catalogue, which is data this app
+    /// did not write; a name the filesystem refuses is a failed download, not
+    /// a crash. Written as a battery because the failures are all different
+    /// kinds — `InvalidInput` for a NUL, `ENAMETOOLONG`, `ENOENT` for a
+    /// component that is not there — and the contract is only that none of
+    /// them is a panic.
+    #[test]
+    fn hostile_partial_names_fail_cleanly() {
+        let scratch = Scratch::new("part-hostile");
+        let dir = scratch.path();
+        let cases = [
+            String::new(),
+            ".".to_string(),
+            "..".to_string(),
+            "a/b".to_string(),
+            "..\\..\\evil.exe".to_string(),
+            "nul\u{0}byte".to_string(),
+            "x".repeat(4096),
+        ];
+        for name in cases {
+            match create_partial(dir, &name) {
+                Ok((file, path)) => {
+                    // Accepted names still obey the two invariants.
+                    assert!(path.starts_with(dir), "{name:?} left {dir:?}");
+                    assert!(!path.is_symlink(), "{name:?} opened a symlink");
+                    drop(file);
+                }
+                Err(error) => {
+                    // A refused name is a value the caller reports, not a panic.
+                    assert!(!error.to_string().is_empty());
+                }
+            }
+        }
+    }
+
+    /// The same protection on the path a hostile name cannot be sanitised away
+    /// on: an existing `.part` name this process would itself generate.
+    #[test]
+    fn a_guessed_partial_name_is_neither_followed_nor_reused() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = Scratch::new("part-symlink");
+        let dir = scratch.path();
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"private").expect("the victim file");
+        let process = std::process::id();
+        // The first three names `create_partial` tries, all pointed at the
+        // victim, and the fourth already taken by a directory.
+        for attempt in 0..3 {
+            std::os::unix::fs::symlink(
+                &victim,
+                dir.join(format!(".SteamSetup.exe.{process}.{attempt}.part")),
+            )
+            .expect("plant the symlink");
+        }
+        std::fs::create_dir(dir.join(format!(".SteamSetup.exe.{process}.3.part")))
+            .expect("take the fourth name");
+
+        let (mut file, path) =
+            create_partial(dir, "SteamSetup.exe").expect("the fifth name is free");
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            format!(".SteamSetup.exe.{process}.4.part")
+        );
+        assert!(!path.is_symlink());
+        std::io::Write::write_all(&mut file, b"payload").expect("write the partial");
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"private",
+            "the write followed a planted symlink onto the victim"
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     /// `test_download_is_authenticated_before_atomic_install`

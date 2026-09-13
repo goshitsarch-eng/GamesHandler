@@ -27,16 +27,20 @@
 //!   a whole game (`exe_icons.py:248-252`). `std` has no mmap and this crate
 //!   takes no dependency for one, so [`extract_icon`] reads in two phases: a
 //!   small header probe, then a bounded read through the resource section's
-//!   raw bytes, falling back to a full read only when the bounded view yields
-//!   nothing. Same observable contract (`None` for anything unreadable), same
-//!   worst case ([`MAX_EXECUTABLE_BYTES`], checked before any read).
-//! - Every read is bounds-checked against the bytes actually in hand. The
-//!   reference relies on `mmap` raising `ValueError` past the end of the
-//!   file — which [`extract_icon`] catches and turns into `None` — while a
-//!   `bytes` input would silently clamp. Clamping cannot produce a valid icon
-//!   (the group/image structure checks reject short reads), so returning
-//!   `None` at the first out-of-range read matches the production (`mmap`)
-//!   path exactly.
+//!   raw bytes, falling back to a full read when the bounded view is
+//!   *inconclusive* — which is "found no icon" **and** "could not read a byte
+//!   it asked for", because the two are not the same question (see
+//!   [`bounded_attempt`]). Same observable contract (`None` for anything
+//!   unreadable), same worst case ([`MAX_EXECUTABLE_BYTES`], checked before
+//!   any read).
+//! - Reads are clamped to the bytes actually in hand, exactly as the
+//!   reference's `data[offset : offset + size]` clamps (`exe_icons.py:212`) —
+//!   `mmap` clamps a slice that runs past the end just as `bytes` does, so a
+//!   payload whose declared size exceeds the file yields a *short* payload
+//!   rather than an exception, and the group/image structure checks judge it
+//!   on their own terms (`exe_icons.py:146`, `:155`). A short read is never
+//!   refused: a truncated executable keeps whatever part of its icon survives
+//!   (`BUG-41`).
 //!
 //! A resource tree is data we did not write, and a truncated or hostile one
 //! must cost a moment rather than a gigabyte. Every walk is bounded, exactly
@@ -105,6 +109,19 @@ struct DirectoryEntry {
     is_named: bool,
 }
 
+/// One parse of one view of an executable.
+///
+/// `clipped` is the difference between "this view does not hold an icon" and
+/// "this view was not asked the whole question": it is set whenever a read
+/// was refused for running past the end of *these* bytes, which is the one
+/// way a longer view can disagree. [`parse_view`]'s only caller that keeps it
+/// is [`bounded_attempt`], where a clipped parse must fall back rather than
+/// answer (`BUG-40`).
+struct Parsed {
+    icon: Option<Vec<u8>>,
+    clipped: bool,
+}
+
 /// Return the primary icon of an in-memory PE image as `.ico` bytes.
 ///
 /// Port of `icon_bytes` (`exe_icons.py:182-235`). `None` means "no usable
@@ -112,15 +129,35 @@ struct DirectoryEntry {
 /// group that assembles to nothing — never an error, because a cover lookup
 /// that cannot read an icon just has no icon.
 pub fn icon_bytes(data: &[u8]) -> Option<Vec<u8>> {
-    let (sections, resource_rva, _resource_size) = sections_and_resource_root(data)?;
-    let base = file_offset(&sections, data.len(), resource_rva, 16)?;
+    parse_view(data).icon
+}
+
+/// [`icon_bytes`], reporting whether the parse ran out of bytes.
+fn parse_view(data: &[u8]) -> Parsed {
+    let mut clipped = false;
+    let Some((sections, resource_rva, _resource_size)) =
+        sections_and_resource_root(data, &mut clipped)
+    else {
+        // The headers themselves may be past the end of this view, so a
+        // failure to find them settles nothing.
+        return Parsed {
+            icon: None,
+            clipped: true,
+        };
+    };
+    let Some(base) = file_offset(&sections, resource_rva, 16) else {
+        return Parsed {
+            icon: None,
+            clipped,
+        };
+    };
 
     // `{id: target}` over type directories that are subdirectories and
     // unnamed. A second entry with the same id overwrites the first, as the
     // reference's dict comprehension does.
     let mut icon_type = None;
     let mut group_type = None;
-    for entry in directory_entries(data, base, 0) {
+    for entry in directory_entries(data, base, 0, &mut clipped) {
         if entry.is_directory && !entry.is_named {
             if entry.id == RT_ICON {
                 icon_type = Some(entry.target);
@@ -129,29 +166,47 @@ pub fn icon_bytes(data: &[u8]) -> Option<Vec<u8>> {
             }
         }
     }
-    let (icon_type, group_type) = (icon_type?, group_type?);
+    let (Some(icon_type), Some(group_type)) = (icon_type, group_type) else {
+        return Parsed {
+            icon: None,
+            clipped,
+        };
+    };
 
-    let groups = collect_group_resources(data, base, group_type);
-    let icons = collect_resources(data, base, icon_type);
+    let groups = collect_group_resources(data, base, group_type, &mut clipped);
+    let icons = collect_resources(data, base, icon_type, &mut clipped);
     if groups.is_empty() || icons.is_empty() {
-        return None;
+        return Parsed {
+            icon: None,
+            clipped,
+        };
     }
 
-    let read = |entry: (u32, u32)| -> Option<Vec<u8>> {
+    let read = |entry: (u32, u32), clipped: &mut bool| -> Option<Vec<u8>> {
         let (rva, size) = entry;
         if size == 0 || usize::try_from(size).ok()? > MAX_ICON_BYTES {
             return None;
         }
         let size = size as usize;
-        let offset = file_offset(&sections, data.len(), rva, size)?;
-        data.get(offset..offset.checked_add(size)?)
-            .map(<[u8]>::to_vec)
+        let offset = file_offset(&sections, rva, size)?;
+        let end = offset.checked_add(size)?;
+        if end > data.len() {
+            // The reference slices, and the slice clamps (`exe_icons.py:212`)
+            // — a short file yields a short payload, not an exception — so
+            // every read in this view is silently short rather than refused.
+            *clipped = true;
+        }
+        Some(
+            data.get(offset..end.min(data.len()))
+                .unwrap_or_default()
+                .to_vec(),
+        )
     };
 
     let mut images: Vec<(u32, Vec<u8>)> = Vec::new();
     let mut total = 0usize;
     for (identifier, entry) in &icons {
-        let Some(payload) = read(*entry) else {
+        let Some(payload) = read(*entry, &mut clipped) else {
             continue;
         };
         total += payload.len();
@@ -161,20 +216,29 @@ pub fn icon_bytes(data: &[u8]) -> Option<Vec<u8>> {
         images.push((*identifier, payload));
     }
     if images.is_empty() {
-        return None;
+        return Parsed {
+            icon: None,
+            clipped,
+        };
     }
 
     // Windows shows the lowest-numbered icon group as the application icon,
     // and a map's values iterate in key order, so this is `sorted(groups)`.
     for entry in groups.values() {
-        let Some(group) = read(*entry) else {
+        let Some(group) = read(*entry, &mut clipped) else {
             continue;
         };
         if let Some(ico) = build_ico(&group, &images) {
-            return Some(ico);
+            return Parsed {
+                icon: Some(ico),
+                clipped,
+            };
         }
     }
-    None
+    Parsed {
+        icon: None,
+        clipped,
+    }
 }
 
 /// Return *exe_path*'s embedded icon as `.ico` bytes, or `None`.
@@ -185,10 +249,11 @@ pub fn icon_bytes(data: &[u8]) -> Option<Vec<u8>> {
 ///
 /// Files up to [`PROBE_BYTES`] are read whole — one syscall, one parse. Larger
 /// files take the bounded path: parse the headers from a probe, read through
-/// the end of the resource section's raw bytes, and only fall back to a full
-/// read when the bounded view yields nothing. The fallback matters: headers
-/// past the probe, or resource data pointing outside the resource section,
-/// are legal, and a bounded-only read would miss icons the reference finds.
+/// the end of the resource section's raw bytes, and fall back to a full read
+/// whenever that view is inconclusive ([`bounded_attempt`]). The fallback
+/// matters: headers past the probe, or resource data pointing outside the
+/// resource section, are legal, and a bounded-only read would miss icons the
+/// reference finds — or, worse, answer with a different one.
 pub fn extract_icon(exe_path: &Path) -> Option<Vec<u8>> {
     let len = std::fs::metadata(exe_path).ok()?.len();
     if !(64..=MAX_EXECUTABLE_BYTES).contains(&len) {
@@ -207,17 +272,29 @@ pub fn extract_icon(exe_path: &Path) -> Option<Vec<u8>> {
 
 /// Try the resource section's raw bytes before paying for a full read.
 ///
-/// Returns `None` when the bounded view is *inconclusive* — headers that do
-/// not parse inside the probe, or a parse that finds no icon — in which case
-/// the caller falls back to the whole file. A bounded view that parses to an
-/// icon is final: the full file cannot hold a *better* icon for the same
-/// headers, only the same bytes at the same offsets.
+/// Returns `None` when the bounded view is *inconclusive*, which is two
+/// different things and both of them matter:
+///
+/// - the view held **no** icon, or
+/// - the view held an icon but a read ran past its end.
+///
+/// The second is not a detail. A parse that yields an icon is *not* final,
+/// because the group loop takes the lowest-numbered group it can *read*
+/// (`exe_icons.py:228`), so a group the bounded view cannot reach simply
+/// hands the answer to the next one — the bounded parse returns a real,
+/// well-formed icon that is the wrong one (`BUG-40`). Clipping is therefore
+/// the signal to read the whole file and let the full parse decide.
 fn bounded_attempt(exe_path: &Path, len: usize, probe: &[u8]) -> Option<Vec<u8>> {
     let end = bounded_end(probe)?.min(len);
-    if end <= probe.len() {
-        return icon_bytes(probe);
+    let parsed = if end <= probe.len() {
+        parse_view(probe)
+    } else {
+        parse_view(&read_prefix(exe_path, end)?)
+    };
+    if parsed.clipped {
+        return None;
     }
-    icon_bytes(&read_prefix(exe_path, end)?)
+    parsed.icon
 }
 
 /// End offset of a bounded read: through the resource section's raw bytes.
@@ -225,7 +302,10 @@ fn bounded_attempt(exe_path: &Path, len: usize, probe: &[u8]) -> Option<Vec<u8>>
 /// `None` when the probe does not hold parseable headers — the signal to skip
 /// the bounded view and read the whole file.
 fn bounded_end(probe: &[u8]) -> Option<usize> {
-    let (sections, resource_rva, _size) = sections_and_resource_root(probe)?;
+    // A section table the probe cuts short can only make `end` too small,
+    // which `parse_view` reports as a clipped parse; the flag has no second
+    // effect here.
+    let (sections, resource_rva, _size) = sections_and_resource_root(probe, &mut false)?;
     let rva = u64::from(resource_rva);
     sections.iter().find_map(|section| {
         let start = u64::from(section.virtual_address);
@@ -258,7 +338,11 @@ fn read_prefix(exe_path: &Path, len: usize) -> Option<Vec<u8>> {
 /// is checked before it is read: where the reference guards with explicit
 /// length comparisons (and, past them, relies on `struct.error`/`ValueError`
 /// from the caller), this returns `None` at the first out-of-range read.
-fn sections_and_resource_root(data: &[u8]) -> Option<(Vec<Section>, u32, u32)> {
+///
+/// `clipped` is set when the section table is cut short by the end of `data`
+/// — the reference simply walks fewer sections there, so this is a read the
+/// view could not serve rather than a verdict about the file (`BUG-40`).
+fn sections_and_resource_root(data: &[u8], clipped: &mut bool) -> Option<(Vec<Section>, u32, u32)> {
     if data.len() < 64 || data.get(0..2)? != b"MZ" {
         return None;
     }
@@ -310,6 +394,7 @@ fn sections_and_resource_root(data: &[u8]) -> Option<(Vec<Section>, u32, u32)> {
     for index in 0..usize::from(section_count).min(MAX_SECTIONS) {
         let position = table.checked_add(index.checked_mul(40)?)?;
         if position.checked_add(40)? > data.len() {
+            *clipped = true;
             break;
         }
         let virtual_size = u32_at(data, position.checked_add(8)?)?;
@@ -331,12 +416,16 @@ fn sections_and_resource_root(data: &[u8]) -> Option<(Vec<Section>, u32, u32)> {
 
 /// Translate a relative virtual address into a readable file offset.
 ///
-/// Port of `_file_offset` (`exe_icons.py:86-94`), plus the end-of-data check
-/// the reference gets from `mmap`: a section whose raw range runs past the
-/// bytes in hand yields `None` here, as the `ValueError` the reference's
-/// caller catches does there. Arithmetic is `u64` throughout so a hostile
-/// header cannot wrap a containment check.
-fn file_offset(sections: &[Section], data_len: usize, rva: u32, length: usize) -> Option<usize> {
+/// Port of `_file_offset` (`exe_icons.py:86-94`), checks and all: the
+/// reference refuses an address no section maps and one whose length runs
+/// past the section's *raw* bytes, and so does this. It deliberately does
+/// **not** refuse a read that runs past the end of the bytes in hand — the
+/// reference does not either, and returning `None` there loses an icon the
+/// reference recovers from a truncated file (`BUG-41`). The caller clamps
+/// instead, which is what `data[offset : offset + size]` does
+/// (`exe_icons.py:212`). Arithmetic is `u64` throughout so a hostile header
+/// cannot wrap a containment check.
+fn file_offset(sections: &[Section], rva: u32, length: usize) -> Option<usize> {
     let rva = u64::from(rva);
     let length = length as u64;
     for section in sections {
@@ -346,11 +435,7 @@ fn file_offset(sections: &[Section], data_len: usize, rva: u32, length: usize) -
             if delta + length > u64::from(section.raw_size) {
                 return None;
             }
-            let offset = u64::from(section.raw_pointer) + delta;
-            if offset + length > data_len as u64 {
-                return None;
-            }
-            return usize::try_from(offset).ok();
+            return usize::try_from(u64::from(section.raw_pointer) + delta).ok();
         }
     }
     None
@@ -358,12 +443,21 @@ fn file_offset(sections: &[Section], data_len: usize, rva: u32, length: usize) -
 
 /// `(id, target, is_directory, is_named)` for one resource directory.
 ///
-/// Port of `_directory_entries` (`exe_icons.py:97-118`).
-fn directory_entries(data: &[u8], base: usize, offset: u32) -> Vec<DirectoryEntry> {
+/// Port of `_directory_entries` (`exe_icons.py:97-118`). `clipped` is set
+/// where the reference's own length guards stop the walk early: it read fewer
+/// entries than the directory declares, which a longer view might not.
+fn directory_entries(
+    data: &[u8],
+    base: usize,
+    offset: u32,
+    clipped: &mut bool,
+) -> Vec<DirectoryEntry> {
     let Some(start) = base.checked_add(offset as usize) else {
+        *clipped = true;
         return Vec::new();
     };
     if start.checked_add(16).is_none_or(|end| end > data.len()) {
+        *clipped = true;
         return Vec::new();
     }
     let (Some(named), Some(numbered)) = (u16_at(data, start + 12), u16_at(data, start + 14)) else {
@@ -379,6 +473,7 @@ fn directory_entries(data: &[u8], base: usize, offset: u32) -> Vec<DirectoryEntr
             break;
         };
         if position.checked_add(8).is_none_or(|end| end > data.len()) {
+            *clipped = true;
             break;
         }
         let (Some(name), Some(target)) = (u32_at(data, position), u32_at(data, position + 4))
@@ -403,20 +498,27 @@ fn directory_entries(data: &[u8], base: usize, offset: u32) -> Vec<DirectoryEntr
 /// pair in place, which is what assigning the reference's dict twice does.
 /// Only the first language of an icon is collected — the localisations are
 /// the same artwork with different locale metadata.
-fn collect_resources(data: &[u8], base: usize, offset: u32) -> Vec<(u32, (u32, u32))> {
+fn collect_resources(
+    data: &[u8],
+    base: usize,
+    offset: u32,
+    clipped: &mut bool,
+) -> Vec<(u32, (u32, u32))> {
     let mut found: Vec<(u32, (u32, u32))> = Vec::new();
-    for entry in directory_entries(data, base, offset) {
+    for entry in directory_entries(data, base, offset, clipped) {
         if entry.is_named || !entry.is_directory {
             continue;
         }
-        for leaf in directory_entries(data, base, entry.target) {
+        for leaf in directory_entries(data, base, entry.target, clipped) {
             if leaf.is_directory {
                 continue;
             }
             let Some(position) = base.checked_add(leaf.target as usize) else {
+                *clipped = true;
                 break;
             };
             if position.checked_add(16).is_none_or(|end| end > data.len()) {
+                *clipped = true;
                 break;
             }
             let (Some(data_rva), Some(data_size)) =
@@ -442,8 +544,15 @@ fn collect_resources(data: &[u8], base: usize, offset: u32) -> Vec<(u32, (u32, u
 /// The walk is the same; the container is a map because the caller tries
 /// groups in ascending id order (`sorted(groups)`), and a map iterates that
 /// way without a separate sort.
-fn collect_group_resources(data: &[u8], base: usize, offset: u32) -> BTreeMap<u32, (u32, u32)> {
-    collect_resources(data, base, offset).into_iter().collect()
+fn collect_group_resources(
+    data: &[u8],
+    base: usize,
+    offset: u32,
+    clipped: &mut bool,
+) -> BTreeMap<u32, (u32, u32)> {
+    collect_resources(data, base, offset, clipped)
+        .into_iter()
+        .collect()
 }
 
 /// Reassemble a real `.ico` file out of a `GROUP_ICON` and its images.
@@ -742,6 +851,25 @@ pub(crate) mod builders {
         root + icon_type + group_type + language_directories
     }
 
+    /// Where [`resource_section_with_groups`] puts group `index`'s data entry.
+    ///
+    /// [`icon_data_entry_offset`]'s sibling, and for the same reason: the
+    /// group's payload address is the field `BUG-40` turns on, and a
+    /// hard-coded offset would drift with the builder.
+    pub(crate) fn group_data_entry_offset(
+        icon_count: usize,
+        group_count: usize,
+        index: usize,
+    ) -> usize {
+        let root = 16 + 2 * 8;
+        let icon_type = 16 + icon_count * 8;
+        let group_type = 16 + group_count * 8;
+        let icon_langs = icon_count * (16 + 8);
+        let group_langs = group_count * (16 + 8);
+        let icon_data = icon_count * 16;
+        root + icon_type + group_type + icon_langs + group_langs + icon_data + index * 16
+    }
+
     /// Wrap a resource section in the smallest PE the parser will accept.
     pub(crate) fn build_pe(section: &[u8], plus: bool, resource_size: Option<usize>) -> Vec<u8> {
         let magic = if plus { 0x20Bu16 } else { 0x10Bu16 };
@@ -931,6 +1059,63 @@ mod tests {
     }
 
     #[test]
+    fn a_payload_cut_short_by_the_end_of_the_file_is_clamped_not_dropped() {
+        // `data[offset : offset + size]` clamps (`exe_icons.py:212`), so a
+        // file ending four bytes into the group's *last entry* still has a
+        // group: the entries that fit are assembled and the rest are gone.
+        // Refusing the read instead loses the image entirely.
+        //
+        // This is the reference's own two-image fixture
+        // (`tests/test_exe_icons.py:53-59`) with the last four bytes cut,
+        // which is where its group payload sits. Measured against
+        // `gamehandler/exe_icons.py` on these exact bytes: `icon_bytes`
+        // returns a 1150-byte ICO holding one 16×16 image — the first entry's
+        // — and `extract_icon` returns the same 1150 bytes.
+        let small = dib_icon(16, 0x11);
+        let large = dib_icon(32, 0x22);
+        let section = resource_section(
+            &[(1, small.clone()), (2, large.clone())],
+            &group_icon(&[(16, small.len(), 1), (32, large.len(), 2)]),
+        );
+        let mut full = build_pe(&section, false, None);
+        full.truncate(full.len() - 4);
+
+        let blob = icon_bytes(&full).expect("the entry that survives the cut");
+        let images = read_ico(&blob);
+        assert_eq!(images.len(), 1, "the second group entry does not fit");
+        assert_eq!(images[0].2, small);
+    }
+
+    #[test]
+    fn a_truncated_file_read_off_disk_keeps_the_same_image() {
+        // The same property through [`extract_icon`], which is the path the
+        // cover lookup actually takes (`covers.rs`'s `save_exe_icon`): the
+        // file is under [`PROBE_BYTES`], so it is read whole and the clamp
+        // has to happen inside the parse rather than at the read.
+        let small = dib_icon(16, 0x11);
+        let large = dib_icon(32, 0x22);
+        let section = resource_section(
+            &[(1, small.clone()), (2, large.clone())],
+            &group_icon(&[(16, small.len(), 1), (32, large.len(), 2)]),
+        );
+        let mut full = build_pe(&section, false, None);
+        full.truncate(full.len() - 4);
+
+        let dir = scratch_dir("truncated-disk");
+        let path = dir.join("cut.exe");
+        std::fs::write(&path, &full).expect("write the fixture");
+        let blob = extract_icon(&path).expect("the entry that survives the cut");
+        assert_eq!(
+            read_ico(&blob)
+                .iter()
+                .map(|(_, _, p)| p)
+                .collect::<Vec<_>>(),
+            [&small]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_resource_pointing_past_the_section_yields_no_icon() {
         let (full, _) = single_icon(0x77);
         let mut broken = full;
@@ -1068,6 +1253,140 @@ mod tests {
                 .collect::<Vec<_>>(),
             [&payload]
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_group_the_bounded_view_cannot_read_does_not_hand_the_icon_to_the_next() {
+        // `BUG-40`'s shape, and the reason "a bounded parse that yields an
+        // icon is final" was false. Group 1's payload lives in a second
+        // section, past both `.rsrc`'s raw bytes and the probe; group 2's
+        // stays in `.rsrc`. The group loop takes the lowest-numbered group it
+        // can *read* (`exe_icons.py:228`), so the bounded view does not
+        // report a *missing* icon — it reports group 2's, which is a real,
+        // well-formed, wrong one.
+        //
+        // Measured against `gamehandler/exe_icons.py` on these exact bytes:
+        // `extract_icon` returns group 1's image (the 0xAA fill, which is
+        // what Windows shows), while `icon_bytes` over the first [`PROBE_BYTES`]
+        // returns group 2's (0xBB) — the wrong answer the bounded parse would
+        // have given had it been allowed to settle the question. Both are
+        // asserted below, so neither a parse that refuses everything nor one
+        // that answers from the wrong group can pass.
+        const DATA_RVA: u32 = 0x2000;
+        const PAYLOAD_OFF: usize = 96 * 1024;
+        let first = dib_icon(16, 0xAA);
+        let second = dib_icon(16, 0xBB);
+        let group1 = group_icon(&[(16, first.len(), 1)]);
+        let group2 = group_icon(&[(16, second.len(), 2)]);
+        let section = resource_section_with_groups(
+            &[(1, first.clone()), (2, second.clone())],
+            &[(1, group1.clone()), (2, group2)],
+        );
+        let mut pe = build_pe(&section, false, None);
+        pe[0x80 + 6..0x80 + 8].copy_from_slice(&2u16.to_le_bytes());
+        let rsrc_header = 0x80 + 24 + 224;
+        let mut data_header = b".data\x00\x00\x00".to_vec();
+        data_header.extend_from_slice(&(group1.len() as u32).to_le_bytes());
+        data_header.extend_from_slice(&DATA_RVA.to_le_bytes());
+        data_header.extend_from_slice(&(group1.len() as u32).to_le_bytes());
+        data_header.extend_from_slice(&(PAYLOAD_OFF as u32).to_le_bytes());
+        data_header.extend_from_slice(&0u32.to_le_bytes());
+        data_header.extend_from_slice(&0u32.to_le_bytes());
+        data_header.extend_from_slice(&0u16.to_le_bytes());
+        data_header.extend_from_slice(&0u16.to_le_bytes());
+        data_header.extend_from_slice(&0x40000040u32.to_le_bytes());
+        pe.splice(
+            rsrc_header + 40..rsrc_header + 40,
+            data_header.iter().copied(),
+        );
+        let rsrc_raw = RSRC_FILE_OFFSET + 40;
+        pe[rsrc_header + 20..rsrc_header + 24].copy_from_slice(&(rsrc_raw as u32).to_le_bytes());
+        let entry = rsrc_raw + group_data_entry_offset(2, 2, 0);
+        pe[entry..entry + 4].copy_from_slice(&DATA_RVA.to_le_bytes());
+        pe[entry + 4..entry + 8].copy_from_slice(&(group1.len() as u32).to_le_bytes());
+        pe.resize(PAYLOAD_OFF, 0);
+        pe.extend_from_slice(&group1);
+
+        let bounded = read_ico(&icon_bytes(&pe[..PROBE_BYTES]).expect("group 2's icon"));
+        assert_eq!(bounded.len(), 1);
+        assert_eq!(bounded[0].2, second);
+
+        let dir = scratch_dir("two-groups");
+        let path = dir.join("split.exe");
+        std::fs::write(&path, &pe).expect("write the fixture");
+        let blob = extract_icon(&path).expect("group 1's icon");
+        let images = read_ico(&blob);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].2, first);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_hostile_executable_is_never_a_panic() {
+        // The parser walks offsets from data nobody in this process wrote, so
+        // the contract for every one of them is a value. Structured rather
+        // than random: **every** prefix length of a real executable is tried,
+        // because that is the boundary the EOF check lived at and the one a
+        // hand-written bounds check gets wrong, and each 4-byte header field
+        // the parser follows is poisoned in turn. The corpus is checked for
+        // *reach* before the panic-freedom is claimed — a corpus of inputs
+        // that all fail the `MZ` test would pass this test while touching
+        // nothing — by requiring that it produces both an icon and a refusal.
+        let small = dib_icon(16, 0x11);
+        let large = dib_icon(32, 0x22);
+        let section = resource_section(
+            &[(1, small.clone()), (2, large.clone())],
+            &group_icon(&[(16, small.len(), 1), (32, large.len(), 2)]),
+        );
+        let pe = build_pe(&section, false, None);
+
+        let mut corpus: Vec<Vec<u8>> = (0..=pe.len()).map(|end| pe[..end].to_vec()).collect();
+        // `lfanew`, section count, the size/count of every optional-header
+        // field the walk reads, the resource directory entry, and the first
+        // section header's four words.
+        for offset in [
+            0x3C, 0x86, 0x94, 0x98, 0x9C, 0xA0, 0xE0, 0xE4, 0xE8, 0xEC, 0x180, 0x184, 0x188, 0x18C,
+            0x190,
+        ] {
+            for value in [0u32, 1, 0x00FF_FFFF, 0x7FFF_FFFF, 0xFFFF_FFFF] {
+                let mut broken = pe.clone();
+                if offset + 4 <= broken.len() {
+                    broken[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+                    corpus.push(broken);
+                }
+            }
+        }
+        // Deterministic single-byte corruption over the whole fixture
+        // (xorshift, so no dependency and no flaky case).
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        for _ in 0..1024 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let mut broken = pe.clone();
+            let index = (state as usize) % broken.len();
+            broken[index] = (state >> 32) as u8;
+            corpus.push(broken);
+        }
+        assert!(corpus.len() > 5_000, "the corpus is {}", corpus.len());
+
+        let parsed: Vec<Option<Vec<u8>>> = corpus.iter().map(|case| icon_bytes(case)).collect();
+        let icons = parsed.iter().filter(|icon| icon.is_some()).count();
+        // Measured: 7,758 cases, 1,075 of them yielding an icon and 6,683
+        // refused — so neither assertion below is satisfied by an empty corpus
+        // and the panic-freedom above is claimed over inputs that reached the
+        // walk rather than the `MZ` test.
+        assert!(icons > 0, "no case in the corpus produced an icon");
+        assert!(icons < corpus.len(), "no case in the corpus was refused");
+
+        // The same corpus through the file path the cover lookup uses.
+        let dir = scratch_dir("hostile");
+        for (index, case) in corpus.iter().enumerate() {
+            let path = dir.join(format!("case-{index}.exe"));
+            std::fs::write(&path, case).expect("write the case");
+            let _ = extract_icon(&path);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
