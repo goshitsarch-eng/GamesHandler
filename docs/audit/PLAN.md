@@ -62,14 +62,14 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 32 | 30 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
+| `BUGS.md` | 48 | 33 | 31 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 17 | 16 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 15 | 13 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 7 `FIXED` |
 | `PACKAGING.md` | 10 | 8 | 6 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
-`BUGS.md`'s 16 tail-less rows are its fifteen open `P3` rows plus the withdrawn
+`BUGS.md`'s 15 tail-less rows are its fourteen open `P3` rows plus the withdrawn
 `BUG-11`, which carries no severity because it is not a defect. That sentence read
 "20 … nineteen" until this revision, and was wrong twice over: the row count was
 measurable from the table above it, and the sentence explaining the number agreed
@@ -132,18 +132,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 51 | 39 | 0 | 12 |
-| P3 | 49 | 10 | 0 | 39 |
-| **Total** | **129** | **78** | **0** | **51** |
+| P3 | 49 | 11 | 0 | 38 |
+| **Total** | **129** | **79** | **0** | **50** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 16 | 0 | 9 |
-| `BUG-xx` | `BUGS.md` | 46 | 30 | 0 | 16 |
+| `BUG-xx` | `BUGS.md` | 46 | 31 | 0 | 15 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 6 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 13 | 0 | 16 |
-| **Total** | | **129** | **78** | **0** | **51** |
+| **Total** | | **129** | **79** | **0** | **50** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -318,7 +318,7 @@ across families, not within them.
 | `BUG-34` | The Library card's and row's "More actions" button and tooltip have no port equivalent | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-42` | Three path/identifier conversions that do not do what the code around them says | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-43` | Two more "the doc says the two agree" pairs, both verified sound-but-for-the-claim | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-44` | An unreadable runners directory renders as a normal, empty, system-Wine-only list | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
+| `BUG-44` | An unreadable runners directory renders as a normal, empty, system-Wine-only list | S1 | — | `c7d4299` — `scan_installed` answers `Complete`/`Partial`/`Unreadable`; a real `chmod 000` directory, and the entry-level half is recorded as untestable rather than mocked.| FIXED |
 | `BUG-45` | python_repr's string branch is not repr() and duplicates — incorrectly — the python_str_repr twelve lines above it | S1 | — | `1143aed` — the string arm delegates to `python_str_repr`; a regression test compares the two functions and fails on the old body.| FIXED |
 | `PERF-07` | The 27 threads are all demand-spawned runtime workers; none polls, and two of them exit on their own | S3 | — | Recorded as not-a-finding unless a poller is found; verify by re-running the thread-naming probe over a 60 s idle run. | OPEN |
 | `PERF-08` | Minor RSS drift that is not attributable to a leak on the evidence gathered | S3 | — | Re-measure with the window held at one size; verify RSS is flat across forced redraws at a constant size. | OPEN |
