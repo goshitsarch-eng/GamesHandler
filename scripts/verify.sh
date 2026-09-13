@@ -1618,7 +1618,21 @@ stage_cargo_sources_fresh() {
     fi
 
     rc=0
-    python3 -c "$COMPARE_PY" "$committed" "$tmp/cargo-sources.json" || rc=$?
+    # `"$py"` and not `python3` (PKG-09). The generator just ran under the
+    # discovered interpreter, which is the venv beside the script whenever one
+    # exists — and the stage's own advice, a few lines up, is to create exactly
+    # that venv. Running the comparison under a *different* interpreter than the
+    # one that produced the file it is comparing would make the two sides of this
+    # check disagree about anything version-sensitive, and the failure would look
+    # like a stale cargo-sources.json rather than a split interpreter. The helper
+    # is pure `json` and `re` today, so the skew is latent rather than live; that
+    # is the reason to close it now, while it costs nothing, rather than the
+    # reason to leave it.
+    #
+    # Asserting that `python3` and `$py` are the same interpreter was the row's
+    # other suggestion, and it is the wrong one here: it would fail the stage on
+    # precisely the venv setup this stage tells the user to create.
+    "$py" -c "$COMPARE_PY" "$committed" "$tmp/cargo-sources.json" || rc=$?
     rm -rf "$tmp"
     [ "$rc" -eq 0 ] || return 1
     return 0

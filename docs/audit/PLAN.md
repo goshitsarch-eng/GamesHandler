@@ -66,7 +66,7 @@ those rows contain `Status:`:
 | `ARCHITECTURE.md` | 26 | 19 | 18 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 20 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 8 | 7 `FIXED`, 1 `PARTIAL` |
-| `PACKAGING.md` | 11 | 9 | 7 `FIXED`, 2 `PARTIAL` |
+| `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
 `BUGS.md`'s 14 tail-less rows are its thirteen open `P3` rows plus the withdrawn
@@ -135,18 +135,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 12 | 0 | 37 |
-| **Total** | **130** | **87** | **0** | **43** |
+| P3 | 49 | 13 | 0 | 36 |
+| **Total** | **130** | **88** | **0** | **42** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 18 | 0 | 7 |
 | `BUG-xx` | `BUGS.md` | 46 | 32 | 0 | 14 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
-| `PKG-xx` | `PACKAGING.md` | 11 | 7 | 0 | 4 |
+| `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 17 | 0 | 12 |
-| **Total** | | **130** | **87** | **0** | **43** |
+| **Total** | | **130** | **88** | **0** | **42** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -331,7 +331,7 @@ across families, not within them.
 | `PKG-06` | The metainfo has no screenshots and no keywords | S6 | — | Add a screenshot and keywords to the metainfo; verify with `appstreamcli validate --pedantic`. | PARTIAL |
 | `PKG-07` | The AppStream validator is not clean under --pedantic: it prints a warning while exiting 0, and the validator the project's own meson test names could not be run at all | S6 | — | Resolve the warning under `--pedantic` and run the meson test the project names; verify both exit clean. | OPEN |
 | `PKG-08` | A comment in data/meson.build asserts a packaging regression that does not exist, and its cited evidence is falsified by the manifest | S6 | — | Correct or delete the comment; verify the cited evidence against the manifest. | FIXED |
-| `PKG-09` | flatpak-contents and cargo-sources both shell out to a bare python3 for their comparison helpers, independently of the interpreter chosen to run the generator | S6 | — | Use the same interpreter the generator was run with; verify by running both stages under a PATH without a bare `python3`. | OPEN |
+| `PKG-09` | flatpak-contents and cargo-sources both shell out to a bare python3 for their comparison helpers, independently of the interpreter chosen to run the generator | S6 | — | Use the same interpreter the generator was run with; verify by running both stages under a PATH without a bare `python3`. **Status: FIXED.** The comparison in `stage_cargo_sources_fresh` runs under `$py` (the discovered interpreter) instead of a bare `python3`. The row's `:1534` citation is stale — that helper is in `stage_cargo_sources`, a different stage with no discovered interpreter — and its alternative (assert the two interpreters match) would fail on the venv the stage itself recommends. Verified with a probe interpreter in the venv position: the generator and the comparison are both invoked through it.| FIXED |
 | `SEC-05` | The Proton runner archive is downloaded from a URL taken verbatim out of the releases JSON, with no scheme and no origin check — unlike the installer download path, which applies both | S4 | — | Apply the same scheme and origin check the installer path applies; verify with a releases payload naming a `file:` and an off-origin URL. | PARTIAL `8106f1e` — `validate_runner_download_url` requires `https` through the same `url_parts` the installer allowlist uses, called from `install_with` before anything is staged, and the new `RunnerError::UntrustedOrigin { url }` carries what it refused. Four mutations fire on four distinct named tests, the fourth being the positive control that the request goes to the URL that was checked. The host-pin half of the suggested fix was **dropped after measurement, not skipped**: every asset of the live Proton-GE listing is on `github.com` and each redirects once to `release-assets.githubusercontent.com`, so no host allowlist is writable, and `RunnerFamily` has no `allowed_hosts` field to port. The redirect target is judged by nothing, and that residue is recorded on the specialist row. |
 | `SEC-06` | RunnerManager::get joins a games.json-sourced runner_id onto the runners directory without validating it, where three other sites validate the same kind of string | S4 | — | Validate the `runner_id` the way the three other sites do; verify with a `games.json` carrying `../../etc`. | FIXED |
 | `SEC-07` | open_url performs no scheme validation, and its message payload is a plain String rather than a catalogue-constant type | S4 | — | Validate the scheme in `open_url` itself and give the payload a catalogue-constant type; verify with a non-`http(s)` producer. | OPEN |
