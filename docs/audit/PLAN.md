@@ -64,7 +64,7 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 34 | 32 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 19 | 18 `FIXED`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 19 | 16 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
+| `COSMIC-UX.md` | 30 | 20 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 8 | 7 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 9 | 7 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
@@ -134,9 +134,9 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 52 | 45 | 0 | 7 |
+| P2 | 52 | 46 | 0 | 6 |
 | P3 | 49 | 12 | 0 | 37 |
-| **Total** | **130** | **86** | **0** | **44** |
+| **Total** | **130** | **87** | **0** | **43** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -145,8 +145,8 @@ advocate reviews every row before it is called done and owns no row.
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 7 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
-| `UX-xx` | `COSMIC-UX.md` | 29 | 16 | 0 | 13 |
-| **Total** | | **130** | **86** | **0** | **44** |
+| `UX-xx` | `COSMIC-UX.md` | 29 | 17 | 0 | 12 |
+| **Total** | | **130** | **87** | **0** | **43** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -293,7 +293,7 @@ across families, not within them.
 | `UX-17` | Plate initials are drawn white-on-accent at roughly 3:1, below the 4.5:1 required at the size they are drawn | S2 | — | Raise the initials' contrast to 4.5:1 at the drawn size; verify the computed ratio against the darkest gradient stop. | FIXED |
 | `UX-18` | No text_input in the app is ever given .label() or .helper_text(), and the visible labels are unassociated sibling text widgets in a Row, so they identify a field to a sighted user and to nothing else | S2 | — | Give each `text_input` a label or helper text; verify the field's accessible name. **Half done, half refuted, and the refuted half is the one the row proposed.** The verification half holds and is what closes the finding: `crates/app/src/view/a11y.rs::input`/`input_with_id` publish a `Role::TextInput` node whose `label` is the field's caption and whose `value` is its contents, read off the real page by `form.rs`'s `every_wrapped_control_on_the_real_form_is_a_tab_stop_and_a_named_node`. The `.label(...)` half is **refused on measurement**: the toolkit paints its label *inside* the widget in a layout child above the box (`.../a401af8/src/widget/text_input/input.rs:2606-2614`, `:2716-2732`), and a caption is already drawn at all four sites — `field_row`'s `text::body(row.label)` beside the control (`view/form.rs:602-609`, the reference's own beside-the-field arrangement at `gamehandler/qml/GameFormPage.qml:83`, `:111`, `:117`), `LABEL_CATEGORY` for the category field, and the search boxes' placeholders — so `.label(...)` would draw each string twice and the category field's three times. `TextInput::label` is also not what carries accessibility here: libcosmic's `src/` holds five `accesskit` occurrences, all in `button/widget.rs` and `wayland/tooltip/widget.rs`, so no node exists for a labelled input in this stack either way. **The defect that was actually here was in the test asserting the row**: `a_text_input_publishes_its_label_and_value` took `"Name"` for both placeholder and caption, so a wrapper forwarding the placeholder passed it — the audit's own recurring shape, inside a test written to close this row. Repaired to `text_input("Half-Life", "Half-Life")` against the caption `"Game name"`; mutation-proved by replacing the wrapper's caption with `String::new()`, which fails `left: Some("")`, `right: Some("Game name")`. | FIXED |
 | `UX-19` | Card surfaces are hand-built three times as a local card_style closure, and two of the three hardcode the radius their own comment says is kept in sync | S2 | — | `5a03977` — same fix as `ARCH-17`; one surface, three pages. The class route the row suggested was measured and rejected as a restyle (radius 8.0/component vs 14.0/window).| FIXED |
-| `UX-20` | libcosmic's purpose-built settings widgets are used nowhere in the app | S2 | — | Adopt `settings::section`/`item`/`item_row`, or record why the hand-built rows are kept; verify by reading the settings view. | OPEN |
+| `UX-20` | libcosmic's purpose-built settings widgets are used nowhere in the app | S2 | — | Adopt `settings::section`/`item`/`item_row`, or record why the hand-built rows are kept; verify by reading the settings view. **Status: FIXED.** The two byte-identical private rows (`view::settings`'s `row`, `view::form`'s `field_row`) are deleted and both pages call `view::settings_row`, which delegates to `settings::item_row`. **The row's premise about spacing was wrong and measuring it is what settled the split of the fix**: `item_row` uses `theme::spacing().space_xs`, whose default is 12 (`cosmic-theme src/model/spacing.rs:34`) — the same literal the deleted helpers wrote — so there was no drift to fix and `UX-23` is not advanced by this. The `settings::section` half of the recommendation was declined on measurement: its header is `text::heading` (14 px) where every heading here is `title4` (20 px), and it is a `ListColumn`, so adopting it would resize headings and restructure two pages. The headings were de-duplicated into `view::settings_section` instead; the heading *level* is left to `UX-22`. Mutation-checked: `the_shared_row_is_the_frameworks_row` fails when the row stops delegating to `item_row`, and `the_shared_heading_is_title4_and_not_the_toolkits_section` fails when the heading preset is swapped.| FIXED |
 ### P3 — 49
 
 | ID | Finding | Owner | Deps | Verification | Status |

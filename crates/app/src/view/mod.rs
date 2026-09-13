@@ -94,6 +94,79 @@
 /// users and is a property of the layer, not of a screen.
 pub const GUTTER: u16 = 18;
 
+/// The label-and-control row the Settings page and the game form both draw
+/// (`UX-20`).
+///
+/// **This calls [`cosmic::widget::settings::item_row`] rather than
+/// reimplementing it.** The row it replaces was hand-written twice —
+/// `view::settings`'s `row` and `view::form`'s `field_row`, with byte-identical
+/// bodies — and the rationale recorded against replacing it argued about
+/// *`iced`'s `form`*, which is a layout with its own opinion about where a label
+/// goes. `item_row` is not that: it is a plain `Row` carrying the theme's own
+/// spacing and centre alignment and leaving the label to its caller. So the
+/// recorded objection was to a widget that was never the alternative here.
+///
+/// Passing [`cosmic::widget::text::body`] keeps the reference's label
+/// typography, and keeps the label a real `Text` child, which is the property
+/// `view::settings`'s
+/// `the_close_on_launch_label_is_drawn_and_its_explanation_is_not_observable`
+/// measures against — [`cosmic::widget::settings::item`] would have used the
+/// plain `text()` preset instead, which is why the helper is used at
+/// `item_row`'s level rather than through `item`.
+///
+/// **The metrics are the same as the version this replaces, measured rather
+/// than assumed.** `item_row` sets `spacing(theme::spacing().space_xs)`,
+/// `align_y(Center)` and `width(Fill)` (`libcosmic
+/// src/widget/settings/item.rs:52-58`), and `cosmic-theme`'s default gives
+/// `space_xs: 12` (`src/model/spacing.rs:34`) — exactly the literal the
+/// hand-rolled pair wrote. Adopting it is a change of *who owns the number*,
+/// not of what the page looks like, which is the whole reason to use the
+/// framework's helper for the job.
+///
+/// **Why this is here and not in either page.** The same reason [`GUTTER`] is:
+/// it has two users, and it is a property of the layer rather than of a screen.
+/// Written generic over `M` so that it stays on the pure side of the split the
+/// module docs describe — it names no `Message` and reads no `State`.
+pub fn settings_row<'a, M: 'static>(
+    label: &'a str,
+    control: cosmic::Element<'a, M>,
+) -> cosmic::Element<'a, M> {
+    use cosmic::widget::{settings, space, text};
+    settings::item_row(vec![
+        text::body(label).into(),
+        space::horizontal().into(),
+        control,
+    ])
+    .into()
+}
+
+/// The section heading the Settings page and the game form both draw (`UX-20`).
+///
+/// De-duplicated from two byte-identical private copies, but **deliberately not
+/// replaced with [`cosmic::widget::settings::section`]**, which is the other
+/// half of `UX-20`'s recommendation. Two measured reasons, and the second is the
+/// one that decides it:
+///
+/// * `Section::title` renders [`cosmic::widget::text::heading`], which is 14 px
+///   bold (`libcosmic src/widget/text.rs:80-87`), where every heading in this app
+///   is `title4`, 20 px bold (`:67-74`). Swapping them resizes every section
+///   heading on two pages — a visible change, and a typography decision, not a
+///   refactor.
+/// * `Section` is not a heading widget. It is a `ListColumn` with an optional
+///   header, so adopting it changes the *structure* of each page body: the rows
+///   under a heading stop being siblings in the page column and become list
+///   entries, which is what gives COSMIC Settings its separators. The reference
+///   this port answers to draws section headings as `Kirigami.Separator`s with
+///   no list grouping between the rows, so adopting `Section` would introduce a
+///   structural difference from the reference to remove a duplication.
+///
+/// The heading *level* question is real and separate, and it is `UX-22`'s — a
+/// row that asks for it can decide it there, once, for every heading in the app,
+/// instead of as a side effect of this one.
+pub fn settings_section<'a, M: 'static>(heading: &'a str) -> cosmic::Element<'a, M> {
+    cosmic::widget::text::title4(heading).into()
+}
+
 pub mod a11y;
 pub mod badge;
 pub mod cover;
@@ -277,5 +350,151 @@ mod tests {
                  leaving the contract describing something the code no longer is."
             );
         }
+    }
+
+    /// The shared row is the framework's, and it renders what the duplicated
+    /// pair rendered (`UX-20`).
+    ///
+    /// **Measured, not read off the source.** The finding was that
+    /// `cosmic::widget::settings::` had *zero* call sites while two
+    /// byte-identical private helpers did its job, so the thing worth pinning is
+    /// that the shared helper produces the toolkit's row shape — not that some
+    /// file contains the string `item_row`.
+    ///
+    /// Three properties are asserted, all of them `item_row`'s own
+    /// (`libcosmic src/widget/settings/item.rs:50-58`):
+    ///
+    /// * the label reaches the traversal as its own `Text` child, which is what
+    ///   makes `view::settings`'s drawn-strings assertions able to see the
+    ///   reference's form labels, and which `settings::item` would have lost —
+    ///   it uses the plain `text()` preset, so this is also why the helper is
+    ///   built on `item_row` rather than on `item`;
+    /// * the control sits **trailing** the label, which is what makes this a
+    ///   settings row rather than a stack;
+    /// * the label and the control are **vertically centred** on each other,
+    ///   which is `item_row`'s `align_y(Alignment::Center)`.
+    ///
+    /// The last two are asserted against a `Column` holding the same three
+    /// children as the sensitivity control: a `Column` puts the control below the
+    /// label rather than to its right, so if these assertions could not tell the
+    /// two apart they would be asserting nothing about which composition is
+    /// drawn. That negative half is the point — the first draft of this test
+    /// compared row *heights* and passed against a hand-rolled row with a
+    /// deliberately wrong spacing, because a horizontal `Row`'s spacing does not
+    /// change its height at all.
+    #[test]
+    fn the_shared_row_is_the_frameworks_row() {
+        use cosmic::iced::Length;
+        use cosmic::widget::{Column, Id, Space, container, text};
+
+        fn laid_out<M: Clone + 'static>(
+            el: &mut cosmic::Element<'_, M>,
+        ) -> (Vec<String>, f32, f32, f32, f32) {
+            let seen = super::testkit::traversal_at_width(el, 600.0);
+            let strings = super::testkit::texts(&seen)
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+            let label = seen
+                .iter()
+                .find(|s| s.text.as_deref() == Some("Label"))
+                .expect("the traversal reported the label's bounds");
+            // The control carries an `Id` because a bare `Space` reports no
+            // bounds at all — it is neither a container nor a text — so a helper
+            // that looked for it by size alone would find nothing and the test
+            // below would fail for a reason unrelated to what it is checking.
+            let control = seen
+                .iter()
+                .find(|s| s.id.as_ref() == Some(&Id::new("control")))
+                .expect("the traversal reported the control's bounds");
+            (
+                strings,
+                control.bounds.x,
+                label.bounds.x,
+                label.bounds.width,
+                (control.bounds.center_y() - label.bounds.center_y()).abs(),
+            )
+        }
+
+        let control = || {
+            container(Space::new())
+                .id(Id::new("control"))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0))
+        };
+        let mut shared: cosmic::Element<'_, ()> = super::settings_row("Label", control().into());
+        let (strings, control_x, label_x, label_w, centre_delta) = laid_out(&mut shared);
+
+        assert!(
+            strings.iter().any(|s| s == "Label"),
+            "the shared row's label must reach the traversal as its own `Text` child, \
+             which is what makes the settings page's drawn-strings assertions able to \
+             see the reference's form labels. Reported: {strings:?}"
+        );
+        assert!(
+            control_x >= label_x + label_w,
+            "the control must sit trailing the label, not over it: control at {control_x}, \
+             label at {label_x} with width {label_w}"
+        );
+        assert!(
+            centre_delta < 1.0,
+            "the label and the control must be vertically centred on each other \
+             (`item_row`'s `align_y(Center)`); their centres differ by {centre_delta} px"
+        );
+
+        // Sensitivity: the same three children in a `Column` are stacked, not
+        // laid out as a row, so the trailing assertion above must not hold for it.
+        let mut stacked: cosmic::Element<'_, ()> = Column::new()
+            .push(text::body("Label"))
+            .push(control())
+            .spacing(12)
+            .align_x(cosmic::iced::Alignment::Center)
+            .into();
+        let (_, stacked_x, stacked_label_x, _, _) = laid_out(&mut stacked);
+        assert!(
+            stacked_x < stacked_label_x + 200.0,
+            "a `Column` put the control at {stacked_x} against a label at {stacked_label_x}, \
+             which the trailing assertion would also have accepted — this test cannot \
+             distinguish a settings row from a stack and is therefore asserting nothing"
+        );
+    }
+
+    /// The heading is deliberately *not* `settings::section`, and the reason is
+    /// a measurement (`UX-20`).
+    ///
+    /// The row's recommendation was to replace both duplicated helpers with the
+    /// toolkit's two. The row is right about the *rows* and this file follows it
+    /// there; it would silently resize every section heading in the app if it
+    /// were followed here. `Section::title` renders `text::heading` — 14 px — and
+    /// every heading in this app is `title4`, 20 px
+    /// (`libcosmic src/widget/text.rs:67-74` against `:80-87`).
+    ///
+    /// Pinned as a measurement so that adopting `settings::section` later is a
+    /// decision someone makes on purpose: if the sizes are made to agree, this
+    /// test fails and points at the row that should record it.
+    #[test]
+    fn the_shared_heading_is_title4_and_not_the_toolkits_section() {
+        fn size_of(el: &mut cosmic::Element<'_, ()>) -> f32 {
+            super::testkit::traversal(el)
+                .first()
+                .map(|seen| seen.bounds.height)
+                .expect("the traversal reported the heading's own bounds")
+        }
+
+        let mut shared = super::settings_section("Behaviour");
+        let mut toolkit = cosmic::widget::text::heading("Behaviour").into();
+        let mut title4 = cosmic::widget::text::title4("Behaviour").into();
+
+        assert_eq!(
+            size_of(&mut shared),
+            size_of(&mut title4),
+            "the shared heading must render exactly as `title4` does"
+        );
+        assert!(
+            size_of(&mut toolkit) < size_of(&mut title4),
+            "`text::heading` and `text::title4` now measure the same, so \
+             `settings::section`'s smaller header is no longer a reason to keep this \
+             helper — `UX-22` owns that decision, and this is where it gets made"
+        );
     }
 }

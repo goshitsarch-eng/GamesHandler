@@ -69,6 +69,7 @@ use crate::state::{FormField, GameForm};
 use crate::view::cover_cache::CoverCache;
 
 use super::a11y;
+use super::{settings_row, settings_section};
 
 // ---------------------------------------------------------------------------
 // The reference's own words. Every one of these is a string
@@ -635,36 +636,6 @@ pub struct GameFormView<'a> {
     pub covers: &'a CoverCache,
 }
 
-/// A labelled row: the reference's `FormLayout` label on the left, the control on
-/// the right.
-///
-/// Hand-rolled for the reason [`super::settings`]'s `row` is: the reference's
-/// form labels are part of the visible page and each one is named here, so
-/// inheriting a layout's own idea of where a label goes would make that a
-/// property of the toolkit.
-///
-/// It also puts every row label in a `text::body` child, which is what makes the
-/// form's copy reachable by `drawn_strings` in `main.rs` — unlike a `Toggler`'s
-/// own label (finding #46). The switches' *subtitles* are not, and that limit is
-/// measured rather than assumed: `main.rs`'s
-/// `the_toggler_labels_do_not_reach_the_text_operation` hands a `Toggler` one of
-/// this module's own [`ToggleRow::subtitle`]s and requires the traversal to come
-/// back empty.
-fn field_row<'a>(label: &'a str, control: Element<'a, Message>) -> Element<'a, Message> {
-    Row::new()
-        .push(text::body(label))
-        .push(control)
-        .spacing(12)
-        .align_y(cosmic::iced::Alignment::Center)
-        .width(Length::Fill)
-        .into()
-}
-
-/// A section heading, as the reference's `Kirigami.Separator` with a label is.
-fn section<'a>(heading: &'a str) -> Element<'a, Message> {
-    text::title4(heading).into()
-}
-
 /// A text row's control.
 ///
 /// The `enabled` flag is **not** applied to the input itself: `TextInput` in the
@@ -795,12 +766,12 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
     // ---- Game --------------------------------------------------------------
     body = body
         .push(text::title3(title(is_new)))
-        .push(section(SECTION_GAME));
+        .push(settings_section(SECTION_GAME));
     for row in &TEXT_ROWS[..4] {
         let live = row_enabled(row.windows_only, is_linux);
-        body = body.push(field_row(row.label, text_control(row, form, live)));
+        body = body.push(settings_row(row.label, text_control(row, form, live)));
     }
-    body = body.push(field_row(
+    body = body.push(settings_row(
         LABEL_TYPE,
         a11y::dropdown(
             dropdown(
@@ -891,9 +862,9 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
     let preview_plan = super::widgets::cover_plan(page.covers, &preview_game);
 
     body = body
-        .push(section(SECTION_LIBRARY))
-        .push(field_row(LABEL_CATEGORY, category_row.into()))
-        .push(field_row(LABEL_COVER, {
+        .push(settings_section(SECTION_LIBRARY))
+        .push(settings_row(LABEL_CATEGORY, category_row.into()))
+        .push(settings_row(LABEL_COVER, {
             // The reference's row, in its own order (`GameFormPage.qml:134-163`):
             // `coverPreview`, then the "No cover yet" label **in its place**,
             // then the two buttons. The preview is portrait and *fixed* — the
@@ -959,13 +930,13 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
     //
     // The prefix row below it is a text field, so it *is* drawn disabled, by the
     // device [`text_control`] describes.
-    body = body.push(section(SECTION_RUNNER));
+    body = body.push(settings_section(SECTION_RUNNER));
     if windows || !RUNNER_ROW_HIDDEN_FOR_LINUX {
         let owned = choices.clone();
         let labels = crate::view::settings::runner_labels(&choices);
         let shown = runner_index(&choices, form.field(FormField::Runner));
         let count = labels.len();
-        body = body.push(field_row(
+        body = body.push(settings_row(
             LABEL_RUNNER,
             a11y::dropdown(
                 dropdown(labels.clone(), Some(shown), move |index| {
@@ -988,7 +959,7 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
             .into(),
         ));
     }
-    body = body.push(field_row(
+    body = body.push(settings_row(
         TEXT_ROWS[4].label,
         text_control(
             &TEXT_ROWS[4],
@@ -998,31 +969,31 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
     ));
 
     // ---- Launch options ----------------------------------------------------
-    body = body.push(section(SECTION_LAUNCH));
+    body = body.push(settings_section(SECTION_LAUNCH));
     for row in &LAUNCH_TOGGLES {
         let live = row_enabled(row.windows_only, is_linux);
-        body = body.push(field_row(row.label, toggle_control(row, form, live)));
+        body = body.push(settings_row(row.label, toggle_control(row, form, live)));
     }
 
     // ---- Compatibility -----------------------------------------------------
-    body = body.push(section(SECTION_COMPAT));
+    body = body.push(settings_section(SECTION_COMPAT));
     for row in &COMPAT_TOGGLES {
         let live = row_enabled(row.windows_only, is_linux);
-        body = body.push(field_row(row.label, toggle_control(row, form, live)));
+        body = body.push(settings_row(row.label, toggle_control(row, form, live)));
     }
-    body = body.push(field_row(
+    body = body.push(settings_row(
         DESKTOP_SIZE_ROW.label,
         text_control(&DESKTOP_SIZE_ROW, form, desktop_size_enabled(form)),
     ));
 
     // ---- Advanced ----------------------------------------------------------
     body = body
-        .push(section(SECTION_ADVANCED))
-        .push(field_row(
+        .push(settings_section(SECTION_ADVANCED))
+        .push(settings_row(
             TEXT_ROWS[5].label,
             text_control(&TEXT_ROWS[5], form, true),
         ))
-        .push(field_row(
+        .push(settings_row(
             ENVIRONMENT_ROW.label,
             text_control(&ENVIRONMENT_ROW, form, true),
         ));

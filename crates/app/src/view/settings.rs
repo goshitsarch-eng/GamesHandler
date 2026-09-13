@@ -26,11 +26,12 @@
 
 use cosmic::Element;
 use cosmic::iced::Length;
-use cosmic::widget::{Column, Row, container, scrollable, text, toggler};
+use cosmic::widget::{Column, container, scrollable, text, toggler};
 use gamehandler_core::runners::RunnerManager;
 use gamehandler_core::settings::{COLOR_SCHEMES, Settings, VIEW_MODES};
 
 use super::a11y;
+use super::{settings_row, settings_section};
 use crate::Message;
 
 /// The colour-scheme selector's `(key, label)` pairs, in `SettingsPage.qml:44-48`
@@ -475,27 +476,6 @@ pub struct SettingsPage<'a> {
     pub runners: &'a RunnerManager,
 }
 
-/// A labelled row: the reference's `FormLayout` label on the left, the control
-/// on the right.
-///
-/// Hand-rolled rather than `iced`'s `form`, because the reference's form labels
-/// are part of the visible page (P-66 names each one) and inheriting a layout's
-/// own idea of where a label goes would make that a property of the toolkit.
-fn row<'a>(label: &'a str, control: Element<'a, Message>) -> Element<'a, Message> {
-    Row::new()
-        .push(text::body(label))
-        .push(control)
-        .spacing(12)
-        .align_y(cosmic::iced::Alignment::Center)
-        .width(Length::Fill)
-        .into()
-}
-
-/// A section heading, as the reference's `Kirigami.Separator` with a label is.
-fn section<'a>(heading: &'a str) -> Element<'a, Message> {
-    text::title4(heading).into()
-}
-
 /// The row label and the selector it names, as a pair that cannot drift.
 ///
 /// **The keyboard step and the accessible name both come from here, and that is
@@ -544,8 +524,8 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
 
     // ---- Appearance --------------------------------------------------------
     body = body
-        .push(section(SECTION_APPEARANCE))
-        .push(row(
+        .push(settings_section(SECTION_APPEARANCE))
+        .push(settings_row(
             LABEL_COLOR_SCHEME,
             selector(
                 LABEL_COLOR_SCHEME,
@@ -554,7 +534,7 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
                 color_scheme_selection,
             ),
         ))
-        .push(row(
+        .push(settings_row(
             LABEL_LAYOUT,
             selector(
                 LABEL_LAYOUT,
@@ -573,26 +553,28 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
     let choices = page.runners.choices();
     let runner_labels = runner_labels(&choices);
     let runner_shown = default_runner_index(&choices, &page.settings.default_runner);
-    body = body.push(section(SECTION_NEW_GAMES)).push(row(
-        LABEL_DEFAULT_RUNNER,
-        a11y::dropdown(
-            cosmic::widget::dropdown(runner_labels.clone(), Some(runner_shown), {
-                let choices = choices.clone();
-                move |index| default_runner_selection(&choices, index)
-            }),
+    body = body
+        .push(settings_section(SECTION_NEW_GAMES))
+        .push(settings_row(
             LABEL_DEFAULT_RUNNER,
-            runner_labels.get(runner_shown).cloned(),
-            {
-                let choices = choices.clone();
-                let count = runner_labels.len();
-                move |delta| {
-                    let next = runner_shown.checked_add_signed(delta as isize)?;
-                    (next < count).then(|| default_runner_selection(&choices, next))
-                }
-            },
-        )
-        .into(),
-    ));
+            a11y::dropdown(
+                cosmic::widget::dropdown(runner_labels.clone(), Some(runner_shown), {
+                    let choices = choices.clone();
+                    move |index| default_runner_selection(&choices, index)
+                }),
+                LABEL_DEFAULT_RUNNER,
+                runner_labels.get(runner_shown).cloned(),
+                {
+                    let choices = choices.clone();
+                    let count = runner_labels.len();
+                    move |delta| {
+                        let next = runner_shown.checked_add_signed(delta as isize)?;
+                        (next < count).then(|| default_runner_selection(&choices, next))
+                    }
+                },
+            )
+            .into(),
+        ));
 
     // ---- The thirteen defaults ---------------------------------------------
     for (key, label, subtitle) in DEFAULT_TOGGLES {
@@ -634,19 +616,19 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
     // strings on it (`SettingsPage.qml:120-125`): `FormData.label` — the form
     // label, "Hide window when launching:" — and `text`, which is what the
     // switch itself renders. This port had the `text` half only, so the label
-    // was declared, passed nothing, and drawn nowhere; `row()` is what the
+    // was declared, passed nothing, and drawn nowhere; `settings_row()` is what the
     // three appearance rows already use for a form label, so this is the same
     // shape rather than a new one.
     //
     // It also puts one of this page's fourteen previously-unobservable strings
     // back inside the render instrument: a `Toggler`'s own label is painted with
     // a direct `text::draw` and reaches no `Text` widget (see the note on the
-    // drawn-strings test), but a label passed to `row()` is a real `text::body`
+    // drawn-strings test), but a label passed to `settings_row()` is a real `text::body`
     // child and `drawn_strings` sees it. The explanation stays on the toggler,
     // where the reference puts it.
     body = body
-        .push(section(SECTION_BEHAVIOR))
-        .push(row(
+        .push(settings_section(SECTION_BEHAVIOR))
+        .push(settings_row(
             CLOSE_ON_LAUNCH_LABEL,
             a11y::toggler(
                 toggler(page.settings.close_on_launch)
@@ -664,10 +646,10 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
             )
             .into(),
         ))
-        .push(section(SECTION_SHORTCUTS));
+        .push(settings_section(SECTION_SHORTCUTS));
 
     for (keys, what) in SHORTCUTS {
-        body = body.push(row(keys, text::body(what).into()));
+        body = body.push(settings_row(keys, text::body(what).into()));
     }
 
     container(scrollable(body)).padding(18).into()
@@ -1248,12 +1230,12 @@ mod tests {
     /// was declared in this module and referenced **nowhere** — not by the view,
     /// not by any test — so the reference's form label was simply absent from
     /// the page while the constant sat in the source. This test is what found
-    /// that, and it is why the constant is now passed to `row()`.
+    /// that, and it is why the constant is now passed to `settings_row()`.
     ///
     /// The two are asserted separately rather than as a pair, because they are
     /// drawn by different mechanisms and can fail independently: the explanation
     /// reaches a `Toggler` label and no tree walk sees it, while the label goes
-    /// to `row()` and becomes a `text::body` child that does. Asserting them
+    /// to `settings_row()` and becomes a `text::body` child that does. Asserting them
     /// together would hide which one moved.
     #[test]
     fn the_close_on_launch_switch_carries_the_references_two_strings() {
@@ -1304,9 +1286,9 @@ mod tests {
     /// the two halves are deliberately in one test because the *contrast* is the
     /// finding:
     ///
-    /// * the label goes through `row()` → `text::body`, which is a real child
+    /// * the label goes through `settings_row()` → `text::body`, which is a real child
     ///   widget, so `drawn_strings` sees it. That is what makes routing it
-    ///   through `row()` a fix and not merely a rearrangement — and it is the
+    ///   through `settings_row()` a fix and not merely a rearrangement — and it is the
     ///   assertion that fails if someone moves it back onto the toggler;
     /// * the explanation is the `Toggler`'s own `.label(...)`, painted with a
     ///   direct `iced_widget::text::draw` (`libcosmic src/widget/toggler.rs:316`),
@@ -1322,7 +1304,7 @@ mod tests {
             drawn.iter().any(|text| text == CLOSE_ON_LAUNCH_LABEL),
             "the reference's form label for the close-on-launch switch must be on \
              the page as a real `Text` child. It reaches the traversal through \
-             `row()`, so its absence means it stopped being drawn at all — which \
+             `settings_row()`, so its absence means it stopped being drawn at all — which \
              is the state this test was written to catch. Drawn: {drawn:?}"
         );
         assert!(
@@ -1511,7 +1493,7 @@ mod tests {
         // ---- the nodes ------------------------------------------------------
         let nodes = harness::published(&mut element);
         // A control is identified by its name **and** its role, not by its name
-        // alone. A row's form label is itself a node: `row()` draws it as a real
+        // alone. A row's form label is itself a node: `settings_row()` draws it as a real
         // `text::body` child, and iced's `text` widget publishes a `Paragraph`
         // node carrying that string — visible in the collected `Nodes:` list on
         // any failure below as a `(Paragraph, Some("Color scheme:"))` beside the
