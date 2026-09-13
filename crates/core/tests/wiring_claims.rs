@@ -290,7 +290,7 @@ fn enclosing_function(src: &str, line: usize) -> Option<String> {
 #[test]
 fn every_function_the_installers_header_claims_is_wired_has_a_call_in_live_code() {
     let root = repo_root();
-    let header_path = root.join("crates/core/src/installers.rs");
+    let header_path = root.join("crates/core/src/installers/mod.rs");
     let source = fs::read_to_string(&header_path)
         .unwrap_or_else(|error| panic!("{} should be readable: {error}", header_path.display()));
 
@@ -570,7 +570,7 @@ fn the_installers_header_no_longer_claims_the_file_has_no_caller() {
     // The specific false sentences, asserted absent rather than merely
     // superseded: a rewrite that reinstated the paragraph while leaving the
     // table would otherwise satisfy the test above.
-    let source = fs::read_to_string(repo_root().join("crates/core/src/installers.rs")).unwrap();
+    let source = fs::read_to_string(repo_root().join("crates/core/src/installers/mod.rs")).unwrap();
     for phrase in [
         "It has no *caller*",
         "have no call site outside their own tests",
