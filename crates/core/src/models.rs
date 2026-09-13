@@ -95,6 +95,30 @@ fn folded(text: &str) -> String {
     text.to_lowercase()
 }
 
+/// A timestamp with its two zeros fused into one, for the two timestamp sorts.
+///
+/// `f64::total_cmp` is a *total* order and distinguishes `-0.0` from `0.0` — it
+/// compares the bit patterns, where IEEE `==` says the two are equal. Python's
+/// key is `-g.last_played`, compared with `<`, so it does not distinguish them,
+/// and two games whose timestamps tie fall through to the name tie-break there.
+/// Here they did not: `total_cmp` ordered them by the sign of a zero and the
+/// name was never consulted (`BUG-20`).
+///
+/// `-0.0` is reachable rather than theoretical. [`timestamp`] admits it —
+/// `numeric >= 0.0` is true for `-0.0` — so a hand-edited or third-party
+/// `games.json` that spells a timestamp `-0.0` loads with the sign intact. The
+/// app itself never writes one (`mark_played` uses the clock), which is why
+/// this went unnoticed rather than why it is harmless: the Python app reads the
+/// same file, and the two must present one order.
+///
+/// Negating instead — the literal transcription of `-g.last_played` — would not
+/// fix it: `-0.0` negated is `0.0` and `0.0` negated is `-0.0`, so the fold
+/// moves the distinction to the other side of the comparison rather than
+/// removing it.
+fn zero_normalised(timestamp: f64) -> f64 {
+    if timestamp == 0.0 { 0.0 } else { timestamp }
+}
+
 /// Shown for a game with no category. `models.py:15`.
 pub const UNCATEGORIZED: &str = "Uncategorized";
 
@@ -878,15 +902,13 @@ impl Library {
         let mut order: Vec<usize> = (0..self.games.len()).collect();
         match sort {
             "recent" => order.sort_by(|&a, &b| {
-                self.games[b]
-                    .last_played
-                    .total_cmp(&self.games[a].last_played)
+                zero_normalised(self.games[b].last_played)
+                    .total_cmp(&zero_normalised(self.games[a].last_played))
                     .then_with(|| keys[a].cmp(&keys[b]))
             }),
             "added" => order.sort_by(|&a, &b| {
-                self.games[b]
-                    .added
-                    .total_cmp(&self.games[a].added)
+                zero_normalised(self.games[b].added)
+                    .total_cmp(&zero_normalised(self.games[a].added))
                     .then_with(|| keys[a].cmp(&keys[b]))
             }),
             _ => order.sort_by(|&a, &b| keys[a].cmp(&keys[b])),
@@ -2109,6 +2131,46 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Alpha", "zeta"]
         );
+    }
+
+    #[test]
+    fn a_negative_zero_timestamp_ties_like_python() {
+        // `BUG-20`. `-0.0` survives the load — `timestamp`'s guard is
+        // `numeric >= 0.0`, which `-0.0` satisfies — so a hand-edited file
+        // reaches the sorts with the sign intact. CPython's key is
+        // `(-g.last_played, g.name.lower())`, whose comparison says `-0.0` and
+        // `0.0` are equal, so these two tie and the name decides:
+        // `sorted` gives `['AAA', 'ZZZ']`. `total_cmp` ordered them by the sign
+        // of the zero instead and answered `["ZZZ", "AAA"]`.
+        //
+        // Written in the reference's own order of events: the fixture is a file
+        // the real loader reads, and the assertion is on the names the real
+        // sorts return.
+        let library = library_from(json!([
+            {"id": "1", "name": "ZZZ", "added": 0.0, "last_played": 0.0},
+            {"id": "2", "name": "AAA", "added": -0.0, "last_played": -0.0},
+        ]));
+        // The premise, asserted rather than assumed: if the sign were lost on
+        // the way in, this test would pass against the old body too and prove
+        // nothing. `all("name")` is the one sort whose key does not read a
+        // timestamp, so it is the harmless way to get at the loaded values.
+        let loaded = library.all("name");
+        assert_eq!(loaded[0].name, "AAA");
+        assert_eq!(loaded[0].added, 0.0);
+        assert!(
+            loaded[0].added.is_sign_negative(),
+            "-0.0 must survive the load, or this test has no subject"
+        );
+
+        let names = |sort: &str| -> Vec<String> {
+            library
+                .all(sort)
+                .iter()
+                .map(|game| game.name.clone())
+                .collect()
+        };
+        assert_eq!(names("recent"), ["AAA", "ZZZ"]);
+        assert_eq!(names("added"), ["AAA", "ZZZ"]);
     }
 
     #[test]
