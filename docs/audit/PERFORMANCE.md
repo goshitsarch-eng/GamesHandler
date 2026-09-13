@@ -2,11 +2,14 @@
 
 ## Scope
 
-This is a read-only audit of the runtime cost of GameHandler (`crates/core` =
+This is an audit of the runtime cost of GameHandler (`crates/core` =
 `gamehandler-core`, the GUI-free half; `crates/app` = the `gamehandler` binary,
-libcosmic UI over the `iced_tiny_skia` **software** renderer), performed against
-the tree at commit `d56782d`. **No source file was modified.** The seven areas
-examined were, in order: redraw behaviour (does anything wake an idle app, and
+libcosmic UI over the `iced_tiny_skia` **software** renderer), performed by
+reading and measuring the tree at commit `d56782d`. The reconnaissance pass was
+read-only and **no measurement below has been re-run since that commit**, so
+every number here is the pre-fix figure; the fixes it produced landed separately
+on branch `audit-hardening` and each row carries its own **Status** tail. The
+seven areas examined were, in order: redraw behaviour (does anything wake an idle app, and
 what does one redraw cost on a CPU renderer); startup cost (the project's claim
 that startup performs exactly two filesystem reads); per-frame allocation inside
 `view()`; image and cover handling; search and filter; unbounded growth; and

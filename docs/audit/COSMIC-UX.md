@@ -19,6 +19,11 @@ patch. Where a finding is the *behavioural* half of a false comment, the comment
 itself is filed in `ARCHITECTURE.md` and cross-referenced, so no defect is
 counted twice.
 
+It was performed by reading `crates/app/src/view/` at commit `d56782d`. The
+reconnaissance pass was read-only; the fixes it produced landed separately on
+branch `audit-hardening` and each row below that has one carries a **Status**
+tail — one does (`UX-05`).
+
 Nothing in this document was derived from a screenshot. Every claim is a line
 read from source, or an arithmetic result reproduced from constants read from
 source, per the rule recorded in `docs/audit/BASELINE.md:193-200`.

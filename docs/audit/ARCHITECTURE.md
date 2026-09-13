@@ -17,6 +17,10 @@ where a defect exists in both, this document says so — a faithful copy of a
 reference bug is a different finding from a port-introduced regression, and the
 distinction decides whether the fix is a divergence or a bug fix.
 
+It was performed by reading the tree at commit `d56782d`. The reconnaissance
+pass was read-only; the fixes it produced landed separately on branch
+`audit-hardening` and each row below that has one carries a **Status** tail.
+
 This audit inherits one rule from `docs/audit/BASELINE.md:193-200`, adopted there
 after a fabricated observation was recorded and withdrawn: **text read off an
 image is not evidence.** Every claim below is either a line read from source, or

@@ -104,11 +104,17 @@ them for a backlog item:
   binary, all transitive pins owned by libcosmic. There is no fix available at
   this layer, and the brief forbids upgrading for version numbers alone. The
   actionable part is two version comparisons at the next libcosmic bump.
-* **`SEC-03`** — the Authenticode publisher check has an unverified half:
-  whether `osslsigncode verify` without `-CAfile` accepts a self-signed
-  certificate. `osslsigncode` is not installed in this environment, so the
-  claim was **not** settled. This is the one row where the environment, rather
-  than the code, is the obstacle.
+* **`UX-01`..`UX-03` are the only rows whose cause is outside this repository.**
+  Everything else above is ordinary work. These three are keyboard and
+  accessibility gaps in the *pinned* libcosmic widgets — `toggler` has no
+  `operate` at all — so closing them is a local widget or an upstream patch
+  rather than an edit to this code. Three agents are on them now.
+* **`SEC-03` cannot be closed in this environment, and no re-run will change
+  that.** The one claim it rests on is whether a system `osslsigncode` without a
+  CA file accepts a self-signed certificate, and `osslsigncode` is not installed
+  here. The row states that its conclusion is an unverified half rather than a
+  finding, which is the honest form: a reader with the tool can settle it in one
+  command.
 
 ## How a finding is called fixed
 
@@ -140,6 +146,12 @@ flagging — and both now have those controls pinned in tests.
 | `PACKAGING.md` | 9 findings on the Flatpak, the desktop entry and the gate |
 | `PLAN.md` | All 129 findings: owner, dependencies, verification, status |
 | `DECISIONS.md` | The seven decisions this audit made (`D-57`–`D-63`) |
+
+Each document's scope section states whether it is still read-only. That
+matters more than it sounds: `SECURITY.md`, `PERFORMANCE.md` and the four
+others were written as read-only reconnaissance, and their fixes landed
+afterwards, so a scope line reading "No source file was modified" is now
+false about the tree a reader is holding.
 
 ## Attribution
 

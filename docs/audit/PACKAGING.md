@@ -2,9 +2,11 @@
 
 ## Scope
 
-This is a read-only audit of how GameHandler is packaged, distributed and
-verified, performed against the tree at commit `d56782d`. **No source file was
-modified.** The six areas examined were, in order: the Flatpak manifest
+This is an audit of how GameHandler is packaged, distributed and verified,
+performed by reading the tree at commit `d56782d`. The reconnaissance pass was
+read-only; the fixes it produced landed separately on branch `audit-hardening`
+and each row below carries its own **Status** tail. The six areas examined were,
+in order: the Flatpak manifest
 (`build-aux/flatpak/com.goshapps.GameHandler.json`) and the scripts under
 `scripts/` and `build-aux/` (correctness, completeness, reproducibility, base
 and runtime versions, and whether `cargo-sources.json` is fresh and covers every
