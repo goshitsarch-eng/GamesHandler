@@ -62,15 +62,18 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 30 | 28 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
+| `BUGS.md` | 48 | 31 | 29 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 16 | 15 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 15 | 13 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 7 `FIXED` |
 | `PACKAGING.md` | 10 | 8 | 6 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
-`BUGS.md`'s 20 tail-less rows are its nineteen open `P3` rows plus the withdrawn
-`BUG-11`, which carries no severity because it is not a defect. Each of the
+`BUGS.md`'s 17 tail-less rows are its sixteen open `P3` rows plus the withdrawn
+`BUG-11`, which carries no severity because it is not a defect. That sentence read
+"20 … nineteen" until this revision, and was wrong twice over: the row count was
+measurable from the table above it, and the sentence explaining the number agreed
+with the number instead of with the rows. Each of the
 other five documents gained tails in the commits that fixed the rows they
 describe (`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`, `41d4b34`,
 `8f7269e`, `6069056`, `d855015` and `SEC-09`'s own), so the pair rule was kept
@@ -129,28 +132,35 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 51 | 38 | 0 | 13 |
-| P3 | 49 | 8 | 0 | 41 |
-| **Total** | **129** | **75** | **0** | **54** |
+| P3 | 49 | 9 | 0 | 40 |
+| **Total** | **129** | **76** | **0** | **53** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 15 | 0 | 10 |
-| `BUG-xx` | `BUGS.md` | 46 | 28 | 0 | 18 |
+| `BUG-xx` | `BUGS.md` | 46 | 29 | 0 | 17 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 6 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 13 | 0 | 16 |
-| **Total** | | **129** | **75** | **0** | **54** |
+| **Total** | | **129** | **76** | **0** | **53** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
-beside them. The three refuted rows (`BUG-11`, `BUG-15`, `UX-08`) sit in their own
+beside them. The four refuted rows (`BUG-11`, `BUG-15`, `UX-08`, `ARCH-24`) sit in their own
 `### Not a defect` section and in no severity bucket, which is why the family table
 counts 46 `BUG-xx` rows against the 48 `BUGS.md` holds — the two it leaves out are
-the refuted pair `BUG-11` and `BUG-15`, which sit in that section — and 29 `UX-xx`
-rows against the 30 `COSMIC-UX.md` holds, where the one it leaves out is `UX-08`. `Remaining` counts `PARTIAL` as
+the refuted pair `BUG-11` and `BUG-15`, which sit in that section — 29 `UX-xx`
+rows against the 30 `COSMIC-UX.md` holds, where the one it leaves out is `UX-08`,
+and 25 `ARCH-xx` rows against the 26 `ARCHITECTURE.md` holds, where the one it
+leaves out is `ARCH-24`. This sentence read "three" and named three ids until
+`ARCH-24` was refuted; the count is here because a reader should not have to union
+four documents to learn how many findings were withdrawn. `Remaining` counts `PARTIAL` as
 remaining, because a half-fixed finding is not closed; `Fixed` therefore excludes
-them and the two `PARTIAL` rows appear in `Remaining` until they are finished.
+them and the five `PARTIAL` rows (`BUG-47`, `PKG-03`, `PKG-06`, `UX-06`,
+`SEC-05`) appear in `Remaining` until they are finished. That read "two"
+while the status cells said five — a count beside the rows rather than taken
+from them, which is the shape this file has been corrected for twice already.
 
 **Two of the tables in this file were stale, and the reason is one commit.** The
 severity table read `P2 17` and `P3 0` while the rows said 18 and 1, and the tails
@@ -309,7 +319,7 @@ across families, not within them.
 | `BUG-42` | Three path/identifier conversions that do not do what the code around them says | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-43` | Two more "the doc says the two agree" pairs, both verified sound-but-for-the-claim | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-44` | An unreadable runners directory renders as a normal, empty, system-Wine-only list | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
-| `BUG-45` | python_repr's string branch is not repr() and duplicates — incorrectly — the python_str_repr twelve lines above it | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-45` | python_repr's string branch is not repr() and duplicates — incorrectly — the python_str_repr twelve lines above it | S1 | — | `1143aed` — the string arm delegates to `python_str_repr`; a regression test compares the two functions and fails on the old body.| FIXED |
 | `PERF-07` | The 27 threads are all demand-spawned runtime workers; none polls, and two of them exit on their own | S3 | — | Recorded as not-a-finding unless a poller is found; verify by re-running the thread-naming probe over a 60 s idle run. | OPEN |
 | `PERF-08` | Minor RSS drift that is not attributable to a leak on the evidence gathered | S3 | — | Re-measure with the window held at one size; verify RSS is flat across forced redraws at a constant size. | OPEN |
 | `PKG-06` | The metainfo has no screenshots and no keywords | S6 | — | Add a screenshot and keywords to the metainfo; verify with `appstreamcli validate --pedantic`. | PARTIAL |
