@@ -23,3 +23,7 @@ dist/
 .idea/
 .vscode/
 *.swp
+# Claude Code agent worktrees. Scratch checkouts of this repository, one per
+# dispatched agent; they are not part of the tree and their contents are
+# throwaway. Ignored so `git status` stays a real signal during the audit.
+.claude/worktrees/
