@@ -36,9 +36,11 @@ pub mod launch_opts;
 pub mod proton;
 pub mod shell;
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::models::Game;
 use crate::paths;
@@ -1007,6 +1009,26 @@ pub enum MetadataRead {
     Damaged { reason: String },
 }
 
+// Metadata file reads performed by `read_metadata`, counted for the PERF-06
+// test.
+//
+// The property that test pins — that a frame's worth of labels opens each
+// build's metadata once rather than once per row — is invisible from outside
+// the function: both versions return the same labels and only one of them costs
+// a read and a parse per call. `read_metadata` is the only place that file is
+// opened, so counting here counts the file opens the finding is about, at the
+// point they happen rather than at the caller that asks for them. It is
+// `thread_local` rather than a global because `cargo test` runs cases
+// concurrently — a shared counter would be incremented by whichever other test
+// happened to be reading metadata at that moment.
+//
+// `#[cfg(test)]` on the counter *and* on the increment keeps this out of a
+// production build entirely, rather than behind a branch that always runs.
+#[cfg(test)]
+thread_local! {
+    static METADATA_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Read `<root>/.gamehandler.json`.
 ///
 /// Port of `_read_metadata` (`runners.py:692-702`). **Deliberate divergence**
@@ -1032,6 +1054,8 @@ pub enum MetadataRead {
 ///   This is the same divergence D-20 settles for `Settings.load`, for the same
 ///   reason: a metadata file we wrote is not a reason to crash.
 pub fn read_metadata(root: &Path) -> MetadataRead {
+    #[cfg(test)]
+    METADATA_READS.with(|reads| reads.set(reads.get() + 1));
     if root.is_symlink() {
         return MetadataRead::Missing;
     }
@@ -1086,10 +1110,75 @@ fn read_family_id(root: &Path) -> String {
 // RunnerManager
 // ---------------------------------------------------------------------------
 
+/// One resolved label: the label, and the mtime of the runner directory it was
+/// resolved from.
+///
+/// `directory_mtime` is `None` when that directory does not exist, which is
+/// itself an answer — "System Wine" — that a later install changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResolvedLabel {
+    directory_mtime: Option<SystemTime>,
+    label: String,
+}
+
+/// The labels [`RunnerManager::label`] has already resolved.
+///
+/// # Why this exists
+///
+/// `label` is on the render path: `view/library.rs` resolves one label per
+/// shown game per frame (its `list_row` and `grid_body`), and the value is a
+/// pure function of the runner id and the contents of the runners directory —
+/// neither of which changes while a frame is drawn. Resolving it per row per
+/// frame pays a `stat`, a file read and a `serde_json` parse for a string that
+/// cannot have changed: PERF-06 measured 3,750 `statx` on the runners directory
+/// in a 3.572 s / 100-redraw window, and `read_metadata`'s parsed
+/// [`MetadataRead`] was built and dropped at the end of every one of them.
+///
+/// # Why an entry is keyed on the runner directory's mtime
+///
+/// A memo of a pure function is only as good as its invalidation, and this one
+/// has to notice a build appearing or disappearing under a user who never
+/// restarts the app — which is what installing and removing a runner *is*. The
+/// runner directory's own mtime is the signal that covers both, and it is
+/// *also* the `stat` the uncached body already paid as `candidate.exists()`:
+/// creating or deleting `<runners>/<id>` moves it, and so does creating
+/// `<runners>/<id>/.gamehandler.json` in it, which is the only other thing the
+/// label depends on. The install writes that metadata into the **staged** tree
+/// and only then renames it into place (`proton.rs`, the `write_metadata` /
+/// `rename_noreplace` pair at the end of `install_with`), so a build directory
+/// is never visible under its final name without its metadata — the one order
+/// that would let a family-less label be cached for the whole session. So the
+/// check costs no syscall the render path was not already making, and what it
+/// removes is the read and the parse behind it.
+///
+/// The limit that leaves, stated rather than implied: rewriting an existing
+/// metadata file **in place** does not move its directory's mtime, so such a
+/// build would keep its label until the next install or removal. Nothing in
+/// this app writes metadata that way — it writes once, into staging.
+#[derive(Clone, Debug, Default)]
+struct LabelCache(RefCell<HashMap<String, ResolvedLabel>>);
+
+/// Two caches are equal, whatever they hold.
+///
+/// The comparison that matters is [`RunnerManager`]'s, and a memo is not part
+/// of that value: two managers naming the same directory *are* the same
+/// manager. A derived comparison would make that depend on which of the two had
+/// resolved a label — `RunnerManager::at(x) == RunnerManager::at(x)` false for
+/// one manager that had drawn a page and one that had not.
+impl PartialEq for LabelCache {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for LabelCache {}
+
 /// Discovers the available runners: system Wine plus installed builds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunnerManager {
     runners_directory: PathBuf,
+    /// The labels resolved so far. See [`LabelCache`].
+    labels: LabelCache,
 }
 
 impl RunnerManager {
@@ -1097,6 +1186,7 @@ impl RunnerManager {
     pub fn new(env: &dyn LaunchEnv) -> Self {
         Self {
             runners_directory: paths::runners_dir_in(env),
+            labels: LabelCache::default(),
         }
     }
 
@@ -1104,6 +1194,7 @@ impl RunnerManager {
     pub fn at(runners_directory: impl Into<PathBuf>) -> Self {
         Self {
             runners_directory: runners_directory.into(),
+            labels: LabelCache::default(),
         }
     }
 
@@ -1173,11 +1264,46 @@ impl RunnerManager {
     }
 
     /// The label shown for a runner id: `"Proton-GE · Proton-GE"` style.
+    ///
+    /// Memoised — see [`LabelCache`] for what invalidates it and why the
+    /// directory `stat` stays. The cached value is returned only while the
+    /// build's own mtime is unchanged, so every filesystem change a caller can
+    /// make is still observed, and a miss falls through to
+    /// [`Self::resolve_label`], which is where the uncached body lives.
     pub fn label(&self, runner_id: &str) -> String {
         if runner_id == SYSTEM_WINE || runner_id.is_empty() {
             return "System Wine".to_string();
         }
         let candidate = self.runners_directory.join(runner_id);
+        // The same `stat` the uncached body made as `candidate.exists()`, taken
+        // once and used both as the cache key and as this call's answer to "is
+        // the build there".
+        let directory_mtime = std::fs::metadata(&candidate)
+            .and_then(|metadata| metadata.modified())
+            .ok();
+        if let Some(cached) = self.labels.0.borrow().get(runner_id)
+            && cached.directory_mtime == directory_mtime
+        {
+            return cached.label.clone();
+        }
+        let label = self.resolve_label(&candidate);
+        self.labels.0.borrow_mut().insert(
+            runner_id.to_string(),
+            ResolvedLabel {
+                directory_mtime,
+                label: label.clone(),
+            },
+        );
+        label
+    }
+
+    /// [`Self::label`] without the cache: the body that walks the filesystem.
+    ///
+    /// `candidate.exists()` rather than the caller's `directory_mtime`, so this
+    /// stays the reference's own test — [`Self::get`]'s fallback turns on the
+    /// same call, and a `metadata` that succeeded while yielding no mtime would
+    /// otherwise relabel an installed build as system Wine.
+    fn resolve_label(&self, candidate: &Path) -> String {
         // Only a Proton runner has a family label, and only a *different* one
         // is worth appending — hence the comparison against the name.
         if candidate.exists() {
@@ -1513,6 +1639,112 @@ mod tests {
         assert_eq!(manager.label("anonymous"), "anonymous · Downloaded runner");
         // An id that does not exist falls back to System Wine, as `get` does.
         assert_eq!(manager.label("nope"), "System Wine");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **A frame's worth of runner labels reads each build's metadata once, not
+    /// once per row.**
+    ///
+    /// PERF-06: `view()` resolves a label for every shown game
+    /// (`view/library.rs`'s `list_row` and `grid_body`), and `view` runs every
+    /// frame — so `RunnerManager::label` was on the render path, and each call
+    /// constructed a `ProtonRunner` whose `new()` read and `serde_json`-parsed
+    /// `<root>/.gamehandler.json`, *discarded* the parsed map, and kept only
+    /// `family_label()` and `name()`.
+    ///
+    /// The fixture is five installed builds — PERF-06's own "5-runner fixture",
+    /// its verification method's number — and 100 frames of 20 rows whose
+    /// runner ids cycle over them: 2,000 resolutions, which is a small page
+    /// rendered for a few seconds. The counter is [`read_metadata`]'s, so it
+    /// counts the *file opens*, which is what that method asks for; a label that
+    /// came from anywhere else would fail the value assertions in the loop.
+    #[test]
+    fn a_frames_runner_labels_read_each_builds_metadata_once() {
+        let root = scratch("label-frames");
+        let ids = [
+            "GE-Proton9-1",
+            "GE-Proton9-2",
+            "GE-Proton9-3",
+            "GE-Proton9-4",
+            "GE-Proton9-5",
+        ];
+        for id in ids {
+            let build = root.join(id);
+            make_proton(&build, false);
+            std::fs::write(
+                build.join(METADATA_NAME),
+                format!(r#"{{"family": "proton-ge", "tag": "{id}"}}"#),
+            )
+            .unwrap();
+        }
+        let manager = RunnerManager::at(&root);
+        let expected: Vec<String> = ids.iter().map(|id| format!("{id} · Proton-GE")).collect();
+
+        METADATA_READS.with(|reads| reads.set(0));
+        let mut resolutions = 0;
+        for _ in 0..100 {
+            for (index, id) in ids.iter().cycle().take(20).enumerate() {
+                let index = index % ids.len();
+                assert_eq!(manager.label(id), expected[index]);
+                resolutions += 1;
+            }
+        }
+        let reads = METADATA_READS.with(std::cell::Cell::get);
+        assert_eq!(
+            resolutions, 2_000,
+            "the fixture renders 100 frames of 20 rows"
+        );
+        assert_eq!(
+            reads,
+            ids.len(),
+            "5 installed builds were read {reads} times for {resolutions} label \
+             resolutions — one read per build is the whole cost there is; one \
+             per resolution is PERF-06"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **A build that appears or disappears relabels without a restart.**
+    ///
+    /// This is the test a cache has to survive: a memo keyed on something that
+    /// never changes would pass
+    /// [`a_frames_runner_labels_read_each_builds_metadata_once`] while telling
+    /// a user who just installed a Proton build that they are still on system
+    /// Wine. The sequence is the app's own — `install_with` writes the metadata
+    /// into the staged tree and only then renames the whole tree into place, so
+    /// the build is *created complete* here too — and then the uninstall path,
+    /// `remove_dir_all`.
+    ///
+    /// Both transitions are `None → Some` and `Some → None` on the directory's
+    /// mtime, so neither depends on the filesystem clock's granularity: a
+    /// directory that did not exist and one that does cannot share a timestamp.
+    #[test]
+    fn a_build_that_appears_or_disappears_is_relabelled_without_a_restart() {
+        let root = scratch("label-invalidate");
+        let manager = RunnerManager::at(&root);
+
+        // Asked for before it exists: the answer is cached as "absent".
+        assert_eq!(manager.label("GE-Proton9-7"), "System Wine");
+
+        let build = root.join("GE-Proton9-7");
+        make_proton(&build, false);
+        std::fs::write(
+            build.join(METADATA_NAME),
+            r#"{"family": "proton-ge", "tag": "GE-Proton9-7"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            manager.label("GE-Proton9-7"),
+            "GE-Proton9-7 · Proton-GE",
+            "a build installed after the page was first drawn must be labelled"
+        );
+
+        std::fs::remove_dir_all(&build).unwrap();
+        assert_eq!(
+            manager.label("GE-Proton9-7"),
+            "System Wine",
+            "a build removed after the page was first drawn must fall back"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

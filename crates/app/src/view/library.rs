@@ -537,19 +537,22 @@ pub struct LibraryPage<'a> {
     /// # This is called from the render path, and that is a known cost
     ///
     /// [`super::widgets::resolved_runner_label`] is documented as *not* being
-    /// called from a widget, because [`RunnerManager::label`] is uncached and
-    /// walks the filesystem. [`view`] runs every frame, so taking the manager
-    /// here reintroduces exactly that — once per shown game per frame.
+    /// called from a widget, because [`RunnerManager::label`] was uncached and
+    /// walked the filesystem. [`view`] runs every frame, so taking the manager
+    /// here reintroduced exactly that — once per shown game per frame.
     ///
-    /// It is taken anyway, and the reason is that the alternative is worse: the
-    /// label has to come from somewhere, and the only other source today is the
-    /// empty string, which is `#30` — every Windows game rendered no runner at
-    /// all. Between a page that says nothing true and a page that walks a
-    /// directory, the walk is the lesser defect and the one that is visible in
-    /// a profile. The fix is a `State` field holding the resolved rows, updated
-    /// where the library is re-read (install and uninstall both already are);
-    /// it is not in this slice, and it is named here rather than left for a
-    /// reader to discover.
+    /// **PERF-06 memoised `label`**, against the runner directory's mtime, so
+    /// what that costs now is one `stat` per shown game per frame rather than a
+    /// directory walk, a file open and a JSON parse. That is a bounded cost, and
+    /// it is why the paragraph that used to stand here — promising a `State`
+    /// field holding the resolved rows instead — no longer applies: 20 `stat`s
+    /// per frame do not need caching *above* a cache to be affordable, and a
+    /// second layer would only be a second thing to invalidate.
+    ///
+    /// The manager is taken rather than the labels because the alternative was
+    /// worse: the label has to come from somewhere, and the only other source
+    /// was the empty string, which is `#30` — every Windows game rendered no
+    /// runner at all.
     pub runners: &'a RunnerManager,
     /// The instant every row's last-played label is computed against.
     ///

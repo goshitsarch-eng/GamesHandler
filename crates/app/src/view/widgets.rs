@@ -676,18 +676,22 @@ fn name_ellipsize() -> cosmic::iced::widget::text::Ellipsize {
 ///
 /// # Why this is not called from a widget
 ///
-/// [`RunnerManager::label`] is **uncached** (`runners/mod.rs:1099`): it joins the
-/// runners directory, tests `exists()`, and constructs a `ProtonRunner` to ask
-/// for its family label — on every call, for every game. A builder runs every
-/// frame, so resolving this inside [`card`] or [`row`] would put a filesystem
-/// walk per game per frame on the render path. That is the same defect as
-/// spawning a process there, only cheaper.
+/// [`RunnerManager::label`] **used to be uncached** (`runners/mod.rs:1273`): it
+/// joined the runners directory, tested `exists()`, and constructed a
+/// `ProtonRunner` to read and parse the build's metadata and ask for its family
+/// label — on every call, for every game. A builder runs every frame, so
+/// resolving this inside [`card`] or [`row`] put a filesystem walk, a file open
+/// and a JSON parse per game per frame on the render path. That is the same
+/// defect as spawning a process there, only cheaper.
 ///
-/// So the label is resolved when the row data is assembled and carried as a
-/// string from then on. It is also the cheaper answer for a second reason:
-/// **the runner list changes only on install or uninstall**, both of which
-/// already re-read the library — so resolving at build time is correct *and*
-/// free, where resolving per frame would be merely correct.
+/// It is memoised now, against the runner directory's mtime (PERF-06), which
+/// leaves one `stat` per call for the key where there was a walk. The rule
+/// below did not change with it, and the reason it did not is the second
+/// reason: the label is resolved when the row data is assembled and carried as
+/// a string from then on, because **the runner list changes only on install or
+/// uninstall**, both of which already re-read the library — so resolving at
+/// build time is correct *and* free, where resolving per frame would be merely
+/// correct.
 ///
 /// Resolving here rather than threading a `&RunnerManager` through the
 /// builders also keeps them free functions over the game: their `Element`
@@ -695,13 +699,17 @@ fn name_ellipsize() -> cosmic::iced::widget::text::Ellipsize {
 ///
 /// # The line number, and why it is not the authority
 ///
-/// `runners/mod.rs:1099` is a **point-in-time** fact about a file that grows.
+/// `runners/mod.rs:1273` is a **point-in-time** fact about a file that grows.
 /// This citation was `mod.rs:1041` when it was written (`13e9806`), which was
 /// correct then; `runners/mod.rs` has since gained 58 lines above `label`, and
 /// every citation of that function's body moved with them — this one and the
 /// one in the test below, both corrected together. The same drift hit
 /// `view/settings.rs`'s citation of `RunnerManager::choices` (`mod.rs:1061` →
-/// `runners/mod.rs:1119`), and the +58 accounts for both.
+/// `runners/mod.rs:1119`), and the +58 accounts for both. PERF-06 moved it
+/// again: memoising `label` added the cache and the two types it keys on above
+/// it, and 1273 is where that left the function. The number is rewritten here
+/// because the prose beside it changed anyway — see the note below about what
+/// a number that no longer lands is worth.
 ///
 /// So the number is a convenience and [`RunnerManager::label`] is the
 /// authority: when this citation and the symbol disagree, the symbol is right
@@ -1071,7 +1079,7 @@ mod tests {
     /// than hypothetical. `bridge.py:300-302` resolves the label *before* the
     /// row is built, so Python can never hand `subtitle_of` an empty string;
     /// [`resolved_runner_label`] is that resolution, and `runner.label("")`
-    /// returning `"System Wine"` (`runners.py:759-761`, `runners/mod.rs:1099`)
+    /// returning `"System Wine"` (`runners.py:759-761`, `runners/mod.rs:1273`)
     /// is the fact that closes the gap. The manager is constructed at a path
     /// with no runners in it, so this also pins the fallback rather than a
     /// lookup.
