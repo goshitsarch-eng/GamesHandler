@@ -95,26 +95,21 @@ Where the 99 rows are:
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
 them for a backlog item:
 
-* **`UX-01`, `UX-02`, `UX-03`** — dropdowns, togglers and text inputs have no
-  keyboard focus ring and contribute no accessibility node. The cause is in the
-  pinned libcosmic widgets: `toggler` has no `operate` at all. Closing these
-  means a local widget or an upstream patch, and the audit has argued both.
-  Three in-flight agents are working this group now.
+* **`UX-01`, `UX-02`, `UX-03` — the only rows whose cause is outside this
+  repository.** Dropdowns, togglers and text inputs have no keyboard focus ring
+  and contribute no accessibility node, and the cause is in the *pinned*
+  libcosmic widgets: `toggler` has no `operate` at all. Closing these is a local
+  widget or an upstream patch rather than an edit to this code, and the audit
+  has argued both. Three agents are on them now.
 * **`SEC-10`** — five live RustSec advisories, none reachable from the shipped
   binary, all transitive pins owned by libcosmic. There is no fix available at
   this layer, and the brief forbids upgrading for version numbers alone. The
   actionable part is two version comparisons at the next libcosmic bump.
-* **`UX-01`..`UX-03` are the only rows whose cause is outside this repository.**
-  Everything else above is ordinary work. These three are keyboard and
-  accessibility gaps in the *pinned* libcosmic widgets — `toggler` has no
-  `operate` at all — so closing them is a local widget or an upstream patch
-  rather than an edit to this code. Three agents are on them now.
-* **`SEC-03` cannot be closed in this environment, and no re-run will change
-  that.** The one claim it rests on is whether a system `osslsigncode` without a
-  CA file accepts a self-signed certificate, and `osslsigncode` is not installed
-  here. The row states that its conclusion is an unverified half rather than a
-  finding, which is the honest form: a reader with the tool can settle it in one
-  command.
+* **`SEC-03` cannot be *settled* in this environment, and no re-run will change
+  that.** The claim it rests on is whether a system `osslsigncode` without a CA
+  file accepts a self-signed certificate, and `osslsigncode` is not installed
+  here. The row says its conclusion is an unverified half rather than a finding,
+  which is the honest form: a reader with the tool can settle it in one command.
 
 ## How a finding is called fixed
 
