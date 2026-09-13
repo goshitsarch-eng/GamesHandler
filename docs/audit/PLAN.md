@@ -65,7 +65,7 @@ those rows contain `Status:`:
 | `BUGS.md` | 48 | 34 | 32 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 17 | 16 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 19 | 16 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
-| `SECURITY.md` | 11 | 7 | 6 `FIXED`, 1 `PARTIAL` |
+| `SECURITY.md` | 11 | 8 | 7 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 9 | 7 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 

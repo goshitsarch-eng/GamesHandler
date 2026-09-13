@@ -356,6 +356,30 @@ def document_statuses() -> dict[str, str]:
     return found
 
 
+def document_rows() -> dict[str, str]:
+    """`{id: the row's whole line}` from the specialist documents.
+
+    Separate from `document_statuses` on purpose. That function answers "what
+    does the `Status:` tail say", and a row that records its outcome some other
+    way answers the pair check's real question — "does the specialist row say
+    anything about how this ended?" — without answering that one. `BUG-11` is
+    the case: its row is struck through and marked `**WITHDRAWN**` inline, in
+    the *Not a defect* section, and carries no tail. Reading only tails made
+    that row look silent, which is why this exists rather than a wider
+    regex in the function above.
+    """
+    pattern = re.compile(
+        r"^\|\s*(?:~~)?\*{0,2}(?:~~)?`?(BUG|ARCH|UX|PERF|SEC|PKG)-(\d+)")
+    found: dict[str, str] = {}
+    for family, document in DOCUMENTS.items():
+        path = REPO / "docs" / "audit" / document
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = pattern.match(line)
+            if match:
+                found[f"{match.group(1)}-{match.group(2)}"] = line
+    return found
+
+
 def cross_referenced_pairs(plan: str) -> set[str]:
     """The ids named in `PLAN.md`'s *Cross-referenced pairs* table.
 
@@ -436,6 +460,34 @@ def pairing_problems(plan: str) -> list[str]:
                 f"and its specialist document says {word_there!r}. D-59 puts the "
                 f"status once, in the document's `Status:` tail; whichever cell "
                 f"is stale, the pair is now recorded twice and differently")
+    # The loop above compares two cells, so it cannot see a row that has only
+    # one: `document` holds `""` for an id whose row carries no tail, and
+    # `not there` skips it. That is the hole `SEC-04` was sitting in — settled
+    # in the plan, its fix described as prose between two table rows, and so
+    # invisible to every check in this file. Measured before this was written:
+    # the plan said `FIXED 88578db`, `SECURITY.md` carried no tail, and
+    # `--check` exited 0.
+    #
+    # Only *settled* rows are reported. An open row with no tail is the normal
+    # state — there is nothing to say yet — so flagging those would bury the
+    # signal in 46 lines of noise.
+    rows = document_rows()
+    for identifier in sorted(set(plan_status)):
+        here = plan_status[identifier]
+        if not settled(here.split(" ")[0].rstrip("—-").strip()):
+            continue
+        # A tail is not the only way a row can be settled: `BUG-11` carries an
+        # inline `**WITHDRAWN**` and no tail, in the *Not a defect* section, and
+        # that is a recording. Measured: it is the only such row in the tree.
+        row = rows.get(identifier, "")
+        if document.get(identifier, "") or re.search(
+                r"\*\*(WITHDRAWN|CLOSED|Withdrawn|Closed)", row):
+            continue
+        problems.append(
+            f"{identifier} is settled in PLAN.md ({here!r}) but its specialist "
+            f"row carries no `Status:` tail, so the pairing check cannot see it. "
+            f"D-59 puts the status in the tail and derives the plan cell from it; "
+            f"a row with only the derived half has nothing to check against")
     return problems
 
 
