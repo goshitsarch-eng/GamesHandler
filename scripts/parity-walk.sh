@@ -42,10 +42,16 @@
 #
 # `up` therefore drives `scripts/walk/vptr-hold.c`, which creates a
 # `zwlr_virtual_pointer_v1` and a `zwp_virtual_keyboard_v1` from the *canonical*
-# vendored protocol XMLs, and then runs `probe_input`, which opens a window
-# whose reaction to a keystroke is unambiguous and requires the framebuffer to
-# have changed. A harness whose input cannot be demonstrated to arrive does not
-# start; that is the difference between an instrument and a camera.
+# vendored protocol XMLs, and then runs two gates — `probe_keyboard`, which
+# opens a window whose reaction to a keystroke is unambiguous and requires the
+# framebuffer to have changed, and `probe_pointer`, which requires a click to
+# move the compositor's focus to the window under it. A harness whose input
+# cannot be demonstrated to arrive does not start; that is the difference
+# between an instrument and a camera.
+#
+# The two are separate gates because they are separate devices on separate
+# paths, and one working says nothing about the other. Read the pointer probe's
+# own note before merging them.
 #
 # Requires `wayland-scanner`, `wayland-client` headers, and a C compiler.
 #
@@ -56,13 +62,23 @@
 #   scripts/parity-walk.sh key NAME..    send keys by name (Tab, Down, F1, n)
 #   scripts/parity-walk.sh chord MOD NAME..   hold MOD (ctrl/alt/shift/logo)
 #   scripts/parity-walk.sh type TEXT     send literal text
+#   scripts/parity-walk.sh hover X Y     move the pointer there and leave it
 #   scripts/parity-walk.sh click X Y     move the pointer and click
 #   scripts/parity-walk.sh rclick X Y   move the pointer and right-click
+#   scripts/parity-walk.sh scroll X Y DY  move the pointer there and wheel by DY
 #   scripts/parity-walk.sh tree          print the window tree as JSON
 #   scripts/parity-walk.sh logs          print the app's stdout+stderr
 #   scripts/parity-walk.sh down          stop both
 #
 # `up` is idempotent; `shot`/`key`/`click` require a running session and say so.
+#
+# `scroll` exists because the app has content below the fold and nothing in this
+# harness could reach it. Its absence is what produced the "F-ADD: the Add/Save
+# button closes the form without saving" verdict: the form's action row is
+# pushed into the same `scrollable` body as the fields, so on a 1280x800 output
+# the Cancel/Add Game buttons are 600-odd pixels below the visible area, and
+# every click aimed at them landed on empty background. A walk that cannot
+# scroll cannot test a form.
 #
 # Environment: WORK (default /tmp/gh-walk), SOURCE=flatpak|build, BUILD_DIR, CC.
 # With SOURCE=build it runs the binary out of a flatpak-builder tree, which is
@@ -92,6 +108,29 @@ VPTR_SRC="$SELF_DIR/walk/vptr-hold.c"
 VPTR_XMLS="$SELF_DIR/walk/wlr-virtual-pointer-unstable-v1.xml
 $SELF_DIR/walk/virtual-keyboard-unstable-v1.xml
 $SELF_DIR/walk/ext-transient-seat-v1.xml"
+# Every pointer gesture goes through this flag, and `probe_pointer` below
+# measures the path it selects, so the two can never disagree about which path
+# the walk is using.
+#
+# `-g` creates the virtual pointer with a null seat. That is not a
+# stylistic choice: this harness runs sway with WLR_LIBINPUT_NO_DEVICES=1, so
+# the advertised seat reports `capabilities: 0, devices: []`, and a virtual
+# pointer attached to a capability-less seat is accepted by the compositor and
+# then delivers nothing — the protocol exchange succeeds, vptr-hold exits 0, and
+# every click is a silent no-op. Measured: a seat-attached click on the Settings
+# row changed 0 of 1024000 pixels; the same click at the same place with `-g`
+# changed 210632 (20.57%) and the app navigated.
+#
+# The keyboard cannot follow it: zwp_virtual_keyboard_v1's seat argument is
+# non-nullable, so a null seat there is a marshalling error that kills the
+# process. vptr-hold keeps the keyboard on the advertised seat and takes `-g`
+# for the pointer alone.
+#
+# Overridable so the pointer probe's negative case can be measured: with
+# `VPTR_PTR_ARGS= scripts/parity-walk.sh up` the gate must refuse to start the
+# walk, and it does ("focus did not move"). An override that made it pass would
+# mean the gate was measuring nothing.
+VPTR_PTR_ARGS="${VPTR_PTR_ARGS--g}"
 # sway offers no way to name its Wayland socket (there is deliberately no
 # `-s` flag: wl_display_add_socket_auto numbers them wayland-0, wayland-1,
 # ...), and WAYLAND_DISPLAY is not consulted. So the name is discovered at
@@ -152,6 +191,47 @@ print("{}x{} at {},{}".format(r.get("width"), r.get("height"), r.get("x"), r.get
 PY
 }
 
+# Build the virtual-input helper if it is missing or older than its source.
+#
+# Every command that drives the binary calls this, not just `up`. It used to be
+# inlined in `up` alone, which meant `click`/`hover`/`type`/`chord` ran whatever
+# binary happened to be on disk: an edit to the C source was silently ignored
+# until the next `up`, and the walk reported the behaviour of the old binary.
+# That is the same "passes without inspecting what it claims" defect the probes
+# below exist to catch, one level down — a check whose guard sits somewhere the
+# check does not.
+ensure_vptr() {
+    if [ -x "$VPTR_BIN" ] && [ "$VPTR_BIN" -nt "$VPTR_SRC" ]; then
+        return 0
+    fi
+    [ -f "$VPTR_SRC" ] || die "missing $VPTR_SRC"
+    for xml in $VPTR_XMLS; do
+        [ -f "$xml" ] || die "missing $xml"
+    done
+    command -v wayland-scanner >/dev/null || die "wayland-scanner is required to build the virtual-input glue"
+    # The protocol XMLs are the canonical upstream files, vendored rather
+    # than hand-written: a Wayland request's opcode is its position among
+    # its interface's `request` declarations, so a hand-trimmed copy that
+    # omits a request silently renumbers every one after it and the
+    # compositor answers `invalid arguments` on a request the caller
+    # thought it was sending correctly.
+    local gen="$WORK/proto" srcs=""
+    mkdir -p "$gen"
+    for xml in $VPTR_XMLS; do
+        local stem; stem=$(basename "$xml" .xml)
+        wayland-scanner client-header "$xml" "$gen/$stem-client.h" \
+            || die "wayland-scanner could not build $stem client header"
+        wayland-scanner private-code  "$xml" "$gen/$stem-protocol.c" \
+            || die "wayland-scanner could not build $stem protocol code"
+        srcs="$srcs $gen/$stem-protocol.c"
+    done
+    # shellcheck disable=SC2086
+    ${CC:-cc} -O2 -o "$VPTR_BIN" "$VPTR_SRC" $srcs -I"$gen" \
+        $(pkg-config --cflags --libs wayland-client) \
+        || die "could not build $VPTR_BIN (need wayland-client headers)"
+    say "built $VPTR_BIN"
+}
+
 # --------------------------------------------------------------------- up
 cmd_up() {
     mkdir -p "$RUNTIME" "$SHOTS"
@@ -207,40 +287,20 @@ EOF
     # whole gesture as one short-lived process, because sway closes a
     # virtual-input client's connection if it sits idle between bursts.
     #
-    # The seat's advertised capability is deliberately NOT the gate here. On
-    # sway with no libinput devices, seat0 reports `capabilities: 0,
-    # devices: []` even while a working virtual pointer is delivering clicks,
-    # because a wlroots virtual pointer is not a seat device. Gating on it
-    # would refuse a session that works. `probe_input` below measures delivery
-    # directly, which is the property that actually matters.
-    if [ ! -x "$VPTR_BIN" ] || [ "$VPTR_SRC" -nt "$VPTR_BIN" ]; then
-        [ -f "$VPTR_SRC" ] || die "missing $VPTR_SRC"
-        for xml in $VPTR_XMLS; do
-            [ -f "$xml" ] || die "missing $xml"
-        done
-        command -v wayland-scanner >/dev/null || die "wayland-scanner is required to build the virtual-input glue"
-        # The protocol XMLs are the canonical upstream files, vendored rather
-        # than hand-written: a Wayland request's opcode is its position among
-        # its interface's `request` declarations, so a hand-trimmed copy that
-        # omits a request silently renumbers every one after it and the
-        # compositor answers `invalid arguments` on a request the caller
-        # thought it was sending correctly.
-        local gen="$WORK/proto" srcs=""
-        mkdir -p "$gen"
-        for xml in $VPTR_XMLS; do
-            local stem; stem=$(basename "$xml" .xml)
-            wayland-scanner client-header "$xml" "$gen/$stem-client.h" \
-                || die "wayland-scanner could not build $stem client header"
-            wayland-scanner private-code  "$xml" "$gen/$stem-protocol.c" \
-                || die "wayland-scanner could not build $stem protocol code"
-            srcs="$srcs $gen/$stem-protocol.c"
-        done
-        # shellcheck disable=SC2086
-        ${CC:-cc} -O2 -o "$VPTR_BIN" "$VPTR_SRC" $srcs -I"$gen" \
-            $(pkg-config --cflags --libs wayland-client) \
-            || die "could not build $VPTR_BIN (need wayland-client headers)"
-        say "built $VPTR_BIN"
-    fi
+    # The seat's advertised capability is not the gate here either. On sway with
+    # no libinput devices, seat0 reports `capabilities: 0, devices: []`, and that
+    # number is genuinely uninformative: it does not distinguish a virtual
+    # pointer that will deliver from one that will not. The working pointer this
+    # harness uses (seatless, `-g`) and the non-working one (seat-attached) are
+    # both invisible to it. Gating on it would refuse sessions that work and
+    # accept sessions that do not.
+    #
+    # `probe_pointer` below asks the compositor what it actually did with a
+    # click, which is the property that matters. Note the earlier version of
+    # this comment asserted that delivery works "even while capabilities: 0" —
+    # it does not. Delivery depends on which seat the pointer is created
+    # against, and this harness's advertised seat is the wrong one.
+    ensure_vptr
     # The keyboard half needs a keymap before any keycode means anything; the
     # `evdev` keycodes the commands above are expressed in are only meaningful
     # against this map. Written here so `up` is the one place that sets the
@@ -248,8 +308,9 @@ EOF
     cat >"$WORK/keymap.xkb" <<'XKB'
 xkb_keymap { xkb_keycodes { include "evdev+aliases(qwerty)" }; xkb_types { include "complete" }; xkb_compat { include "complete" }; xkb_symbols { include "pc+us" }; };
 XKB
-    probe_input || die "virtual input does not reach the compositor (see $WORK/probe-foot.log; re-run with VPTR_BIN=/bin/true to confirm the probe itself can fail)"
-    say "virtual pointer+keyboard verified"
+    probe_keyboard || die "virtual keyboard input does not reach the compositor (see $WORK/probe-foot.log; re-run with VPTR_BIN=/bin/true to confirm the probe itself can fail)"
+    probe_pointer || die "the virtual pointer does not reach the compositor; every click in this walk would be a no-op that reports success (see the pointer probe note above)"
+    say "virtual keyboard and pointer verified independently"
 
     if [ -f "$APP_PIDFILE" ] && kill -0 "$(cat "$APP_PIDFILE")" 2>/dev/null; then
         say "app already running"
@@ -332,6 +393,23 @@ keycode_for() {
 
 # Modifier names as bit positions in the XKB modifier state, which is what
 # `zwp_virtual_keyboard_v1.modifiers` carries.
+#
+# **This request works, and holding the physical modifier key does not.** Both
+# halves were measured against this compositor, using sway's own keybindings as
+# a third-party consumer of the event (a temporary `bindsym Control+n exec
+# touch ...`, since a binding is handled by the compositor rather than
+# forwarded to a client):
+#
+#     keydown 29; key 49; keyup 29              -> sway saw a *plain* n
+#     modifiers 4 0 0 0; key 49; modifiers 0... -> sway saw Ctrl+n
+#     keydown 29; modifiers 4...; key 49; ...   -> sway saw Ctrl+n
+#     keydown 29; keydown 49; keyup 49; keyup 29-> sway saw a *plain* n
+#
+# So the bitmask path is the one that delivers and the keycode path is a dead
+# end here — the opposite of what the surrounding comment in `cmd_up` implies
+# about modifier state being derived from key events. The bitmask is therefore
+# used, and the note is kept because "hold the real key" is the intuitive fix
+# for exactly this problem and it silently produces unmodified keys.
 modifier_mask() {
     case "$1" in
         shift) echo 1 ;; ctrl|control) echo 4 ;; alt) echo 8 ;; logo|super) echo 64 ;;
@@ -340,6 +418,7 @@ modifier_mask() {
 }
 
 cmd_key() {
+    ensure_vptr
     [ $# -gt 0 ] || die "key needs at least one key name"
     local seq="" k
     for k in "$@"; do
@@ -352,6 +431,7 @@ cmd_key() {
 }
 
 cmd_chord() {
+    ensure_vptr
     local mod="${1:?chord needs a modifier}"; shift
     [ $# -gt 0 ] || die "chord needs at least one key name"
     local mask; mask=$(modifier_mask "$mod")
@@ -366,24 +446,39 @@ cmd_chord() {
 }
 
 cmd_type() {
+    ensure_vptr
     [ $# -gt 0 ] || die "type needs text"
-    local text="$*" seq="" i ch
+    local text="$*" seq="" i ch code lower
     for (( i=0; i<${#text}; i++ )); do
         ch="${text:i:1}"
         case "$ch" in
-            ' ') code=57 ;;
-            *) code=$(keycode_for "$ch") ;;
+            ' ') seq="$seq key 57;" ;;
+            # An uppercase letter is the lowercase key with shift held, and a
+            # `type` that cannot type a capital cannot type a game title. The
+            # earlier version sent an empty keycode for one, which produced a
+            # malformed burst and a misleading "could not deliver" error.
+            [A-Z])
+                lower=$(printf '%s' "$ch" | tr 'A-Z' 'a-z')
+                code=$(keycode_for "$lower")
+                seq="$seq modifiers 1 0 0 0; key $code; modifiers 0 0 0 0;"
+                ;;
+            *) seq="$seq key $(keycode_for "$ch");" ;;
         esac
-        seq="$seq key $code;"
     done
     "$VPTR_BIN" -c "keymap $WORK/keymap.xkb;$seq" >/dev/null 2>&1 \
         || die "the virtual keyboard could not deliver: $text"
     say "type $text"
 }
 
-# ------------------------------------------------------------------ pointer
+# ------------------------------------------------- keyboard and pointer gates
 #
-# The gate that tests delivery: open a window whose reaction to a keystroke is
+# Two gates, one per device, because the two travel different paths and a
+# working keyboard says nothing about the pointer. That is not a hypothetical:
+# this harness spent an entire walk reporting "virtual pointer+keyboard
+# verified" from a single gate that only ever sent keycodes, and it was wrong
+# about the pointer for the whole walk. Every click it reported was a no-op.
+
+# The keyboard gate: open a window whose reaction to a keystroke is
 # unambiguous, type into it through the virtual keyboard, and require that the
 # framebuffer changed. The probe is its own client, so a silent failure here
 # cannot be confused with a property of the app under test.
@@ -396,16 +491,17 @@ cmd_type() {
 # The negative case is the point. Measured with `VPTR_BIN=/bin/true` — a tool
 # that exits 0 and sends nothing — this reports `changed pixels: 0` and returns
 # 1. A probe that cannot fail is not a probe.
-probe_input() {
-    command -v foot >/dev/null || { say "note: foot is not installed; the input probe cannot run"; return 1; }
-    command -v grim >/dev/null || { say "note: grim is not installed; the input probe cannot run"; return 1; }
+probe_keyboard() {
+    command -v foot >/dev/null || { say "note: foot is not installed; the keyboard probe cannot run"; return 1; }
+    command -v grim >/dev/null || { say "note: grim is not installed; the keyboard probe cannot run"; return 1; }
     local before="$WORK/probe-before.png" after="$WORK/probe-after.png"
     # A unique app-id per run so a stale probe window from an earlier walk
     # cannot be the thing that reacts.
-    local probe_id="ghprobe-$$"
+    local probe_id="ghkbd-$$"
     foot -a "$probe_id" >"$WORK/probe-foot.log" 2>&1 &
     local fpid=$!
     sleep 2
+    focus_wait "$probe_id" || { kill "$fpid" 2>/dev/null; say "keyboard probe: the probe window never took focus"; return 1; }
     if ! grim "$before" 2>/dev/null; then
         kill "$fpid" 2>/dev/null
         return 1
@@ -419,10 +515,10 @@ probe_input() {
     kill "$fpid" 2>/dev/null
     local changed
     changed=$(python3 "$SELF_DIR/walk/imgdiff.py" "$before" "$after" 2>/dev/null | head -1) || {
-        say "input probe: captures were not comparable"
+        say "keyboard probe: captures were not comparable"
         return 1
     }
-    say "input probe: $changed"
+    say "keyboard probe: $changed"
     # "changed pixels: 0 of ..." is the failure; anything else means a keystroke
     # reached a client and the client reacted to it.
     case "$changed" in
@@ -432,24 +528,174 @@ probe_input() {
     esac
 }
 
+# The pointer gate. This is the one whose absence cost the walk its verdict.
+#
+# A pointer that delivers nothing cannot be detected from the virtual-input
+# client's side: the compositor accepts the device, accepts every motion and
+# button request, and the client exits 0. Nothing in the protocol reports that
+# the events went nowhere. The only honest test is to ask a *third* party
+# whether it saw them, and the cheapest such party is the compositor's own
+# focus bookkeeping: sway moves keyboard focus to the window under a click, and
+# it publishes the result of that in `get_tree`.
+#
+# So: two probe windows, explicitly focus one, click the other, and require the
+# focus to have moved. Measured on this harness with the seat-attached pointer
+# focus does not move (the click is swallowed); with the seatless pointer `-g`
+# it moves. Neither the app under test nor any property of it participates, so
+# this gate can be trusted before the app is even started.
+probe_pointer() {
+    command -v foot >/dev/null || { say "note: foot is not installed; the pointer probe cannot run"; return 1; }
+    local a="ghptr-a-$$" b="ghptr-b-$$"
+    foot -a "$a" >"$WORK/probe-foot.log" 2>&1 &
+    local pid_a=$!
+    sleep 2
+    foot -a "$b" >>"$WORK/probe-foot.log" 2>&1 &
+    local pid_b=$!
+    sleep 2
+    local rc=1
+    if focus_wait "$b" && focus_wait "$a"; then
+        local target
+        target=$(window_center "$b")
+        if [ -n "$target" ]; then
+            # shellcheck disable=SC2086
+            "$VPTR_BIN" $VPTR_PTR_ARGS -c "home; move $target; click $target" >/dev/null 2>&1
+            sleep 1
+            if [ "$(focused_app_id)" = "$b" ]; then
+                say "pointer probe: focus moved to the clicked window"
+                rc=0
+            else
+                say "pointer probe: focus did not move — the pointer is not being routed (args: ${VPTR_PTR_ARGS:-none})"
+            fi
+        else
+            say "pointer probe: could not read the probe window's geometry"
+        fi
+    else
+        say "pointer probe: the probe windows never appeared"
+    fi
+    kill "$pid_a" "$pid_b" 2>/dev/null
+    return $rc
+}
+
+# The app_id of the focused toplevel, or empty. `swaymsg -t get_tree` is the
+# only oracle here that is answered by the compositor rather than by the
+# program being tested.
+focused_app_id() {
+    swaymsg_ -t get_tree 2>/dev/null | python3 -c '
+import json, sys
+t = json.load(sys.stdin)
+found = []
+def walk(n):
+    if n.get("focused") and n.get("app_id"):
+        found.append(n["app_id"])
+    for c in n.get("nodes", []) + n.get("floating_nodes", []):
+        walk(c)
+walk(t)
+print(found[0] if found else "")' 2>/dev/null
+}
+
+# Wait for a toplevel with this app_id to exist, then focus it. Returns 1 if it
+# never appears. Focusing explicitly rather than relying on the compositor to
+# hand a new window focus keeps the probe's precondition stated instead of
+# assumed.
+focus_wait() {
+    local id="$1" i pid
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        pid=$(swaymsg_ -t get_tree 2>/dev/null | python3 -c '
+import json, sys
+want = sys.argv[1]
+t = json.load(sys.stdin)
+hit = []
+def walk(n):
+    if n.get("app_id") == want:
+        hit.append(1)
+    for c in n.get("nodes", []) + n.get("floating_nodes", []):
+        walk(c)
+walk(t)
+print("1" if hit else "")' "$id" 2>/dev/null)
+        [ -n "$pid" ] && break
+        sleep 0.5
+    done
+    [ -n "$pid" ] || return 1
+    swaymsg_ "[app_id=\"$id\"] focus" >/dev/null 2>&1
+    sleep 0.5
+    [ "$(focused_app_id)" = "$id" ]
+}
+
+# "X,Y" for the centre of the named window, in the screen coordinates the
+# virtual pointer moves in. sway reports the toplevel rect excluding its own
+# title bar, and the pointer is compositor-space, so the offset is added here —
+# the one place in the harness that knows about it.
+window_center() {
+    swaymsg_ -t get_tree 2>/dev/null | python3 -c '
+import json, sys
+want = sys.argv[1]
+t = json.load(sys.stdin)
+hit = []
+def walk(n):
+    if n.get("app_id") == want:
+        hit.append(n["rect"])
+    for c in n.get("nodes", []) + n.get("floating_nodes", []):
+        walk(c)
+walk(t)
+if not hit:
+    sys.exit(1)
+r = hit[0]
+print(str(r["x"] + r["width"] // 2) + "," + str(r["y"] + r["height"] // 2))' "$1" 2>/dev/null
+}
+
 # A click is one uninterrupted burst through the virtual pointer. It is not
 # `swaymsg seat - cursor`, which reports `success: true` on this compositor
 # while delivering nothing, and it is not a `move` followed by a later `press`,
 # because sway closes a virtual-input client's connection across an idle gap
 # and the press then lands nowhere. The exit status alone would not catch
 # either; the `-c` one-shot is what makes the whole gesture one client.
+#
+# The exit status catches less than it looks like it does: a click delivered
+# into a capability-less seat succeeds at the protocol level and moves nothing.
+# That is why the seat is chosen by $VPTR_PTR_ARGS, why `up` runs
+# `probe_pointer`, and why a click is only evidence when a capture before and
+# after it differ.
 cmd_click() {
+    ensure_vptr
     local x="${1:?click needs x}" y="${2:?click needs y}"
-    "$VPTR_BIN" -c "click $x $y" >/dev/null 2>&1 \
+    "$VPTR_BIN" $VPTR_PTR_ARGS -c "click $x $y" >/dev/null 2>&1 \
         || die "the virtual pointer could not deliver a click at $x,$y"
     say "click at $x,$y"
 }
 
 cmd_rclick() {
+    ensure_vptr
     local x="${1:?rclick needs x}" y="${2:?rclick needs y}"
-    "$VPTR_BIN" -c "click $x $y 273" >/dev/null 2>&1 \
+    "$VPTR_BIN" $VPTR_PTR_ARGS -c "click $x $y 273" >/dev/null 2>&1 \
         || die "the virtual pointer could not deliver a right-click at $x,$y"
     say "right-click at $x,$y"
+}
+
+# Move the pointer onto a point and leave it there, so the hover state (tooltip,
+# card lift, button highlight) is on screen for the next `shot`. Also the
+# cheapest way to ask whether the pointer is being routed at all.
+cmd_hover() {
+    ensure_vptr
+    local x="${1:?hover needs x}" y="${2:?hover needs y}"
+    "$VPTR_BIN" $VPTR_PTR_ARGS -c "home; move $x $y" >/dev/null 2>&1 \
+        || die "the virtual pointer could not move to $x,$y"
+    say "hover at $x,$y"
+}
+
+# Wheel the pointer over X,Y by DY (positive is "scroll down"). One burst, like
+# every other gesture: sway closes a virtual-input client's connection across an
+# idle gap, so a move and a wheel have to be one client even though the C side
+# settles between them.
+#
+# The exit status proves only that the compositor accepted the requests. As with
+# `click`, a wheel is evidence only when a capture before and after it differ —
+# the harness cannot see from this side whether anything consumed the axis.
+cmd_scroll() {
+    ensure_vptr
+    local x="${1:?scroll needs x}" y="${2:?scroll needs y}" dy="${3:?scroll needs dy}"
+    "$VPTR_BIN" $VPTR_PTR_ARGS -c "scroll $x $y $dy" >/dev/null 2>&1 \
+        || die "the virtual pointer could not wheel at $x,$y"
+    say "scroll $dy at $x,$y"
 }
 
 cmd_tree() {
@@ -494,8 +740,10 @@ case "${1:-}" in
     key)   shift; cmd_key "$@" ;;
     chord) shift; cmd_chord "$@" ;;
     type)  shift; cmd_type "$@" ;;
+    hover) shift; cmd_hover "$@" ;;
     click) shift; cmd_click "$@" ;;
     rclick) shift; cmd_rclick "$@" ;;
+    scroll) shift; cmd_scroll "$@" ;;
     tree)  shift; cmd_tree "$@" ;;
     logs)  shift; cmd_logs "$@" ;;
     down)  shift; cmd_down "$@" ;;
