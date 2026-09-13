@@ -60,7 +60,7 @@ pub const SECTION_HOST_PLUGINS: &str = "Host plugins";
 /// the gap `UX-28` records, and the reason a replacement has to be written
 /// rather than copied.
 ///
-/// The *shape* is `view::installers`': a [`cosmic::widget::text::title4`] over a
+/// The *shape* is `view::installers`': a [`cosmic::widget::text::title3`] over a
 /// [`cosmic::widget::text::body`], drawn inside the body under the page's own
 /// heading rather than returned in place of the page. What the words say is
 /// bounded by what is true here — the catalogue is `plugins::PLUGINS`, a fixed
@@ -474,7 +474,7 @@ pub fn view<'a>(page: PluginsPage<'a>) -> Element<'a, Message> {
     let mut body = Column::new()
         .spacing(12)
         .width(Length::Fill)
-        .push(text::title4(SECTION_HOST_PLUGINS))
+        .push(text::title3(SECTION_HOST_PLUGINS))
         .push(text::caption(page.intro));
 
     // The branch the other three list pages have and this one did not (`UX-28`).
@@ -484,7 +484,7 @@ pub fn view<'a>(page: PluginsPage<'a>) -> Element<'a, Message> {
     // asserts both halves for that reason.
     if page.rows.is_empty() {
         body = body
-            .push(text::title4(EMPTY_TEXT))
+            .push(text::title3(EMPTY_TEXT))
             .push(text::body(EMPTY_EXPLANATION));
     }
 
@@ -535,6 +535,34 @@ mod tests {
                 .contains(&format!("\"{SECTION_HOST_PLUGINS}\"")),
             "the page heading is no longer the QML's"
         );
+    }
+
+    /// **The page's headings render at `title3` — the one level every
+    /// section heading in this port shares** (UX-22).
+    ///
+    /// `the_heading_is_the_qmls` checks the *words*; this checks the *level*,
+    /// which a string match cannot see. `PluginsPage.qml:16` is `level: 3`,
+    /// the level every section heading in the reference is drawn at — so a
+    /// page that drops this heading to `title4` (its level before the fix)
+    /// fails the height comparison, and so does the placeholder title, which
+    /// shares the level across the three pages that draw one.
+    #[test]
+    fn the_pages_headings_render_at_the_references_level() {
+        let intro = plugins::plugins_intro(&SystemPluginEnv);
+        let empty = PluginsPage {
+            intro: &intro,
+            rows: &[],
+        };
+        let mut page = view(empty);
+
+        for needle in [SECTION_HOST_PLUGINS, EMPTY_TEXT] {
+            let mut expected: Element<'_, ()> = text::title3(needle).into();
+            assert_eq!(
+                testkit::text_height(&mut page, needle),
+                testkit::text_height(&mut expected, needle),
+                "`{needle}` is not drawn at `title3`'s height"
+            );
+        }
     }
 
     #[test]

@@ -170,3 +170,25 @@ pub(crate) fn drawn_strings<M: Clone + 'static>(
         .filter_map(|seen| seen.text)
         .collect()
 }
+
+/// The height `needle` is drawn at inside `el` — the level a heading renders
+/// at, rather than the constructor a source scan would read.
+///
+/// UX-22's assertion shape: the finding was two heading *levels* doing one
+/// job, and a test that greps the call sites for `title3`/`title4` cannot see
+/// the level — only the measurement can. Compare against the height a bare
+/// [`cosmic::widget::text`] of the wanted level gives the same string.
+///
+/// The traversal reports one entry per drawn string, so a `needle` drawn
+/// twice answers its first bounds — fine for the headings this is for, and
+/// the reason the `expect` names the string rather than the page.
+pub(crate) fn text_height<M: Clone + 'static>(
+    el: &mut cosmic::Element<'_, M>,
+    needle: &str,
+) -> f32 {
+    traversal(el)
+        .iter()
+        .find(|seen| seen.text.as_deref() == Some(needle))
+        .map(|seen| seen.bounds.height)
+        .unwrap_or_else(|| panic!("`{needle}` is not drawn in this tree"))
+}

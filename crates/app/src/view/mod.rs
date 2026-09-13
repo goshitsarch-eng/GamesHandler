@@ -239,9 +239,17 @@ pub fn settings_row<'a, M: 'static>(
 ///   no list grouping between the rows, so adopting `Section` would introduce a
 ///   structural difference from the reference to remove a duplication.
 ///
-/// The heading *level* question is real and separate, and it is `UX-22`'s — a
-/// row that asks for it can decide it there, once, for every heading in the app,
-/// instead of as a side effect of this one.
+/// The heading *level* question was `UX-22`'s, and its answer is why this
+/// helper is `title4` while every *reference-attested* section heading is
+/// `title3`. The reference draws a `Kirigami.Heading level: 3` for each of
+/// its section headings (Runners ×4, Installers "Catalog", Plugins "Host
+/// plugins", Credits ×3) — those are `text::title3` in this port. On the two
+/// pages this helper serves, the reference draws `Kirigami.Separator`s with
+/// `FormData.isSection` — a rule, not a heading — so the label is this port's
+/// own device and is held one rung below the headings the reference actually
+/// draws, where it cannot be mistaken for one. The same level split applies
+/// to the placeholder titles: the reference's `PlaceholderMessage` titles are
+/// `title3` here (Library, Installers, Plugins), one level for one job.
 pub fn settings_section<'a, M: 'static>(heading: &'a str) -> cosmic::Element<'a, M> {
     cosmic::widget::text::title4(heading).into()
 }

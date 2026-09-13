@@ -610,7 +610,7 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
 
     if page.catalog.is_empty() {
         body = body
-            .push(text::title4(EMPTY_TEXT))
+            .push(text::title3(EMPTY_TEXT))
             .push(text::body(EMPTY_EXPLANATION));
     }
 
@@ -2036,6 +2036,28 @@ mod tests {
             !drawn.iter().any(|text| text == "Install"),
             "no card is drawn for an empty catalog, so no Install button is \
              either; drawn: {drawn:?}"
+        );
+
+        // UX-22: the placeholder title renders at `title3`, the one level the
+        // three pages that draw a placeholder title share — Library's pair and
+        // Plugins' all measure it, and this page drawing `EMPTY_TEXT` a level
+        // down (its level before the fix) fails the comparison.
+        let categories = installer_categories();
+        let mut page = view(InstallersView {
+            catalog: &[],
+            search: "nothing matches this",
+            category: ALL_CATEGORIES,
+            categories: &categories,
+            runners: &[],
+            runner_id: "",
+            busy: false,
+            progress: None,
+        });
+        let mut expected: Element<'_, ()> = text::title3(EMPTY_TEXT).into();
+        assert_eq!(
+            testkit::text_height(&mut page, EMPTY_TEXT),
+            testkit::text_height(&mut expected, EMPTY_TEXT),
+            "the placeholder title is not drawn at `title3`'s height"
         );
     }
 
