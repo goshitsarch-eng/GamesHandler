@@ -87,6 +87,12 @@ use crate::state::{ReleasesStatus, State};
 
 use super::badge::badge;
 
+/// The toolbar's re-fetch action. `RunnersPage.qml:21-26`.
+///
+/// The reference's `Kirigami.Action { text: "Refresh" }`. Its own constant
+/// because the page draws it in one place and the label is asserted there.
+pub const REFRESH: &str = "Refresh";
+
 // ---------------------------------------------------------------------------
 // The decisions, as data
 // ---------------------------------------------------------------------------
@@ -439,6 +445,20 @@ pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
                     family: families()[index].id.to_string(),
                 }
             }))
+            // The page's `actions:` block (`RunnersPage.qml:21-26`), which was
+            // not ported. It exists for exactly one state — a fetch that failed
+            // — where the error is on screen with nothing to press, and the
+            // dropdown only fires on *change*, so switching family away and back
+            // was the only retry. `enabled: backend.releasesStatus !== "loading"`
+            // is `on_press_maybe`, the pattern `view::plugins` already uses.
+            //
+            // The family is the one currently selected, not a default: pressing
+            // Refresh must not silently move the user to another family.
+            .push(button::standard(REFRESH).on_press_maybe(
+                (page.status != &ReleasesStatus::Loading).then_some(Message::FetchReleases {
+                    family: page.selected_family.to_string(),
+                }),
+            ))
             .spacing(8)
             .align_y(Alignment::Center),
     );
@@ -1133,6 +1153,87 @@ mod tests {
 
     fn released(tag: &str, name: &str, size: i64) -> ReleaseInfo {
         ReleaseInfo::new(tag, name, "https://example.invalid/a.tar.gz", size)
+    }
+
+    /// Every string the page actually draws, by walking the built widget tree.
+    ///
+    /// Same shape as `view::library`'s and `view::settings`'s. `BUG-09` is a
+    /// *missing control*, and a control's absence is only visible in the built
+    /// tree — a constant or a pure-function test cannot see it.
+    fn drawn_strings(mut element: Element<'_, Message>) -> Vec<String> {
+        use cosmic::iced::advanced::widget::{Operation, Tree};
+        use cosmic::iced::advanced::{Layout, layout::Limits};
+        use cosmic::iced::{Font, Pixels, Rectangle, Size};
+
+        #[derive(Default)]
+        struct Texts(Vec<String>);
+        impl Operation for Texts {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn text(&mut self, _id: Option<&cosmic::widget::Id>, _bounds: Rectangle, text: &str) {
+                self.0.push(text.to_string());
+            }
+        }
+
+        let renderer = cosmic::Renderer::new(Font::default(), Pixels(16.0));
+        let mut tree = Tree::new(element.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
+        let mut texts = Texts::default();
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
+        texts.0
+    }
+
+    fn page_strings(family: &str, status: &ReleasesStatus, releases: &[ReleaseRow]) -> Vec<String> {
+        drawn_strings(view(RunnersView {
+            installed: &[],
+            selected_family: family,
+            status,
+            releases,
+            progress: None,
+        }))
+    }
+
+    /// `BUG-09`: the Runners page has a Refresh control, and it is drawn
+    /// **specifically in the state the reference enables it for**.
+    ///
+    /// `RunnersPage.qml:21-26` is a page action with
+    /// `enabled: backend.releasesStatus !== "loading"`. Without it, a fetch
+    /// that failed leaves the error on screen with nothing to press — the
+    /// dropdown only fires on *change*, so switching family away and back was
+    /// the only retry.
+    ///
+    /// Both halves are asserted: the control exists, and it is the *error*
+    /// state that has it, so a fix that drew a Refresh button unconditionally
+    /// would also pass the first half alone.
+    #[test]
+    fn the_runners_page_offers_refresh_when_a_fetch_has_failed() {
+        let failed = page_strings(
+            "ge-proton",
+            &ReleasesStatus::Error("rate limited".to_string()),
+            &[],
+        );
+        assert!(
+            failed.iter().any(|s| s == REFRESH),
+            "a failed fetch must leave something to press; got {failed:?}"
+        );
+
+        // The status line is still shown beside it — the control is a retry,
+        // not a replacement for the message.
+        assert!(
+            failed.iter().any(|s| s.contains("rate limited")),
+            "the error itself must stay on screen; got {failed:?}"
+        );
+
+        // Idle and Ready have it too: the reference's `enabled` excludes only
+        // `loading`, so a fetch that never started is just as retryable.
+        let idle = page_strings("ge-proton", &ReleasesStatus::Idle, &[]);
+        assert!(idle.iter().any(|s| s == REFRESH), "got {idle:?}");
     }
 
     // ---- installed_rows ---------------------------------------------------
