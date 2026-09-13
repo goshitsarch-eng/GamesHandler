@@ -62,7 +62,7 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 28 | 26 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
+| `BUGS.md` | 48 | 30 | 28 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 15 | 15 `FIXED` |
 | `COSMIC-UX.md` | 30 | 15 | 13 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 7 `FIXED` |
@@ -129,18 +129,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 51 | 38 | 0 | 13 |
-| P3 | 50 | 6 | 0 | 44 |
-| **Total** | **130** | **73** | **0** | **57** |
+| P3 | 50 | 8 | 0 | 42 |
+| **Total** | **130** | **75** | **0** | **55** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 26 | 15 | 0 | 11 |
-| `BUG-xx` | `BUGS.md` | 46 | 26 | 0 | 20 |
+| `BUG-xx` | `BUGS.md` | 46 | 28 | 0 | 18 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 6 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 13 | 0 | 16 |
-| **Total** | | **130** | **73** | **0** | **57** |
+| **Total** | | **130** | **75** | **0** | **55** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -293,11 +293,11 @@ across families, not within them.
 | `BUG-19` | sanitize accepts a bare - as the number null, so [-], [-]-style malformed numbers and {"last_played":-} parse where Python raises JSONDecodeError | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-20` | Library::all("recent") / all("added") do not treat -0.0 and 0.0 as equal, so two games whose timestamps tie present in a different order than the reference | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-21` | Four .trim()-where-Python-has-a-truthiness-test divergences on paths and identifiers, each of which shifts a value in the permissive direction | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-22` | merge_dll_overrides trims ; from both ends where Python rstrips only, so a leading ; survives the reference and is removed here | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
+| `BUG-22` | merge_dll_overrides trims ; from both ends where Python rstrips only, so a leading ; survives the reference and is removed here | S1 | — | `b3ad80b` — `python_rstrip_char` where the reference `rstrip`s; a seventh merge case covers the leading `;` and fails under the old helper.| FIXED |
 | `BUG-23` | Three ways a launch failure is turned into a non-failure | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `BUG-24` | The rolling stderr buffer trims to exactly limit bytes where Python keeps the trailing chunk, and the port's chunks.len() > 1 clause is dead code: Python compares *chunk counts* and keeps the last chunk even when it overshoots, while the Rust buffer is one flat Vec<u8> where the same expression is a byte count, subsumed by chunks.len() > limit. The test pins the port's behaviour and its docstring describes Python's guard | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-25` | Two functions apply opposite policies to the same input | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-26` | The archive's containment root falls back to an unresolved path: if canonicalize(destination) fails, the root stays unresolved while the member path goes through resolve_missing, which resolves as far as it can — so a resolved member is starts_with-compared against an unresolved root. Members are lexically stripped of .. first, so the reachable outcome is a *false rejection* rather than an accepted escape; I could not construct the accepting case and am not claiming one | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-26` | The archive's containment root falls back to an unresolved path: if canonicalize(destination) fails, the root stays unresolved while the member path goes through resolve_missing, which resolves as far as it can — so a resolved member is starts_with-compared against an unresolved root. Members are lexically stripped of .. first, so the reachable outcome is a *false rejection* rather than an accepted escape; I could not construct the accepting case and am not claiming one | S1 | — | `b3ad80b` — `containment_root` refuses (`DestinationUnresolvable`) instead of comparing against an unresolved root; both call sites use it. Mutation-checked both ways.| FIXED |
 | `BUG-27` | A typo in the Steam AppID field is silent: "abc" or "12 34" parses to 0, i.e | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-28` | Six worker-to-UI sends discard their message with let _ =, including the two that carry *why* a launch failed | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-29` | One production expect on a value a future page addition invalidates: activate_page runs on every nav-bar click and panics if a Page variant is absent from Page::ALL | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
