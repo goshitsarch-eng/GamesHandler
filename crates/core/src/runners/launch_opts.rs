@@ -117,6 +117,18 @@ fn python_trim_char(value: &str, character: char) -> &str {
     value.trim_matches(character)
 }
 
+/// Python's `str.rstrip(chars)` for a single character: the **right** end only.
+///
+/// Separate from [`python_trim_char`] because the reference uses both in the
+/// same function and the difference is reachable (BUG-22). `merge_dll_overrides`
+/// trims `extra` from both ends — that is `strip(";")` — but trims the
+/// accumulated value from the right only, because a leading `;` in
+/// `WINEDLLOVERRIDES` is the user's own and the reference leaves it alone.
+/// Using the both-ends helper for both was the divergence.
+fn python_rstrip_char(value: &str, character: char) -> &str {
+    value.trim_end_matches(character)
+}
+
 /// Decode UTF-8 the way `bytes.decode("utf-8", errors="ignore")` does.
 ///
 /// Not [`String::from_utf8_lossy`], which substitutes `U+FFFD`: this *drops*
@@ -345,8 +357,15 @@ fn env_tokens(line: &str) -> Option<Vec<String>> {
 ///
 /// Appending rather than replacing is the point: `build_command` has already
 /// `setdefault`ed the value that keeps a prefix quiet, and a game that turns
-/// DXVK off must not lose it. Both sides are trimmed of their `;` so a repeated
-/// call does not accumulate empty entries.
+/// DXVK off must not lose it.
+///
+/// The two sides are trimmed differently, and that is the reference's choice
+/// rather than an oversight here: `extra` loses its `;` from both ends
+/// (`strip(";")`), while the accumulated value loses them only from the right
+/// (`rstrip(";")`), so `WINEDLLOVERRIDES=";dxgi=n,b"` keeps its leading `;`
+/// exactly as Python keeps it. An earlier revision of this comment said "both
+/// sides are trimmed of their `;`" and the code did that — trimming the leading
+/// `;` off the user's value, which is BUG-22.
 pub fn merge_dll_overrides(env: &mut BTreeMap<String, String>, extra: &str) {
     let extra = python_trim_char(python_trim(extra), ';');
     if extra.is_empty() {
@@ -362,7 +381,7 @@ pub fn merge_dll_overrides(env: &mut BTreeMap<String, String>, extra: &str) {
     }
     env.insert(
         "WINEDLLOVERRIDES".to_string(),
-        format!("{};{}", python_trim_char(&current, ';'), extra),
+        format!("{};{}", python_rstrip_char(&current, ';'), extra),
     );
 }
 
@@ -1178,8 +1197,10 @@ A=\"quoted; with semicolon\"
     #[test]
     fn merging_an_override_never_loses_the_existing_one() {
         // Pairs read off CPython. The `rstrip(";")` and the `strip(";")` on the
-        // fragment are what stop repeated calls accumulating separators.
-        let cases: [MergeCase<'_>; 6] = [
+        // fragment are what stop repeated calls accumulating separators — and
+        // note that the two are *different* operations on purpose, which is the
+        // case the last row is here for.
+        let cases: [MergeCase<'_>; 7] = [
             (&[], "", &[]),
             (&[], "  ;a=b;; ", &[("WINEDLLOVERRIDES", "a=b")]),
             (
@@ -1201,6 +1222,23 @@ A=\"quoted; with semicolon\"
                 &[("WINEDLLOVERRIDES", "")],
                 "z",
                 &[("WINEDLLOVERRIDES", "z")],
+            ),
+            // The case no row covered, which is why BUG-22 survived: the
+            // *accumulated* value keeps a leading `;` (Python `rstrip`s it from
+            // the right only) while the *fragment* loses one from both ends.
+            // Using one helper for both deleted this `;` and diverged from the
+            // reference in the one direction the other five rows cannot see.
+            //
+            // The expectation is `merge_dll_overrides` run under CPython, not
+            // read off this implementation — the first version of this row was
+            // written from the intent and was wrong about the interior spaces,
+            // which the reference preserves. Only the leading `;` is meant to be
+            // the subject here; the trailing space is why it was worth running
+            // the reference instead of reasoning about it.
+            (
+                &[("WINEDLLOVERRIDES", ";dxgi=n,b")],
+                "; d3d11=n,b ;; ",
+                &[("WINEDLLOVERRIDES", ";dxgi=n,b; d3d11=n,b ")],
             ),
         ];
         for (initial, extra, expected) in cases {

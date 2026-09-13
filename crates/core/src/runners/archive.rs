@@ -119,6 +119,19 @@ pub enum ArchiveError {
     },
     /// A member that resolves outside the destination.
     OutsideDestination(String),
+    /// The destination could not be resolved, so the containment check could
+    /// not be made against a resolved root (BUG-26).
+    ///
+    /// This is a refusal, not a failure to report something cosmetic. The
+    /// check in [`destination_path`] is a resolved-path `starts_with`; if the
+    /// root is left unresolved while the member is resolved as far as it can
+    /// be, the comparison degrades to a lexical one and the property the
+    /// function exists for is gone — silently, because the answer it returns
+    /// still looks like an answer.
+    DestinationUnresolvable {
+        path: PathBuf,
+        source: io::Error,
+    },
     /// A member type the filter refuses: fifo, socket, char or block device.
     SpecialFile(String),
     /// A link whose target is an absolute path.
@@ -156,6 +169,12 @@ impl std::fmt::Display for ArchiveError {
             Self::OutsideDestination(name) => {
                 write!(f, "Runner archive member escapes the destination: {name}")
             }
+            Self::DestinationUnresolvable { path, source } => write!(
+                f,
+                "Cannot check the runner archive for escapes: {} could not be \
+                 resolved ({source})",
+                path.display()
+            ),
             Self::SpecialFile(name) => {
                 write!(
                     f,
@@ -412,6 +431,26 @@ fn resolve_missing(path: &Path) -> PathBuf {
 /// member may become (only a directory is meaningful; a *file* or a *link*
 /// there would replace the destination for everything after it, which Python
 /// refuses by identity in the link branch).
+/// The resolved destination every containment check is compared against.
+///
+/// Extracted so the two checks that need it — the member name here and the link
+/// target in [`plan_member`] — cannot drift into resolving the root differently,
+/// which is BUG-26's shape: one of them falling back to the unresolved path
+/// while the other kept the resolved one.
+///
+/// `unwrap_or_else(|_| destination.to_path_buf())` stood here and is the defect.
+/// It made a failed resolution look like a successful one, so a check
+/// documented as "resolved member against resolved root" quietly became
+/// "resolved member against a lexical root" on exactly the trees where the
+/// difference matters — and returned the same shape of answer either way, so
+/// nothing could notice.
+fn containment_root(destination: &Path) -> Result<PathBuf, ArchiveError> {
+    fs::canonicalize(destination).map_err(|source| ArchiveError::DestinationUnresolvable {
+        path: destination.to_path_buf(),
+        source,
+    })
+}
+
 fn destination_path(destination: &Path, name: &str) -> Result<Option<PathBuf>, ArchiveError> {
     let mut relative = PathBuf::new();
     for component in Path::new(name).components() {
@@ -432,7 +471,7 @@ fn destination_path(destination: &Path, name: &str) -> Result<Option<PathBuf>, A
         return Ok(None);
     }
 
-    let resolved_root = fs::canonicalize(destination).unwrap_or_else(|_| destination.to_path_buf());
+    let resolved_root = containment_root(destination)?;
     let resolved = resolve_missing(&destination.join(&relative));
     if !resolved.starts_with(&resolved_root) {
         return Err(ArchiveError::OutsideDestination(name.to_string()));
@@ -509,7 +548,7 @@ fn plan_member<R: Read>(
         .into_owned();
     let relative = destination_path(destination, &name)?;
     let kind = entry.header().entry_type();
-    let resolved_root = fs::canonicalize(destination).unwrap_or_else(|_| destination.to_path_buf());
+    let resolved_root = containment_root(destination)?;
 
     // `member.size < 0` has no Rust equivalent — the tar header's size field is
     // unsigned here where Python's is a signed int — so the check Python makes
@@ -850,6 +889,64 @@ mod tests {
         FileMode(&'a str, &'a [u8], u32),
         Dir(&'a str),
         Symlink(&'a str, &'a str),
+    }
+
+    /// A destination that cannot be resolved is refused, not compared lexically
+    /// (BUG-26).
+    ///
+    /// The escape check is a resolved member against a resolved root. With the
+    /// old `unwrap_or_else(|_| destination.to_path_buf())` the root stayed
+    /// lexical whenever `canonicalize` failed, so the check silently became a
+    /// prefix comparison — an answer of the same shape as the real one, which
+    /// is why nothing could notice. These two assertions are what notice.
+    ///
+    /// The first is the direct one: the helper refuses and names the path. The
+    /// second is the one that matters — it goes through [`destination_path`],
+    /// the function the escape check actually runs, and pins that a member of
+    /// an unresolvable destination is an error rather than an `Ok`.
+    #[test]
+    fn an_unresolvable_destination_is_refused_rather_than_degraded() {
+        let missing = std::env::temp_dir().join("gh-archive-no-such-destination-8712");
+
+        match containment_root(&missing) {
+            Err(ArchiveError::DestinationUnresolvable { path, .. }) => {
+                assert_eq!(
+                    path, missing,
+                    "the refusal should name the path it could not resolve"
+                )
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+
+        match destination_path(&missing, "bin/wine") {
+            Err(ArchiveError::DestinationUnresolvable { .. }) => {}
+            Ok(relative) => panic!(
+                "a member of an unresolvable destination must be refused, not \
+                 reported as {relative:?} — an Ok here is the comparison \
+                 degrading to a lexical one, which is BUG-26"
+            ),
+            Err(other) => panic!("expected DestinationUnresolvable, got {other:?}"),
+        }
+    }
+
+    /// The resolved root is the destination itself once it exists, so the
+    /// refusal above is not a function that refuses everything.
+    ///
+    /// Without this the test above would pass against a `containment_root` that
+    /// returned `Err` unconditionally — the negative half of a pair, which is
+    /// this audit's recurring shape.
+    #[test]
+    fn a_real_destination_resolves_to_itself() {
+        let dir = std::env::temp_dir().join("gh-archive-root-resolves-8712");
+        fs::create_dir_all(&dir).unwrap();
+        let direct = fs::canonicalize(&dir).unwrap();
+        assert_eq!(containment_root(&dir).unwrap(), direct);
+        assert_eq!(
+            destination_path(&dir, "bin/wine").unwrap(),
+            Some(PathBuf::from("bin/wine")),
+            "an ordinary member of a real destination passes"
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 
     /// Write `name` into a header's name field without the builder's own
