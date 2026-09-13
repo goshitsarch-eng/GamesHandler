@@ -208,6 +208,13 @@ pub const SHORTCUTS: [(&str, &str); 4] = [
 ///
 /// The list is kept as data rather than deleted, and so is
 /// [`UNWIRED_SHORTCUTS`], for the reason the complement's own doc gives.
+///
+/// **`#[cfg(test)]` since ARCH-25.** The pair exists for the guard below and for
+/// no production reader, which is the honest description of what it is: a
+/// two-way check written down in a form a reviewer can read without running
+/// anything. Gating it says so, and it is what lets lint reach the rest of the
+/// module instead of a module-level allow covering it.
+#[cfg(test)]
 pub const IMPLEMENTED_SHORTCUTS: [&str; 4] = ["Ctrl+N:", "Ctrl+F:", "Ctrl+,:", "Ctrl+Q:"];
 
 /// Every row [`SHORTCUTS`] prints that [`IMPLEMENTED_SHORTCUTS`] does not.
@@ -220,6 +227,7 @@ pub const IMPLEMENTED_SHORTCUTS: [&str; 4] = ["Ctrl+N:", "Ctrl+F:", "Ctrl+,:", "
 /// at zero length rather than deleted so that the *next* shortcut to be
 /// advertised-but-unwired has an obvious home and the test that guards it
 /// remains a two-way check rather than one-way.
+#[cfg(test)]
 pub const UNWIRED_SHORTCUTS: [&str; 0] = [];
 
 /// A section heading, `(heading, is_a_form_section)`.

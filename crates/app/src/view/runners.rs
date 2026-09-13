@@ -1935,6 +1935,79 @@ mod tests {
         }
     }
 
+    /// **The cut is at the test module, not at any `#[cfg(test)]`.**
+    ///
+    /// ARCH-25 gated four production items with `#[cfg(test)]`, one of them
+    /// early in `credits.rs`. The cut jumped to it, the scan silently stopped
+    /// reading the rest of that file, and the `links >= 3` anti-vacuity assert
+    /// went red — reporting "the scan found only 2 calls", which points at the
+    /// call sites rather than at the cut. So the rule is pinned here directly,
+    /// on the shape that broke it.
+    ///
+    /// # Why this asserts on `link_button_production_source`
+    ///
+    /// The first version of this test called `test_module_start` and asserted on
+    /// its offset. Reverting the *call site* to `text.find("#[cfg(test)]")` left
+    /// it green: the helper was correct and the scan was not using it. A test of
+    /// the instrument that the instrument's entry point does not run is the same
+    /// defect this whole module exists to catch, so the assertions below go
+    /// through `link_button_production_source` — what `link_button_sources`
+    /// calls, and therefore what the scan reads.
+    #[test]
+    fn the_cut_is_at_the_test_module_and_not_at_a_gated_item() {
+        // A gated production constant, then real production code, then the
+        // module. The cut must land between the last two and not before the
+        // middle one.
+        let source = concat!(
+            "pub const A: u8 = 1;\n",
+            "#[cfg(test)]\n",
+            "pub const B: u8 = 2;\n",
+            "pub const C: u8 = 3; // production, and it must be scanned\n",
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    pub const D: u8 = 4;\n",
+            "}\n",
+        );
+        let scanned = link_button_production_source(source);
+        assert!(
+            scanned.contains("pub const C"),
+            "the cut landed before `C`, so a `#[cfg(test)]` on a production item \
+             stopped the scan early: {scanned:?}"
+        );
+        assert!(
+            scanned.contains("pub const B"),
+            "the gated item itself is production source and stays in the scan"
+        );
+        assert!(
+            !scanned.contains("pub const D"),
+            "the cut did not reach the test module, so the scan reads this \
+             module's own defect sample and reports itself"
+        );
+
+        // The other spelling in this tree, and a file with no test module.
+        assert!(test_module_start("#[cfg(test)]\npub mod testkit;\n").is_some());
+        assert_eq!(
+            test_module_start("pub fn f() {}\n"),
+            None,
+            "a file with no test module must be scanned whole"
+        );
+        // An attribute between the marker and the `mod`.
+        assert!(test_module_start("#[cfg(test)]\n#[allow(unused)]\nmod tests {}\n").is_some());
+        assert_eq!(
+            test_module_start("#[cfg(test)]\nfn helper() {}\n"),
+            None,
+            "`#[cfg(test)]` on a function is not a test module"
+        );
+        // And the same shapes through the entry point, so the pair cannot drift.
+        for no_module in ["pub fn f() {}\n", "#[cfg(test)]\nfn helper() {}\n"] {
+            assert_eq!(
+                link_button_production_source(no_module).trim(),
+                no_module.trim(),
+                "a file with no test module must be scanned whole"
+            );
+        }
+    }
+
     /// Every `.rs` file the view directory holds, plus `main.rs`, with comments
     /// blanked and the `#[cfg(test)]` modules cut — because this module's own
     /// defect sample is a string that contains a pressless link, and a scanner
@@ -1990,21 +2063,35 @@ mod tests {
             .collect()
     }
 
-    /// One file's production source: everything from the first `#[cfg(test)]`
-    /// to the end of the file is cut (test modules live at the end of every
-    /// file in this tree, and this module's own defect sample is a string that
-    /// contains a pressless link), and `//`/`/* */` comments are blanked with
+    /// One file's production source: everything from the file's own test
+    /// module to the end is cut, and `//`/`/* */` comments are blanked with
     /// offsets kept so a finding can name a line. String literals are kept:
     /// the rule matches on the call shape, not on their contents.
     ///
-    /// Cutting at the first `#[cfg(test)]` rather than brace-matching each
-    /// test module is what keeps a brace inside a doc comment from ending the
-    /// cut early — the failure mode that blanked this file's own view code
-    /// during development and left the guard green on the defect it was
-    /// written for. Nothing production lives below a test module here, so the
-    /// coarser cut loses nothing.
+    /// # The cut is at the test *module*, not at any `#[cfg(test)]`
+    ///
+    /// This used to cut at the first `#[cfg(test)]` occurrence, on the stated
+    /// grounds that "nothing production lives below a test module here". That
+    /// was true only until ARCH-25 gated four production items with
+    /// `#[cfg(test)]` — one of them at `credits.rs:108`, a few dozen lines into
+    /// a 900-line file. The cut jumped to line 108 and the scan silently stopped
+    /// reading the rest of the file, dropping that file's production
+    /// `button::link(` calls out of the count. Nothing about the scanned defect
+    /// changed; only what the scanner looked at did.
+    ///
+    /// The `links >= 3` assert below is what caught it, which is the guard
+    /// working — but the failure it produced was "the scan found only 2 calls",
+    /// which points at the call sites rather than at the cut. So the rule is now
+    /// the precise one its own name promised: the offset of the first
+    /// `#[cfg(test)]` that a `mod` follows. A gated production item no longer
+    /// moves it, and a file with no test module is scanned whole.
+    ///
+    /// Cutting by brace-matching each `mod tests { … }` was the other option and
+    /// is worse: a brace inside a doc comment ends it early, which is the
+    /// failure mode that blanked this file's own view code during development
+    /// and left the guard green on the defect it was written for.
     fn link_button_production_source(text: &str) -> String {
-        let cut_at = text.find("#[cfg(test)]").unwrap_or(text.len());
+        let cut_at = test_module_start(text).unwrap_or(text.len());
         let (production, _) = text.split_at(cut_at);
         let chars: Vec<char> = production.chars().collect();
         let mut out = chars.clone();
@@ -2171,6 +2258,42 @@ mod tests {
             return None;
         }
         (0..=haystack.len() - needle.len()).find(|at| haystack[*at..].starts_with(needle))
+    }
+
+    /// The byte offset where a file's test module begins, if it has one.
+    ///
+    /// `#[cfg(test)]` followed by optional further attributes and then `mod`,
+    /// which is the two spellings this tree uses (`#[cfg(test)]\nmod tests {`
+    /// and `#[cfg(test)]\npub mod testkit;`). Written as a scan over the
+    /// attribute occurrences rather than as a regex because the tree has no
+    /// regex crate and this is the only rule that needs one.
+    fn test_module_start(text: &str) -> Option<usize> {
+        const MARK: &str = "#[cfg(test)]";
+        let mut from = 0;
+        while let Some(found) = text[from..].find(MARK) {
+            let at = from + found;
+            match next_item_after_attributes(&text[at + MARK.len()..]) {
+                Some(item) if item.starts_with("mod ") || item.starts_with("pub mod ") => {
+                    return Some(at);
+                }
+                _ => from = at + MARK.len(),
+            }
+        }
+        None
+    }
+
+    /// `text` with leading whitespace and any `#[…]` attributes removed, so a
+    /// caller can read the item that follows them. `None` if an attribute is
+    /// unterminated, which means the file is not parseable enough to scan.
+    fn next_item_after_attributes(text: &str) -> Option<&str> {
+        let mut rest = text;
+        loop {
+            let tail = rest.trim_start();
+            let Some(attribute) = tail.strip_prefix("#[") else {
+                return Some(tail);
+            };
+            rest = &attribute[attribute.find(']')? + 1..];
+        }
     }
 
     // ---- progress_fraction ------------------------------------------------

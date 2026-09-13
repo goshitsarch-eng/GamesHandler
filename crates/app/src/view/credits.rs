@@ -104,6 +104,16 @@ use crate::Message;
 /// The same string as [`Page::Credits`](crate::state::Page::Credits)'s label —
 /// the reference uses one string in both places and so does this port;
 /// `the_title_is_the_drawers_label_and_the_qmls` holds all three together.
+///
+/// **`#[cfg(test)]` since ARCH-25, and that is a correction rather than a
+/// demotion.** The string is user-visible, but not from here: `CreditsPage.qml:10`
+/// sets it as its `Kirigami.ScrollablePage.title`, which is the page *chrome* —
+/// `Main.qml:94` is the drawer row — and the body's first child is the `level: 3`
+/// heading this file draws as [`LEAD_HEADING`]. The port carries the chrome title
+/// in the navigation bar, which reads it from
+/// [`Page::Credits`](crate::state::Page::Credits)'s label; this constant is what
+/// holds the two, and the QML's third copy, to that one string.
+#[cfg(test)]
 pub const PAGE_TITLE: &str = "About & Credits";
 
 /// The heading under the title. `CreditsPage.qml:17`.

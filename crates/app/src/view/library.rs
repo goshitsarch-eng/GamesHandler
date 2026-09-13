@@ -313,18 +313,6 @@ pub struct RowWindow {
     pub end: usize,
 }
 
-impl RowWindow {
-    /// How many rows are built.
-    pub fn len(self) -> usize {
-        self.end.saturating_sub(self.start)
-    }
-
-    /// Whether `index` is built.
-    pub fn contains(self, index: usize) -> bool {
-        index >= self.start && index < self.end
-    }
-}
-
 /// How many rows the grid puts on one line at `viewport_width`.
 ///
 /// # This is a decision and not a measurement, and it has to match iced's

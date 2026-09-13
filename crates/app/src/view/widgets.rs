@@ -297,35 +297,6 @@ pub fn preview_label() -> &'static str {
     cover::NO_COVER_LABEL
 }
 
-/// A game's cover at a given *width*, its height taken from the tile aspect.
-///
-/// The single-argument form exists for a grid that lays out a column of tiles
-/// and wants them all the same shape; a caller with its own box should use
-/// [`cover_box`] instead, which is what [`card`] and [`row`] do.
-pub fn cover_tile<'a, M: Clone + 'static>(
-    cache: &CoverCache,
-    game: &'a Game,
-    width: f32,
-) -> Element<'a, M> {
-    cover_box(cache, game, tile_cover_spec(width))
-}
-
-/// The cover box the library **grid** asks for, at a given tile width.
-///
-/// The fourth `*_cover_spec`, and the one that carries an argument: a grid tile
-/// is as wide as the column that holds it, not a constant. It exists for the
-/// same reason as the other three — the numbers live in one place, so a test
-/// that pins the spec is pinning what the widget draws — and `cover_tile` is its
-/// only drawing caller.
-pub fn tile_cover_spec(width: f32) -> CoverSpec {
-    CoverSpec {
-        width,
-        height: metrics::tile_height(width),
-        radius: metrics::TILE_RADIUS,
-        compact: false,
-    }
-}
-
 /// A game's cover in an explicit box — a renderer for [`cover_plan`].
 pub fn cover_box<'a, M: Clone + 'static>(
     cache: &CoverCache,
@@ -2343,9 +2314,9 @@ mod tests {
     /// drawing is told apart from the tile's.
     ///
     /// This is also what catches a `row` that stopped asking for
-    /// [`row_cover_spec`] and called [`cover_tile`] instead: the drawn height
-    /// of a row's cover is clamped to the line, so the *box* difference (50.4
-    /// against 54) never reaches the layout — but `cover_tile` passes
+    /// [`row_cover_spec`] and took the tile's spec instead: the drawn height of
+    /// a row's cover is clamped to the line, so the *box* difference (50.4
+    /// against 54) never reaches the layout — but a tile spec carries
     /// `compact: false`, and the initials fall from 21 points to 12.
     #[test]
     fn a_rows_initials_are_the_compact_rule_and_not_the_tiles() {
@@ -2354,7 +2325,7 @@ mod tests {
             metrics::initials_size(36.0, 54.0, false),
             12.0,
             "the tile's rule at the row's width, which is what a row drawn \
-             through `cover_tile` would use"
+             through a tile spec would use"
         );
 
         let game = Game::new_named("Halo");
@@ -2380,7 +2351,7 @@ mod tests {
     }
 
     /// The list row's box is the fixed strip, not the tile aspect. Those two
-    /// differ, and a refactor that made `row` call `cover_tile` would give
+    /// differ, and a refactor that gave `row` the tile's spec would draw
     /// 36×54 instead of 36×50.4 — close enough to look right in a screenshot.
     ///
     /// Pinned on the spec rather than on the drawn box because the row clamps
@@ -2388,6 +2359,13 @@ mod tests {
     /// *visible* difference is carried by the initials instead — see
     /// `a_rows_initials_are_the_compact_rule_and_not_the_tiles`, which calls
     /// the real `row`.
+    ///
+    /// The tile aspect itself is `metrics::PORTRAIT_RATIO`, now `#[cfg(test)]`
+    /// (ARCH-25): the library grid draws a card, so `GRID_CELL.1` is the cell
+    /// **height** rather than a number anything multiplies a width by. That is
+    /// the opposite direction from what this test needs, and confusing the two
+    /// is what the failure above exists to catch: the tile's spec is 200×300,
+    /// three times the row's 50.4.
     #[test]
     fn a_rows_spec_is_the_fixed_strip_and_not_the_tile_aspect() {
         let row = row_cover_spec();
@@ -2400,7 +2378,14 @@ mod tests {
             row.height
         );
         assert!(row.compact, "a row is the compact drawing");
-        assert_eq!(metrics::tile_height(row.width), 54.0);
+
+        let tile = card_cover_spec();
+        assert!(
+            tile.height > row.height * 4.0,
+            "the card's cover should dwarf the row's strip, got {} against {}",
+            tile.height,
+            row.height
+        );
     }
 
     /// **What each cover composition is made of**, read off the ids a real
@@ -2907,18 +2892,21 @@ mod tests {
         )
     }
 
-    /// The three boxes the app draws initials in.
+    /// The two boxes the app draws initials in.
     ///
-    /// The picker's fourth box is absent on purpose: `cover_preview` draws
-    /// [`preview_label_widget`] — words — for every game without artwork, so
-    /// `initials_only` is never built at a preview spec. A test that included it
-    /// would be asserting about a plate the application does not draw.
-    fn initials_specs() -> [(&'static str, CoverSpec); 3] {
-        [
-            ("row", row_cover_spec()),
-            ("card", card_cover_spec()),
-            ("grid tile", tile_cover_spec(metrics::GRID_CELL.0)),
-        ]
+    /// Two of the four specs are absent on purpose, and ARCH-25 turned the
+    /// first of these from a caveat into a deletion:
+    ///
+    /// - the **grid tile**'s box was here until ARCH-25, which found that the
+    ///   library draws a *card* (`card_cover_spec`) and nothing ever asked for a
+    ///   `tile_cover_spec`. It was reachable only from this list, so the test
+    ///   was asserting about a plate the application does not draw — the same
+    ///   objection the doc already made to the picker's box below, one entry up.
+    /// - the **picker**'s fourth box: `cover_preview` draws
+    ///   [`preview_label_widget`] — words — for every game without artwork, so
+    ///   `initials_only` is never built at a preview spec.
+    fn initials_specs() -> [(&'static str, CoverSpec); 2] {
+        [("row", row_cover_spec()), ("card", card_cover_spec())]
     }
 
     /// The font each text node in a built element hands the renderer, with the

@@ -54,14 +54,19 @@ mod icons;
 mod shortcuts;
 mod state;
 mod theme;
-// TODO(T-09): remove once the pages call these components. See D-32.
-//
-// The module is declared now, rather than when the pages land, because a
+// The module is declared here, rather than beside its first caller, because a
 // declaration is what makes its tests run: without this line `cargo test`
 // reports success 44 assertions short of the truth, which is the same defect
-// as a check that never executes. The allow covers everything nested inside
-// `view`, and it is deleted as part of T-09's definition of done.
-#[allow(dead_code)]
+// as a check that never executes.
+//
+// This declaration used to carry a module-level `#[allow(dead_code)]`, with a
+// `TODO(T-09)` saying the pages would call the components eventually (D-32).
+// ARCH-25 measured what it actually covered: ten items, not the fifteen the
+// row named. Nine were genuinely unused — the `RowWindow` helpers, the
+// grid-tile cover stack (`cover_tile`, `tile_cover_spec`, `tile_height`,
+// `PORTRAIT_RATIO`), the credits title — and one was a field read only by a
+// test. The first nine are deleted and the tenth is `#[cfg(test)]`, so lint
+// now reaches the whole view layer rather than trusting that it does.
 mod view;
 
 pub use state::{

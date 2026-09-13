@@ -266,12 +266,15 @@ const _: () = assert!(
 /// is one shape, and two independent constants is two chances for the grid and
 /// the single-tile view to disagree about it. The 2:3 portrait is set by the
 /// store art in `COVER_ASSETS` (`covers.py:35-43`), which is authored for it.
+///
+/// **Test-only since ARCH-25.** The library's grid draws a *card*, whose box is
+/// the cell less its chrome (`card_cover_box`), and the single-tile view that
+/// multiplied this ratio by an arbitrary width no longer exists — so the
+/// constant's only reader is the test below. It is kept, under `#[cfg(test)]`,
+/// as the written form of the shape `covers.py`'s art assumes: if the art is
+/// ever re-authored, this is the line that says what it was authored for.
+#[cfg(test)]
 pub const PORTRAIT_RATIO: f32 = GRID_CELL.1 / GRID_CELL.0;
-
-/// The height of a tile of the given width — see [`PORTRAIT_RATIO`].
-pub fn tile_height(width: f32) -> f32 {
-    width * PORTRAIT_RATIO
-}
 
 /// The cover's box inside a library card.
 ///
@@ -387,13 +390,15 @@ mod tests {
         );
     }
 
-    /// A tile is the 2:3 portrait the store art is authored for, and
-    /// [`tile_height`] reproduces the cell exactly at the cell's own width.
+    /// A tile is the 2:3 portrait the store art is authored for.
+    ///
+    /// Asserted against the literal rather than against `GRID_CELL.1 /
+    /// GRID_CELL.0`, which is the constant's own definition and would make this
+    /// a tautology: the claim worth pinning is that the cell *is* the shape
+    /// `COVER_ASSETS` authors its art for, not that the constant equals itself.
     #[test]
     fn a_tile_is_the_two_to_three_portrait_of_its_width() {
         assert_eq!(PORTRAIT_RATIO, 1.5);
-        assert_eq!(tile_height(GRID_CELL.0), GRID_CELL.1);
-        assert_eq!(tile_height(100.0), 150.0);
     }
 
     /// The initials scale with the tile, and the compact rule keys off the

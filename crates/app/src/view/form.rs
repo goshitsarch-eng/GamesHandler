@@ -193,7 +193,19 @@ pub struct TextRow {
     /// the reference and compare it field by field. Every control these rows name
     /// has one; the category combo's is `categoryBox` and the cover row has no
     /// control of its own, which is why neither is a [`TextRow`].
+    ///
+    /// **`#[cfg(test)]` since ARCH-25**, and the field is not one that should be
+    /// read elsewhere: it names a QML object by a string, so a reachability
+    /// check on it would be a check against the reference rather than against
+    /// the running application. Production addresses these rows through
+    /// [`TextRow::field`], which [`GameForm`] can act on.
+    #[cfg(test)]
     pub id: &'static str,
+    /// The label, and the accessible name of the control this row builds.
+    ///
+    /// Not `#[cfg(test)]`, unlike [`TextRow::id`] beside it: the label is the
+    /// text the control draws and the name a screen reader announces, so it is
+    /// read by the page rather than only by the reference check.
     pub label: &'static str,
     pub placeholder: &'static str,
     /// The QML's `enabled: !form.isLinux` on that row.
@@ -235,6 +247,7 @@ pub struct BrowseButton {
 pub const TEXT_ROWS: [TextRow; 6] = [
     TextRow {
         field: FormField::Name,
+        #[cfg(test)]
         id: "nameField",
         label: "Name:",
         placeholder: "",
@@ -243,6 +256,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
     },
     TextRow {
         field: FormField::ExePath,
+        #[cfg(test)]
         id: "exeField",
         label: "Executable:",
         placeholder: "",
@@ -254,6 +268,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
     },
     TextRow {
         field: FormField::Arguments,
+        #[cfg(test)]
         id: "argsField",
         label: "Launch arguments:",
         placeholder: "",
@@ -262,6 +277,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
     },
     TextRow {
         field: FormField::WorkingDirectory,
+        #[cfg(test)]
         id: "cwdField",
         label: "Working directory:",
         placeholder: "",
@@ -270,6 +286,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
     },
     TextRow {
         field: FormField::PrefixPath,
+        #[cfg(test)]
         id: "prefixField",
         label: "Wine prefix (optional):",
         placeholder: PREFIX_PLACEHOLDER,
@@ -278,6 +295,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
     },
     TextRow {
         field: FormField::AdditionalApp,
+        #[cfg(test)]
         id: "extraField",
         label: "Additional application:",
         placeholder: ADDITIONAL_APP_PLACEHOLDER,
@@ -289,6 +307,7 @@ pub const TEXT_ROWS: [TextRow; 6] = [
 /// The Environment row, which is the last of the Advanced section (`:325-330`).
 pub const ENVIRONMENT_ROW: TextRow = TextRow {
     field: FormField::Environment,
+    #[cfg(test)]
     id: "envField",
     label: "Environment variables:",
     placeholder: ENVIRONMENT_PLACEHOLDER,
@@ -299,6 +318,7 @@ pub const ENVIRONMENT_ROW: TextRow = TextRow {
 /// The desktop-size row (`:306-312`). See [`TEXT_ROWS`] for why it is separate.
 pub const DESKTOP_SIZE_ROW: TextRow = TextRow {
     field: FormField::VirtualDesktopSize,
+    #[cfg(test)]
     id: "desktopSizeField",
     label: "Desktop size:",
     placeholder: DESKTOP_SIZE_PLACEHOLDER,
