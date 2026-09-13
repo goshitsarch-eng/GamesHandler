@@ -21,52 +21,52 @@
 //!
 //! # What is asserted
 //!
-//! For every `| `[`function`]` | `path:line` |` row of the header's `# Callers`
-//! table:
+//! For every `| `[`function`]` | `path`, in `container` |` row of the header's
+//! `# Callers` table:
 //!
 //! * the cited path exists and is readable;
 //! * the cited file's **production** source — test modules cut, see
 //!   [`production_src`] — contains a *call-shaped* occurrence of the function,
 //!   `function(`. This is the claim: it is called from live code.
-//! * the cited line number is the line the call is on, when the citation is
-//!   into another file, and merely a real line when it is into this one — see
-//!   the exception noted below.
+//! * that call is inside `container`, the function the row names as its
+//!   enclosing scope — resolved by [`enclosing_function`].
 //!
-//! The line is a **locator**, not the claim. The assertion that matters is the
-//! second one, and it does not drift when unrelated code above it is edited.
+//! The enclosing function is the **locator**, not the claim. The assertion that
+//! matters is the second one, and it does not drift when unrelated code above
+//! it is edited.
 //!
 //! The five functions the old sentence named are additionally required to still
 //! appear as rows, so the table cannot shrink to nothing and pass vacuously.
 //!
 //! # What is deliberately not asserted, and why
 //!
-//! **The exact line.** The first version of this test required the function to
-//! be named on the cited line, and it failed on the header this file was
-//! written for: three of the five citations had already drifted. Pinning the
-//! line would then fail on every unrelated insertion above it — `main.rs` is
-//! five thousand lines and the install worker sits deep inside it. A test that
-//! fails on correct code is a test someone deletes, and deleting *this* test
-//! restores the defect it exists for. The line number is kept in the header for
-//! a reader to jump to and is checked only for being a real line; when a call
-//! moves, the failure message here prints where it actually is so the table can
-//! be refreshed in the same commit.
+//! **The exact line number.** The table cited `path:line` for one revision and
+//! this test asserted the line exactly, and that is the version that failed
+//! *inside the hour*: concurrent edits to `main.rs` moved `easy_install_worker`
+//! from `:3160` to `:3269`, every `main.rs` citation stopped landing, and the
+//! check failed on correct code for a reason that is not the claim. That is
+//! `ARCH-16`'s defect (*a pointer that no longer lands is worse than no
+//! pointer, because it is trusted*) arriving in the fix for `ARCH-05`. A symbol
+//! survives an edit; a line number does not. So a row names the enclosing
+//! function and [`enclosing_function`] resolves it at check time.
 //!
-//! **The line, for rows that cite this same file.** The table sits above the
-//! calls it cites in `installers.rs`, so any edit to the table moves their line
-//! numbers while the table itself stays put. Requiring an exact line there
-//! would make the test fail whenever the header is edited — on correct code —
-//! and a test that does that is one someone deletes, which would restore the
-//! defect it exists for. Those two rows are therefore checked for pointing
-//! inside the file and no further. Rows into other files are exact, because
-//! nothing done to this table can move them. This is a measured consequence of
-//! where the table lives, not a tolerance.
+//! That is **stronger than the line was**, not merely steadier. "Some line in
+//! this file contains a call" is satisfied by a call in a dead branch, by an
+//! unrelated function beside it, or by a test helper in a test block this
+//! reader does not recognise as one; "this call is inside the function the
+//! header names" is the wiring claim itself. It also makes both rows that cite
+//! `installers.rs` subject to the same rule as the rest — the previous version
+//! had to exempt them, because the table sits above the calls it cites there
+//! and every edit to the table moved their line numbers.
 //!
 //! **That the occurrence is a call rather than a mention.** `function(` is
 //! matched textually, so a comment reading `download_installer(` would satisfy
 //! it. Resolving this properly means parsing Rust, which is a heavier thing
 //! than the claim needs: the failure this guards against is a function that
 //! lost its last caller, and that removes the text too. The bound is stated
-//! here rather than left for a reader to find.
+//! here rather than left for a reader to find. [`enclosing_function`] has the
+//! same bound from the other direction — it scans backwards for `fn ` rather
+//! than parsing — and is exact for the shapes the files here contain.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -88,7 +88,9 @@ fn repo_root() -> PathBuf {
 struct Row {
     function: String,
     path: PathBuf,
-    line: usize,
+    /// The function the call must be inside. A symbol, not a line, so the row
+    /// survives an edit above it — see the module docs.
+    container: String,
 }
 
 /// Read the `# Callers` section of `installers.rs`'s module doc.
@@ -117,7 +119,7 @@ fn caller_rows(source: &str) -> Vec<Row> {
         if cells.len() != 2 {
             continue;
         }
-        // `| [`name`] | `path:line` |`
+        // `| [`name`] | `path`, in `container` |`
         let name = cells[0]
             .trim_matches('`')
             .trim_start_matches('[')
@@ -129,24 +131,32 @@ fn caller_rows(source: &str) -> Vec<Row> {
         if !cells[1].starts_with('`') {
             continue;
         }
-        let citation = cells[1].trim_matches('`');
-        let Some((path, line)) = citation.rsplit_once(':') else {
+        // Both halves are code-spanned in the table — `` `path`, in
+        // `container` `` — so the backticks are stripped rather than trimmed:
+        // `trim_matches` would leave the one between the path and the comma,
+        // and the path would carry a trailing backtick into the filesystem.
+        let citation: String = cells[1].chars().filter(|c| *c != '`').collect();
+        let citation = citation.trim();
+        let Some((path, container)) = citation.split_once(", in ") else {
             panic!(
                 "the `# Callers` row for `{name}` cites {citation:?}, which is \
-                 not a `path:line` citation, so this test cannot check it and \
-                 would pass without reading anything."
+                 not a `path`, in `container` citation, so this test cannot \
+                 check it and would pass without reading anything. A row that \
+                 names only a file is the shape that failed before: a file has \
+                 thousands of lines and naming it asserts nothing."
             );
         };
-        let Ok(line) = line.parse::<usize>() else {
+        if path.is_empty() || container.is_empty() {
             panic!(
-                "the `# Callers` row for `{name}` cites a line number this test \
-                 cannot parse: {citation:?}"
+                "the `# Callers` row for `{name}` cites {citation:?}, which has \
+                 an empty path or an empty container, so there is nothing to \
+                 resolve."
             );
-        };
+        }
         rows.push(Row {
             function: name.to_string(),
             path: PathBuf::from(path),
-            line,
+            container: container.to_string(),
         });
     }
     rows
@@ -235,6 +245,48 @@ fn defines(line: &str, function: &str) -> bool {
     line[head.len() + 3..].starts_with(&format!("{function}("))
 }
 
+/// The name of the innermost `fn` whose body contains `line` (1-based), from
+/// `src`'s production source.
+///
+/// The scan is textual and backwards from the call: the first line above it
+/// that declares a function is the one the call sits in, because Rust has no
+/// forward-referencing items inside a body. It is exact for the shapes these
+/// files contain and the bound is the same one [`call_lines`] states — a `fn `
+/// inside a string literal read as a definition would resolve the container
+/// wrongly, and none appears on these paths.
+///
+/// `//`-commented lines are skipped, for the same reason [`call_lines`] skips
+/// them: a commented-out definition is not a scope, and a stale comment naming
+/// a function is exactly what this file exists to catch.
+///
+/// **A call outside every function resolves to `None` and fails the check**,
+/// which is the safe direction: the row's claim is that live code calls the
+/// function, and a free-standing call in a module body is not that.
+fn enclosing_function(src: &str, line: usize) -> Option<String> {
+    let lines: Vec<&str> = src.lines().collect();
+    for index in (0..line.min(lines.len())).rev() {
+        let text = lines[index];
+        if text.trim_start().starts_with("//") {
+            continue;
+        }
+        let Some((_, rest)) = text.split_once("fn ") else {
+            continue;
+        };
+        // The identifier after `fn `, up to the first character that cannot be
+        // part of one. A signature that wraps has the name and then `(` or
+        // nothing, and an empty capture means the `fn ` was not a definition.
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        return Some(name);
+    }
+    None
+}
+
 #[test]
 fn every_function_the_installers_header_claims_is_wired_has_a_call_in_live_code() {
     let root = repo_root();
@@ -280,7 +332,7 @@ fn every_function_the_installers_header_claims_is_wired_has_a_call_in_live_code(
         let Row {
             function,
             path,
-            line,
+            container,
         } = row;
         let file = root.join(path);
         let text = fs::read_to_string(&file).unwrap_or_else(|error| {
@@ -291,15 +343,6 @@ fn every_function_the_installers_header_claims_is_wired_has_a_call_in_live_code(
                 file.display()
             )
         });
-
-        let total = text.lines().count();
-        assert!(
-            *line >= 1 && *line <= total,
-            "the `# Callers` row for `{function}` cites {}:{line}, and that file \
-             has {total} lines. The citation points outside the file, so a \
-             reader following it lands nowhere.",
-            file.display()
-        );
 
         let (production, cut) = production_src(&text);
         let calls = call_lines(&production, function);
@@ -316,27 +359,41 @@ fn every_function_the_installers_header_claims_is_wired_has_a_call_in_live_code(
                 "not found, so none removed"
             }
         );
-        // The locator is asserted exactly, with one measured exception: a row
-        // citing a line in *this* file. The table sits above the calls it
-        // cites, so every edit to the table moves those line numbers, and an
-        // exact check there would measure the header's length rather than the
-        // call's position — failing on correct code. Rows into other files are
-        // unaffected by anything done here and are held to the line.
-        if file != header_path {
-            assert!(
-                calls.contains(line),
-                "the `# Callers` row for `{function}` cites {}:{line}, but the \
-                 live call is at {}. This is not a failure of the claim — the \
-                 function is wired — it is the locator drifting. Update the row \
-                 to a line listed here so the next reader lands on the call.",
-                file.display(),
-                calls
-                    .iter()
-                    .map(usize::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
+
+        // The locator: every call of `function` in this file must be inside the
+        // container the row names. `any`, not `all` — a function may have more
+        // than one production call site and the row names the one it names —
+        // but the messages below distinguish the two ways this fails, because
+        // "no call is in X" and "there are no calls at all" have different
+        // fixes: move the row, or say in the header that the wiring is gone.
+        let containers: Vec<Option<String>> = calls
+            .iter()
+            .map(|line| enclosing_function(&production, *line))
+            .collect();
+        assert!(
+            containers
+                .iter()
+                .any(|found| found.as_deref() == Some(container.as_str())),
+            "the `# Callers` row for `{function}` says the call is in \
+             `{container}`, in {}, and it is not. The calls this row's file has \
+             are at {} — inside {}. This is not a failure of the claim (the \
+             function is wired) unless the list is empty of `{container}` \
+             entirely, in which case the header is naming a function that no \
+             longer calls it. Update the row to a container listed here.",
+            file.display(),
+            calls
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            containers
+                .iter()
+                .map(|found| found
+                    .as_deref()
+                    .map_or("no function at all".to_string(), |name| format!("`{name}`")))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 }
 
@@ -347,6 +404,75 @@ fn every_function_the_installers_header_claims_is_wired_has_a_call_in_live_code(
 /// helper that silently stopped excluding definitions would restore exactly
 /// that, and nothing in the check above would notice — so the exclusion is
 /// pinned here, on both the definition shapes this workspace uses.
+#[test]
+fn the_container_is_the_innermost_function_and_survives_an_edit_above_it() {
+    // The locator this test replaces was a line number, and it went stale
+    // within the hour: `easy_install_worker` moved from `:3160` to `:3269`
+    // under concurrent edits and every `main.rs` row stopped landing. The
+    // assertion below is the half that matters — the *same source* with three
+    // lines inserted above the call must resolve to the same container, which
+    // is exactly what a line number cannot do.
+    let source = "\
+fn outer() {
+    let a = 1;
+    let b = 2;
+    call_me(a, b);
+}
+
+fn other() {
+    call_me(0, 0);
+}
+";
+    assert_eq!(
+        enclosing_function(source, 4).as_deref(),
+        Some("outer"),
+        "the call on line 4 is inside `outer`"
+    );
+    assert_eq!(
+        enclosing_function(source, 8).as_deref(),
+        Some("other"),
+        "the call on line 8 is inside `other` — the scan must take the \
+         *nearest* `fn` above the call, not the first in the file. A helper \
+         that returned `outer` for every call would make the container claim \
+         unfalsifiable, which is the defect this file exists to catch."
+    );
+
+    let shifted = format!("// a new line\n// and another\n// and a third\n{source}");
+    assert_eq!(
+        enclosing_function(&shifted, 11).as_deref(),
+        Some("other"),
+        "the same call, four lines lower, must resolve to the same container. \
+         This is the property the line-number locator did not have."
+    );
+
+    // A call outside every function has no container, and `None` is what makes
+    // the row fail rather than pass vacuously.
+    assert_eq!(enclosing_function("call_me(1);\n", 1), None);
+}
+
+#[test]
+fn a_definition_is_not_its_own_container() {
+    // `enclosing_function` scans backwards from the call, so a definition below
+    // the call would be wrong to pick up. This pins the direction: the call on
+    // line 1 is inside `body`, not inside `later`.
+    let source = "\
+fn body() {
+    call_me(1);
+}
+
+fn later() {
+    call_me(2);
+}
+";
+    assert_eq!(
+        enclosing_function(source, 2).as_deref(),
+        Some("body"),
+        "a function defined *after* the call must not be reported as its \
+         container — that would name a scope the call is not in, and the header \
+         row would be checked against the wrong function."
+    );
+}
+
 #[test]
 fn the_needle_does_not_match_a_definition() {
     let source = "\

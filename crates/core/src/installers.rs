@@ -24,20 +24,30 @@
 //!
 //! | Function | Production call site |
 //! |---|---|
-//! | [`download_installer`] | `crates/app/src/main.rs:3174` |
-//! | [`wait_for_installer`] | `crates/app/src/main.rs:3219` |
-//! | [`wait_for_prefix_idle`] | `crates/app/src/main.rs:3225` |
-//! | [`verify_installer_authenticity`] | `crates/core/src/installers.rs:1929` |
-//! | [`wineserver_binary`] | `crates/core/src/installers.rs:2045` |
+//! | [`download_installer`] | `crates/app/src/main.rs`, in `easy_install_worker` |
+//! | [`wait_for_installer`] | `crates/app/src/main.rs`, in `easy_install_worker` |
+//! | [`wait_for_prefix_idle`] | `crates/app/src/main.rs`, in `easy_install_worker` |
+//! | [`verify_installer_authenticity`] | `crates/core/src/installers.rs`, in `download_into` |
+//! | [`wineserver_binary`] | `crates/core/src/installers.rs`, in `wait_for_prefix_idle` |
 //!
 //! `wait_for_prefix_idle` reaches the worker as the closure `wait_for_installer`
-//! is handed (`crates/app/src/main.rs:3226`), not as a statement of its own,
-//! which is why its row's line is inside that call.
+//! is handed, not as a statement of its own, which is why its row is inside that
+//! function rather than beside it.
+//!
+//! **Each row names a function, not a line number, and that is a correction.**
+//! The first version of this table cited `path:line`, and the check below
+//! asserted the exact line. It went stale within the hour: concurrent edits to
+//! `main.rs` moved the worker from `:3160` to `:3269` and the whole install
+//! path's three citations stopped landing, which is `ARCH-16`'s defect — *a
+//! pointer that no longer lands is worse than no pointer, because it is
+//! trusted* — reappearing in the fix for `ARCH-05`. A symbol survives an edit;
+//! a line number does not. The enclosing function is now the locator, and the
+//! check asserts the **call is inside it**, which is both drift-free and a
+//! stronger statement than "some line somewhere holds a call".
 //!
 //! Every row above is checked by `crates/core/tests/wiring_claims.rs`, which
-//! reads this table and fails when a cited file stops containing a live call.
-//! A row's line number is a locator; when the call moves, that test names the
-//! line it moved to so the row can be corrected in the same commit.
+//! reads this table and fails when a cited function stops containing a live call
+//! to the function its row names.
 //!
 //! The header was corrected because a false "not landed yet" is not a neutral
 //! error: a maintainer reading the crate that is supposed to be self-describing
