@@ -10,6 +10,7 @@
 //! grace period and reports what the runner said. Everything in this module
 //! exists to serve that one function.
 
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
@@ -31,7 +32,6 @@ use super::{
     uses_proton_runtime,
 };
 use crate::models::Game;
-use crate::paths;
 
 /// Bytes of a child's stderr kept for the failure message. `_ERROR_BUFFER_BYTES`.
 pub const ERROR_BUFFER_BYTES: usize = 64 * 1024;
@@ -339,6 +339,25 @@ fn empty_as_dot(path: PathBuf) -> PathBuf {
     }
 }
 
+/// The `WINEPREFIX` whose directory `launch` creates, as `runners.py:1398-1400`
+/// reads it: `prefix = env.get("WINEPREFIX")`, then `if prefix:
+/// Path(prefix).mkdir(...)`.
+///
+/// `if prefix:` is a truthiness test, **not** a strip — a whitespace-only
+/// value is truthy and is created literally, which is the behaviour a
+/// get-then-`trim` read would silently refuse. The strip read exists in the
+/// reference but at a different site: `install_bundled_dxvk`'s
+/// `env.get("WINEPREFIX", "").strip()` (`runners.py:1043`), which the port
+/// reaches through `python_trim` in `launch_opts.rs`. The two reads differ,
+/// and using either one for both is the divergence this helper exists to
+/// close (BUG-21).
+fn prefix_dir_to_create(environment: &BTreeMap<String, String>) -> Option<&str> {
+    environment
+        .get("WINEPREFIX")
+        .map(String::as_str)
+        .filter(|value| !value.is_empty())
+}
+
 /// `extra` — `game.additional_app` — is started *before* the main process and
 /// without waiting, which is Python's behaviour and what makes a tool like
 /// `gamescope` or a trainer usable alongside the title.
@@ -365,8 +384,8 @@ pub fn launch(
         environment.extend(parse_env_block(&game.environment));
         runner_executable = argv.first().cloned().unwrap_or_default();
 
-        if let Some(prefix) = super::stripped_var(&environment, "WINEPREFIX") {
-            std::fs::create_dir_all(&prefix)?;
+        if let Some(prefix) = prefix_dir_to_create(&environment) {
+            std::fs::create_dir_all(prefix)?;
         }
         uses_proton = uses_proton_runtime(runner.as_ref(), &argv);
         if game.nvapi && !uses_proton {
@@ -441,8 +460,11 @@ pub fn launch(
     // Python's `cwd = game.working_directory or None`, then the executable's
     // own directory when the working directory is empty and the executable
     // exists. The second half is what makes a title whose installer wrote a
-    // relative path beside the `.exe` still find it.
-    let mut cwd = game.working_directory.trim().to_string();
+    // relative path beside the `.exe` still find it. `or` is a truthiness
+    // test, so the check is `is_empty` on the value as stored: a
+    // whitespace-only directory is truthy and is handed to `chdir` verbatim,
+    // which a `trim` here would silently fall back instead (BUG-21).
+    let mut cwd = game.working_directory.clone();
     if cwd.is_empty() && !game.exe_path.is_empty() && Path::new(&game.exe_path).exists() {
         cwd = Path::new(&game.exe_path)
             .parent()
@@ -499,13 +521,11 @@ pub fn tool_command(
             name: runner.name().to_string(),
         });
     };
-    let prefix_root = game.prefix_path.trim();
-    let prefix = if prefix_root.is_empty() {
-        paths::prefixes_dir_in(env).join(&game.id)
-    } else {
-        PathBuf::from(prefix_root)
-    };
-    let prefix = super::wine_prefix_root(&prefix);
+    // `wine_prefix_root(game.prefix_path or str(config.prefixes_dir() /
+    // game.id))` (`runners.py:1482`). `or` is a truthiness test, which is what
+    // `super::game_prefix` already reads it as — a whitespace-only
+    // `prefix_path` is truthy and used literally, not trimmed away (BUG-21).
+    let prefix = super::wine_prefix_root(&super::game_prefix(game, env));
 
     let mut environment = env.environ();
     environment.insert(
@@ -1309,6 +1329,72 @@ mod tests {
             std::path::Path::new(prefix).is_dir(),
             "the prefix directory is created before the tool runs"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------
+    // BUG-21 — `or` is truthiness, so a whitespace-only value is used
+    // verbatim rather than trimmed into the fallback
+    // -----------------------------------------------------------------
+
+    /// `prefix_dir_to_create` is the truthiness read of `runners.py:1398-1400`:
+    /// `if prefix:` is `Some` for anything non-empty, whitespace included. The
+    /// `.strip()` read the old code performed belongs to
+    /// `install_bundled_dxvk` (`runners.py:1043`), which still has it.
+    #[test]
+    fn a_whitespace_only_wineprefix_is_created_verbatim() {
+        assert_eq!(prefix_dir_to_create(&BTreeMap::new()), None);
+        let empty = BTreeMap::from([("WINEPREFIX".to_string(), String::new())]);
+        assert_eq!(prefix_dir_to_create(&empty), None);
+        let spaces = BTreeMap::from([("WINEPREFIX".to_string(), "   ".to_string())]);
+        assert_eq!(prefix_dir_to_create(&spaces), Some("   "));
+    }
+
+    /// `game.working_directory or None` (`runners.py:1419`): a whitespace-only
+    /// directory is truthy, so Python hands it to `chdir` and gets
+    /// `FileNotFoundError` — a launch failure, not a silent fall back to the
+    /// executable's own directory, which is what a `trim` here produced.
+    ///
+    /// The directory is `"\t"` and not `" "` on purpose: the sibling test
+    /// above has `tool_command` *create* a directory literally named `" "` in
+    /// this process's working directory, and the two tests run on different
+    /// threads of the same process — during that window `chdir(" ")` succeeds
+    /// and this test reads as refuted when it is only interrupted. `"\t"` is
+    /// a name nothing in the suite creates.
+    #[test]
+    fn a_whitespace_only_working_directory_fails_the_launch() {
+        let root = scratch("launch-cwd-whitespace");
+        let script = root.join("run.sh");
+        write_script(&script, "#!/bin/sh\nexit 0\n");
+        let mut game = execs(&script);
+        game.working_directory = "\t".to_string();
+        let outcome = launch(
+            &game,
+            &RunnerManager::at("/nonexistent"),
+            &FakeLaunchEnv::new(),
+            &NoShares,
+        );
+        assert!(outcome.is_err(), "chdir into '\\t' must fail");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `game.prefix_path or str(prefixes_dir / game.id)` (`runners.py:1482`):
+    /// the same truthiness test, so a whitespace-only `prefix_path` is the
+    /// prefix — and the tool gets it verbatim through `wine_prefix_root`,
+    /// which leaves it alone because `" "/pfx/drive_c` does not exist.
+    ///
+    /// The `create_dir_all` this exercises makes a directory literally named
+    /// `" "` in the test process's working directory; the trailing
+    /// `remove_dir` takes it away again.
+    #[test]
+    fn a_whitespace_only_prefix_path_is_used_verbatim() {
+        let root = scratch("launch-tool-prefix-ws");
+        let manager = runner_with_wine(&root, "GE-Proton9-5");
+        let mut game = windows_game("GE-Proton9-5");
+        game.prefix_path = " ".to_string();
+        let command = tool_command(&game, &manager, "winecfg", &FakeLaunchEnv::new()).unwrap();
+        assert_eq!(command.env.get("WINEPREFIX").map(String::as_str), Some(" "));
+        let _ = std::fs::remove_dir(" ");
         let _ = std::fs::remove_dir_all(&root);
     }
 

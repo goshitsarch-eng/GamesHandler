@@ -1498,16 +1498,6 @@ pub fn uses_proton_runtime(runner: &dyn Runner, argv: &[String]) -> bool {
             .is_some_and(|first| pure_posix_name(first) == "umu-run")
 }
 
-/// The non-empty value of `key`, as Python's `dict.get(key, "").strip()`.
-///
-/// Used by the launch path for `WINEPREFIX`, where Python's `if prefix_value:`
-/// treats whitespace-only as absent.
-pub fn stripped_var(env: &BTreeMap<String, String>, key: &str) -> Option<String> {
-    env.get(key)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2437,20 +2427,6 @@ mod tests {
             "System Wine"
         );
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    // -- stripped_var --------------------------------------------------------
-
-    #[test]
-    fn a_whitespace_only_variable_is_absent() {
-        // Python's `if prefix_value:` after `.strip()`, which the DXVK
-        // installer and the launch path both depend on.
-        let mut env = BTreeMap::new();
-        env.insert("WINEPREFIX".to_string(), "   ".to_string());
-        assert_eq!(stripped_var(&env, "WINEPREFIX"), None);
-        env.insert("WINEPREFIX".to_string(), " /prefix ".to_string());
-        assert_eq!(stripped_var(&env, "WINEPREFIX").as_deref(), Some("/prefix"));
-        assert_eq!(stripped_var(&env, "ABSENT"), None);
     }
 
     // -----------------------------------------------------------------------
