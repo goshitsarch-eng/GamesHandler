@@ -803,6 +803,38 @@ stage_test() {
         fi
     }
 
+    # `cargo test` exits 0 when it runs **nothing**, so the exit code alone is
+    # not evidence that anything was tested: a crate whose only test is deleted
+    # or `#[ignore]`d reports `running 0 tests / test result: ok. 0 passed` and
+    # returns 0. Measured for #50 both ways — a crate with no `#[test]` at all,
+    # and the same crate with its single test ignored. `require_compiled` does
+    # not cover it either, because `Compiling` prints in both cases.
+    #
+    # So the run has a floor. It is deliberately *below* the current count
+    # rather than equal to it: a test deleted on purpose (a tautology removed,
+    # a case folded into another) is a legitimate edit that must not require
+    # editing this file, while the wholesale disappearance the floor exists for
+    # trips it by a mile. Raise it as the suite grows; the point is that a
+    # collapse to zero cannot pass, not that this file tracks the exact number.
+    # The floor is only meaningful together with `require_compiled`, which is
+    # why it lives here beside it.
+    require_tests_ran() {
+        local label="$1" out="$2" floor="$3"
+        local passed
+        # Sum every `test result: ok. N passed` line across the run's binaries.
+        passed="$(grep -oE '^test result: ok\. [0-9]+ passed' <<<"$out" \
+            | grep -oE '[0-9]+' | paste -sd+ - | bc)"
+        if [ -z "$passed" ]; then
+            echo "FAIL $label ran no tests at all — cargo exited 0 with no 'test result' line (#50)"
+            rc=1
+        elif [ "$passed" -lt "$floor" ]; then
+            echo "FAIL $label ran only $passed tests, floor is $floor — a collapse this large is not a green run (#50)"
+            rc=1
+        else
+            echo "ok   $label ran $passed tests (floor $floor)"
+        fi
+    }
+
     # Configuration 1: the whole workspace, default target dir.
     if ! output="$(env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
             cargo clean -p gamehandler-core -p gamehandler 2>&1)"; then
@@ -816,6 +848,7 @@ stage_test() {
     [ "$status" -eq 0 ] || return 1
     require_compiled gamehandler-core "$output"
     require_compiled gamehandler "$output"
+    require_tests_ran "the workspace suite" "$output" 900
 
     # Configuration 2: the core crate alone, in its own target dir (task #27),
     # which needs its own clean for the same reason.
@@ -833,6 +866,7 @@ stage_test() {
     printf '%s\n' "$output"
     [ "$status" -eq 0 ] || return 1
     require_compiled gamehandler-core "$output"
+    require_tests_ran "the core crate alone" "$output" 500
 
     return "$rc"
 }
