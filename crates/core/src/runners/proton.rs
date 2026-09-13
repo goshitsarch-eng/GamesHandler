@@ -1119,7 +1119,24 @@ pub fn uninstall(runners_directory: &Path, runner_id: &str) -> Result<(), Runner
     }
     let install_id = safe_install_id(runner_id)?;
     let target = runners_directory.join(install_id);
-    if target.is_symlink() || !target.is_dir() {
+    // A **symlinked** build is listed as installed — `installed_protons` filters
+    // on `is_dir()`, which follows the link, and `is_available` then resolves a
+    // wine binary or `proton` script through it — so the row is drawn with a
+    // working Remove button. Removing the *link* is what that button promises,
+    // and it is safe: `remove_file` unlinks the symlink and never the directory
+    // it points at, so the build it refers to is untouched.
+    //
+    // This deliberately diverges from the reference. Python's guard returns
+    // early for a symlink, and it has to: `shutil.rmtree` on one raises
+    // `OSError` (measured, not assumed), so the guard is load-bearing there. But
+    // Python's Remove button then toasts `Removed {id}` for a build that is
+    // still listed and still launchable — the defect is in the reference too,
+    // and the port is the last place it can change. See `BUG-03`.
+    if target.is_symlink() {
+        fs::remove_file(&target)?;
+        return Ok(());
+    }
+    if !target.is_dir() {
         return Ok(());
     }
     fs::remove_dir_all(&target)?;
@@ -1129,7 +1146,8 @@ pub fn uninstall(runners_directory: &Path, runner_id: &str) -> Result<(), Runner
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runners::env::tests::scratch;
+    use crate::runners::RunnerManager;
+    use crate::runners::env::tests::{FakeLaunchEnv, scratch};
     use std::fs;
 
     // -----------------------------------------------------------------
@@ -2745,9 +2763,14 @@ mod tests {
         });
     }
 
-    /// `uninstall`: an unknown id, a missing directory and a symlink are all
-    /// silent no-ops — including a symlink **to a real directory**, which must
-    /// not be followed and deleted.
+    /// `uninstall`: an unknown id and a missing directory are silent no-ops, and
+    /// a symlink is removed **as a link** — never followed.
+    ///
+    /// The link half changed under `BUG-03`. What the test has always been for is
+    /// the safety property, and that is unchanged: `real/keep` must survive,
+    /// because deleting through the link would destroy a directory the app was
+    /// never asked to touch. What changed is that the link itself now goes, so
+    /// that the "Removed {id}" the UI toasts is true.
     #[test]
     fn uninstalling_an_unknown_or_linked_id_is_a_silent_no_op() {
         in_scratch("proton-uninstall-noop", |root| {
@@ -2764,14 +2787,67 @@ mod tests {
             uninstall(&runners, "GE-Proton9-6").unwrap();
             assert!(real.join("keep").is_file(), "the link target must survive");
             assert!(
-                runners.join("GE-Proton9-6").is_symlink(),
-                "the link is left alone"
+                !runners.join("GE-Proton9-6").exists(),
+                "the link itself must be gone, or the UI toasts a removal that did not happen"
             );
 
             // A plain file where a directory would be.
             fs::write(runners.join("GE-Proton9-7"), "x").unwrap();
             uninstall(&runners, "GE-Proton9-7").unwrap();
             assert!(runners.join("GE-Proton9-7").is_file());
+        });
+    }
+
+    /// `BUG-03`, end to end: a symlinked build that the UI **lists** can be
+    /// removed, and stops being listed.
+    ///
+    /// This is the assertion that was missing. The old test checked `uninstall`
+    /// in isolation, where a silent no-op and a successful removal are the same
+    /// value — `Ok(())` — so it passed while the Remove button was lying. What
+    /// makes the toast true is that the row disappears, which is a property of
+    /// the *listing* and the removal together.
+    #[test]
+    fn a_listed_symlinked_build_can_actually_be_removed() {
+        in_scratch("proton-uninstall-linked-listing", |root| {
+            let runners = root.join("runners");
+            let real = root.join("real");
+            fs::create_dir_all(real.join("files/bin")).unwrap();
+            fs::write(real.join("proton"), "#!/bin/sh\n").unwrap();
+
+            let manager = RunnerManager::new(
+                &FakeLaunchEnv::new()
+                    .with_vars(&[("GAMEHANDLER_DATA_HOME", root.to_str().unwrap())]),
+            );
+            let linked = runners.join("GE-Proton9-9");
+            fs::create_dir_all(&runners).unwrap();
+            std::os::unix::fs::symlink(&real, &linked).unwrap();
+
+            // Precondition: it is listed, which is what puts a Remove button on
+            // screen in the first place. Without this the test could pass on a
+            // build that was never visible.
+            let before: Vec<String> = manager
+                .installed_protons()
+                .iter()
+                .map(|runner| runner.id.clone())
+                .collect();
+            assert!(
+                before.contains(&"GE-Proton9-9".to_string()),
+                "a symlinked build is listed as installed; got {before:?}"
+            );
+
+            uninstall(&runners, "GE-Proton9-9").unwrap();
+
+            let after: Vec<String> = manager
+                .installed_protons()
+                .iter()
+                .map(|runner| runner.id.clone())
+                .collect();
+            assert!(
+                !after.contains(&"GE-Proton9-9".to_string()),
+                "after Remove the build must no longer be listed; got {after:?}"
+            );
+            // And the build the link referred to is untouched.
+            assert!(real.join("proton").is_file());
         });
     }
 
