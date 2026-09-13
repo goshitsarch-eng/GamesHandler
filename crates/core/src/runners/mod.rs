@@ -44,6 +44,11 @@ use std::time::SystemTime;
 
 use crate::models::Game;
 use crate::paths;
+// Used by `RunnerManager::get`/`label` to validate a `games.json`-sourced id
+// (SEC-06). A plain import rather than a re-export: a caller outside this
+// module reaches `proton`'s `safe_install_id` through `runners::proton`, and
+// widening this module's public surface is not part of that fix.
+use archive::safe_install_id;
 
 pub use archive::METADATA_NAME;
 pub use archive::{ArchiveError, Limits};
@@ -1252,8 +1257,22 @@ impl RunnerManager {
     /// alternative is a game that cannot be started at all. Note that the test
     /// is `.exists()`, not `.is_dir()` — a *file* named like a runner id is
     /// still resolved, and its `ProtonRunner` reports itself unavailable.
+    ///
+    /// **SEC-06.** `runner_id` arrives from `games.json`, so it is external
+    /// input, and `Path::join` is not containment: an absolute id replaces the
+    /// base entirely and `..` walks out of it. The guard is
+    /// [`safe_install_id`], the same validation three sites in `proton.rs`
+    /// already apply to the same kind of string; here its result is
+    /// **discarded**, because the id below is the one the caller asked for and
+    /// `safe_install_id` trims — substituting its output would change which
+    /// directory a legitimately-padded id resolves to. An id that cannot be a
+    /// directory name therefore falls back to system Wine, which is this
+    /// function's answer for every other id it cannot resolve.
     pub fn get(&self, runner_id: &str, env: &dyn LaunchEnv) -> Box<dyn Runner> {
         if runner_id == SYSTEM_WINE || runner_id.is_empty() {
+            return Box::new(self.system_wine(env));
+        }
+        if safe_install_id(runner_id).is_err() {
             return Box::new(self.system_wine(env));
         }
         let candidate = self.runners_directory.join(runner_id);
@@ -1270,8 +1289,17 @@ impl RunnerManager {
     /// build's own mtime is unchanged, so every filesystem change a caller can
     /// make is still observed, and a miss falls through to
     /// [`Self::resolve_label`], which is where the uncached body lives.
+    ///
+    /// **SEC-06.** The same guard as [`Self::get`], for the same reason: this
+    /// id is `games.json`-sourced too. Falling through here is what keeps the
+    /// two consistent — an unvalidated id makes `resolve_label` `stat` whatever
+    /// path it names, and `stat` is itself an observation of a location the id
+    /// had no business naming.
     pub fn label(&self, runner_id: &str) -> String {
         if runner_id == SYSTEM_WINE || runner_id.is_empty() {
+            return "System Wine".to_string();
+        }
+        if safe_install_id(runner_id).is_err() {
             return "System Wine".to_string();
         }
         let candidate = self.runners_directory.join(runner_id);
@@ -1589,6 +1617,56 @@ mod tests {
         let runner = manager.get("GE-Proton-does-not-exist", &env);
         assert_eq!(runner.id(), SYSTEM_WINE);
         assert_eq!(runner.name(), "System Wine");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_id_that_would_escape_the_runners_directory_never_resolves() {
+        // SEC-06. `runner_id` comes from `games.json`, and `Path::join` is not
+        // containment: an absolute id replaces the base and `..` walks out of
+        // it. The fixture is a real directory *outside* the runners directory
+        // that a Proton build would be discovered from, so the test fails by
+        // resolving it rather than by asserting on a path string.
+        let root = scratch("manager-escape");
+        let env = env_at(&root);
+        let runners_directory = root.join("runners");
+        let manager = RunnerManager::at(&runners_directory);
+        let outside = root.join("outside").join("GE-Proton9-5");
+        make_proton(&outside, false);
+
+        // The control: the same build *inside* the runners directory resolves,
+        // so a passing test cannot be a manager that simply resolves nothing.
+        let inside = runners_directory.join("GE-Proton9-5");
+        make_proton(&inside, false);
+        assert_eq!(
+            manager.get("GE-Proton9-5", &env).id(),
+            "GE-Proton9-5",
+            "the control build under the runners directory must resolve"
+        );
+
+        let escapes = [
+            // Absolute: `join` discards the base entirely.
+            outside.to_string_lossy().into_owned(),
+            // Relative, walking out and back to the same build.
+            "../outside/GE-Proton9-5".to_string(),
+            // A separator, which no install id may contain.
+            "outside/GE-Proton9-5".to_string(),
+            // A bare parent, which names the runners directory's parent.
+            "..".to_string(),
+        ];
+        for id in escapes {
+            let runner = manager.get(&id, &env);
+            assert_eq!(
+                runner.id(),
+                SYSTEM_WINE,
+                "`{id}` must not resolve to a runner outside the runners directory"
+            );
+            assert_eq!(
+                manager.label(&id),
+                "System Wine",
+                "`{id}` must not be labelled from a path outside the runners directory"
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
