@@ -163,12 +163,11 @@ where
 ///   `PATH=""` searched `/bin:/usr/bin` and found wrappers the reference
 ///   refuses to find (`BUG-37`).
 ///
-/// One honest approximation: the execute check is "any execute bit is set",
-/// where `os.access(name, X_OK)` consults the effective uid's class. The two
-/// differ only for a file executable by some *other* class and not by ours,
-/// where this accepts and `exec` then fails with a clear `EACCES`. Removing
-/// that gap needs `rustix::fs::access`, which arrives with `renameat2` in
-/// `proton.rs`; see the note there.
+/// The execute check is `os.access(name, X_OK)` itself — `rustix::fs::access`,
+/// which is `access(2)` over the real ids. An earlier revision checked the mode
+/// bits instead and accepted a file executable by some *other* class and not by
+/// ours, where `exec` then failed with a clear `EACCES`; the gap this paragraph
+/// used to describe is closed (BUG-23).
 pub fn which_in(name: &str, env: &dyn Env) -> Option<PathBuf> {
     if name.is_empty() {
         return None;
@@ -214,17 +213,16 @@ pub fn which_in(name: &str, env: &dyn Env) -> Option<PathBuf> {
 
 /// Python's `_access_check`: exists, is not a directory, and is executable.
 fn is_executable_file(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-
-    let Ok(metadata) = std::fs::metadata(path) else {
-        // `metadata` follows symlinks, as `os.path.exists` does; a dangling or
-        // permission-denied path is not a hit either way.
-        return false;
-    };
-    if metadata.is_dir() {
+    if path.is_dir() {
+        // `is_dir` follows symlinks, as `os.path.isdir` does; a dangling or
+        // permission-denied path answers `false` here and fails the `access`
+        // below either way.
         return false;
     }
-    metadata.permissions().mode() & 0o111 != 0
+    // `os.access(name, os.X_OK)` verbatim — the real ids, not the mode bits.
+    // The mode check this replaced accepted a file executable only by a class
+    // we are not in, so `which_in` could report a hit `exec` would refuse.
+    rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_ok()
 }
 
 /// Directory names a BattlEye or Easy Anti-Cheat runtime is published under.
@@ -526,6 +524,39 @@ pub(crate) mod tests {
     fn which_ignores_a_non_executable_file() {
         let root = scratch("which-noexec");
         fs::write(root.join("wine"), "not a program\n").unwrap();
+        let env = FakeEnv::new(&[("PATH", root.to_str().unwrap())]);
+        assert_eq!(which_in("wine", &env), None);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// **`access(2)` asks whether *we* can execute the file, not whether
+    /// anyone can.**
+    ///
+    /// The test creates the file, so the process owns it; mode `0o001` then
+    /// grants execute to the "other" class only. `os.access(name, os.X_OK)`
+    /// consults the class the mode grants *us* — the owner bits — and answers
+    /// no; the `mode() & 0o111` check this used to be answered yes, so
+    /// `which_in` reported a binary `exec` would refuse (BUG-23).
+    ///
+    /// Uid 0 is exempt from the asymmetry — `access` succeeds for root when
+    /// any execute bit is set — so the divergence only exists for a non-root
+    /// process. `/proc/self`'s owner is the real uid, the same one `access`
+    /// consults, and reading it needs no `rustix::process` feature.
+    #[test]
+    fn which_ignores_a_file_executable_only_by_another_class() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if std::fs::metadata("/proc/self")
+            .map(|meta| meta.uid() == 0)
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let root = scratch("which-other-class");
+        let probe = root.join("wine");
+        fs::write(&probe, "#!/bin/sh\n").unwrap();
+        let mut permissions = fs::metadata(&probe).unwrap().permissions();
+        permissions.set_mode(0o001);
+        fs::set_permissions(&probe, permissions).unwrap();
         let env = FakeEnv::new(&[("PATH", root.to_str().unwrap())]);
         assert_eq!(which_in("wine", &env), None);
         let _ = fs::remove_dir_all(&root);

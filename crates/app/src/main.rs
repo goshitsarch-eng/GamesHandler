@@ -325,14 +325,19 @@ pub enum Message {
     },
     /// The grace watch ended.
     ///
-    /// `reason` is `None` when the title was still running when the grace
-    /// period expired, which is the success case — and the reference does
-    /// nothing at all with it (`report`, `bridge.py:478-483`), so neither does
-    /// this. `Some(_)` is the runner's failure report, shown as a toast with the
-    /// window brought back.
+    /// `reason` has three states, matching `LaunchedGame::failure`:
+    /// `Ok(None)` when the title was still running when the grace period
+    /// expired, which is the success case — and the reference does nothing at
+    /// all with it (`report`, `bridge.py:478-483`), so neither does this.
+    /// `Ok(Some(_))` is the runner's failure report, shown as a toast with the
+    /// window brought back. `Err(_)` is the watch itself failing — a `waitpid`
+    /// error, which the reference's `watch()` lets raise into `_async`'s
+    /// catch-all so the bare exception text is notified (`bridge.py:154-161`)
+    /// and `report` never runs. It is not folded into `Ok(None)`: a watch that
+    /// cannot answer is not a healthy title (BUG-23).
     LaunchWatchFinished {
         game_id: GameId,
-        reason: Option<String>,
+        reason: Result<Option<String>, String>,
     },
     /// Run `winecfg` or `winetricks` against the game's prefix.
     RunPrefixTool { game_id: GameId, tool: PrefixTool },
@@ -2097,21 +2102,26 @@ impl Shell {
                 }
                 return cosmic::app::Task::batch(tasks);
             }
-            // `report()` (`bridge.py:478-483`). `None` is the success case and
-            // the reference does nothing with it; `Some` is an error nobody can
-            // see if close-on-launch hid the window, so it is brought back
-            // before the notice is shown.
-            Message::LaunchWatchFinished { game_id, reason } => {
-                let Some(reason) = reason else {
-                    return cosmic::task::none();
-                };
-                let name = self.state.game_name(&game_id);
-                return cosmic::app::Task::batch([
-                    hide_window(false),
-                    self.state
-                        .toast_task(format!("“{name}” stopped right away: {reason}")),
-                ]);
-            }
+            // `report()` (`bridge.py:478-483`) for the two `Ok` arms: `None` is
+            // the success case and the reference does nothing with it; `Some`
+            // is an error nobody can see if close-on-launch hid the window, so
+            // it is brought back before the notice is shown. `Err` is the
+            // `watch()` half of `bridge.py` raising into `_async`'s catch-all
+            // (`:154-161`): `fail` is unset there, so the bare error text is
+            // notified and `report` — the show-window, the "stopped right
+            // away" wording — never runs.
+            Message::LaunchWatchFinished { game_id, reason } => match reason {
+                Ok(None) => {}
+                Err(message) => return self.state.toast_task(message),
+                Ok(Some(reason)) => {
+                    let name = self.state.game_name(&game_id);
+                    return cosmic::app::Task::batch([
+                        hide_window(false),
+                        self.state
+                            .toast_task(format!("“{name}” stopped right away: {reason}")),
+                    ]);
+                }
+            },
             // `runPrefixTool()` (`bridge.py:487-500`). An id the library does
             // not hold returns silently, which is the reference's own first two
             // lines — unlike `playGame`, there is no "Select a game first" here.
@@ -2957,8 +2967,12 @@ fn launch_and_watch(game: &Game, runners: &RunnerManager, sender: &UnboundedSend
         result: Ok(()),
     });
     // `started.failure()` with `LaunchedGame.failure`'s own default — see
-    // [`launch_grace`].
-    let reason = started.failure(launch_grace());
+    // [`launch_grace`]. The `Err` arm is the wait itself failing, which
+    // `bridge.py`'s `watch()` lets raise; it travels as its own value so the
+    // handler can report it the way `_async` does rather than as silence.
+    let reason = started
+        .failure(launch_grace())
+        .map_err(|error| error.to_string());
     let _ = sender.unbounded_send(Message::LaunchWatchFinished {
         game_id: game.id.clone(),
         reason,
@@ -4194,7 +4208,7 @@ mod tests {
         // is the control arm for the `None` half.
         Message::LaunchWatchFinished { .. } => ("LaunchWatchFinished", Message::LaunchWatchFinished {
                             game_id: "g".to_string(),
-                            reason: Some("the runner exited with status 1".to_string()),
+                            reason: Ok(Some("the runner exited with status 1".to_string())),
                         }),
         Message::RunPrefixTool { .. } => ("RunPrefixTool", Message::RunPrefixTool {
                             game_id: "g".to_string(),
@@ -4864,7 +4878,7 @@ mod tests {
             &mut running,
             Message::LaunchWatchFinished {
                 game_id: "g".to_string(),
-                reason: None,
+                reason: Ok(None),
             },
         );
         assert!(
@@ -4885,7 +4899,7 @@ mod tests {
             &mut died,
             Message::LaunchWatchFinished {
                 game_id: "g".to_string(),
-                reason: Some("the runner exited with status 1".to_string()),
+                reason: Ok(Some("the runner exited with status 1".to_string())),
             },
         );
         assert!(
@@ -4900,6 +4914,47 @@ mod tests {
              toast (`Toasts::push`'s expiry task), so it must ask the runtime \
              for at least two units; it asked for {}",
             loud.task_units
+        );
+    }
+
+    /// **A watch that *failed* — rather than observing a death — toasts the raw
+    /// error and does not touch the window.**
+    ///
+    /// `reason` is a `Result` because [`LaunchedGame::failure`]'s `try_wait`
+    /// can itself fail (BUG-23): that is a different event from "the title
+    /// exited", and folding it into the same arm would both misdescribe the
+    /// toast — nothing stopped, the *watch* broke — and wrongly restore a
+    /// window the reference only restores for a real death. The `Err` arm
+    /// therefore skips `game_name` and `hide_window` entirely: it pushes the
+    /// bare error text, which is why this test's fixture can use a title the
+    /// library does not hold — a lookup the arm performs is a bug this catches.
+    ///
+    /// The task count is the instrument: the death case batches two units
+    /// (window restore plus toast expiry), the still-running case batches
+    /// none, and this case must land exactly on one — the toast's expiry task
+    /// alone. A mutation that routes `Err` through the `Some` body (window
+    /// restore included) fails the upper bound; one that treats it as `None`
+    /// fails the toast assertion.
+    #[test]
+    fn a_failed_watch_toasts_the_error_without_restoring_the_window() {
+        let mut shell = shell_with_work_to_do();
+        let effect = observe(
+            &mut shell,
+            Message::LaunchWatchFinished {
+                game_id: "not-a-real-id".to_string(),
+                reason: Err("failed to wait for the runner: ESRCH".to_string()),
+            },
+        );
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("num_elems: 1"),
+            "a failed watch must still surface — the error text is the only \
+             record the user gets that the launch could not be watched at all"
+        );
+        assert_eq!(
+            effect.task_units, 1,
+            "the watch-failure arm must push the toast and nothing else: \
+             restoring the window is for a title that actually died, and \
+             `Task::none` would mean the error was silently swallowed"
         );
     }
 

@@ -237,15 +237,21 @@ impl LaunchedGame {
 
     /// Why the title stopped, if it stopped badly within `timeout`.
     ///
-    /// `Some` is the message a toast should show; `None` means the title was
-    /// **still running** when the grace period expired, which is the success
-    /// case and the overwhelmingly common one.
+    /// `Ok(Some)` is the message a toast should show; `Ok(None)` means the
+    /// title was **still running** when the grace period expired, which is the
+    /// success case and the overwhelmingly common one. `Err` is the third
+    /// outcome: the wait itself failed, which Python does not catch —
+    /// `Popen.wait` raises out of `failure()` and the caller's `_async`
+    /// catch-all notifies the bare exception text. The port keeps the error
+    /// distinct for the same reason: a watch that cannot answer is not "the
+    /// title kept running", and a `waitpid` error reported as one is a dead
+    /// title hiding behind a healthy-looking grace period (BUG-23).
     ///
-    /// The two exits are Python's: a timeout is `None`, an exit code of `0` is
-    /// `None`, and anything else is the runner's own last words or — when it
-    /// said nothing — [`failure_message`]'s status line. See [`ErrorTail`] for
-    /// why the drain is finished before the buffer is read, which is the one
-    /// place this deliberately differs from Python.
+    /// The two `Ok` exits are Python's: a timeout is `None`, an exit code of
+    /// `0` is `None`, and anything else is the runner's own last words or —
+    /// when it said nothing — [`failure_message`]'s status line. See
+    /// [`ErrorTail`] for why the drain is finished before the buffer is read,
+    /// which is the one place this deliberately differs from Python.
     ///
     /// The `status == 0` rule is written twice: here, which is Python's order —
     /// it returns before touching the tail — and again in [`failure_message`].
@@ -254,17 +260,19 @@ impl LaunchedGame {
     /// the rule that has to survive is [`failure_message`]'s, and this early
     /// return is kept for Python's ordering rather than for an observable of
     /// its own.
-    pub fn failure(&mut self, timeout: Duration) -> Option<String> {
-        let status = wait_with_timeout(&mut self.child, timeout)?;
+    pub fn failure(&mut self, timeout: Duration) -> Result<Option<String>, std::io::Error> {
+        let Some(status) = wait_with_timeout(&mut self.child, timeout)? else {
+            return Ok(None);
+        };
         if status == 0 {
-            return None;
+            return Ok(None);
         }
         let captured = self
             .errors
             .take()
             .map(ErrorTail::finish)
             .unwrap_or_default();
-        failure_message(status, &readable_error(&captured))
+        Ok(failure_message(status, &readable_error(&captured)))
     }
 }
 
@@ -276,20 +284,21 @@ impl LaunchedGame {
 /// visible only for a title that was killed by a signal within the grace
 /// period, where Python's number would be the negated signal — a number that
 /// names no signal a user could act on either way.
-fn wait_with_timeout(child: &mut Child, timeout: Duration) -> Option<i32> {
+///
+/// A `try_wait` error is `Err`, not `None`: `Popen.wait` raises on it and
+/// Python's caller sees the exception. Folding it into the still-running
+/// `None` was the defect — it made an unwatched child indistinguishable from a
+/// live one (BUG-23).
+fn wait_with_timeout(child: &mut Child, timeout: Duration) -> Result<Option<i32>, std::io::Error> {
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Some(status.code().unwrap_or(-1)),
+            Ok(Some(status)) => return Ok(Some(status.code().unwrap_or(-1))),
             Ok(None) => {}
-            // A child that cannot be waited on is treated as still running
-            // rather than as a failure: the message a launch shows must come
-            // from the runner, and inventing one from a `waitpid` error would
-            // be the same class of fabrication B-07 is about.
-            Err(_) => return None,
+            Err(error) => return Err(error),
         }
         if Instant::now() >= deadline {
-            return None;
+            return Ok(None);
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         std::thread::sleep(remaining.min(Duration::from_millis(10)));
@@ -447,14 +456,24 @@ pub fn launch(
         // start is a thing the user will spend an evening trying to debug from
         // the game's side. See `BUG-05`.
         //
-        // Detached and unreaped once started, exactly as Python leaves it.
-        Process::new(&extra_argv[0])
+        // Detached once started — but not unreaped. `Popen` does not reap
+        // either, yet CPython registers every live `Popen` in
+        // `subprocess._active` and `_cleanup()` reaps the finished ones on the
+        // *next* `Popen` call and again at interpreter exit, so the zombie
+        // there is bounded by the next spawn. A `Child` dropped on the floor
+        // here is a zombie for the rest of the session — one per launch with a
+        // helper. A detached `wait` is the equivalent that does not need a
+        // next spawn (BUG-23).
+        let mut helper = Process::new(&extra_argv[0])
             .args(&extra_argv[1..])
             .envs(&environment)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
+        std::thread::spawn(move || {
+            let _ = helper.wait();
+        });
     }
 
     // Python's `cwd = game.working_directory or None`, then the executable's
@@ -563,21 +582,18 @@ pub fn tool_command(
     }
 }
 
-/// `os.access(path, os.X_OK)`, which is not the same question as `is_file()`.
+/// `os.access(path, os.X_OK)` verbatim, which `access(2)` answers: the real
+/// uid and gid, with the class the file's mode grants *us* — owner, group or
+/// other — rather than "any execute bit set".
 ///
-/// `std::fs::metadata` gives the mode bits; the *effective* answer for the
-/// current user also depends on ownership and group, so this checks the owner
-/// bit when we own the file and the group bit when our group does, and falls
-/// back to any-execute otherwise. That is stricter than `access(2)` for the
-/// exotic case of a supplementary group, and the consequence of being wrong is
-/// a `WINESERVER` variable that is not set — which is exactly what Python does
-/// when the file is not executable at all.
+/// The mode-bits check this replaces answered a different question: a file
+/// executable only by a class we are not in passed it, and `WINESERVER` then
+/// pointed at a `wineserver` our `exec` would refuse. `access(2)` uses the
+/// real ids by default, exactly as `os.access` does without
+/// `effective_ids=True`, so the two agree for the supplementary-group case
+/// too. (BUG-23; the same upgrade settled `env.rs`'s `is_executable_file`.)
 fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
-    };
-    metadata.permissions().mode() & 0o111 != 0
+    rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_ok()
 }
 
 #[cfg(test)]
@@ -810,7 +826,7 @@ mod tests {
             elapsed >= Duration::from_millis(40),
             "the window closed before the first attempt, so nothing was retried: {elapsed:?}"
         );
-        assert_eq!(running.failure(Duration::from_secs(10)), None);
+        assert_eq!(running.failure(Duration::from_secs(10)).unwrap(), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -921,6 +937,7 @@ mod tests {
         let mut running = launched(&game);
         let message = running
             .failure(Duration::from_secs(10))
+            .expect("the watch answered")
             .expect("a non-zero exit within the grace period is a failure");
 
         assert!(
@@ -953,6 +970,7 @@ mod tests {
         let started = Instant::now();
         let message = running
             .failure(Duration::from_secs(10))
+            .expect("the watch answered")
             .expect("a non-zero exit within the grace period is a failure");
         let elapsed = started.elapsed();
 
@@ -974,7 +992,7 @@ mod tests {
         for attempt in 0..25 {
             let game = scripted("echo 'err: attempt marker' >&2; exit 2");
             let mut running = launched(&game);
-            let message = running.failure(Duration::from_secs(10)).unwrap();
+            let message = running.failure(Duration::from_secs(10)).unwrap().unwrap();
             assert!(
                 message.contains("attempt marker"),
                 "attempt {attempt} lost the text: {message:?}"
@@ -990,7 +1008,7 @@ mod tests {
         let game = scripted("exit 4");
         let mut running = launched(&game);
         assert_eq!(
-            running.failure(Duration::from_secs(10)).as_deref(),
+            running.failure(Duration::from_secs(10)).unwrap().as_deref(),
             Some("the runner exited with status 4")
         );
     }
@@ -1000,7 +1018,7 @@ mod tests {
     fn a_zero_exit_is_not_a_failure() {
         let game = scripted("exit 0");
         let mut running = launched(&game);
-        assert_eq!(running.failure(Duration::from_secs(10)), None);
+        assert_eq!(running.failure(Duration::from_secs(10)).unwrap(), None);
     }
 
     /// A title still running when the grace period expires is the success case.
@@ -1009,7 +1027,7 @@ mod tests {
         let game = scripted("sleep 30");
         let mut running = launched(&game);
         let started = Instant::now();
-        assert_eq!(running.failure(Duration::from_millis(150)), None);
+        assert_eq!(running.failure(Duration::from_millis(150)).unwrap(), None);
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "the grace period must bound the wait, not the child's lifetime"
@@ -1028,7 +1046,7 @@ mod tests {
              exit 5",
         );
         let mut running = launched(&game);
-        let message = running.failure(Duration::from_secs(10)).unwrap();
+        let message = running.failure(Duration::from_secs(10)).unwrap().unwrap();
         assert!(message.contains("module not found"), "{message:?}");
         assert!(
             !message.contains("fixme:"),
@@ -1261,6 +1279,29 @@ mod tests {
             command.env.get("WINESERVER").map(String::as_str),
             Some(server.to_string_lossy().as_ref())
         );
+
+        // Executable by *another* class only: the file is ours and only
+        // "other" can run it. `access(2)` consults the class the mode grants
+        // us — the owner bits — and answers no; the mode-bits check this used
+        // to be answered yes and advertised a `wineserver` our `exec` would
+        // refuse (BUG-23). Uid 0 is exempt from that asymmetry — `access`
+        // succeeds for root when any execute bit is set — so the case only
+        // exists for a non-root process. `/proc/self`'s owner is the real uid,
+        // the same one `access` consults, and reading it needs no
+        // `rustix::process` feature.
+        use std::os::unix::fs::MetadataExt;
+        let root_user = std::fs::metadata("/proc/self")
+            .map(|meta| meta.uid() == 0)
+            .unwrap_or(true);
+        if !root_user {
+            std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o001)).unwrap();
+            let command = tool_command(&game, &manager, "winecfg", &FakeLaunchEnv::new()).unwrap();
+            assert!(
+                !command.env.contains_key("WINESERVER"),
+                "a wineserver only *other* users can execute must not be \
+                 advertised — `os.access` asks about us, not about anyone"
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1417,7 +1458,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(marker.exists(), "the title's process should have run");
-        assert_eq!(running.failure(Duration::from_secs(10)), None);
+        assert_eq!(running.failure(Duration::from_secs(10)).unwrap(), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1449,7 +1490,7 @@ mod tests {
             root.join("beside").exists(),
             "the child should have run in its own directory"
         );
-        assert_eq!(running.failure(Duration::from_secs(10)), None);
+        assert_eq!(running.failure(Duration::from_secs(10)).unwrap(), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1480,7 +1521,7 @@ mod tests {
             elsewhere.join("where").exists(),
             "the child should have run in the explicit directory"
         );
-        assert_eq!(running.failure(Duration::from_secs(10)), None);
+        assert_eq!(running.failure(Duration::from_secs(10)).unwrap(), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1692,7 +1733,7 @@ mod tests {
         let mut running =
             launched_or_busy_retry(&game, &RunnerManager::at(&root), &host, &NoShares)
                 .expect("a Proton build reached through umu is what NVAPI needs");
-        assert_eq!(running.failure(Duration::from_secs(10)), None);
+        assert_eq!(running.failure(Duration::from_secs(10)).unwrap(), None);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1732,7 +1773,7 @@ mod tests {
         let mut running =
             launched_or_busy_retry(&game, &RunnerManager::at("/nonexistent"), &host, &NoShares)
                 .expect("a plain-Wine title with a bundled runtime launches");
-        assert_eq!(running.failure(Duration::from_secs(10)), None);
+        assert_eq!(running.failure(Duration::from_secs(10)).unwrap(), None);
 
         let windows = prefix.join("drive_c/windows");
         assert_eq!(

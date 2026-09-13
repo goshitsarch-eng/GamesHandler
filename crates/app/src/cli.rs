@@ -313,7 +313,17 @@ fn launch_game_at(library: &mut Library, runners: &RunnerManager, game_id: &str)
                     game.name
                 );
             }
-            Ok(started.failure(launch_grace()))
+            match started.failure(launch_grace()) {
+                Ok(reason) => Ok(reason),
+                // The wait itself failing is `started.failure()` raising, which
+                // `main.py:42` leaves uncaught — a traceback on stderr and a
+                // non-zero exit. The port keeps that observable — the error on
+                // stderr, exit 1 — without the crash (BUG-23).
+                Err(error) => {
+                    eprintln!("{APP_NAME}: could not watch {}: {error}", game.name);
+                    return ExitCode::from(1);
+                }
+            }
         }
     };
     let (message, code) = launch_report(&game.name, attempt);
