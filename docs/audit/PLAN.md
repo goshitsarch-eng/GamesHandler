@@ -125,19 +125,19 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 23 | 23 | 0 | 0 |
-| P2 | 52 | 20 | 0 | 32 |
+| P2 | 52 | 23 | 0 | 29 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **129** | **49** | **0** | **80** |
+| **Total** | **129** | **52** | **0** | **77** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 8 | 0 | 17 |
+| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 10 | 0 | 15 |
 | `BUG-xx` | `BUGS.md` | 46 | 24 | 0 | 22 |
-| `PERF-xx` | `PERFORMANCE.md` | 8 | 3 | 0 | 5 |
+| `PERF-xx` | `PERFORMANCE.md` | 8 | 4 | 0 | 4 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
 | `SEC-xx` | `SECURITY.md` | 10 | 4 | 0 | 6 |
 | `UX-xx` | `COSMIC-UX.md` | 30 | 5 | 0 | 25 |
-| **Total** | | **129** | **49** | **0** | **80** |
+| **Total** | | **129** | **52** | **0** | **77** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -222,8 +222,8 @@ across families, not within them.
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
-| `ARCH-07` | cargo fmt --check fails, and formatting is not a stage in the gate | S5 | — | Add `cargo fmt --check` as a gate stage and make the tree clean; verify by running it at HEAD (must exit 0) and by re-introducing a formatting diff (must fail). | OPEN |
-| `ARCH-08` | README.md documents a property the command it names does not deliver | S5 | — | Correct the README paragraph to what `cargo test` does, or make the command deliver the claim; verify by running the documented command with the variables set. | OPEN |
+| `ARCH-07` | cargo fmt --check fails, and formatting is not a stage in the gate | S5 | — | Add `cargo fmt --check` as a gate stage and make the tree clean; verify by running it at HEAD (must exit 0) and by re-introducing a formatting diff (must fail). **Second half was already done and the row had not noticed** — the 542 diffs were applied in `eaddd00`, so `cargo fmt --all --check` exits 0 at HEAD. The gate half is new: `stage_fmt`, third in `STAGES`, running `cargo fmt --all --check` — `--all` because bare `cargo fmt` at the workspace root skips `crates/core`. Mutation-proved: an unformatted function appended to `crates/core/src/lib.rs` fails the stage with `Diff in .../lib.rs:103`, restoring passes. Gate green with `fmt` in the passed list; `docs/migration/packaging.md`'s stale hand-kept stage list replaced with a pointer to `STAGES`. | FIXED `d855015` |
+| `ARCH-08` | README.md documents a property the command it names does not deliver | S5 | — | Correct the README paragraph to what `cargo test` does, or make the command deliver the claim; verify by running the documented command with the variables set. **Measured, and the row was half right:** with `DISPLAY=:0` and `WAYLAND_DISPLAY=wayland-1` both set, `cargo test --workspace` is **green** (445 + 579 + the smaller targets, 0 failed) — so the property the README promises about the *outcome* holds, while its claim about the *mechanism* ("runs with … unset", implying `cargo test` does the unsetting) is false; `scripts/verify.sh:851` does it. Rewritten to state the property as a fact about the code: `crates/core` has no GUI dependency, so the tests cannot reach a display either way. | FIXED `d855015` |
 | `ARCH-09` | Errors lose their context at several boundaries, and one of them makes a local write failure indistinguishable from a legitimate "not found" | S5 | — | A regression test per boundary asserting the error names the operation and the path, and that a destination-side failure is not reported as "not found". | OPEN |
 | `ARCH-10` | The error taxonomy is strong inside core and collapses at two boundaries | S5 | — | A test per boundary asserting the `core` error enum survives to the UI message rather than being flattened to `String`. | OPEN |
 | `ARCH-11` | Module organisation: the four large files are large because of their test modules, and the production halves have concrete seams that no one has cut | S5 | — | Structural: verify with `cargo test` green plus the seam actually used by both callers. No behavioural test can see a moved definition. | OPEN |
@@ -248,7 +248,7 @@ across families, not within them.
 | `BUG-41` | file_offset's EOF check rejects a whole resource the reference reads by clamping, so a truncated executable loses an icon Python recovers | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | FIXED |
 | `BUG-46` | Navigating away from the open game form leaves the form on screen | S1 | — | Two tests: `navigating_away_closes_the_layers_the_page_was_covering`, and `clear_overlays_names_every_overlay_field_on_state`, which holds the method against the fields it must cover (verified by deleting one assignment). | FIXED `d9d6863` |
 | `BUG-47` | A card's and a row's title and subtitle have no ellipsis marker, so a name too long for its column is cut mid-glyph with nothing to say it was truncated | S2 | — | The comment half is fixed; the wiring cannot be asserted because iced offers no downcast and `Text::format` is private. Recorded rather than papered over. | PARTIAL `ff26a50` |
-| `PERF-04` | The project's claim that startup performs only two filesystem reads is false, and the comment asserting it sits three lines above the calls that contradict it | S3 | — | Correct the comment and the README claim, and enumerate the reads that actually happen; verify by counting the syscalls at startup (`strace -c -e trace=openat,statx`). | OPEN |
+| `PERF-04` | The project's claim that startup performs only two filesystem reads is false, and the comment asserting it sits three lines above the calls that contradict it | S3 | — | Correct the comment and the README claim, and enumerate the reads that actually happen; verify by counting the syscalls at startup (`strace -c -e trace=openat,statx`). **Done, with one half of the row refuted.** No README claim exists — grepped; the row's "and the README claim" has no referent and was not invented. The comment is corrected and now enumerates the real startup work: `refresh_plugins` walking `PATH` per plugin through `is_installed`, `detect_package_manager` and `in_flatpak`; `refresh_installers`' `read_dir` over the runners directory. **Re-measured** (`strace -f -c -e trace=%file`, release binary): **18** `statx` of `/.flatpak-info`, 6 each of `pacman`/`dnf`/`apt-get`, and — the part worth not attributing to this code — **187,490 of 190,438** path-bearing syscalls are libcosmic's icon-theme scan under `/usr/share/icons`, which is far smaller inside the Flatpak. | FIXED `d855015` |
 | `PERF-05` | search() re-sorts and re-filters the entire library, and categories() rebuilds and re-sorts the category list, on every frame — and both allocate Strings inside sort comparators | S3 | — | Cache the filtered/sorted result against the inputs it depends on, and drop the comparator allocations; verify the per-frame allocation count on a 500-game fixture. | OPEN |
 | `PERF-06` | RunnerManager::label is uncached, walks the filesystem, and is called once per shown game per frame — and it reads and JSON-parses each runner's metadata only to discard the parsed value | S3 | — | Cache the label against the runner directory's mtime, or read the id without parsing metadata; verify the per-frame file opens on a 5-runner fixture. | OPEN |
 | `PKG-02` | Nothing in the repository runs the verification chain automatically | S6 | — | Add CI (or a hook, or a `just`/`make` entry) that runs `scripts/verify.sh`; verify by breaking a test and watching the wiring fail. | FIXED `372b86e` |
