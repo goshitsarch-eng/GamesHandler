@@ -541,8 +541,16 @@ fn run_gui() -> ExitCode {
         |name| std::env::var(name).ok(),
         &mut std::io::stderr(),
         || {
-            let settings =
-                cosmic::app::Settings::default().size(cosmic::iced::Size::new(1200.0, 800.0));
+            let settings = cosmic::app::Settings::default()
+                .size(cosmic::iced::Size::new(1200.0, 800.0))
+                // The reference sets a floor and this port did not, so the
+                // window could be dragged to 1x1 and every page became
+                // unusable. `UX-04`; the numbers are `Main.qml:12-13`'s.
+                .size_limits(
+                    cosmic::iced::Limits::NONE
+                        .min_width(MIN_WINDOW.0)
+                        .min_height(MIN_WINDOW.1),
+                );
             // `String` rather than the framework's error type so the seam does
             // not depend on it; the message is all that is used.
             cosmic::app::run::<App>(settings, ()).map_err(|error| error.to_string())
@@ -551,6 +559,26 @@ fn run_gui() -> ExitCode {
 
     ExitCode::from(outcome.exit_status())
 }
+
+/// The smallest window this app will draw, in logical pixels — `UX-04`.
+///
+/// The reference states a floor (`gamehandler/qml/Main.qml:12-13`:
+/// `minimumWidth: 420; minimumHeight: 480`) and this port stated none, so the
+/// framework's default applied verbatim: `Limits::NONE.min_height(1.0)
+/// .min_width(1.0)` (`libcosmic src/app/settings.rs:98`), honoured at
+/// `src/app/mod.rs:79-84`. The window could be dragged to 1x1 and every page
+/// became unusable — and because the value was an implicit framework default
+/// rather than a stated choice, nothing in the port read as "we chose no
+/// minimum".
+///
+/// A floor is also the precondition for `UX-08`, `UX-09` and `UX-21`: the three
+/// horizontal-overflow findings are only meaningful once there is a width the
+/// layout is guaranteed to be handed.
+///
+/// The numbers are the reference's, not a re-derivation — `the_window_floor_is_
+/// the_references` reads them back out of `Main.qml` rather than trusting this
+/// constant, so changing either one alone fails a test.
+pub const MIN_WINDOW: (f32, f32) = (420.0, 480.0);
 
 /// Messages handled by `App::update`.
 ///
@@ -10227,6 +10255,158 @@ mod tests {
                 "no row voices this notify.emit — port it and add the row: {call:?}"
             );
         }
+    }
+
+    /// **The window floor this app states is the reference's, and it is actually
+    /// applied** — `UX-04`, both halves.
+    ///
+    /// # Why this reads two files rather than asserting a constant
+    ///
+    /// There are two ways `UX-04` can come back, and a constant compared against
+    /// itself catches neither:
+    ///
+    /// * the number drifts from the reference's. So the first half parses
+    ///   `main.qml`'s `minimumWidth`/`minimumHeight` — the authority the port is
+    ///   specified by, still in the tree — and requires [`MIN_WINDOW`] to be
+    ///   those values. A transcription verified by eye is verified by the same
+    ///   eyes that made the mistake;
+    /// * the constant survives and stops being *used*, which is the finding's
+    ///   actual shape: the default it replaced was
+    ///   `Limits::NONE.min_height(1.0).min_width(1.0)`, and a `size_limits` call
+    ///   deleted from the builder would put the app back where it was with this
+    ///   test still green. So the second half reads `main.rs` and requires the
+    ///   one construction of `cosmic::app::Settings` in it to carry the call.
+    ///
+    /// # What this cannot do, so nobody over-trusts it
+    ///
+    /// `Settings::size_limits` is `pub(crate)` in libcosmic, so the built value
+    /// cannot be read back and compared — this checks that the call is written,
+    /// not that the framework honoured it. Honouring is
+    /// `libcosmic src/app/mod.rs:79-84`, cited in [`MIN_WINDOW`]'s doc, and it
+    /// is not something this crate can observe from a unit test. A green here
+    /// means "the floor is the reference's and the builder still asks for it".
+    #[test]
+    fn the_window_floor_is_the_references_and_the_builder_asks_for_it() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+
+        // ---- half one: the number is the reference's -----------------------
+        let main_qml = root.join("gamehandler/qml/Main.qml");
+        let text = std::fs::read_to_string(&main_qml).unwrap_or_else(|err| {
+            panic!(
+                "{} should be readable: {err}\n\
+                 It is the reference this shell was ported from, and this test \
+                 reads the floor out of it. If it has been moved, this check \
+                 needs a new path — and so does every citation in \
+                 docs/migration/.",
+                main_qml.display()
+            )
+        });
+        let qml_value = |key: &str| -> f32 {
+            let line = text
+                .lines()
+                .find(|line| line.trim().starts_with(&format!("{key}:")))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "`{key}:` is not in Main.qml. It is where the reference \
+                         states its window floor, and this test exists to keep \
+                         this port's floor equal to it. If the reference stopped \
+                         stating one, `MIN_WINDOW` has no authority to cite and \
+                         this test should be deleted rather than guessed at"
+                    )
+                });
+            let rest = line
+                .trim()
+                .strip_prefix(&format!("{key}:"))
+                .expect("the prefix was just matched")
+                .trim();
+            rest.parse::<f32>().unwrap_or_else(|err| {
+                panic!("`{key}:` in Main.qml is {rest:?}, which is not a number: {err}")
+            })
+        };
+        let raw_width = text
+            .lines()
+            .find(|line| line.trim().starts_with("minimumWidth:"))
+            .expect("the reference states a minimum width");
+        assert_eq!(
+            qml_value("minimumWidth"),
+            MIN_WINDOW.0,
+            "the reference's window floor is {}x{} ({raw_width:?}) and this port \
+             states {}x{}. `UX-04`'s fix is to match the reference; changing the \
+             constant without changing the reading means the port's floor is now \
+             a number nobody chose",
+            qml_value("minimumWidth"),
+            qml_value("minimumHeight"),
+            MIN_WINDOW.0,
+            MIN_WINDOW.1
+        );
+        assert_eq!(
+            qml_value("minimumHeight"),
+            MIN_WINDOW.1,
+            "as above, on the other axis"
+        );
+
+        // ---- half two: the builder still asks for it -----------------------
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
+        )
+        .expect("this file must be readable");
+        // The one place the app builds the framework's settings, searched in the
+        // *non-test* half of the file: this test's own body names the string, so
+        // counting over the whole file would count itself and the arithmetic
+        // would be about this test rather than about the app. Splitting at the
+        // test module is what makes the count a property of the code that runs.
+        let tests_at = source
+            .find("\nmod tests {")
+            .expect("this file has a test module; the split below depends on it");
+        let production = &source[..tests_at];
+        let constructions = production
+            .matches("cosmic::app::Settings::default()")
+            .count();
+        assert_eq!(
+            constructions, 1,
+            "this file builds `cosmic::app::Settings` {constructions} times; this \
+             test grades the one at the app's startup and would have to name \
+             which, rather than assuming there is one"
+        );
+        let start = production
+            .find("cosmic::app::Settings::default()")
+            .expect("counted above");
+        // The expression runs to the `;` that closes the `let settings = …`, and
+        // the comment lines are dropped *before* looking for it: the builder's
+        // own comment contains a `;` mid-sentence (`\`UX-04\`; the numbers are
+        // …`), so searching the raw text stops inside a comment and reports a
+        // construction with no `size_limits` in the part it kept. That is a
+        // measurement that reads what is convenient rather than what is there —
+        // the finding this whole file is an audit of — so the comments come out
+        // first, and the assertion's failure message prints what was kept.
+        let expression: String = production[start..]
+            .lines()
+            .take_while(|line| !line.trim_end().ends_with(';'))
+            .chain(
+                production[start..]
+                    .lines()
+                    .skip_while(|line| !line.trim_end().ends_with(';'))
+                    .take(1),
+            )
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let expression = expression.as_str();
+        assert!(
+            expression.contains(".size_limits("),
+            "the settings construction does not call `.size_limits(…)`, so the \
+             window floor is back to the framework's default — \
+             `Limits::NONE.min_height(1.0).min_width(1.0)` (`libcosmic \
+             src/app/settings.rs:98`) — and the window can be dragged to 1x1 \
+             again. That is `UX-04` exactly, and a `MIN_WINDOW` nothing applies \
+             is the shape it came back in. The construction: {expression:?}"
+        );
+        assert!(
+            expression.contains("MIN_WINDOW"),
+            "the settings construction sets size limits but not from \
+             [`MIN_WINDOW`], so the floor and the constant can disagree without \
+             this test noticing: {expression:?}"
+        );
     }
 
     /// The icon names are the reference drawer's, checked against `Main.qml`

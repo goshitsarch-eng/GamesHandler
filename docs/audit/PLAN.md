@@ -101,10 +101,10 @@ advocate reviews every row before it is called done and owns no row.
 | Severity | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
-| P1 | 23 | 22 | 0 | 1 |
+| P1 | 23 | 23 | 0 | 0 |
 | P2 | 52 | 19 | 0 | 33 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **128** | **46** | **0** | **82** |
+| **Total** | **128** | **47** | **0** | **81** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -113,8 +113,8 @@ advocate reviews every row before it is called done and owns no row.
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 3 | 0 | 5 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
 | `SEC-xx` | `SECURITY.md` | 10 | 3 | 0 | 7 |
-| `UX-xx` | `COSMIC-UX.md` | 30 | 4 | 0 | 26 |
-| **Total** | | **128** | **46** | **0** | **82** |
+| `UX-xx` | `COSMIC-UX.md` | 30 | 5 | 0 | 25 |
+| **Total** | | **128** | **47** | **0** | **81** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -190,7 +190,7 @@ across families, not within them.
 | `UX-01` | Dropdowns are in no keyboard focus ring and contribute no accessibility node | S2 | — | A test asserting the `Operation` from a built dropdown contains a focusable node. Upstream `Dropdown` has its `operate` hook commented out, so this needs a wrapper or a carried patch. | FIXED (app half) — `view/a11y.rs::dropdown`, all 11 sites; the toolkit's popup stays unopenable from the keyboard and that residue is recorded in the module docs and `COSMIC-UX.md` |
 | `UX-02` | Togglers are mouse-only | S2 | — | A test asserting a focused toggler responds to space/enter. Upstream `toggler` has **no** `operate` at all, so this needs a local widget or an upstream patch. | FIXED — `view/a11y.rs::toggler`. The audit row's premise was also wrong: libcosmic does not use iced's toggler at all (`src/widget/toggler.rs:15` re-exports the *style* types), so the widget publishes no node whatever — see `COSMIC-UX.md` |
 | `UX-03` | Text inputs emit no accessibility node at all, so the entire add/edit-game form is invisible to a screen reader | S2 | — | A test asserting `a11y_nodes` is non-empty for a built `text_input`. Neither implementation defines it. | FIXED — `view/a11y.rs::input` / `input_with_id`, all 4 sites; the input was already focusable and already handled typing (`src/widget/text_input/input.rs:843-855`) |
-| `UX-04` | The application configures no minimum window size, so the window can be dragged to 1×1 and every page becomes unusable | S2 | — | Set the window minimum and assert it is at least what the narrowest page layout needs (`UX-08`, `UX-09`, `UX-21`). | OPEN |
+| `UX-04` | The application configures no minimum window size, so the window can be dragged to 1×1 and every page becomes unusable | S2 | — | Set the window minimum and assert it is at least what the narrowest page layout needs (`UX-08`, `UX-09`, `UX-21`). | FIXED — `MIN_WINDOW = (420.0, 480.0)` in `main.rs`, applied to the app's one `cosmic::app::Settings`; the test reads the numbers back out of `Main.qml` **and** requires the builder to use them, because the finding's shape was a value nothing applied |
 | `UX-05` | "Add Game" has no always-visible control | S2 | duplicate of `BUG-07` | As `BUG-07`; the toolbar button is the always-visible control. | FIXED with `BUG-07` |
 
 ### P2 — 52
