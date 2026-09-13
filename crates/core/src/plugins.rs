@@ -241,11 +241,19 @@ fn effective_uid() -> Option<u32> {
 }
 
 /// Whether GameHandler is running in a Flatpak sandbox (`plugins.py:107-109`).
+///
+/// Python is `bool(os.environ.get("FLATPAK_ID")) or Path("/.flatpak-info").exists()`,
+/// and `or` evaluates its right operand whenever the left is falsy — which
+/// includes the variable being **set to the empty string**. A `match` on
+/// `Option` is not the same shape: its `Some` arm is terminal, so `Some("")`
+/// never reached the marker file and a sandbox that exports `FLATPAK_ID=""`
+/// was judged not to be one (`BUG-38`).
+///
+/// The consequence is not cosmetic: [`detect_package_manager`] would then
+/// name the host's manager and the page would offer an install command that
+/// cannot work inside the sandbox.
 pub fn in_flatpak(env: &dyn PluginEnv) -> bool {
-    match env.var("FLATPAK_ID") {
-        Some(value) => !value.is_empty(),
-        None => env.exists("/.flatpak-info"),
-    }
+    env.var("FLATPAK_ID").is_some_and(|value| !value.is_empty()) || env.exists("/.flatpak-info")
 }
 
 /// A short id for the host package manager, or `""`.
@@ -997,6 +1005,29 @@ mod tests {
         // sandbox on its own.
         let empty = FakePluginEnv::new().with_var("FLATPAK_ID", "");
         assert!(!in_flatpak(&empty));
+
+        // **And it must not stop the other signal from being consulted.**
+        // This is `BUG-38`: `or` evaluates its right operand whenever the left
+        // is falsy, and `""` is falsy, so Python falls through to the marker
+        // file. A `match` on `Option` had `Some("")` as a terminal `false`, so
+        // a sandbox that exports the variable empty was judged not to be one —
+        // and `detect_package_manager` then offered the host's manager inside
+        // the sandbox. The assertion above passes under both readings, which is
+        // why the defect needed this second fixture to be visible at all.
+        let empty_with_marker = FakePluginEnv::new()
+            .with_var("FLATPAK_ID", "")
+            .with_file("/.flatpak-info");
+        assert!(
+            in_flatpak(&empty_with_marker),
+            "an empty FLATPAK_ID must fall through to the marker file, as Python's \
+             `or` does — otherwise a sandbox is not recognised as one"
+        );
+        assert_eq!(
+            detect_package_manager(&empty_with_marker),
+            "",
+            "and the consequence: the host's package manager must not be offered \
+             inside a sandbox"
+        );
     }
 
     // ---------------------------------------------------------- the 3 states

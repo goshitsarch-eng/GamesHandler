@@ -98,11 +98,20 @@ impl LaunchEnv for SystemLaunchEnv {
     }
 }
 
-/// Python's `os.defpath`, used when `PATH` is unset or empty.
+/// Python's `os.defpath`, used when `PATH` is **unset**.
 ///
-/// `shutil.which` falls back to this rather than to nothing, which is why a
-/// Flatpak-launched app with a deliberately empty `PATH` still finds
-/// `/usr/bin/wine`.
+/// Not when it is empty: that case returns `None` before any directory is
+/// tried (`BUG-37`). A Flatpak-launched app with a deliberately empty `PATH`
+/// therefore finds nothing here, which is what the reference does and is the
+/// safer reading besides — an empty `PATH` is a statement that the caller wants
+/// no `PATH` search.
+///
+/// `os.defpath` is `/bin:/usr/bin`; CPython prefers `os.confstr("CS_PATH")`
+/// and falls back to `os.defpath` only if that fails. On this host `CS_PATH` is
+/// `/usr/bin` — a subset of `DEFPATH`, and the two find the same binaries on
+/// any usrmerged system, where `/bin` is a link to `/usr/bin`. The difference is
+/// unobservable without a system that has a binary in a real `/bin` and not in
+/// `/usr/bin`, and this port does not invent one.
 const DEFPATH: &str = "/bin:/usr/bin";
 
 /// Turn the process environment into the `String`-valued map the launch path
@@ -146,6 +155,13 @@ where
 ///   comment says so explicitly, and skipping empties (the intuitive reading)
 ///   would change which binary is found.
 /// * Duplicate entries are visited once, matching CPython's `seen` set.
+/// * A `PATH` that is **set but empty** is not the same as one that is unset.
+///   `os.environ.get("PATH")` answers `""`, which is falsy, and CPython's
+///   `if not path: return None` (`which`, bpo-35755) returns before any
+///   directory is tried. Only an *unset* `PATH` reaches `os.confstr("CS_PATH")`
+///   / `os.defpath`. This function used to fold the two together, so
+///   `PATH=""` searched `/bin:/usr/bin` and found wrappers the reference
+///   refuses to find (`BUG-37`).
 ///
 /// One honest approximation: the execute check is "any execute bit is set",
 /// where `os.access(name, X_OK)` consults the effective uid's class. The two
@@ -162,7 +178,12 @@ pub fn which_in(name: &str, env: &dyn Env) -> Option<PathBuf> {
         return is_executable_file(&path).then_some(path);
     }
 
-    let raw = match env.var("PATH").filter(|value| !value.is_empty()) {
+    // Three cases, and the reference distinguishes all three: unset falls back
+    // to the default path, **set-but-empty refuses to search at all**, and
+    // anything else is the path. The middle case is the one a `.filter()`
+    // cannot express, because it makes `Some("")` and `None` the same value.
+    let raw = match env.var("PATH") {
+        Some(value) if value.is_empty() => return None,
         Some(value) => value,
         None => DEFPATH.to_string(),
     };
@@ -510,15 +531,55 @@ pub(crate) mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    /// **`PATH` set to `""` searches nothing; unset falls back to `DEFPATH`.**
+    ///
+    /// The two cases are one character apart in the environment and opposite in
+    /// CPython: `os.environ.get("PATH")` answers `""` for the first, which is
+    /// falsy, and `if not path: return None` returns before any directory is
+    /// tried. Only the *unset* case reaches `os.confstr("CS_PATH")` /
+    /// `os.defpath`. This port folded them together until `BUG-37`.
+    ///
+    /// Measured against CPython 3.14.7 on this host, for the same four inputs:
+    /// `path=""` → `None`, `PATH` unset → `/usr/bin/sh`, `path="/usr/bin"` →
+    /// `/usr/bin/sh`, `path=":"` → `'sh'` when the cwd holds an executable `sh`.
+    ///
+    /// The `:` half needs a *controlled working directory* and is therefore in
+    /// `tests/which_cwd.rs`, which is its own process and can `chdir`. The test
+    /// that used to sit here was named
+    /// `which_checks_an_empty_path_entry_against_the_current_directory` and
+    /// created its probe in a scratch **directory** without ever entering it,
+    /// so it asserted against the default path and could not have observed the
+    /// behaviour its name claims.
     #[test]
-    fn which_checks_an_empty_path_entry_against_the_current_directory() {
-        // `PATH=":"` means the current directory in Python, and the intuitive
-        // "skip empty entries" reading is wrong. Verified against CPython.
+    fn which_refuses_search_when_path_is_set_but_empty() {
         let root = scratch("which-empty");
-        make_executable(&root.join("gh-empty-entry-probe"));
-        let env = FakeEnv::new(&[("PATH", "")]);
-        // An empty PATH string falls back to the default path, not to "".
-        assert_eq!(which_in("gh-empty-entry-probe", &env), None);
+        let probe = root.join("gh-empty-path-probe");
+        make_executable(&probe);
+
+        // Set-but-empty: no search, even though the binary would be found if
+        // the entry were treated as "the current directory" or as "unset".
+        let empty = FakeEnv::new(&[("PATH", "")]);
+        assert_eq!(which_in("gh-empty-path-probe", &empty), None);
+
+        // Unset: the default path, which does not contain our scratch dir
+        // either — so this assertion passes for a reason independent of the
+        // one above, and a port that returned `None` unconditionally would
+        // fail the third case.
+        let unset = FakeEnv::new(&[]);
+        assert_eq!(which_in("gh-empty-path-probe", &unset), None);
+
+        // The default path really is searched when `PATH` is unset, so the
+        // second assertion is not passing because nothing is ever found.
+        assert!(
+            which_in("sh", &unset).is_some(),
+            "an unset PATH must still reach DEFPATH — a bare `None` would make \
+             every wrapper lookup fail on a host that starts with no PATH"
+        );
+
+        // And a real path still works, so the first assertion is about the
+        // empty string rather than about `which_in` being broken.
+        let real = FakeEnv::new(&[("PATH", root.to_str().unwrap())]);
+        assert_eq!(which_in("gh-empty-path-probe", &real), Some(probe));
         let _ = fs::remove_dir_all(&root);
     }
 

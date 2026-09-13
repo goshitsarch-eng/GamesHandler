@@ -1150,6 +1150,48 @@ mod tests {
     use crate::runners::env::tests::{FakeLaunchEnv, scratch};
     use std::fs;
 
+    /// **An unknown family id is an error, not the default family.**
+    ///
+    /// `BUG-15` recorded that an unknown id silently became `proton-ge`, so the
+    /// page fetched and returned *a different family's* releases. The code does
+    /// not do that — the `unwrap_or` is on the `Option`, inside a call that
+    /// returns a `Result`, so `None` takes the default and `Some("nonsense")`
+    /// propagates Python's `KeyError` text. `resolve_family` had **no test at
+    /// all** until this one, which is how a row could be written about it
+    /// without the measurement to settle it.
+    ///
+    /// The three cases are separate assertions because the whole defect is the
+    /// conflation of two of them.
+    #[test]
+    fn a_family_that_is_not_in_the_catalogue_is_refused_not_defaulted() {
+        // Absent means default — the caller did not name a family.
+        let default = resolve_family(None).map(|family| family.id).unwrap();
+        assert_eq!(default, DEFAULT_FAMILY_ID);
+
+        // A named family resolves to itself, so the assertion above is not
+        // passing because everything returns the default.
+        let named = resolve_family(Some("proton-cachyos"))
+            .map(|family| family.id)
+            .unwrap();
+        assert_eq!(named, "proton-cachyos");
+
+        // And an id that is not in the catalogue is Python's KeyError, carried
+        // byte-identically — *not* the default.
+        let error = resolve_family(Some("not-a-family")).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Unknown runner family: not-a-family",
+            "the reference raises KeyError with this text and the port carries \
+             it unchanged"
+        );
+        // `Some("")` is a *named* id that is not in the catalogue, which is not
+        // the same as `None` — a truthiness test would merge them.
+        assert_eq!(
+            resolve_family(Some("")).unwrap_err().to_string(),
+            "Unknown runner family: "
+        );
+    }
+
     // -----------------------------------------------------------------
     // python_int against CPython
     // -----------------------------------------------------------------
