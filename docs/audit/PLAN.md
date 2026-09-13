@@ -65,7 +65,7 @@ those rows contain `Status:`:
 | `BUGS.md` | 48 | 34 | 32 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 19 | 18 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 20 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
-| `SECURITY.md` | 11 | 8 | 7 `FIXED`, 1 `PARTIAL` |
+| `SECURITY.md` | 11 | 9 | 8 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
@@ -135,8 +135,8 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 13 | 0 | 36 |
-| **Total** | **130** | **88** | **0** | **42** |
+| P3 | 49 | 14 | 0 | 35 |
+| **Total** | **130** | **89** | **0** | **41** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -144,9 +144,9 @@ advocate reviews every row before it is called done and owns no row.
 | `BUG-xx` | `BUGS.md` | 46 | 32 | 0 | 14 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
-| `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
+| `SEC-xx` | `SECURITY.md` | 11 | 8 | 0 | 3 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 17 | 0 | 12 |
-| **Total** | | **130** | **88** | **0** | **42** |
+| **Total** | | **130** | **89** | **0** | **41** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -334,7 +334,7 @@ across families, not within them.
 | `PKG-09` | flatpak-contents and cargo-sources both shell out to a bare python3 for their comparison helpers, independently of the interpreter chosen to run the generator | S6 | — | Use the same interpreter the generator was run with; verify by running both stages under a PATH without a bare `python3`. **Status: FIXED.** The comparison in `stage_cargo_sources_fresh` runs under `$py` (the discovered interpreter) instead of a bare `python3`. The row's `:1534` citation is stale — that helper is in `stage_cargo_sources`, a different stage with no discovered interpreter — and its alternative (assert the two interpreters match) would fail on the venv the stage itself recommends. Verified with a probe interpreter in the venv position: the generator and the comparison are both invoked through it.| FIXED |
 | `SEC-05` | The Proton runner archive is downloaded from a URL taken verbatim out of the releases JSON, with no scheme and no origin check — unlike the installer download path, which applies both | S4 | — | Apply the same scheme and origin check the installer path applies; verify with a releases payload naming a `file:` and an off-origin URL. | PARTIAL `8106f1e` — `validate_runner_download_url` requires `https` through the same `url_parts` the installer allowlist uses, called from `install_with` before anything is staged, and the new `RunnerError::UntrustedOrigin { url }` carries what it refused. Four mutations fire on four distinct named tests, the fourth being the positive control that the request goes to the URL that was checked. The host-pin half of the suggested fix was **dropped after measurement, not skipped**: every asset of the live Proton-GE listing is on `github.com` and each redirects once to `release-assets.githubusercontent.com`, so no host allowlist is writable, and `RunnerFamily` has no `allowed_hosts` field to port. The redirect target is judged by nothing, and that residue is recorded on the specialist row. |
 | `SEC-06` | RunnerManager::get joins a games.json-sourced runner_id onto the runners directory without validating it, where three other sites validate the same kind of string | S4 | — | Validate the `runner_id` the way the three other sites do; verify with a `games.json` carrying `../../etc`. | FIXED |
-| `SEC-07` | open_url performs no scheme validation, and its message payload is a plain String rather than a catalogue-constant type | S4 | — | Validate the scheme in `open_url` itself and give the payload a catalogue-constant type; verify with a non-`http(s)` producer. | OPEN |
+| `SEC-07` | open_url performs no scheme validation, and its message payload is a plain String rather than a catalogue-constant type | S4 | — | Validate the scheme in `open_url` itself and give the payload a catalogue-constant type; verify with a non-`http(s)` producer. **Status: FIXED `c7d4299`.** The scheme is checked in `open_url` before the command is built, so no ordering reaches `spawn`; `open_url_command` has exactly one caller, the line after the gate. Two tests: one asserts a refused URL never spawned, the other drives both real catalogues as acceptances so a gate that refused everything fails. | FIXED `c7d4299` |
 | `SEC-08` | Three manifest permissions are justified only by the child process, with no direct launcher-code tie; the permissions that *do* tie to code are recorded here so the distinction is auditable | S4 | — | Record each permission's justification in the manifest beside it, or drop the ones with none; verify by reading the manifest against the code. | OPEN |
 | `SEC-09` | Two of the app's process spawns inherit the launcher's entire environment, and they are the two security-relevant ones: the package-manager install and the Authenticode verifier | S4 | — | Clear the environment at the two spawn sites and pass back only what the child needs; verify by dumping the child's environment. | FIXED |
 | `UX-21` | Grid cells are fixed at 200×300 with a fixed column count, so at narrow widths the library grid runs off the right edge and the cards there cannot be reached | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |

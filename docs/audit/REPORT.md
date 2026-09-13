@@ -63,9 +63,9 @@ and the section *What remains, honestly* says which is which.
 | `ARCH-xx` | Architecture, code quality | 25 | 18 | 1 | 7 |
 | `UX-xx` | libcosmic / COSMIC UX | 29 | 17 | 1 | 12 |
 | `PERF-xx` | Performance, resource | 8 | 6 | 0 | 2 |
-| `SEC-xx` | Security, robustness | 11 | 7 | 0 | 4 |
+| `SEC-xx` | Security, robustness | 11 | 8 | 0 | 3 |
 | `PKG-xx` | Packaging, platform, QA | 11 | 8 | 0 | 3 |
-| **Total** | | **130** | **88** | **4** | **42** |
+| **Total** | | **130** | **89** | **4** | **41** |
 
 The `Found` column is defects; the four refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
@@ -79,8 +79,8 @@ By severity:
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 13 | 0 | 36 |
-| **Total** | **130** | **88** | **0** | **42** |
+| P3 | 49 | 14 | 0 | 35 |
+| **Total** | **130** | **89** | **0** | **41** |
 
 `Not a defect` is not a euphemism for "wontfix": all four rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`, `BUG-15`,
