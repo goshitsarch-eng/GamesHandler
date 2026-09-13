@@ -264,11 +264,11 @@ Disposition for the Rust build:
 | finish-arg | Verdict | Reason |
 | --- | --- | --- |
 | `--share=network` | **KEEP** | Runner/installer downloads, Steam artwork lookup, release-page fetches are core function (README.md:12-16). |
-| `--share=ipc` | **KEEP** | Shared memory for the compositor; standard for any GUI Flatpak. (The old rationale cited GPU buffers via wgpu; that no longer applies under D-11, but the flag is still wanted for SHM.) |
+| `--share=ipc` | **KEEP (child's need — see below)** | Shared memory for the compositor; standard for any GUI Flatpak. (The old rationale cited GPU buffers via wgpu; that no longer applies under D-11, but the flag is still wanted for SHM.) The launcher's own code touches no SHM: `grep -rnE 'shm\|/dev/shm' crates/` matches only test strings. The tie is to the compositor that draws the window and to the launched Wine process, not to a `file:line`. |
 | `--socket=fallback-x11` | **KEEP** | XWayland fallback on X11 sessions, and now also the native path for X11 sessions since `x11` is enabled (§2.3). |
 | `--socket=wayland` | **KEEP** | Primary display path for winit. |
-| `--socket=pulseaudio` | **KEEP** | Game audio (Wine/PulseAudio socket passthrough). Unrelated to toolkit. |
-| `--allow=multiarch` | **KEEP** | 32-bit Windows games and downloaded Wine/Proton builds (README.md:127-128). Non-negotiable for a Wine launcher. |
+| `--socket=pulseaudio` | **KEEP (child's need — see below)** | Game audio (Wine/PulseAudio socket passthrough). Unrelated to toolkit. The launcher never opens the socket itself: `grep -rnE 'PULSE_\|[^a-z]pulse' crates/` finds nothing outside test strings, because audio is the launched process's. |
+| `--allow=multiarch` | **KEEP (child's need — see below)** | 32-bit Windows games and downloaded Wine/Proton builds (README.md:127-128). Non-negotiable for a Wine launcher. This one is *close* to the code — `install_bundled_dxvk` reads `WINEARCH` and selects a 32-bit prefix layout (`crates/core/src/runners/launch_opts.rs:449-455`, 32-bit layout chosen at `:465-468`) — but reading an environment variable is not executing a 32-bit binary, which is what the grant is for. The i386 Wine comes from `org.freedesktop.Platform.Compat.i386` and runs as the child. |
 | `--device=dri` + `--device=input` + `--device=usb` | **NARROWED (SEC-01)** | The three classes a launched game needs and nothing else: `dri` for the GPU, `input` for controllers and the event devices SDL reads, `usb` so `/dev/bus/usb` exists for enumeration. This closes PLAN.md Q-2 by measurement rather than by the gamepad test Q-2 asked for. `--device=all` was **not** required for gamepads: `--device=input` is what exposes `/dev/input`, and opening an event node needs its own unix permissions either way. **Measured in the sandbox** (`flatpak run --command=/bin/sh … -c 'ls /dev'`, before and after): the narrow grant removes `/dev/mem`, `/dev/kvm`, `/dev/nvme0n1` and its partitions, `/dev/vfio`, `/dev/vhost-net`, `/dev/watchdog`, `/dev/watchdog0`, `/dev/nvram`, `/dev/ttyS0-3`, `/dev/ppp`, `/dev/rfkill`, `/dev/hwrng`, `/dev/mtd*`, `/dev/gpiochip0` and `/dev/udmabuf` — every one of which `all` had put inside the sandbox that third-party game binaries run in, and none of which any code in `crates/` opens. `flatpak-metadata(5)` is explicit that a device grant exposes the nodes and grants nothing the user does not already have, so this is about the sandbox's blast radius rather than a privilege boundary. `tests/test_packaging.py` asserts the narrow set **and** asserts `--device=all` is absent, because the positive list alone is satisfied by a manifest that carries both. |
 | `--filesystem=home:ro` | **NARROWED (SEC-02)** | Read-only, with one writable carve-out. The KEEP this replaces was right that libraries live in arbitrary user locations, and right that a portal chooser does not replace it — the app must *execute* games from those locations afterwards. It did not follow that the sandbox needs to *write* there. **Measured in the sandbox** (`flatpak run --command=sh`, before and after): under the old bare `home` grant, `touch ~/.config/gh-sec02-w2` and `touch ~/.local/share/gh-sec02-w3` both succeeded; under `home:ro` both are refused. What the read-only form keeps is everything the code reads — `~/.local/share/umu`, `~/.local/share/lutris/runtime` and `~/.local/share/Steam/steamapps/common` stay readable — and, the half that was asserted here and never demonstrated, **execution from an arbitrary home path still works**: a planted executable at `~/.gh-sec02-exec-probe` ran with exit 0 under the narrowed grant. The exposure that closes is the other direction, which `SEC-04` was an instance of: a write-path bug reached `~/.config/autostart` because the grant let it. |
 | `--filesystem=~/.local/share/applications:create` | **ADDED (SEC-02)** | The one writable carve-out. `shortcut_directory_in` (`crates/core/src/runners/desktop.rs:96-98`) writes shortcuts to the user's application menu deliberately rather than to this application's own data directory — a shortcut has to land where the session's menu reads it. `:create` is the narrowest mode that supports it: it permits adding and replacing files under that directory and nothing else. **Measured to override the broader `home:ro`**, which is the property the pairing depends on: creating, re-writing and removing a `.desktop` file all succeed, while a sibling directory (`~/.local/share/gh-sec02-other`) and a traversal back out of it are both refused. Without this grant the create-shortcut flow stops working under the narrowed home grant. |
@@ -288,6 +288,58 @@ Disposition for the Rust build:
 `/share/doc`, and the LLVM/clang entries only if the Rust build still needs
 them (it should not — no C++ binding generation remains; verify at manifest
 time and drop).
+
+### 3.1 Two kinds of permission, and why the difference is written down
+
+Every `finish-args` entry falls into one of two kinds. The distinction is
+recorded per-arg above (`child's need` in the Verdict column) and collected
+here, because a future narrowing pass needs to tell the two kinds apart rather
+than re-derive which is which.
+
+**Anchors are symbols, not line numbers.** This table's first version cited six
+`file:line` pairs and **every one of them was wrong** — `launch_opts.rs:745`
+already held unrelated code at `babaeef`, the commit that wrote it, and
+`installers.rs:1753`, `proton.rs:1045` and `runners/mod.rs:236` landed on blank
+lines or on other functions. A reader following one lands on real, plausible
+code and so reads the citation as verified, which is `ARCH-16`'s fault and
+`ARCHITECTURE.md`'s ARCH-26 row calls it the third instance. A function name
+survives an edit; a line number does not.
+
+| Argument | Kind | Anchor — the thing whose deletion falsifies the justification |
+| --- | --- | --- |
+| `--share=network` | launcher code | `crates/app/src/http.rs` (the sole `HttpClient`, injected under D-26), and its three consumers: `gamehandler_core::covers`, `gamehandler_core::installers`, `gamehandler_core::runners::proton` |
+| `--socket=wayland`, `--socket=fallback-x11` | launcher code, **weakly** | No symbol in `crates/` reads a display variable to draw with; the only such reader is `display_refusal` in `crates/app/src/main.rs`, and its whole job is to *refuse* to start when the variable is unset. The real tie is that libcosmic is built with its `winit`, `wayland` and `x11` features (`crates/app/Cargo.toml`), so the window *is* the dependency and deleting it means removing the GUI rather than removing a call. Flagged as the weakest anchor in the table for that reason. |
+| `--filesystem=~/.local/share/applications:create` | launcher code | `gamehandler_core::runners::desktop::create_desktop_shortcut`, whose `shortcut_directory_in()` is the path it writes; its only production caller is `Shell::update` in `crates/app/src/main.rs` |
+| `--env=PATH=…gamescope…` | launcher code | `gamehandler_core::runners::launch_opts::apply_launch_options` — its `launch_env.which("gamescope")` branch, which refuses the launch rather than silently dropping the toggle; plus the Flathub-extension message in `gamehandler_core::runners::mod` (`RunnerError::GamescopeMissing`) |
+| `--filesystem=xdg-run/gvfs` | launcher code (read half) | `gamehandler_core::netpaths::as_local_path_in` — reached from `as_local_path`, which calls `gvfs_root_in()` and `scan_gvfs_for()`. Its production caller is `crates/app/src/easy_install.rs`, on the two portal answers (`ExeFileChosen`, `CoverFileChosen`). |
+| `--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro` | launcher code | The seventh of the seven roots in `gamehandler_core::runners::env`'s root list |
+| `--share=ipc` | child process | Nothing in this repository changes. `grep -rnE '/dev/shm\|shm_' crates/` finds no SHM use outside test strings; the requirement is the launched Wine/Proton process's X11 MIT-SHM path. |
+| `--socket=pulseaudio` | child process | Nothing in this repository changes. `grep -rnE 'PULSE_\|[^a-z]pulse' crates/` finds nothing outside test strings; the requirement is the launched process's audio output. |
+| `--allow=multiarch` | child process | Nothing in this repository changes. `gamehandler_core::runners::launch_opts::install_bundled_dxvk` reads `WINEARCH` to *select a 32-bit prefix layout*, but the launcher never executes a 32-bit binary; the i386 Wine comes from the `inherit-extensions` entry and runs as the child. |
+| `--device=dri` | child process, **unsettled** | No launcher tie: `wgpu` is deliberately absent from the feature set (D-11 — the software renderer is what makes the Flatpak smoke test and a broken-GPU machine both work), so this code never opens `/dev/dri`. The base is `org.winehq.Wine`, whose Vulkan/DXVK path needs the render node, so the need is the base extension's rather than this code's. **The smoke test cannot settle it either way:** `flatpak override --user --nodevice=all` still reports `devices=dri;`, because flatpak re-adds the render node for any app inheriting a GL extension (`inherit-extensions` here). Recorded so nobody reads a green `gui-stays-up` as evidence about this arg. |
+| `--device=input` | child process (launcher half **measured** absent) | `grep -rn '/dev/input\|evdev\|gamepad\|joystick' crates/` returns nothing, and the measurement agrees: with the device grants narrowed to `--device=dri` alone, `scripts/smoke-test.sh`'s `gui-stays-up` still passes over weston. That is what the toolkit predicts — a Wayland client receives keystrokes over the compositor socket, so `/dev/input` inside the sandbox is not how the window is driven. The residual claim is that the *launched game* needs it for gamepads, which is the standard justification for this grant and **is not measurable here** without a controller and a title. |
+| `--device=usb` | **nothing** | No tie of either kind. The only `usb` match anywhere in `crates/` is the word "VRChat" inside a runner-family description. The grant target is elided in `flatpak info` output, so even its scope is unverified from this machine. A child-side need (racing wheels, VR headsets) is plausible and is presumably why it is here, but **this tree cannot support the claim** — which is why the kind column needs a third value rather than two. |
+
+No narrowing is available today: every child-side arg is already the narrow form
+(there is no `--socket=session-bus`, no bare `--filesystem=host`, and
+`--allow=multiarch` is scoped to the i386 runtime rather than being a device
+grant). The value of the split is that it says *which* args a narrowing pass may
+touch and which it must argue about with the child's requirements instead of
+with the source — and, for the last two rows, which ones have no argument behind
+them here at all.
+
+**The deployed copy is older than the manifest, and that is how `SEC-01` was
+partly undone once.** `SEC-01` narrowed `--device=all` to `dri;input;usb` in
+`e2c6476`, and the manifest in this tree still says that; the Flatpak installed
+on this machine was built the day before and its own metadata still reads
+`devices=all;`. A per-user override naming the narrowed set had then been left
+in place, which is what made `flatpak info --show-permissions` look correct. Two
+consequences, and both are the kind that hide: an override is *state on the
+machine*, not in the repository, so nothing here fails when it is removed; and
+measuring the deployed app measures a different `finish-args` than the one under
+review. `flatpak override --user --reset <app-id>` before any sandbox
+measurement, and confirm the manifest's `finish-args` against the *metadata of
+the build you are about to run* rather than against `flatpak info` alone.
 
 ---
 
