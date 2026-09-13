@@ -210,6 +210,31 @@ fn container_end(bytes: &[u8], start: usize) -> usize {
 /// `null` are all equivalent. Integers that overflow `i64`/`u64` but stay
 /// inside `f64` range are *not* invalid — Python converts them to the nearest
 /// `f64` and keeps them — so those are rewritten to that exact `f64`.
+///
+/// # Lone surrogates, the case this was missing
+///
+/// `serde_json` rejects a `\uXXXX` escape naming an unpaired surrogate, and
+/// CPython's `json.loads` accepts one. That asymmetry alone would be a curiosity
+/// except for who produces the escapes: a lone surrogate in a string is
+/// **exactly what CPython emits** for a game whose path contains a byte that is
+/// not valid UTF-8. `Path.stem` decodes the filename with `surrogateescape`, so
+/// a game named after such a file carries a lone surrogate in memory, and
+/// `json.dumps(ensure_ascii=True)` — the default, and what
+/// `Library.save` uses — writes it out as `\udce9` verbatim. The Python app
+/// reads its own file back happily.
+///
+/// So this is not "a file the port cannot parse because it is malformed"; it is
+/// **a file the reference app writes**, and before this every library holding
+/// one loaded as empty — which, through `BUG-01`, then destroyed the library on
+/// the next write. `BUGS.md` BUG-02, and the two together are why the pair is a
+/// P0 rather than two P2s.
+///
+/// The substitution is a string-body concern, which is why it lives here rather
+/// than beside the number rewrites: strings are skipped by [`string_end`] for
+/// the literal rewrites because a `NaN` inside a game's name is not a number,
+/// and this is the one thing that has to look *inside* them. An unpaired
+/// surrogate becomes U+FFFD, which is what Python does when the same string
+/// meets an encoder that will not take it.
 pub fn sanitize(text: &str) -> Cow<'_, str> {
     let bytes = text.as_bytes();
     let mut out = String::new();
@@ -221,7 +246,18 @@ pub fn sanitize(text: &str) -> Cow<'_, str> {
     while i < bytes.len() {
         let literal: (usize, usize, Cow<'_, str>) = match bytes[i] {
             b'"' => {
-                i = string_end(bytes, i);
+                // The one place that has to look *inside* a string: an unpaired
+                // `\uXXXX` surrogate escape is what the Python app writes for a
+                // non-UTF-8 filename, and `serde_json` refuses the whole
+                // document over it. See this function's doc.
+                let end = string_end(bytes, i);
+                if let Some(fixed) = rewrite_unpaired_surrogates(&text[i..end]) {
+                    rewrote = true;
+                    out.push_str(&text[copied..i]);
+                    out.push_str(&fixed);
+                    copied = end;
+                }
+                i = end;
                 continue;
             }
             b'N' if bytes[i..].starts_with(b"NaN") => (i, i + 3, Cow::Borrowed("null")),
@@ -275,6 +311,93 @@ fn string_end(bytes: &[u8], start: usize) -> usize {
         }
     }
     bytes.len()
+}
+
+/// Replace every unpaired `\uXXXX` surrogate escape in a JSON string body with
+/// U+FFFD, or `None` if the body holds none.
+///
+/// `body` is the string **including** its quotes, as [`string_end`] returns it.
+/// Escape sequences that are not surrogates are left exactly as they are — the
+/// point is to change only what `serde_json` would refuse, so a well-formed
+/// document is returned untouched and [`sanitize`] can borrow.
+///
+/// # What counts as paired
+///
+/// A high surrogate (`D800`–`DBFF`) is paired only when the *next* escape is a
+/// low surrogate (`DC00`–`DFFF`), and vice versa. Anything else — a lone
+/// surrogate, or a pair in the wrong order — is replaced. The rewrite is
+/// per-surrogate and preserves the pairing when it is there, which matters
+/// because a genuine surrogate pair is a valid character that must survive:
+/// rewriting it would turn an emoji in a game's name into two replacement
+/// characters.
+fn rewrite_unpaired_surrogates(body: &str) -> Option<String> {
+    let bytes = body.as_bytes();
+    let mut out: Option<String> = None;
+    // Everything before `copied` has been flushed into `out`.
+    let mut copied = 0usize;
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] != b'\\' || i + 1 >= bytes.len() || bytes[i + 1] != b'u' {
+            // `\\` skips whatever it escapes, so a literal `\\u0041` — an
+            // escaped backslash followed by the text `u0041` — is not an escape.
+            i += if bytes[i] == b'\\' { 2 } else { 1 };
+            continue;
+        }
+        let Some(code) = hex4(bytes, i + 2) else {
+            // Not four hex digits: let `serde_json` report it.
+            i += 2;
+            continue;
+        };
+        let replacement_end = match (code, next_hex4(bytes, i + 6)) {
+            // A correctly ordered pair is a real character; skip both escapes.
+            (0xD800..=0xDBFF, Some(low)) if (0xDC00..=0xDFFF).contains(&low) => {
+                i += 12;
+                continue;
+            }
+            // A low surrogate followed by a high one is *not* a pair.
+            (0xD800..=0xDFFF, _) => i + 6,
+            // Not a surrogate at all.
+            _ => {
+                i += 6;
+                continue;
+            }
+        };
+
+        let out = out.get_or_insert_with(|| {
+            let mut buffer = String::with_capacity(body.len());
+            buffer.push_str(&body[..copied]);
+            buffer
+        });
+        out.push_str(&body[copied..i]);
+        out.push('\u{fffd}');
+        copied = replacement_end;
+        i = replacement_end;
+    }
+
+    match out {
+        Some(mut buffer) => {
+            buffer.push_str(&body[copied..]);
+            Some(buffer)
+        }
+        None => None,
+    }
+}
+
+/// The four hex digits of a `\uXXXX` escape starting at `start`, if they are
+/// there and are hex.
+fn hex4(bytes: &[u8], start: usize) -> Option<u32> {
+    let digits = bytes.get(start..start + 4)?;
+    let text = std::str::from_utf8(digits).ok()?;
+    u32::from_str_radix(text, 16).ok()
+}
+
+/// [`hex4`] for a `\uXXXX` that must itself be introduced by `\u`.
+fn next_hex4(bytes: &[u8], start: usize) -> Option<u32> {
+    if bytes.get(start..start + 2)? != b"\\u" {
+        return None;
+    }
+    hex4(bytes, start + 2)
 }
 
 /// Index just past the number literal that starts at `start`.
@@ -556,6 +679,103 @@ mod tests {
             "a document with nothing to rewrite must not be reallocated"
         );
         assert_eq!(sanitized, text);
+    }
+
+    /// **A lone surrogate escape that the Python app writes is readable.**
+    ///
+    /// `BUGS.md` BUG-02. This is the asymmetry that made it a P0: `serde_json`
+    /// rejects an unpaired `\uXXXX` surrogate and CPython's `json.loads`
+    /// accepts one, so a file the reference app wrote — and reads back happily —
+    /// was unreadable here. Combined with BUG-01 the next write then destroyed
+    /// the library.
+    ///
+    /// The escape is not exotic input. A game whose path holds a non-UTF-8 byte
+    /// carries a lone surrogate in Python's memory (`os.fsdecode`'s
+    /// `surrogateescape`), and `json.dumps` writes it out verbatim. Verified
+    /// against CPython for the exact strings below:
+    ///
+    /// ```text
+    /// json.loads('[{"name":"Caf\udce9"}]')  ->  [{'name': 'Caf\udce9'}]   (Ok)
+    /// ```
+    #[test]
+    fn a_lone_surrogate_escape_is_read_the_way_python_reads_it() {
+        // The audit's string: `\udce9` is what a latin-1 `é` byte becomes.
+        let value = parse_lenient(r#"[{"name": "Caf\udce9"}]"#)
+            .expect("a file the Python app writes must not be rejected");
+        assert_eq!(
+            value[0]["name"].as_str(),
+            Some("Caf\u{fffd}"),
+            "an unpaired surrogate becomes U+FFFD, which is what Python does when the \
+             same string meets an encoder that will not take it"
+        );
+
+        // The same escape in a **key**, which the audit also measured as failing.
+        let keyed = parse_lenient(r#"[{"\udce9": "value"}]"#)
+            .expect("a surrogate in a key is the same defect");
+        assert_eq!(keyed[0].as_object().unwrap().len(), 1);
+    }
+
+    /// **A correctly paired surrogate is a real character and survives.**
+    ///
+    /// The anti-vacuity half, and the reason the rewrite is per-surrogate rather
+    /// than "replace every surrogate escape": `\ud83d\ude00` is U+1F600, a
+    /// single valid character. A rewrite that did not check pairing would turn
+    /// an emoji in a game's name into two replacement characters, and the test
+    /// above would still pass.
+    #[test]
+    fn a_paired_surrogate_escape_survives_as_one_character() {
+        let value = parse_lenient(r#"[{"name": "Game \ud83d\ude00"}]"#).unwrap();
+        assert_eq!(
+            value[0]["name"].as_str(),
+            Some("Game \u{1f600}"),
+            "a well-formed pair is one character, not two substitutions"
+        );
+    }
+
+    /// **A pair in the wrong order is not a pair.**
+    ///
+    /// A low surrogate followed by a high one is two unpaired surrogates, and
+    /// `serde_json` refuses it. Accepting it would be inventing a rule Python
+    /// does not have.
+    #[test]
+    fn a_reversed_surrogate_pair_is_substituted_not_accepted() {
+        let value = parse_lenient(r#"[{"name": "\ude00\ud83d"}]"#).unwrap();
+        assert_eq!(
+            value[0]["name"].as_str(),
+            Some("\u{fffd}\u{fffd}"),
+            "a low-then-high pair is two unpaired surrogates"
+        );
+    }
+
+    /// **An escaped backslash before a `u` is text, not an escape.**
+    ///
+    /// `"\\udce9"` is a literal backslash followed by the four characters
+    /// `udce9`. Treating it as an escape would corrupt a perfectly ordinary
+    /// string — a Windows path in a game's arguments, most likely.
+    #[test]
+    fn an_escaped_backslash_does_not_start_a_surrogate_escape() {
+        let value = parse_lenient(r#"[{"args": "C:\\\\udce9"}]"#).unwrap();
+        assert_eq!(
+            value[0]["args"].as_str(),
+            Some(r"C:\\udce9"),
+            "the backslash is escaped, so what follows is literal text"
+        );
+    }
+
+    /// **A document with no surrogates is still borrowed.**
+    ///
+    /// The rewrite runs over every string in every document, so the cheap path
+    /// has to stay cheap: this is the same assertion as
+    /// `sanitize_leaves_ordinary_documents_untouched`, made again through the
+    /// string-body branch that was added.
+    #[test]
+    fn ordinary_strings_are_still_not_rewritten() {
+        let text = r#"[{"name": "Half-Life 2", "args": "-novid -w 1920"}]"#;
+        assert!(
+            matches!(sanitize(text), Cow::Borrowed(_)),
+            "no surrogate anywhere, so nothing should be reallocated"
+        );
+        assert_eq!(sanitize(text), text);
     }
 
     #[test]
