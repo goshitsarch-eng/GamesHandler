@@ -1129,11 +1129,28 @@ fn build_nav_model() -> nav_bar::Model {
 /// a `Core`, which needs a display to construct. The position is looked up in
 /// [`Page::ALL`] rather than written as a literal, so the two orders cannot
 /// disagree.
+///
+/// # A missing page answers `false` rather than panicking (`BUG-29`)
+///
+/// This used to be `.expect("every Page is in Page::ALL")`, which is a panic in
+/// **release** as well as debug — an `expect` is not a `debug_assert!`. Worse,
+/// it ran *before* [`Shell::show_page`]'s `debug_assert!(self.pages_agree())`,
+/// so the invariant that check exists to report could never observe the case: a
+/// `Page` variant absent from [`Page::ALL`] (reachable by adding a variant and
+/// leaving the constant alone, which compiles because an array's length is
+/// checked against the literal and not against the enum) took the process down
+/// on a sidebar click, on a build with `debug_assertions` off.
+///
+/// `false` is what the function already meant: `activate_position` returning
+/// `false` and the lookup failing are the same fact — the model is not showing
+/// the page that was asked for — and the caller already treats `false` as an
+/// inconsistency to report rather than as a reason to abort. `Page::ALL` is now
+/// held complete by `crates/app/tests/page_roster.rs`, at `cargo test` time,
+/// naming the variant; this is the release path if that guard is ever bypassed.
 fn activate_page(model: &mut nav_bar::Model, page: Page) -> bool {
-    let position = Page::ALL
-        .iter()
-        .position(|candidate| *candidate == page)
-        .expect("every Page is in Page::ALL");
+    let Some(position) = Page::ALL.iter().position(|candidate| *candidate == page) else {
+        return false;
+    };
     model.activate_position(position as u16)
 }
 
@@ -1564,6 +1581,14 @@ impl Shell {
     ///   `state.page` directly: this function writes both records before
     ///   checking them, so a later call repairs such a write before the check
     ///   runs. That is why the second structure exists.
+    ///
+    ///   This is a **debug** assertion, so it is absent from a release build —
+    ///   and until `BUG-29` the case it names did not reach it even in debug.
+    ///   A `Page` variant missing from [`Page::ALL`] made `activate_page`
+    ///   `expect`-panic before this line, in every profile.
+    ///   `crates/app/tests/page_roster.rs` now holds `Page::ALL` complete at
+    ///   test time, which is where a divergence should surface; `activate_page`
+    ///   answers `false` for the release path.
     /// - `no_handler_leaves_the_sidebar_out_of_step`, which drives every message
     ///   through [`Shell::update`] and checks the two agree afterwards, so a
     ///   handler that writes `state.page` directly fails a test rather than
