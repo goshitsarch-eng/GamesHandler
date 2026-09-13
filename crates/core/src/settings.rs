@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::json;
+use crate::json::{self, PersistenceError};
 use crate::models::{SORT_MODES, SYSTEM_WINE};
 use crate::paths;
 
@@ -199,12 +199,12 @@ impl Settings {
     }
 
     /// Port of `Settings.save` (`settings.py:69-74`) to the loaded path.
-    pub fn save(&self) -> std::io::Result<()> {
+    pub fn save(&self) -> Result<(), PersistenceError> {
         self.save_to(&self.path)
     }
 
     /// [`Self::save`] to an explicit path, as `Settings.save(path)` allows.
-    pub fn save_to(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+    pub fn save_to(&self, path: impl AsRef<Path>) -> Result<(), PersistenceError> {
         json::write_python_file(path.as_ref(), self)
     }
 }

@@ -47,7 +47,7 @@ use std::path::{Path, PathBuf};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use serde_json::{Map, Value};
 
-use crate::json;
+use crate::json::{self, PersistenceError};
 use crate::paths;
 
 // Case folds performed by `folded`, counted for the PERF-05 tests.
@@ -813,21 +813,20 @@ impl Library {
     /// writing it would turn a recoverable problem into a permanent one. The
     /// caller gets an error it can show, which is the point: the reference
     /// reports nothing and loses the file.
-    pub fn save(&self) -> std::io::Result<()> {
+    pub fn save(&self) -> Result<(), PersistenceError> {
         if self.load_status.is_destructive_to_save_over() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "the library file {} could not be read ({}), so it has not been \
-                     overwritten — fix or move the file and try again. Nothing has been \
-                     changed on disk.",
-                    self.path.display(),
-                    match self.load_status {
-                        LoadStatus::Unreadable => "unreadable",
-                        _ => "not a game list",
-                    }
-                ),
-            ));
+            // A variant, not a formatted string (`ARCH-10`): this is the
+            // refusal ARCH-01 is about, and a caller that wants to say
+            // something different about it — "your file is safe, here is what
+            // to do" rather than "the write failed" — can now match on it
+            // instead of testing an `io::ErrorKind` nobody read.
+            return Err(PersistenceError::WouldDiscardUnreadable {
+                path: self.path.clone(),
+                reason: match self.load_status {
+                    LoadStatus::Unreadable => "unreadable",
+                    _ => "not a game list",
+                },
+            });
         }
         self.save_to(&self.path)
     }
@@ -840,7 +839,7 @@ impl Library {
     /// somewhere other than the file that failed to load is not overwriting
     /// anything, and that is what the fixture tests rely on. Only
     /// [`Self::save`], which writes back to the source, is gated.
-    pub fn save_to(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+    pub fn save_to(&self, path: impl AsRef<Path>) -> Result<(), PersistenceError> {
         json::write_python_file(path.as_ref(), &self.all("name"))
     }
 
@@ -901,14 +900,14 @@ impl Library {
     }
 
     /// Port of `Library.add` (`models.py:168-171`).
-    pub fn add(&mut self, game: Game) -> std::io::Result<()> {
+    pub fn add(&mut self, game: Game) -> Result<(), PersistenceError> {
         self.upsert(game);
         self.save()
     }
 
     /// Port of `Library.remove`: a no-op when the id is unknown, and the file
     /// is only rewritten when something actually changed.
-    pub fn remove(&mut self, game_id: &str) -> std::io::Result<()> {
+    pub fn remove(&mut self, game_id: &str) -> Result<(), PersistenceError> {
         let Some(position) = self.games.iter().position(|game| game.id == game_id) else {
             return Ok(());
         };
@@ -918,7 +917,7 @@ impl Library {
     }
 
     /// Port of `Library.update`.
-    pub fn update(&mut self, game: Game) -> std::io::Result<()> {
+    pub fn update(&mut self, game: Game) -> Result<(), PersistenceError> {
         self.upsert(game);
         self.save()
     }
@@ -930,7 +929,15 @@ impl Library {
     /// memo is about the *library's* contents and not about which fields that
     /// particular query reads, which is not a distinction a future field could
     /// be trusted to keep. It is invalidated like the rest.
-    pub fn mark_played(&mut self, game_id: &str) -> std::io::Result<()> {
+    ///
+    /// The `position` lookup rather than the `iter_mut().find()` this had
+    /// before `PERF-05`: `invalidate` takes `&self` and `iter_mut` holds a
+    /// mutable borrow of `self.games` across the call, so the two cannot be
+    /// written in one expression. Splitting the lookup from the write is what
+    /// lets the memo be dropped *before* the mutation, which is the order that
+    /// matters — invalidating afterwards would leave a window in which a
+    /// re-entrant read served rows from the old vector.
+    pub fn mark_played(&mut self, game_id: &str) -> Result<(), PersistenceError> {
         let Some(position) = self.games.iter().position(|game| game.id == game_id) else {
             return Ok(());
         };
@@ -1690,7 +1697,20 @@ mod tests {
         let error = library
             .add(added.clone())
             .expect_err("adding over an unreadable file must not silently succeed");
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        // The refusal is its own variant, not an `io::Error` carrying an
+        // `InvalidData` kind (`ARCH-10`): a caller can tell "nothing was
+        // written because the file was unreadable" from "the write failed"
+        // without parsing the message.
+        assert!(
+            matches!(
+                error,
+                PersistenceError::WouldDiscardUnreadable {
+                    reason: "not a game list",
+                    ..
+                }
+            ),
+            "expected the refusal, got {error:?}"
+        );
         assert!(
             error.to_string().contains("has not been overwritten"),
             "the error has to tell the user their file was left alone, not just that \
@@ -1720,7 +1740,10 @@ mod tests {
             let (mut library, path) =
                 library_with_raw_file(r#"[{"id": "alpha-1", "name": "Alpha""#);
             if let Err(error) = mutate(&mut library, added.clone()) {
-                assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{name}");
+                assert!(
+                    matches!(error, PersistenceError::WouldDiscardUnreadable { .. }),
+                    "{name} failed for the wrong reason: {error:?}"
+                );
             }
             assert_eq!(
                 std::fs::read_to_string(&path).unwrap(),

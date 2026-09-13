@@ -981,9 +981,15 @@ pub enum Message {
     /// Install a plugin. `installPlugin()`.
     InstallPlugin(String),
     /// A plugin install finished.
+    ///
+    /// The error is [`view::plugins::InstallRunError`], not a `String`
+    /// (`ARCH-10`): the payload is the one place the install's outcome travels,
+    /// and rendering it to text *here* would put the flattening below the
+    /// handler that has to act on it. It is only rendered at the toast, one
+    /// line before a user reads it.
     PluginInstallFinished {
         plugin_id: String,
-        result: Result<bool, String>,
+        result: Result<bool, view::plugins::InstallRunError>,
     },
 
     // ---- Internal plumbing ------------------------------------------------
@@ -2144,9 +2150,12 @@ impl Shell {
             // that closed on a rejection would be a worse bug than an
             // unreachable arm.
             //
-            // `Library::add`/`update` return `io::Result` and a write failure is
-            // not the user's to fix, so it is reported rather than raised, the
-            // same way every other store in this shell reports one.
+            // `Library::add`/`update` return `PersistenceError` (`ARCH-10`) and
+            // a write failure is not the user's to fix, so it is reported
+            // rather than raised, the same way every other store in this shell
+            // reports one. The variant is rendered, not discarded: its
+            // `Display` names the file and the step that failed, which is what
+            // a bare `io::Error` did not.
             Message::SaveGameForm(form) => {
                 // The reference's add-vs-update test (`bridge.py:406`): whether the
                 // library already holds this id, not what the form says it is.
@@ -2729,6 +2738,11 @@ impl Shell {
             // rows are rebuilt first because `pluginsChanged.emit()` is the
             // signal the page redraws from — reporting before refreshing would
             // toast an outcome beside a button that still said "Install".
+            //
+            // `result`'s error arm is `InstallRunError` and not a `String`
+            // (`ARCH-10`), which is what lets this handler be the place the
+            // error becomes text — one line above the toast — rather than a
+            // place text arrives.
             Message::PluginInstallFinished { plugin_id, result } => {
                 self.state
                     .refresh_plugins(&gamehandler_core::plugins::SystemPluginEnv);
@@ -4084,7 +4098,7 @@ impl cosmic::Application for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gamehandler_core::models::Game;
+    use gamehandler_core::models::{Game, LoadStatus};
 
     /// An environment built from `(name, value)` pairs, as the lookup
     /// [`display_present`] takes. Keeps every case below off the real process
@@ -7650,6 +7664,115 @@ mod tests {
             shell.state.toasts
         );
         std::fs::remove_file(&root).unwrap();
+    }
+
+    /// **Boundary: `core`'s typed persistence error survives to the toast**
+    /// (`ARCH-10`).
+    ///
+    /// The app layer is where a `core` error becomes the text a user reads, and
+    /// this is the test for that boundary. It asserts on the two facts the
+    /// [`PersistenceError`](gamehandler_core::json::PersistenceError) variant
+    /// carries and the `io::Error` it replaced did not — the **path** and the
+    /// **step** that failed. The OS text alone for the destination below is
+    /// `Not a directory (os error 20)`, which names neither, so a boundary that
+    /// flattened the error back to a `String` would print exactly that and fail
+    /// both assertions here.
+    ///
+    /// The failure is the filesystem's and is produced without an unwritable
+    /// uid: a regular file stands where the library's directory has to be, so
+    /// `create_dir_all` fails with `NotADirectory` for root as much as for
+    /// anyone else.
+    #[test]
+    fn a_failed_write_reaches_the_toast_naming_the_path_and_the_step() {
+        let (root, library) = library_with("arch10-write", &[("g1", "Hades")]);
+        let target = library.path().to_path_buf();
+        let mut shell = Shell::new();
+        shell.state.library = library;
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::write(&root, b"a file, not a directory").unwrap();
+        let hit = CoverHit::from_steam(
+            70,
+            "Hades".to_string(),
+            "Action".to_string(),
+            PathBuf::from("/tmp/hades.jpg"),
+            "https://example.invalid/hades.jpg".to_string(),
+        );
+
+        let _ = observe(
+            &mut shell,
+            Message::CoverFetchFinished {
+                game_id: "g1".to_string(),
+                result: Ok(hit),
+            },
+        );
+
+        let toasts = format!("{:?}", shell.state.toasts);
+        assert!(
+            toasts.contains("Could not save \u{201c}Hades\u{201d}"),
+            "the save failure must still surface with the game's name; toasts: {toasts}"
+        );
+        assert!(
+            toasts.contains("could not create the directory holding"),
+            "the toast must name the step that failed, not just the OS error the \
+             step returned; toasts: {toasts}"
+        );
+        assert!(
+            toasts.contains(&target.display().to_string()),
+            "the toast must name the file it could not write, which the `io::Error` \
+             this replaced never did; toasts: {toasts}"
+        );
+        std::fs::remove_file(&root).unwrap();
+    }
+
+    /// **The other half of the same boundary** (`ARCH-10`, `ARCH-01`): a write
+    /// the gate refused is reported as a refusal, not as a failed write.
+    ///
+    /// The two are different problems with different fixes — one is the disk's,
+    /// one is the file's — and before the typed error they were the same type
+    /// differing only by an `ErrorKind` no caller read. This test is the
+    /// anti-vacuity arm of the one above: a boundary that reported *every*
+    /// persistence failure as "could not create the directory holding …" would
+    /// pass that test and fail this one, because the gate refuses before the
+    /// filesystem is touched at all.
+    #[test]
+    fn a_refused_write_reaches_the_toast_as_a_refusal_not_a_write_failure() {
+        let mut shell = shell_with_work_to_do();
+        let target = shell.state.library.path().to_path_buf();
+        // A torn file — the exact shape `models`' `an_unparsable_library_is_
+        // reported_and_never_overwritten` pins — then a re-read, which is what
+        // arms the gate.
+        std::fs::write(&target, r#"[{"id": "g1", "name": "Hades""#).unwrap();
+        shell.state.library.load();
+        assert_eq!(
+            shell.state.library.load_status(),
+            LoadStatus::Unparsable,
+            "the fixture has to arm the gate, or this test observes the wrong branch"
+        );
+
+        let mut form = GameForm::new_template(&shell.state.settings, "refused".to_string());
+        form.set_field(crate::state::FormField::Name, "Refused".to_string());
+        let _ = observe(&mut shell, Message::SaveGameForm(form));
+
+        let toasts = format!("{:?}", shell.state.toasts);
+        assert!(
+            toasts.contains("has not been overwritten"),
+            "the refusal has to tell the user their file was left alone; toasts: {toasts}"
+        );
+        for step in [
+            "could not create the directory holding",
+            "could not write the temporary file for",
+            "could not move the temporary file onto",
+        ] {
+            assert!(
+                !toasts.contains(step),
+                "the gate refused before the filesystem was touched, so the toast must \
+                 not report a write failure ({step:?}); toasts: {toasts}"
+            );
+        }
+        assert!(
+            !toasts.contains("Added"),
+            "a refused save must not also announce that it saved; toasts: {toasts}"
+        );
     }
 
     /// The form's lookup without a name is refused before anything is minted:

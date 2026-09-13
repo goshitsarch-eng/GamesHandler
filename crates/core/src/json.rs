@@ -25,8 +25,9 @@
 //!   a file written here and one written by the Python app are diff-identical.
 
 use std::borrow::Cow;
+use std::fmt;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -468,6 +469,126 @@ pub fn to_python_string<T: Serialize + ?Sized>(value: &T) -> Result<String, serd
     Ok(writer.0)
 }
 
+/// Why a `Library` or `Settings` value could not be written to disk
+/// (`ARCH-10`).
+///
+/// `core`'s other boundaries each hand back an enum with a `Display` —
+/// [`InstallerError`](crate::installers::InstallerError),
+/// [`RunnerError`](crate::runners::RunnerError),
+/// [`CoverError`](crate::covers::CoverError) — and persistence was the one that
+/// did not. It returned a bare [`io::Error`], which is also the failure a user
+/// is likeliest to meet, and whose `Display` says the least of any of them:
+/// `Permission denied (os error 13)` names neither the file nor the operation,
+/// and "the disk is full" and "the file is not a game list" were the same type
+/// to every caller.
+///
+/// The introduction is **additive**. Each `io::Error` a write can produce maps
+/// to exactly one variant, and every arm's `Display` still ends in the OS text
+/// it came from — but it now starts with the operation and the path, because
+/// those are the two facts the OS text omits.
+///
+/// [`io::Error`]: std::io::Error
+#[derive(Debug)]
+pub enum PersistenceError {
+    /// The destination's parent directory could not be created.
+    CreateDirectory {
+        /// The file that was to be written, not the directory — the directory
+        /// is derivable from it and the caller knows the file.
+        path: PathBuf,
+        /// The filesystem's own report.
+        source: io::Error,
+    },
+    /// The temporary file beside the destination could not be written.
+    WriteTemporary {
+        /// The destination the temporary file was being written for.
+        path: PathBuf,
+        /// The filesystem's own report. A full disk lands here.
+        source: io::Error,
+    },
+    /// The temporary file could not be renamed onto the destination. The
+    /// destination is untouched, which is the whole point of the rename.
+    Replace {
+        /// The destination.
+        path: PathBuf,
+        /// The filesystem's own report.
+        source: io::Error,
+    },
+    /// The value could not be rendered as JSON. In memory, so unreachable for
+    /// any value this app can build — stated rather than unwrapped.
+    Serialize {
+        /// The file the value was being written to.
+        path: PathBuf,
+        /// `serde_json`'s report.
+        source: serde_json::Error,
+    },
+    /// Writing was refused because the file it would replace could not be
+    /// read.
+    ///
+    /// The one persistence failure that is not the filesystem's: it is
+    /// [`Library::save`](crate::models::Library::save)'s gate (`ARCH-01`), and
+    /// it belongs in this enum so that "refused, and nothing was lost" is a
+    /// variant a caller can match on rather than a sentence buried in an
+    /// `io::Error`'s message — which is what it was before, distinguished only
+    /// by an `ErrorKind` no caller read.
+    WouldDiscardUnreadable {
+        /// The file that was left alone.
+        path: PathBuf,
+        /// How the read failed, in the words the gate already used.
+        reason: &'static str,
+    },
+}
+
+impl fmt::Display for PersistenceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // Every arm names the operation and the path. The OS text alone —
+            // what this used to render — names neither.
+            Self::CreateDirectory { path, source } => write!(
+                f,
+                "could not create the directory holding {}: {source}",
+                path.display()
+            ),
+            Self::WriteTemporary { path, source } => write!(
+                f,
+                "could not write the temporary file for {}: {source}",
+                path.display()
+            ),
+            Self::Replace { path, source } => write!(
+                f,
+                "could not move the temporary file onto {}: {source}",
+                path.display()
+            ),
+            Self::Serialize { path, source } => {
+                write!(f, "could not render {} as JSON: {source}", path.display())
+            }
+            // Unchanged from the sentence the gate wrote when it produced an
+            // `io::Error`, because `models`' tests and the app's toast both
+            // assert on it.
+            Self::WouldDiscardUnreadable { path, reason } => write!(
+                f,
+                "the library file {} could not be read ({}), so it has not been \
+                 overwritten — fix or move the file and try again. Nothing has been \
+                 changed on disk.",
+                path.display(),
+                reason
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PersistenceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::CreateDirectory { source, .. }
+            | Self::WriteTemporary { source, .. }
+            | Self::Replace { source, .. } => Some(source),
+            Self::Serialize { source, .. } => Some(source),
+            // Not an error that was wrapped: it is the decision not to write.
+            Self::WouldDiscardUnreadable { .. } => None,
+        }
+    }
+}
+
 /// Write `value` to `path` as Python would, without ever leaving a partial file
 /// behind.
 ///
@@ -476,19 +597,37 @@ pub fn to_python_string<T: Serialize + ?Sized>(value: &T) -> Result<String, serd
 /// rename it into place. A rename is atomic within a filesystem, so a crash
 /// mid-write cannot truncate a library the user would then lose
 /// (`docs/migration/architecture.md` §5).
-pub fn write_python_file<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+///
+/// Each of the four steps reports itself ([`PersistenceError`]), so a caller
+/// can tell "the directory could not be made" from "the disk filled up" from
+/// "the rename was refused". They have three different fixes and used to be one
+/// `io::Error`.
+pub fn write_python_file<T: Serialize>(path: &Path, value: &T) -> Result<(), PersistenceError> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent).map_err(|source| PersistenceError::CreateDirectory {
+            path: path.to_path_buf(),
+            source,
+        })?;
     }
     // In memory, so this cannot fail for any value we can actually build.
-    let text = to_python_string(value)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let text = to_python_string(value).map_err(|source| PersistenceError::Serialize {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, text.as_bytes())?;
-    std::fs::rename(&temporary, path)
+    std::fs::write(&temporary, text.as_bytes()).map_err(|source| {
+        PersistenceError::WriteTemporary {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    std::fs::rename(&temporary, path).map_err(|source| PersistenceError::Replace {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// An `io::Write` that appends to a `String` and refuses invalid UTF-8.
@@ -1073,6 +1212,127 @@ mod tests {
             files,
             ["settings.json"],
             "the .tmp file must be renamed away"
+        );
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// **Each failing step of a write is its own variant** (`ARCH-10`).
+    ///
+    /// The point of the enum is that the three filesystem steps have three
+    /// different fixes — make the directory, free some space, look at why the
+    /// rename was refused — and were one `Not a directory`/`Permission denied`
+    /// string before. Each arm here drives one step and only that step, and
+    /// asserts both the variant and that the message names the path.
+    ///
+    /// The destination-side arms deliberately do **not** reuse the shape of a
+    /// "no such file" failure: `create_dir_all` refusing because a file is in
+    /// the way and the gate refusing to overwrite are different problems, and
+    /// a version of this code that reported both as one of them would fail the
+    /// arm it did not report.
+    #[test]
+    fn every_write_step_that_can_fail_maps_to_its_own_variant() {
+        let directory = std::env::temp_dir().join(format!("gh-json-steps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+
+        // 1. The parent cannot be created: a regular file stands where the
+        //    directory has to be. `NotADirectory` for every uid, so this does
+        //    not assume the test runner cannot write.
+        let blocked = directory.join("blocked");
+        std::fs::write(&blocked, b"not a directory").unwrap();
+        let path = blocked.join("games.json");
+        let error = write_python_file(&path, &json!([])).expect_err("the parent is a file");
+        assert!(
+            matches!(error, PersistenceError::CreateDirectory { .. }),
+            "got {error:?}"
+        );
+        assert!(
+            error.to_string().contains(&path.display().to_string()),
+            "the message has to name the file, which the OS text alone does not: {error}"
+        );
+
+        // 2. The temporary file cannot be written: its **name is already a
+        //    directory**, so `std::fs::write` fails with `IsADirectory` — and
+        //    it fails at step 2 and not step 1, because the parent exists.
+        let occupied = directory.join("occupied");
+        std::fs::create_dir_all(occupied.join("games.json.tmp")).unwrap();
+        let path = occupied.join("games.json");
+        let error =
+            write_python_file(&path, &json!([])).expect_err("the temporary name is a directory");
+        assert!(
+            matches!(error, PersistenceError::WriteTemporary { .. }),
+            "got {error:?}"
+        );
+        assert!(
+            error.to_string().contains(&path.display().to_string()),
+            "the message has to name the file: {error}"
+        );
+
+        // 3. The rename cannot land: the destination **is a directory**, so
+        //    `rename` refuses even though the temporary file was written.
+        let destination = directory.join("destination");
+        std::fs::create_dir_all(&destination).unwrap();
+        let error = write_python_file(&destination, &json!([]))
+            .expect_err("the destination is a directory");
+        assert!(
+            matches!(error, PersistenceError::Replace { .. }),
+            "got {error:?}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(&destination.display().to_string()),
+            "the message has to name the file: {error}"
+        );
+        // The rename failed, so the temporary file is still beside it — which
+        // is the property the rename exists for, and the reason this arm can
+        // be told apart from a write that never started.
+        assert!(destination.with_extension("json.tmp").exists());
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// The wrapped OS error is reachable as [`std::error::Error::source`], so a
+    /// caller that wants the `ErrorKind` can still ask for it (`ARCH-10`).
+    ///
+    /// This is what the enum must not lose: `Library::save`'s gate used to be
+    /// distinguished from a write failure by an `ErrorKind` on the `io::Error`
+    /// itself, and the variant has to be at least as informative.
+    #[test]
+    fn a_write_failure_still_carries_the_os_error() {
+        let directory = std::env::temp_dir().join(format!("gh-json-src-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let blocked = directory.join("blocked");
+        std::fs::write(&blocked, b"not a directory").unwrap();
+
+        let error = write_python_file(&blocked.join("games.json"), &json!([])).unwrap_err();
+        let source = std::error::Error::source(&error).expect("the OS error must still be there");
+        let kind = source
+            .downcast_ref::<io::Error>()
+            .expect("the source is the `io::Error` that failed")
+            .kind();
+        // Compared against the error the same call produces directly rather
+        // than against a literal: `create_dir_all` reports this collision as
+        // `AlreadyExists` on Linux (measured — the first guess here was
+        // `NotADirectory`, and the test said otherwise), and pinning the
+        // literal would make this a test of the platform instead of a test
+        // that the wrapped error is the real one.
+        assert_eq!(
+            kind,
+            std::fs::create_dir_all(&blocked).unwrap_err().kind(),
+            "the variant must wrap the error the syscall actually returned"
+        );
+
+        // And the arm that is *not* a wrapped error says so rather than
+        // handing back an unrelated one.
+        assert!(
+            std::error::Error::source(&PersistenceError::WouldDiscardUnreadable {
+                path: std::path::PathBuf::from("/tmp/games.json"),
+                reason: "not a game list",
+            })
+            .is_none()
         );
 
         let _ = std::fs::remove_dir_all(&directory);
