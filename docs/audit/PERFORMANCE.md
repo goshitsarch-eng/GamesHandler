@@ -14,16 +14,22 @@ so a reader is never comparing a before with a before. Each row carries its own
 **Status** tail; the tails are the only numbers in this file that postdate the
 reconnaissance.
 
-Two citations in this file were checked against the tree when the fixes were
-written and were found to be **wrong when the row was written**, not merely stale
-afterwards — which is a different fault and the reason it is recorded here rather
-than quietly corrected. `PERF-01` cited `widgets.rs:727-728` for `framed`; that
-line is `fn plate`, and `framed` is at `:687`. `PERF-02` cited
-`library.rs:433` for the 200 px grid cell; at the audit's own commit `d56782d`
-that line is `fn row_labels`, and `GRID_CELL = (200.0, 300.0)` is at
-`metrics.rs:40`, where it still is. Both are corrected in place in the rows
-above. The lesson is the one `ARCH-05` already records: a `path:line` citation is
-a claim about a file that can be checked, and neither of these was. The
+**Four** rows' citations in this file were checked against the tree and found to
+be **wrong when the row was written**, not merely stale afterwards — which is a
+different fault and the reason it is recorded here rather than quietly corrected.
+`PERF-01` cited `widgets.rs:727-728` for `framed`; that line is `fn plate`, and
+`framed` is at `:687`. `PERF-02` cited `library.rs:433` for the 200 px grid cell;
+at the audit's own commit `d56782d` that line is `fn row_labels`, and
+`GRID_CELL = (200.0, 300.0)` is at `metrics.rs:40`, where it still is. `PERF-05`
+and `PERF-06` are the other two, and they were wrong in a way a reader could not
+have noticed: every line they name exists and holds plausible code, so the
+citation reads as verified. `PERF-05` cited `models.rs:625-639` for `all`, which
+was at `:722` at `babaeef` — the commit that first wrote this file — and had
+never been anywhere else; `PERF-06` was wrong at six of its seven sites. All four
+rows are corrected in place, each with its pre-fix numbers given so the claim can
+be checked rather than taken. The lesson is the one `ARCH-05` already records: a
+`path:line` citation is a claim about a file that can be checked, and none of
+these four was. The
 seven areas examined were, in order: redraw behaviour (does anything wake an idle app, and
 what does one redraw cost on a CPU renderer); startup cost (the project's claim
 that startup performs exactly two filesystem reads); per-frame allocation inside
@@ -53,12 +59,17 @@ the findings rest on.
 **there is no idle spin** — an idle app consumes 0 CPU ticks and issues **zero**
 filesystem syscalls over tens of seconds, with all 27 threads blocked — and
 **covers are decoded once and cached across frames, not re-decoded per frame**.
-But the per-frame path is far from free, and three findings are serious on a
-software renderer: every game's cover is `stat`ed *and* `open`ed on **every**
-frame whether or not it is visible (PERF-01); decoded covers are retained at full
+But the per-frame path was far from free, and three findings were serious on a
+software renderer: every game's cover was `stat`ed *and* `open`ed on **every**
+frame whether or not it is visible (PERF-01); decoded covers were retained at full
 source resolution, which I measured taking a 500-game library to **753 MB** of
-RSS (PERF-02); and nothing is virtualized, so all N tiles are built, filtered,
-sorted and laid out every frame (PERF-03).
+RSS (PERF-02); and nothing was virtualized, so all N tiles were built, filtered,
+sorted and laid out every frame (PERF-03). **All three have since been fixed** —
+see their rows' `Status:` tails for the post-fix measurements — and the paragraph
+is left in the tense of the reconnaissance that produced it rather than rewritten,
+because the figures in it are the ones each tail is measured against. Nothing on this
+path is left open: the two `P3` rows below close themselves — `PERF-07` and `PERF-08`
+each conclude "no action" from their own measurement rather than deferring one.
 
 ## Findings
 
