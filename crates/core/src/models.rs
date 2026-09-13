@@ -516,6 +516,42 @@ pub fn format_last_played_now(timestamp: f64) -> String {
     format_last_played(timestamp, now())
 }
 
+/// How a [`Library`]'s file read went.
+///
+/// The reference has no equivalent, and it is the one place this port
+/// deliberately diverges from `models.py` — see [`Library::load_at`]. Python's
+/// `load` collapses "there is no file" and "there is a file I cannot read" into
+/// the same empty list, and every later `save` writes that emptiness back. In
+/// Python that is survivable because the file is the app's only state; here the
+/// app is the *second* implementation of the format, so a file written by the
+/// other one is a normal thing to meet and a parse failure is a thing to report
+/// rather than a thing that eats the library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LoadStatus {
+    /// No file. A first run, and nothing is wrong.
+    #[default]
+    Absent,
+    /// The file was read and is a list. Individual entries may still have been
+    /// skipped, which is the reference's documented tolerance.
+    Loaded,
+    /// The file exists and could not be read: permissions, I/O, or bytes that
+    /// are not UTF-8.
+    Unreadable,
+    /// The file was read but is not the list this app writes.
+    Unparsable,
+}
+
+impl LoadStatus {
+    /// Whether writing would destroy something the app could not read.
+    ///
+    /// True for the two failure states and false for the two good ones. This is
+    /// the predicate [`Library::save`] gates on, so it is the whole safety
+    /// property in one place rather than a condition written out at each call.
+    pub fn is_destructive_to_save_over(self) -> bool {
+        matches!(self, Self::Unreadable | Self::Unparsable)
+    }
+}
+
 /// Loads, mutates and persists a collection of [`Game`]s. `models.py:120-209`.
 #[derive(Debug, Clone)]
 pub struct Library {
@@ -524,6 +560,9 @@ pub struct Library {
     /// under a sort keep their file order, and `Library::all` relies on a
     /// stable sort to preserve that.
     games: Vec<Game>,
+    /// What the last read of [`Self::path`] did; [`Self::save`] refuses to
+    /// write when it was not a clean read.
+    load_status: LoadStatus,
 }
 
 impl Library {
@@ -541,6 +580,7 @@ impl Library {
         let mut library = Self {
             path: path.unwrap_or_else(paths::games_file),
             games: Vec::new(),
+            load_status: LoadStatus::default(),
         };
         match now {
             Some(now) => library.load_at(now),
@@ -560,6 +600,20 @@ impl Library {
     /// all yield an empty library; a non-object list entry is skipped on its
     /// own, and so is an entry with an empty name, so the rest of the file
     /// survives.
+    ///
+    /// # The deliberate divergence: the failure is recorded, not just tolerated
+    ///
+    /// Tolerating the read and *forgetting* that it failed is what makes the
+    /// reference's behaviour destructive here: the in-memory library becomes
+    /// empty, and the next `save` — which any add, edit, removal or
+    /// `mark_played` performs — writes that emptiness over the user's file. The
+    /// user sees an empty library, adds one game, and the original is gone with
+    /// no message at any point.
+    ///
+    /// So this records what happened in [`Self::load_status`] and
+    /// [`Self::save`] refuses to write over a file it could not read. The read
+    /// itself behaves exactly as the reference does, entry skips included; only
+    /// the write is gated.
     pub fn load(&mut self) {
         self.load_at(now());
     }
@@ -568,11 +622,21 @@ impl Library {
     pub fn load_at(&mut self, now: f64) {
         self.games.clear();
         let Ok(source) = std::fs::read_to_string(&self.path) else {
+            // A file that is not there is a first run. Anything else — an I/O
+            // error, a permission denial, bytes that are not UTF-8 — is a file
+            // whose contents are unknown, and unknown is not empty.
+            self.load_status = if self.path.exists() {
+                LoadStatus::Unreadable
+            } else {
+                LoadStatus::Absent
+            };
             return;
         };
         let Ok(Value::Array(entries)) = json::parse_lenient(&source) else {
+            self.load_status = LoadStatus::Unparsable;
             return;
         };
+        self.load_status = LoadStatus::Loaded;
         for entry in entries {
             let Value::Object(fields) = entry else {
                 continue;
@@ -583,6 +647,11 @@ impl Library {
             }
             self.upsert(game);
         }
+    }
+
+    /// What the last read of the library file did.
+    pub fn load_status(&self) -> LoadStatus {
+        self.load_status
     }
 
     /// Inserts, replacing an existing entry with the same id in place.
@@ -605,13 +674,41 @@ impl Library {
     ///
     /// The payload is `self.all("name")` — saving re-sorts the in-memory dict
     /// into name order, so the file on disk is always sorted.
+    ///
+    /// # It refuses to write over a file it could not read
+    ///
+    /// See [`Self::load_at`]. When the last read failed, the in-memory library
+    /// is empty for a reason that has nothing to do with the user's games, and
+    /// writing it would turn a recoverable problem into a permanent one. The
+    /// caller gets an error it can show, which is the point: the reference
+    /// reports nothing and loses the file.
     pub fn save(&self) -> std::io::Result<()> {
+        if self.load_status.is_destructive_to_save_over() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "the library file {} could not be read ({}), so it has not been \
+                     overwritten — fix or move the file and try again. Nothing has been \
+                     changed on disk.",
+                    self.path.display(),
+                    match self.load_status {
+                        LoadStatus::Unreadable => "unreadable",
+                        _ => "not a game list",
+                    }
+                ),
+            ));
+        }
         self.save_to(&self.path)
     }
 
     /// [`Self::save`] to an explicit path, as Python's `lib.path = out;
     /// lib.save()` allows. Used by the oracle fixture tests so they never write
     /// into the checked-in fixture directory.
+    ///
+    /// The status gate does **not** apply to an explicit path: a caller writing
+    /// somewhere other than the file that failed to load is not overwriting
+    /// anything, and that is what the fixture tests rely on. Only
+    /// [`Self::save`], which writes back to the source, is gated.
     pub fn save_to(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         json::write_python_file(path.as_ref(), &self.all("name"))
     }
@@ -1038,6 +1135,159 @@ mod tests {
         let path = directory.join("games.json");
         std::fs::write(&path, json::to_python_string(&entries).unwrap()).unwrap();
         Library::new_at(Some(path), FROZEN_NOW)
+    }
+
+    /// A library whose file holds `contents` **verbatim**, for the cases where
+    /// the point is that the bytes are not a game list.
+    fn library_with_raw_file(contents: &str) -> (Library, PathBuf) {
+        let directory = std::env::temp_dir().join(format!("gh-lib-raw-{}", new_id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("games.json");
+        std::fs::write(&path, contents).unwrap();
+        (Library::new_at(Some(path.clone()), FROZEN_NOW), path)
+    }
+
+    /// **A file the app cannot parse is not overwritten by the next write.**
+    ///
+    /// `BUGS.md` BUG-01, and the reason it is a P0 rather than the cosmetic
+    /// divergence it reads like: `load_at` cleared the in-memory library, hit a
+    /// parse failure, discarded it, and returned `()`. Nothing downstream could
+    /// tell "no games" from "one bad byte", so the next `add` wrote the
+    /// emptiness over the user's file. The user saw an empty library, added one
+    /// game, and the original was gone with no message at any point.
+    ///
+    /// The scenario below is the one the audit executed against the built
+    /// binary: a truncated file (`[{"id": "alpha-1", "name": "Alpha"` with the
+    /// closing brackets cut off), which `--list` reported as an empty library
+    /// with exit 0.
+    #[test]
+    fn an_unparsable_library_is_reported_and_never_overwritten() {
+        let (mut library, path) = library_with_raw_file(r#"[{"id": "alpha-1", "name": "Alpha""#);
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        assert_eq!(
+            library.load_status(),
+            LoadStatus::Unparsable,
+            "a file that is not a game list must be recorded as such; an empty library and \
+             an unreadable one are the same value to every caller otherwise, which is the \
+             whole defect"
+        );
+        assert!(library.is_empty());
+
+        // Every mutating entry point goes through `save`. Each one must fail
+        // rather than write, and the file must be byte-identical afterwards.
+        let added = Game::new_named("Hades");
+        let error = library
+            .add(added.clone())
+            .expect_err("adding over an unreadable file must not silently succeed");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            error.to_string().contains("has not been overwritten"),
+            "the error has to tell the user their file was left alone, not just that \
+             something failed: {error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "the file must be byte-identical after a refused write"
+        );
+
+        // The other three mutators are the same guard; assert them from a fresh
+        // library each so one refusing does not mask the next.
+        for (name, mutate) in [
+            (
+                "update",
+                &(|library: &mut Library, game: Game| library.update(game))
+                    as &dyn Fn(&mut Library, Game) -> _,
+            ),
+            ("mark_played", &|library: &mut Library, _game: Game| {
+                library.mark_played("alpha-1")
+            }),
+            ("remove", &|library: &mut Library, _game: Game| {
+                library.remove("alpha-1")
+            }),
+        ] {
+            let (mut library, path) =
+                library_with_raw_file(r#"[{"id": "alpha-1", "name": "Alpha""#);
+            if let Err(error) = mutate(&mut library, added.clone()) {
+                assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{name}");
+            }
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                before,
+                "{name} wrote over a file the app could not read"
+            );
+        }
+    }
+
+    /// **A file that is not there is a first run, and saving still works.**
+    ///
+    /// The anti-vacuity half of the test above: a gate that refused every write
+    /// would pass it. `Absent` is the state of a fresh install and must stay
+    /// writable, or the app could never save anything.
+    #[test]
+    fn a_missing_library_file_is_absent_and_still_writable() {
+        let path = std::env::temp_dir().join(format!("gh-absent-{}.json", new_id()));
+        let mut library = Library::new_at(Some(path.clone()), FROZEN_NOW);
+        assert_eq!(library.load_status(), LoadStatus::Absent);
+        assert!(!LoadStatus::Absent.is_destructive_to_save_over());
+
+        library.add(Game::new_named("Hades")).unwrap();
+        assert!(path.exists(), "a fresh library must still be able to save");
+    }
+
+    /// **A file that parses is `Loaded`, whatever the entries did.**
+    ///
+    /// The reference skips a non-object entry and an entry with an empty name,
+    /// deliberately, and that tolerance must not be mistaken for a failed read —
+    /// otherwise a file with one junk entry would become unwritable.
+    #[test]
+    fn a_list_with_skipped_entries_is_loaded_not_failed() {
+        let library = library_from(json!([
+            {"id": "keep-1", "name": "Keep"},
+            "not an object",
+            {"id": "blank-1", "name": ""},
+            {"id": "keep-2", "name": "Keep Two"},
+        ]));
+        assert_eq!(library.load_status(), LoadStatus::Loaded);
+        assert!(!library.load_status().is_destructive_to_save_over());
+        assert_eq!(library.len(), 2, "the two valid entries survive");
+    }
+
+    /// **Bytes that are not UTF-8 are unreadable, not unparsable.**
+    ///
+    /// `read_to_string` rejects them before any parser sees them, so the status
+    /// has to come from the read failing while the file exists. Both are
+    /// refusals, but the message a user gets should name the real cause.
+    #[test]
+    fn a_file_that_is_not_utf8_is_unreadable() {
+        let directory = std::env::temp_dir().join(format!("gh-lib-bytes-{}", new_id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("games.json");
+        std::fs::write(&path, b"[{\"name\": \"Caf\xe9\"}]").unwrap();
+
+        let library = Library::new_at(Some(path.clone()), FROZEN_NOW);
+        assert_eq!(library.load_status(), LoadStatus::Unreadable);
+        assert!(
+            library.save().is_err(),
+            "invalid UTF-8 is exactly the file a refused write protects"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"[{\"name\": \"Caf\xe9\"}]");
+    }
+
+    /// **The gate is on the source path, not on writing at all.**
+    ///
+    /// `save_to` writes somewhere the library did not read from, which is how
+    /// the oracle fixture tests work and is not an overwrite of anything. A gate
+    /// that covered it would break them, so the boundary is pinned here.
+    #[test]
+    fn save_to_an_explicit_path_is_not_gated() {
+        let (library, _path) = library_with_raw_file(r#"[{"id": "alpha-1", "name": "Alpha""#);
+        let out = std::env::temp_dir().join(format!("gh-out-{}.json", new_id()));
+        library
+            .save_to(&out)
+            .expect("writing to a path that was never read from must not be gated");
+        assert!(out.exists());
     }
 
     #[test]

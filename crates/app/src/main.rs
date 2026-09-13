@@ -145,6 +145,18 @@ fn main() -> ExitCode {
 /// subject. The criterion above still governs, and the way to satisfy it is to
 /// compute the answer rather than to phrase the excuse well.
 fn list_lines(library: &Library) -> Vec<String> {
+    // An unreadable or unparsable file is the case the criterion above exists
+    // for, and the one it was still failing: without this, `--list` printed
+    // "the library is empty" with `rc=0` for a file the app could not read, so
+    // a script could not tell a full library it failed to open from a build
+    // that never opened the file at all. That is the same shape as the stub
+    // this function's doc records being deleted. `BUGS.md` BUG-01.
+    if library.load_status().is_destructive_to_save_over() {
+        return vec![format!(
+            "{APP_NAME}: the library file could not be read and was not modified: {}",
+            library.path().display()
+        )];
+    }
     let games = library.all("name");
     if games.is_empty() {
         return vec![format!("{APP_NAME}: the library is empty")];
@@ -171,8 +183,16 @@ fn list_lines(library: &Library) -> Vec<String> {
 /// need the directories: [`Library::load`] treats a missing file as an empty
 /// library and never writes.
 fn list_games() -> ExitCode {
-    for line in list_lines(&Library::new(None)) {
+    let library = Library::new(None);
+    for line in list_lines(&library) {
         println!("{line}");
+    }
+    // A non-zero exit for a library the app could not read: the printed line
+    // says so, but `--list`'s contract is a row per game to a script, and a
+    // script reads the exit code. Silence-plus-zero is what the deleted stub
+    // did, and this is the same failure wearing a better sentence.
+    if library.load_status().is_destructive_to_save_over() {
+        return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
 }
@@ -3918,6 +3938,51 @@ mod tests {
         assert_eq!(
             list_lines(&library),
             vec!["GameHandler: the library is empty"]
+        );
+    }
+
+    /// **A library the app could not read does not print the empty line.**
+    ///
+    /// The same criterion as the stub regression below, applied to the case
+    /// that was still failing it: a truncated `games.json` printed "the library
+    /// is empty", which is byte-identical to a genuinely empty library, and
+    /// exited 0 — so a script could not tell a full library this build failed
+    /// to open from a build that never opened the file. `BUGS.md` BUG-01.
+    ///
+    /// The fixture is the exact one the audit executed against the built
+    /// binary: the closing brackets cut off a one-entry file.
+    #[test]
+    fn an_unreadable_library_says_so_and_is_not_reported_as_empty() {
+        let root = std::env::temp_dir().join(format!("gh-cli-corrupt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("games.json");
+        std::fs::write(&path, r#"[{"id": "alpha-1", "name": "Alpha""#).unwrap();
+
+        let library = Library::new_at(Some(path.clone()), 0.0);
+        let lines = list_lines(&library);
+
+        assert_eq!(lines.len(), 1, "one diagnostic line, not a row per game");
+        assert!(
+            lines[0].contains("could not be read"),
+            "the line must say the file could not be read: {lines:?}"
+        );
+        assert!(
+            lines[0].contains(&path.display().to_string()),
+            "it must name the file, since the user's next move is to go and look \
+             at it: {lines:?}"
+        );
+        assert_ne!(
+            lines,
+            vec!["GameHandler: the library is empty"],
+            "the empty sentence is reserved for a library that is genuinely empty — \
+             this is the confusion the earlier stub was deleted for"
+        );
+        // And the file is untouched, which is the half that matters: telling the
+        // user is worthless if the next write eats the data anyway.
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            r#"[{"id": "alpha-1", "name": "Alpha""#
         );
     }
 
