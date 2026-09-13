@@ -41,6 +41,7 @@
 //! None of this is reachable from a file the app itself wrote, and none of it
 //! changes a single byte for well-formed input.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use serde::ser::{Serialize, SerializeStruct, Serializer};
@@ -48,6 +49,51 @@ use serde_json::{Map, Value};
 
 use crate::json;
 use crate::paths;
+
+// Case folds performed by `folded`, counted for the PERF-05 tests.
+//
+// The property those tests pin — that a sort folds each name once rather than
+// once per comparison, and that a frame after the first folds nothing at all —
+// is invisible from outside: every version of `all` and `search` returns the
+// *same* rows in the *same* order and only costs more. The fold is where the
+// `String` is allocated, so counting it counts the allocations the finding is
+// about. It is `thread_local` rather than a global because `cargo test` runs
+// cases concurrently — a shared counter would be incremented by whichever other
+// test happened to be sorting at that moment.
+//
+// `#[cfg(test)]` on the counter *and* on the increment keeps this out of a
+// production build entirely, rather than behind a branch that always runs.
+#[cfg(test)]
+thread_local! {
+    static FOLDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Read the fold counter, and reset it when `reset` is set.
+///
+/// One function rather than a `with` at each test, because the pair is always
+/// used together — a count read without a reset is a count of whatever the rest
+/// of the suite did first.
+#[cfg(test)]
+fn folds(reset: bool) -> usize {
+    FOLDS.with(|folds| {
+        let seen = folds.get();
+        if reset {
+            folds.set(0);
+        }
+        seen
+    })
+}
+
+/// The case-folded form of a name or a category.
+///
+/// Python's `str.lower()`, which is what `models.py:156-203` sorts and matches
+/// on. This is the one place in the module that folds, and routing every fold
+/// through it is what makes the work countable — see [`FOLDS`].
+fn folded(text: &str) -> String {
+    #[cfg(test)]
+    FOLDS.with(|folds| folds.set(folds.get() + 1));
+    text.to_lowercase()
+}
 
 /// Shown for a game with no category. `models.py:15`.
 pub const UNCATEGORIZED: &str = "Uncategorized";
@@ -552,6 +598,64 @@ impl LoadStatus {
     }
 }
 
+/// The rows the last [`Library::search`] resolved, and the key they were
+/// resolved for.
+///
+/// # Why the library memoises its own query
+///
+/// `view()` calls `search` and `categories` at the top of every frame
+/// (`crates/app/src/view/library.rs`), and both were O(N log N) in the
+/// library's size with a `String` folded inside every comparison. PERF-05
+/// measured that cost — for a 500-game library, one `search` folded 4,132 times
+/// and one `categories` 4,002, and the page calls both on **every** frame. The
+/// answer, though, changes only when the library, the query, the category or the
+/// sort changes, and none of those change during a redraw.
+///
+/// # Why the rows are indices
+///
+/// A cached `Vec<&Game>` would be a borrow of [`Library::games`] stored inside
+/// the `Library` that owns it, which is the self-reference Rust has no safe
+/// answer for, and a cached `Vec<Game>` would be a second copy of the library.
+/// Positions in `games` are owned data, and rebuilding the rows from them is
+/// `k` pointer writes with no comparison and no `String`.
+#[derive(Debug, Clone, Default)]
+struct RowMemo {
+    /// Whether the three fields below describe [`Self::indices`].
+    ///
+    /// Cleared by [`Library::invalidate`] rather than compared against a
+    /// revision counter, because a counter has to be *read* correctly at every
+    /// mutation and a flag has to be *written*: one is a step a new mutating
+    /// method can omit while still looking right, the other is a call it either
+    /// makes or visibly does not.
+    valid: bool,
+    query: String,
+    category: String,
+    sort: String,
+    indices: Vec<usize>,
+}
+
+impl RowMemo {
+    /// Whether this memo already holds the rows for that key.
+    fn is_current(&self, query: &str, category: &str, sort: &str) -> bool {
+        self.valid && self.query == query && self.category == category && self.sort == sort
+    }
+}
+
+/// The category list the last [`Library::categories`] computed, and whether it
+/// still describes `games`.
+///
+/// Separate from [`RowMemo`] because the key is not the same shape: the
+/// category list depends on the library and on nothing else, so tying it to the
+/// query would recompute it every time the sort changed and — worse — let a
+/// caller that asks for categories first cache them under the wrong key. See
+/// [`RowMemo`] for the argument, which is the same one.
+#[derive(Debug, Clone, Default)]
+struct CategoryMemo {
+    /// Whether [`Self::list`] still describes the library.
+    valid: bool,
+    list: Vec<String>,
+}
+
 /// Loads, mutates and persists a collection of [`Game`]s. `models.py:120-209`.
 #[derive(Debug, Clone)]
 pub struct Library {
@@ -563,6 +667,10 @@ pub struct Library {
     /// What the last read of [`Self::path`] did; [`Self::save`] refuses to
     /// write when it was not a clean read.
     load_status: LoadStatus,
+    /// The last query this library answered. See [`RowMemo`].
+    rows: RefCell<RowMemo>,
+    /// The last category list this library computed. See [`CategoryMemo`].
+    category_list: RefCell<CategoryMemo>,
 }
 
 impl Library {
@@ -581,12 +689,30 @@ impl Library {
             path: path.unwrap_or_else(paths::games_file),
             games: Vec::new(),
             load_status: LoadStatus::default(),
+            rows: RefCell::new(RowMemo::default()),
+            category_list: RefCell::new(CategoryMemo::default()),
         };
         match now {
             Some(now) => library.load_at(now),
             None => library.load(),
         }
         library
+    }
+
+    /// Forget the resolved rows and the category list.
+    ///
+    /// **This is the whole invalidation story** for [`RowMemo`] and
+    /// [`CategoryMemo`], and it is one function so that a method added later
+    /// has a single thing to call rather than two fields to remember. Every
+    /// `&mut self` method that changes [`Self::games`] calls it —
+    /// [`Self::load_at`], [`Self::upsert`], [`Self::remove`] and
+    /// [`Self::mark_played`]; [`Self::add`] and [`Self::update`] reach it
+    /// through `upsert`. A method that changed `games` without calling this
+    /// would serve the previous library's rows, which
+    /// `every_mutation_is_visible_to_the_next_search` is what prevents.
+    fn invalidate(&mut self) {
+        self.rows.borrow_mut().valid = false;
+        self.category_list.borrow_mut().valid = false;
     }
 
     pub fn path(&self) -> &Path {
@@ -620,6 +746,10 @@ impl Library {
 
     /// [`Self::load`] with the clock injected.
     pub fn load_at(&mut self, now: f64) {
+        // Before the first early return: every arm below leaves `games` in a
+        // state the previous run's rows do not describe, including the three
+        // that return having only cleared it.
+        self.invalidate();
         self.games.clear();
         let Ok(source) = std::fs::read_to_string(&self.path) else {
             // A file that is not there is a first run. Anything else — an I/O
@@ -660,6 +790,7 @@ impl Library {
     /// duplicated id while taking the *last* value, which is what the
     /// `duplicate_ids` fixture pins.
     fn upsert(&mut self, game: Game) {
+        self.invalidate();
         match self
             .games
             .iter_mut()
@@ -720,21 +851,48 @@ impl Library {
     /// stable sort in both languages, so entries equal on both terms keep their
     /// insertion order.
     pub fn all(&self, sort: &str) -> Vec<&Game> {
-        let mut games: Vec<&Game> = self.games.iter().collect();
+        self.all_indices(sort)
+            .into_iter()
+            .map(|index| &self.games[index])
+            .collect()
+    }
+
+    /// [`Self::all`] as positions in [`Self::games`].
+    ///
+    /// Split out for [`Self::search`], whose memo holds positions rather than
+    /// references — see [`RowMemo`]. The two are one implementation rather than
+    /// two: a second sort written for the memo would be a second statement of
+    /// the tie-break rules.
+    fn all_indices(&self, sort: &str) -> Vec<usize> {
+        // Python's key is `g.name.lower()` for every sort — the whole key for
+        // "name", and the tie-break for the two timestamps. **The fold is
+        // computed once per game and the *precomputed* key is what the
+        // comparator reads.** Written inline (`sort_by_key(|a| a.name
+        // .to_lowercase())`, which is what this was) the fold runs inside the
+        // comparator, on both arguments of every comparison — of which a sort
+        // makes O(N log N). PERF-05 measured the difference on a 500-game
+        // fixture: 3,242 folds for one `all("name")`, against 500 here. The
+        // order and the stability are unchanged, which is what
+        // `sorting_matches_python_including_the_name_tie_break` and
+        // `timestamp_sorts_break_ties_by_name` hold.
+        let keys: Vec<String> = self.games.iter().map(|game| folded(&game.name)).collect();
+        let mut order: Vec<usize> = (0..self.games.len()).collect();
         match sort {
-            "recent" => games.sort_by(|a, b| {
-                b.last_played
-                    .total_cmp(&a.last_played)
-                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            "recent" => order.sort_by(|&a, &b| {
+                self.games[b]
+                    .last_played
+                    .total_cmp(&self.games[a].last_played)
+                    .then_with(|| keys[a].cmp(&keys[b]))
             }),
-            "added" => games.sort_by(|a, b| {
-                b.added
-                    .total_cmp(&a.added)
-                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            "added" => order.sort_by(|&a, &b| {
+                self.games[b]
+                    .added
+                    .total_cmp(&self.games[a].added)
+                    .then_with(|| keys[a].cmp(&keys[b]))
             }),
-            _ => games.sort_by_key(|a| a.name.to_lowercase()),
+            _ => order.sort_by(|&a, &b| keys[a].cmp(&keys[b])),
         }
-        games
+        order
     }
 
     /// Port of `Library.get`.
@@ -754,6 +912,7 @@ impl Library {
         let Some(position) = self.games.iter().position(|game| game.id == game_id) else {
             return Ok(());
         };
+        self.invalidate();
         self.games.remove(position);
         self.save()
     }
@@ -765,12 +924,19 @@ impl Library {
     }
 
     /// Port of `Library.mark_played` (`models.py:182-186`).
+    ///
+    /// The timestamp is a row's `"Played … ago"` text and one of the sort keys,
+    /// not a filter term, so the resolved rows would survive this — but the
+    /// memo is about the *library's* contents and not about which fields that
+    /// particular query reads, which is not a distinction a future field could
+    /// be trusted to keep. It is invalidated like the rest.
     pub fn mark_played(&mut self, game_id: &str) -> std::io::Result<()> {
-        if let Some(game) = self.games.iter_mut().find(|game| game.id == game_id) {
-            game.last_played = now();
-            return self.save();
-        }
-        Ok(())
+        let Some(position) = self.games.iter().position(|game| game.id == game_id) else {
+            return Ok(());
+        };
+        self.invalidate();
+        self.games[position].last_played = now();
+        self.save()
     }
 
     /// Port of `Library.search` (`models.py:188-199`).
@@ -778,37 +944,81 @@ impl Library {
     /// The query matches the name **or** the display category, so searching a
     /// category name finds its games (parity item P-04). `category` equal to
     /// `"All"` is not a filter.
+    ///
+    /// # The answer is memoised against the three arguments
+    ///
+    /// See [`RowMemo`]. On a hit this is `k` pointer writes and one `Vec` of
+    /// them — no sort, no comparison and no `String`. The rows are identical
+    /// either way by construction, and
+    /// `a_repeated_query_is_the_same_rows_without_the_work` is what holds the
+    /// two against each other.
     pub fn search(&self, query: &str, category: &str, sort: &str) -> Vec<&Game> {
-        let query = query.trim().to_lowercase();
-        let mut games = self.all(sort);
+        if !self.rows.borrow().is_current(query, category, sort) {
+            let indices = self.compute_rows(query, category, sort);
+            *self.rows.borrow_mut() = RowMemo {
+                valid: true,
+                query: query.to_string(),
+                category: category.to_string(),
+                sort: sort.to_string(),
+                indices,
+            };
+        }
+        self.rows
+            .borrow()
+            .indices
+            .iter()
+            .map(|&index| &self.games[index])
+            .collect()
+    }
+
+    /// [`Self::search`] without the memo: the sort, the two filters and the
+    /// query match, exactly as the reference writes them.
+    fn compute_rows(&self, query: &str, category: &str, sort: &str) -> Vec<usize> {
+        let query = folded(query.trim());
+        let mut order = self.all_indices(sort);
         if !category.is_empty() && category != "All" {
-            games.retain(|game| game.display_category() == category);
+            order.retain(|&index| self.games[index].display_category() == category);
         }
         if query.is_empty() {
-            return games;
+            return order;
         }
-        games.retain(|game| {
-            game.name.to_lowercase().contains(&query)
-                || game.display_category().to_lowercase().contains(&query)
+        order.retain(|&index| {
+            let game = &self.games[index];
+            folded(&game.name).contains(&query) || folded(game.display_category()).contains(&query)
         });
-        games
+        order
     }
 
     /// Port of `Library.categories` (`models.py:201-203`): distinct display
     /// categories, case-insensitively sorted with [`UNCATEGORIZED`] last.
+    ///
+    /// # The answer is memoised whole
+    ///
+    /// See [`CategoryMemo`]. The filter selector is built from this on every
+    /// frame (`crates/app/src/view/library.rs:643`) and nothing in it depends on
+    /// the query or the sort, so it is recomputed only when the games change.
+    /// The list is returned by value — the caller owns it — so a hit still
+    /// copies it; what the memo removes is the `to_owned()` per game, the sort
+    /// and the two folds per comparison.
     pub fn categories(&self) -> Vec<String> {
-        let mut found: Vec<String> = self
-            .games
-            .iter()
-            .map(|game| game.display_category().to_owned())
-            .collect();
-        found.sort_by(|a, b| {
-            (a == UNCATEGORIZED)
-                .cmp(&(b == UNCATEGORIZED))
-                .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
-        });
-        found.dedup();
-        found
+        if !self.category_list.borrow().valid {
+            let mut found: Vec<String> = self
+                .games
+                .iter()
+                .map(|game| game.display_category().to_owned())
+                .collect();
+            found.sort_by(|a, b| {
+                (a == UNCATEGORIZED)
+                    .cmp(&(b == UNCATEGORIZED))
+                    .then_with(|| folded(a).cmp(&folded(b)))
+            });
+            found.dedup();
+            *self.category_list.borrow_mut() = CategoryMemo {
+                valid: true,
+                list: found,
+            };
+        }
+        self.category_list.borrow().list.clone()
     }
 
     /// Port of `Library.__len__`.
@@ -1135,6 +1345,306 @@ mod tests {
         let path = directory.join("games.json");
         std::fs::write(&path, json::to_python_string(&entries).unwrap()).unwrap();
         Library::new_at(Some(path), FROZEN_NOW)
+    }
+
+    /// A library of `count` games with distinct names and a handful of
+    /// categories — the fixture PERF-05's verification method names ("a
+    /// 500-game fixture").
+    ///
+    /// Built through `library_from` rather than by pushing `Game`s so the
+    /// fixture is the one the app actually loads: a real file, parsed by the
+    /// real loader, in the real order.
+    fn library_of(count: usize) -> Library {
+        let categories = ["Action", "Puzzle", "Shooter", "Roguelike", "Simulation"];
+        let entries: Vec<Value> = (0..count)
+            .map(|index| {
+                json!({
+                    "id": format!("{index:032}"),
+                    // Mixed case on purpose: a fold is the work being counted,
+                    // and an all-lowercase name would still fold.
+                    "name": format!("Game {index}"),
+                    "category": categories[index % categories.len()],
+                    "added": index as f64,
+                    "last_played": (index % 7) as f64,
+                })
+            })
+            .collect();
+        library_from(Value::Array(entries))
+    }
+
+    /// The rows a `search`/`all` call answered with, as ids.
+    fn row_ids(games: &[&Game]) -> Vec<String> {
+        games.iter().map(|game| game.id.clone()).collect()
+    }
+
+    /// The ids [`Library::compute_rows`] resolves for a key — the answer
+    /// [`Library::search`] is supposed to be memoising, computed the long way
+    /// round. The oracle for
+    /// `the_memo_answers_with_the_rows_the_uncached_body_would_have`.
+    fn uncached_rows(library: &Library, query: &str, category: &str, sort: &str) -> Vec<String> {
+        library
+            .compute_rows(query, category, sort)
+            .into_iter()
+            .map(|index| library.games[index].id.clone())
+            .collect()
+    }
+
+    /// One `(query, category, sort)` triple — the three arguments
+    /// [`Library::search`] is keyed on.
+    type SearchKey = (&'static str, &'static str, &'static str);
+
+    /// Every key worth asking [`Library::search`] for, over the fixture above.
+    ///
+    /// Each shape of the query is here because each takes a different branch:
+    /// `"zzz"` matches nothing, `"game 1"` matches names (and, being a
+    /// substring of `"game 10"`, more than one), `"shooter"` matches a
+    /// *category* and no name at all (parity item P-04), and `"  "` trims to
+    /// empty, which is the no-query path. `"All"` and `""` are the two
+    /// spellings of "no category filter" and both appear.
+    const SEARCH_KEYS: &[SearchKey] = &[
+        ("", "All", "name"),
+        ("", "All", "added"),
+        ("", "All", "recent"),
+        ("", "Puzzle", "name"),
+        ("game 1", "All", "name"),
+        ("game 1", "All", "recent"),
+        ("shooter", "All", "name"),
+        ("puzzle", "All", "recent"),
+        ("shooter", "Shooter", "added"),
+        ("zzz", "All", "name"),
+    ];
+
+    /// Keys that are *spelled* differently and mean the same thing, so the memo
+    /// is allowed — required — to answer them alike.
+    ///
+    /// Kept out of [`SEARCH_KEYS`], whose whole purpose is that its entries
+    /// disagree, and asserted here instead, because "these two agree" is a
+    /// statement about the reference's semantics and not about the memo:
+    /// `""` and `"All"` are both "no category filter" (`models.py:188-199`);
+    /// `"  "` trims to the empty query; the fold is case-insensitive, so
+    /// `"GAME 1"` and `"game 1"` are one query; and `"shooter"` matches only
+    /// through the display category, so filtering by `"Shooter"` selects the
+    /// same games it already selected (parity item P-04).
+    const EQUIVALENT_KEYS: &[(SearchKey, SearchKey)] = &[
+        (("", "", "name"), ("", "All", "name")),
+        (("  ", "All", "name"), ("", "All", "name")),
+        (("GAME 1", "All", "name"), ("game 1", "All", "name")),
+        (("shooter", "Shooter", "name"), ("shooter", "All", "name")),
+    ];
+
+    #[test]
+    fn one_sort_folds_each_name_once_not_once_per_comparison() {
+        // PERF-05, the half the memo cannot hide: the fold used to live inside
+        // the comparator, so a 500-game sort folded both arguments of every one
+        // of its ~2,742 comparisons (3,242 folds, the tie-breaks included).
+        // Nothing about the *order* may depend on where the fold happens, which
+        // is why this asserts the count and
+        // `sorting_matches_python_including_the_name_tie_break` asserts the
+        // order.
+        let library = library_of(500);
+
+        for sort in ["name", "added", "recent"] {
+            folds(true);
+            let sorted = library.all(sort);
+            assert_eq!(sorted.len(), 500);
+            assert_eq!(
+                folds(false),
+                500,
+                "all({sort:?}) folded the library more than once per game, so the fold \
+                 is back inside the comparator"
+            );
+        }
+    }
+
+    #[test]
+    fn a_redraw_of_an_unchanged_page_folds_nothing() {
+        // PERF-05. `view()` calls `search` and `categories` at the top of every
+        // frame (`crates/app/src/view/library.rs:643`), so the number that
+        // matters is a *later* frame's: the first one legitimately resolves
+        // both, and none of the three arguments or the library itself changes
+        // in between.
+        let library = library_of(500);
+        let frame = || {
+            let _ = library.search("game 1", "All", "name");
+            let _ = library.categories();
+        };
+
+        frame();
+        folds(true);
+        for _ in 0..100 {
+            frame();
+        }
+        let redrawn = folds(false);
+
+        // Before the memo this was 813,400 for the same hundred redraws of the
+        // same unchanged page: 500 games re-sorted and re-filtered and the
+        // category list rebuilt and re-sorted, on every one of them.
+        assert_eq!(
+            redrawn, 0,
+            "100 redraws of an unchanged page folded {redrawn} names and category lists"
+        );
+    }
+
+    #[test]
+    fn the_memo_answers_with_the_rows_the_uncached_body_would_have() {
+        // The cache is only allowed to be a cache. Every key is asked for twice
+        // — the first call resolves it, the second is served from the memo —
+        // and both answers are held against `compute_rows`, the uncached body,
+        // which is what makes this a check on the memo rather than on the sort
+        // it shares with it.
+        let library = library_of(500);
+        for &(query, category, sort) in SEARCH_KEYS {
+            let uncached = uncached_rows(&library, query, category, sort);
+            for pass in ["resolved", "memoised"] {
+                assert_eq!(
+                    row_ids(&library.search(query, category, sort)),
+                    uncached,
+                    "the {pass} answer for {query:?}/{category:?}/{sort:?} is not the one \
+                     the uncached body gives"
+                );
+            }
+        }
+        for &(first, second) in EQUIVALENT_KEYS {
+            assert_eq!(
+                row_ids(&library.search(first.0, first.1, first.2)),
+                row_ids(&library.search(second.0, second.1, second.2)),
+                "{first:?} and {second:?} are two spellings of one query and must not \
+                 resolve differently just because they are different memo keys"
+            );
+        }
+    }
+
+    #[test]
+    fn the_search_keys_resolve_to_different_rows() {
+        // Guards the test above from passing vacuously. A memo keyed on
+        // everything, or on nothing, only shows up if the keys in the matrix
+        // disagree about the answer — if two of them resolved to the same rows,
+        // answering one with the other's memo would look correct.
+        let library = library_of(500);
+        let answers: Vec<Vec<String>> = SEARCH_KEYS
+            .iter()
+            .map(|&(query, category, sort)| row_ids(&library.search(query, category, sort)))
+            .collect();
+        for (index, answer) in answers.iter().enumerate() {
+            for (other, other_answer) in answers.iter().enumerate().skip(index + 1) {
+                assert_ne!(
+                    answer, other_answer,
+                    "SEARCH_KEYS[{index}] {:?} and SEARCH_KEYS[{other}] {:?} resolve to the \
+                     same rows, so the memo tests cannot tell their answers apart",
+                    SEARCH_KEYS[index], SEARCH_KEYS[other]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_mutation_is_visible_to_the_next_search() {
+        // `Library::invalidate` is the whole invalidation story for the two
+        // memos, and this is what holds every mutating method to it.
+        //
+        // **Every case reads back through the key it warmed.** That is the
+        // whole point: a mutation followed by a *new* query recomputes whether
+        // or not anything was invalidated, so an assertion that changes the key
+        // is an assertion that passes without the invalidation being there — it
+        // was, until this comment was written, and dropping `invalidate()` from
+        // `remove` left the suite green.
+        fn by_name(library: &Library) -> Vec<&Game> {
+            library.search("", "All", "name")
+        }
+        fn by_recent(library: &Library) -> Vec<&Game> {
+            library.search("", "All", "recent")
+        }
+
+        let mut library = library_of(20);
+
+        // Warm both memos, so the previous library's rows and category list are
+        // sitting in them waiting to be wrongly served.
+        let _ = library.categories();
+        assert_eq!(row_ids(&by_name(&library)).len(), 20);
+
+        // `add`, through `upsert`.
+        library
+            .add(Game::from_dict_at(
+                &object(json!({
+                    "id": "added-1",
+                    "name": "Zzz Added",
+                    "category": "Brand New",
+                    "added": 1.0,
+                    "last_played": 0.0,
+                })),
+                FROZEN_NOW,
+            ))
+            .unwrap();
+        let added = row_ids(&by_name(&library));
+        assert_eq!(added.len(), 21, "the added game is not among the rows");
+        assert!(added.contains(&"added-1".to_string()));
+        assert!(
+            library.categories().iter().any(|name| name == "Brand New"),
+            "a category added after the memo was resolved is missing from the selector"
+        );
+
+        // `update`, through `upsert`.
+        library
+            .update(Game::from_dict_at(
+                &object(json!({
+                    "id": "added-1",
+                    "name": "Renamed",
+                    "category": "Brand New",
+                    "added": 1.0,
+                    "last_played": 0.0,
+                })),
+                FROZEN_NOW,
+            ))
+            .unwrap();
+        let updated: Vec<String> = by_name(&library)
+            .iter()
+            .map(|game| game.name.clone())
+            .collect();
+        assert!(
+            updated.contains(&"Renamed".to_string()) && !updated.contains(&"Zzz Added".to_string()),
+            "the rows still carry the name the game had before the update: {updated:?}"
+        );
+
+        // `remove`. This one is a safety matter and not only a freshness one:
+        // the memo holds positions in `games`, so a stale memo served after a
+        // removal reads a shifted — or, at the end, out-of-bounds — index.
+        assert_eq!(row_ids(&by_name(&library)).len(), 21);
+        library.remove("added-1").unwrap();
+        assert_eq!(
+            row_ids(&by_name(&library)).len(),
+            20,
+            "the removed game is still among the rows"
+        );
+        assert!(
+            !library.categories().iter().any(|name| name == "Brand New"),
+            "a category whose last game was removed is still in the selector"
+        );
+
+        // `mark_played` — `last_played` is the key the `"recent"` sort reads, so
+        // the memoised order itself is what has to change.
+        let _ = by_recent(&library);
+        let target = library.games[3].id.clone();
+        library.mark_played(&target).unwrap();
+        assert_eq!(
+            row_ids(&by_recent(&library))[0],
+            target,
+            "the game just played is not first under the recent sort"
+        );
+
+        // `load_at` — the file, and with it every row, is replaced.
+        let replacement = library_from(json!([
+            {"id": "loaded-1", "name": "Loaded", "category": "Loaded Category"}
+        ]));
+        let _ = by_name(&library);
+        replacement.save_to(library.path()).unwrap();
+        library.load_at(FROZEN_NOW);
+        assert_eq!(library.len(), 1);
+        assert_eq!(
+            row_ids(&by_name(&library)),
+            ["loaded-1"],
+            "the rows of the library before the reload are still being served"
+        );
+        assert_eq!(library.categories(), ["Loaded Category"]);
     }
 
     /// A library whose file holds `contents` **verbatim**, for the cases where
