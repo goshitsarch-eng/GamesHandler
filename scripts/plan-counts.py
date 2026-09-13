@@ -313,6 +313,107 @@ def report_tables(rows):
     return category, severity
 
 
+def document_statuses() -> dict[str, str]:
+    """`{id: STATUS}` from the specialist documents' `Status:` tails."""
+    pattern = re.compile(
+        r"^\|\s*(?:~~)?\*{0,2}(?:~~)?`?(BUG|ARCH|UX|PERF|SEC|PKG)-(\d+)")
+    kind = re.compile(r"Status:\s*([A-Z][A-Z ]{2,20})")
+    found: dict[str, str] = {}
+    for family, document in DOCUMENTS.items():
+        path = REPO / "docs" / "audit" / document
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = pattern.match(line)
+            if not match:
+                continue
+            status = kind.search(line)
+            found[f"{match.group(1)}-{match.group(2)}"] = (
+                status.group(1).strip() if status else "")
+    return found
+
+
+def cross_referenced_pairs(plan: str) -> set[str]:
+    """The ids named in `PLAN.md`'s *Cross-referenced pairs* table.
+
+    That table is the audit's record of ids that are **one fix and one
+    commit**, and the pairing it describes is this script's own stated
+    mechanism; nothing checked it until this function existed. The gap it
+    closes was measured, not theorised: the table named eight ids, and two of
+    them had drifted — `SEC-05` read `PARTIAL` here and `FIXED` in
+    `SECURITY.md`, `UX-26` likewise, each because a later fix moved one cell
+    and not the other. Every other id in the table agreed, which is exactly
+    why the pair has to be checked as a set rather than sampled.
+    """
+    ids: set[str] = set()
+    inside = False
+    for line in plan.splitlines():
+        if line.startswith("## "):
+            inside = line.strip() == "## Cross-referenced pairs"
+            continue
+        if not inside:
+            continue
+        for cell in line.split("|"):
+            cell = cell.strip()
+            if re.fullmatch(r"`(?:BUG|ARCH|UX|PERF|SEC|PKG)-\d+`", cell):
+                ids.add(cell.strip("`"))
+    return ids
+
+
+def pairing_problems(plan: str) -> list[str]:
+    """Cross-referenced ids whose two cells disagree about the status word.
+
+    Only the *word* is compared, not the free text after it: the two tails
+    describe the fix from their own side and are meant to differ in prose. A
+    prefix test is used rather than equality so that `FIXED 75fc739` and
+    `FIXED` agree, which is what `status_cell`'s doc already establishes for
+    the summary tables.
+
+    `DECISIONS.md` D-59 says a status lives once, as a `Status:` tail on the
+    specialist row, with the plan and the report derived from it. The plan's
+    cell is derived by hand, so this is the check that the derivation happened.
+    """
+    document = document_statuses()
+    plan_status: dict[str, str] = {}
+    inside_findings = False
+    for line in plan.splitlines():
+        if line.startswith("## "):
+            inside_findings = line.strip() == "## Findings"
+            continue
+        # Scoped to `## Findings` on purpose: the *Cross-referenced pairs*
+        # table is itself made of `| \`ARCH-01\` | \`BUG-01\` | …` rows, and
+        # the first version of this function read every one of them as a
+        # finding row. It reported six disagreements, all of them artefacts of
+        # its own parsing — `PLAN.md says 'Architecture'` is a cell of the
+        # pairs table, not a status. A checker that miscounts its own input is
+        # the same defect as a check that passes without inspecting, one level
+        # up.
+        if not inside_findings:
+            continue
+        match = ROW.match(line)
+        if match:
+            plan_status[f"{match.group(1)}-{match.group(2)}"] = status_cell(line)
+    problems = []
+    # Every id whose specialist document carries a `Status:` tail is compared,
+    # not only the cross-referenced ones. The narrower scope was the first
+    # version and it missed the two drifts that motivated the check: `SEC-05`
+    # and `UX-26` are not pairs, so comparing pairs alone reported a clean tree
+    # while `SEC-05` read `PARTIAL` here and `FIXED` in `SECURITY.md`.
+    for identifier in sorted(set(document) & set(plan_status)):
+        here = plan_status.get(identifier, "")
+        there = document.get(identifier)
+        if not here or not there:
+            continue
+        word_here = here.split(" ")[0].rstrip("—-").strip()
+        word_there = there.split(" ")[0].rstrip("—-").strip()
+        if word_here != word_there:
+            problems.append(
+                f"{identifier} is cross-referenced as one fix and one commit, "
+                f"but its two status cells disagree: PLAN.md says {word_here!r} "
+                f"and its specialist document says {word_there!r}. D-59 puts the "
+                f"status once, in the document's `Status:` tail; whichever cell "
+                f"is stale, the pair is now recorded twice and differently")
+    return problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true",
@@ -333,6 +434,7 @@ def main() -> int:
     print(f"rows: {len(rows)}  defects: {defects}  not-a-defect: {refuted}")
 
     problems = status_problems(plan)
+    problems += pairing_problems(plan)
     tails = tail_lines()
     for line in tails:
         if line not in plan:

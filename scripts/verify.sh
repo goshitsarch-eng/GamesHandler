@@ -1398,6 +1398,14 @@ stage_cargo_lock() {
 # columns were reordered fails even though its numbers are unchanged. That is
 # deliberate — this whole audit's most common defect is a check that passes
 # without inspecting what it claims.
+#
+# The same stage now also checks the *other* direction, which the verbatim
+# comparison cannot see: every row that carries a `Status:` tail in its
+# specialist document must agree with `PLAN.md`'s status cell for that id. The
+# tables are derived from the plan's cells, so a fix that flips the tail and not
+# the cell leaves every generated line byte-identical and exits 0 — which is how
+# `SEC-05` came to read `PARTIAL` in one file and `FIXED` in the other, and how
+# `UX-16` sat as `OPEN` for a commit after its fix landed.
 # ---------------------------------------------------------------------------
 stage_plan_counts() {
     python3 scripts/plan-counts.py --check
