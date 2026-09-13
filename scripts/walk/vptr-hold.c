@@ -234,16 +234,32 @@ static void go_home(void) {
 }
 
 
-// Whether to attach the virtual devices to the seat or create them globally.
+// The pointer and the keyboard do not get the same seat argument, and the
+// reason is a property of each protocol rather than a preference.
 //
 // On this harness the advertised seat0 has no devices: sway runs with
 // WLR_LIBINPUT_NO_DEVICES=1, so `swaymsg -t get_seats` reports
 // `capabilities: 0, devices: []`. A virtual pointer attached to a seat that
 // reports no pointer capability is accepted by the compositor and then
 // delivers nothing — every click is a silent no-op that looks like a
-// successful protocol exchange. Creating the device attached to the seat to
-// which the compositor routes input (`-s`), or globally with a null seat
-// (`-g`), are the two paths that can actually deliver.
+// successful protocol exchange, which is how this tool spent a whole walk
+// reporting clicks that never arrived while its keyboard, on the same seat,
+// worked. `zwlr_virtual_pointer_v1`'s seat argument is `allow-null="true"`, so
+// passing NULL creates a *global* pointer that is routed without a seat at
+// all, and that is the path that delivers here.
+//
+// `zwp_virtual_keyboard_v1` has no such freedom: its seat argument is a plain
+// `object` with no `allow-null`, so NULL is a marshalling error ("null value
+// passed for arg 0" / `Invalid argument`) that fails the *whole* process — the
+// historical `-g` flag did exactly that, which is why it was never usable.
+// The keyboard therefore keeps the advertised seat, which is the path the
+// keycodes are already known to reach the compositor through.
+//
+// The two targets are tracked separately for that reason. A transient seat,
+// when a compositor grants one, is a real seat and serves both.
+//
+// `-g` selects the global pointer. It changes only the pointer's target; the
+// keyboard stays on the advertised seat.
 static int use_global = 0;
 
 // Connect, bind the seat and both managers, and create one virtual pointer and
@@ -260,8 +276,6 @@ static int setup(void) {
         fprintf(stderr, "missing virtual pointer/keyboard manager\n");
         return 1;
     }
-    struct wl_seat *target = use_global ? NULL : seat;
-
     // `-t`: ask the compositor for a transient seat. On a compositor whose own
     // seat advertises no capability, the virtual device has to be attached to a
     // seat the compositor will actually route from, and this is the protocol
@@ -279,25 +293,39 @@ static int setup(void) {
         }
         if (transient_seat) {
             fprintf(stderr, "vptr-hold: transient seat obtained\n");
-            target = transient_seat;
         } else {
             fprintf(stderr, "vptr-hold: no transient seat, using advertised seat\n");
         }
     }
 
-    if (!target && !use_global) {
-        fprintf(stderr, "vptr-hold: no seat to attach to\n");
+    // A transient seat is a real seat and serves both devices. Absent one, the
+    // two diverge: the pointer may go global (null seat) but the keyboard may
+    // not, because a null seat is a marshalling error for its non-nullable
+    // argument. Splitting them is what makes `-g` work at all — see the
+    // comment above `use_global`.
+    struct wl_seat *ptr_target = transient_seat ? transient_seat
+                                                : (use_global ? NULL : seat);
+    struct wl_seat *kbd_target = transient_seat ? transient_seat : seat;
+
+    if (!ptr_target && !use_global) {
+        fprintf(stderr, "vptr-hold: no seat to attach the pointer to\n");
+        return 1;
+    }
+    if (!kbd_target) {
+        fprintf(stderr, "vptr-hold: no seat for the keyboard\n");
         return 1;
     }
 
-    vptr = zwlr_virtual_pointer_manager_v1_create_virtual_pointer(mgr, target);
+    vptr = zwlr_virtual_pointer_manager_v1_create_virtual_pointer(mgr, ptr_target);
     if (!vptr) { fprintf(stderr, "create virtual pointer failed\n"); return 1; }
-    vkbd = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(kmgr, target);
+    vkbd = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(kmgr, kbd_target);
     if (!vkbd) { fprintf(stderr, "create virtual keyboard failed\n"); return 1; }
     wl_display_roundtrip(disp);
 
-    fprintf(stderr, "vptr-hold: %s pointer+keyboard held\n",
-            use_global ? "global" : (transient_seat ? "transient-seat" : "seat-attached"));
+    fprintf(stderr, "vptr-hold: %s pointer + %s keyboard held\n",
+            transient_seat ? "transient-seat"
+                           : (use_global ? "global" : "seat-attached"),
+            transient_seat ? "transient-seat" : "seat-attached");
     fflush(stderr);
     return 0;
 }
@@ -329,6 +357,17 @@ static int run_command(const char *line) {
             }
             go_home();
             move_to((double)bx, (double)by);
+            // Motion and press must not share a frame. A toolkit resolves
+            // which widget a button event belongs to from the cursor position
+            // it holds when it processes the event, and flushing the jump and
+            // the press together lets the press be read against the position
+            // the pointer had *before* the move — here, the origin `go_home`
+            // parked it at, where nothing is interactive. The symptom is a
+            // click that is delivered (the compositor moves focus, so every
+            // delivery probe passes) and yet activates nothing. Settling
+            // after the move is what makes the press land on the target.
+            if (pump() < 0) return -1;
+            usleep(50 * 1000);
             zwlr_virtual_pointer_v1_button(vptr, now_ms(), (uint32_t)btn,
                                            WL_POINTER_BUTTON_STATE_PRESSED);
             zwlr_virtual_pointer_v1_frame(vptr);
@@ -360,6 +399,42 @@ static int run_command(const char *line) {
             motion_by(a, b);
             cursor_x += a; cursor_y += b;
             clamp_tracking();
+        } else if (!strcmp(cmd, "scroll")) {
+            // The wheel. `axis` is a *version 1* request of this interface —
+            // its `since` is 1 — so it goes out on the same binding every
+            // other gesture here uses. The only request this interface added
+            // at version 2 is `create_virtual_pointer_with_output`, which the
+            // walk never needs because it never asks for a pointer on a named
+            // output. Binding at 2 to get at `axis` would therefore buy
+            // nothing and would risk a protocol error against a compositor
+            // that caps the global at 1.
+            //
+            // Vertical only, and the value is deliberately left smooth:
+            // WL_POINTER_AXIS_VERTICAL_SCROLL is axis 0, and `axis_discrete`
+            // is not sent alongside it because that would be a second
+            // description of one gesture, which a client is free to count
+            // twice. `frame` is what closes the sequence — without it the
+            // toolkit holds an axis value that never terminates.
+            int sx = 0, sy = 0;
+            double amount = 0.0;
+            if (sscanf(line, "%*s %d %d %lf", &sx, &sy, &amount) < 3) {
+                fprintf(stderr, "scroll needs X Y DY\n");
+                printf("# scroll FAILED\n");
+                fflush(stdout);
+                return 0;
+            }
+            go_home();
+            move_to((double)sx, (double)sy);
+            // The same settle a click needs, for the same reason: an axis
+            // event is routed to the surface the cursor is over when the
+            // event is *processed*, so a jump and a wheel in one frame
+            // scrolls whatever the pointer was over before the move.
+            if (pump() < 0) return -1;
+            usleep(50 * 1000);
+            zwlr_virtual_pointer_v1_axis(vptr, now_ms(),
+                                         WL_POINTER_AXIS_VERTICAL_SCROLL,
+                                         wl_fixed_from_double(amount));
+            zwlr_virtual_pointer_v1_frame(vptr);
         } else if (!strcmp(cmd, "press") || !strcmp(cmd, "release")) {
             sscanf(line, "%*s %lu", &n);
             zwlr_virtual_pointer_v1_button(
@@ -390,7 +465,16 @@ static int run_command(const char *line) {
                 fprintf(stderr, "cannot open keymap %s\n", path);
                 printf("# keymap FAILED\n");
                 fflush(stdout);
-                return 0;
+                // Fail, do not return success. This used to `return 0`, and the
+                // callers in `parity-walk.sh` run with stderr discarded:
+                // `"$VPTR_BIN" -c ... >/dev/null 2>&1 || die "the virtual
+                // keyboard could not deliver"`. Between the two, every one of
+                // those `|| die` guards was unreachable — a keymap that failed
+                // to load left the client with no keymap, so every keycode that
+                // followed meant nothing, and the harness reported the keys as
+                // delivered. A guard that cannot observe the failure it names is
+                // not a guard. A non-zero exit makes the caller's `|| die` real.
+                return -1;
             }
             off_t sz = lseek(fd, 0, SEEK_END);
             lseek(fd, 0, SEEK_SET);
@@ -401,7 +485,7 @@ static int run_command(const char *line) {
             fprintf(stderr, "unknown command: %s", cmd);
             printf("# unknown\n");
             fflush(stdout);
-            return 0;
+            return -1;
         }
 
         if (pump() < 0) {
