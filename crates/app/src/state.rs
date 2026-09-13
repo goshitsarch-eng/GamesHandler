@@ -281,6 +281,29 @@ impl GameForm {
         "virtual_desktop",
     ];
 
+    /// This form as a [`Game`], for the cover preview (`UX-11`).
+    ///
+    /// The reference's row draws `backend.coverUrlFor(form.gameData.coverPath)`
+    /// — a function of the *form's* fields, not of a library entry — so a new
+    /// game's preview works before the game is saved, and an edited one shows a
+    /// cover that has been changed but not yet committed. This is the same
+    /// reading: only the two fields the preview consults are carried, and the
+    /// rest are [`Game::default`]'s.
+    ///
+    /// A whole `Game` rather than a `(name, cover_path)` pair because
+    /// `cover_plan`'s `Plate` arm names the game (its initials are what a tile
+    /// with no artwork draws) and [`crate::view::cover_cache::CoverCache`] serves
+    /// the form's preview through the same function the library's tiles use.
+    /// Passing a second, narrower input would let the two disagree about what
+    /// counts as artwork, which is what the preview stack was written to prevent.
+    pub fn as_preview_game(&self) -> Game {
+        Game {
+            name: self.name.clone(),
+            cover_path: self.cover_path.clone(),
+            ..Game::default()
+        }
+    }
+
     /// The template `newGameTemplate()` builds (`bridge.py:382-399`).
     ///
     /// The id is generated here, when the form opens, rather than at save —

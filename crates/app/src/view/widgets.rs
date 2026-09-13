@@ -120,7 +120,7 @@ const PREVIEW_LABEL_SIZE: f32 = 11.0;
 // each widget, so a builder that stopped drawing a node fails there rather than
 // rendering something subtly different that no test can see.
 const PLATE_ID: &str = "gamehandler.cover.plate";
-const PICTURE_ID: &str = "gamehandler.cover.picture";
+pub(crate) const PICTURE_ID: &str = "gamehandler.cover.picture";
 const INITIALS_ID: &str = "gamehandler.cover.initials";
 const PREVIEW_LABEL_ID: &str = "gamehandler.cover.preview-label";
 
@@ -329,8 +329,33 @@ pub fn tile_cover_spec(width: f32) -> CoverSpec {
 /// A game's cover in an explicit box — a renderer for [`cover_plan`].
 pub fn cover_box<'a, M: Clone + 'static>(
     cache: &CoverCache,
-    game: &'a Game,
+    game: &Game,
     spec: CoverSpec,
+) -> Element<'a, M> {
+    let plan = cover_plan(cache, game);
+    plan_box(cache, game, spec, &plan)
+}
+
+/// A `Game`'s cover in an explicit box, from a plan that has **already** been
+/// decided — the renderer behind [`cover_box`] and [`cover_preview`].
+///
+/// `plan` is an argument rather than a decision made here so that a caller which
+/// has to know the plan anyway — [`cover_preview`], which draws words instead of
+/// a picture in one of its three arms — reads the same one the drawing does.
+/// Deciding it twice would be a second `classify` per frame (that is PERF-01)
+/// and, worse, the two calls could in principle disagree; here they cannot.
+///
+/// `game` is plain `&Game` rather than `&'a Game`, and the element borrows it
+/// for nothing: the plan already holds the only string derived from the game
+/// that any arm draws, and what is left is the id ([`cover::accent_of`]) and the
+/// cover path, both read and consumed during this call. That is what lets the
+/// game form draw a preview of a game that does not exist anywhere yet — see
+/// [`crate::state::GameForm::as_preview_game`].
+fn plan_box<'a, M: Clone + 'static>(
+    cache: &CoverCache,
+    game: &Game,
+    spec: CoverSpec,
+    plan: &CoverPlan,
 ) -> Element<'a, M> {
     // Resolved once, above the match, so that the plate's gradient and the ink
     // drawn on it cannot come from different shades: `plate` fills with
@@ -339,14 +364,14 @@ pub fn cover_box<'a, M: Clone + 'static>(
     // id — but nothing in the types would say they had to.
     let accent = cover::accent_of(&game.id);
 
-    match cover_plan(cache, game) {
-        CoverPlan::Photo => framed(cache, game, spec, 0.0),
+    match plan {
+        CoverPlan::Photo => framed(cache, &game.cover_path, spec, 0.0),
         CoverPlan::IconOnPlate { inset } => {
-            let inner = framed(cache, game, spec, inset);
+            let inner = framed(cache, &game.cover_path, spec, *inset);
             plate(spec, accent, inner)
         }
         CoverPlan::InitialsOnPlate { text } => {
-            let inner = initials_only(text, spec, accent);
+            let inner = initials_only(text.clone(), spec, accent);
             plate(spec, accent, inner)
         }
     }
@@ -636,12 +661,16 @@ pub fn row<'a, M: Clone + 'static>(
 /// `classify`, so the picker and the tile agree about which games have
 /// artwork by construction — and so the one thing they *do* differently, words
 /// instead of initials, is visible as a single arm.
-pub fn cover_preview<'a, M: Clone + 'static>(cache: &CoverCache, game: &'a Game) -> Element<'a, M> {
+pub fn cover_preview<'a, M: Clone + 'static>(
+    cache: &CoverCache,
+    game: &Game,
+    plan: &CoverPlan,
+) -> Element<'a, M> {
     let spec = preview_cover_spec();
 
-    match cover_plan(cache, game) {
+    match plan {
         CoverPlan::InitialsOnPlate { .. } => preview_label_widget(spec),
-        CoverPlan::Photo | CoverPlan::IconOnPlate { .. } => framed(cache, game, spec, 0.0),
+        CoverPlan::Photo | CoverPlan::IconOnPlate { .. } => plan_box(cache, game, spec, plan),
     }
 }
 
@@ -902,12 +931,12 @@ fn row_subtitle_of(game: &Game, labels: &RowLabels<'_>) -> String {
 /// neither of those is an acceptable answer to it.
 fn framed<'a, M: Clone + 'static>(
     cache: &CoverCache,
-    game: &'a Game,
+    cover_path: &str,
     spec: CoverSpec,
     inset: f32,
 ) -> Element<'a, M> {
-    let source = cache.kind(&game.cover_path);
-    let picture: Element<'a, M> = match cache.image(&game.cover_path) {
+    let source = cache.kind(cover_path);
+    let picture: Element<'a, M> = match cache.image(cover_path) {
         Some(handle) => image(handle)
             .content_fit(source.content_fit())
             .width(Length::Fill)
@@ -941,7 +970,7 @@ fn framed<'a, M: Clone + 'static>(
 /// row plate are 21 px and their box is 29.4 = 1.4 x 21 tall, and on the 188 x
 /// 207 card plate they are 64 px and 89.6 = 1.4 x 64 — the second number is the
 /// one this file already records in
-/// [`an_icons_picture_is_inset_inside_the_plate_by_the_icon_inset`].
+/// `an_icons_picture_is_inset_inside_the_plate_by_the_icon_inset`.
 ///
 /// It is named because [`plate_text_band`] turns it into the band of the plate
 /// the glyphs cover, and a wrong factor there picks the wrong ink.
@@ -1257,19 +1286,165 @@ pub(crate) const WEBP_COVER: [u8; 118] = [
 #[cfg(test)]
 pub(crate) const WEBP_COVER_SIZE: (u32, u32) = (24, 16);
 
+/// A real cover file on disk, for the tests in this module and the game form's.
+///
+/// A path under the system temporary directory holding `bytes`, named `stem-N`
+/// with a counter so no two calls can read a half-written file left by another.
+/// Bytes rather than an extension because a cover is
+/// [`CoverSource::Plate`] whatever it is called — so a test that wants a
+/// photograph or an icon has to put bytes on disk. The name carries no
+/// extension on purpose: which composition a cover gets is decided from the
+/// content and never from the suffix (see [`super::cover`]'s module docs), and a
+/// fixture called `.png` would leave that untested either way.
+///
+/// It is `pub(crate)` and at module scope rather than inside `tests` because the
+/// game form's suite draws the same kind of cover through
+/// [`cover_preview`](crate::view::widgets::cover_preview), and a second copy of
+/// this would be a second answer to "what is a cover file".
+#[cfg(test)]
+pub(crate) fn cover_fixture(stem: &str, bytes: &[u8]) -> String {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("gamehandler-widgets-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a writable temporary directory");
+    let path = dir.join(format!("{stem}-{n}"));
+    std::fs::write(&path, bytes).expect("a writable fixture");
+    path.to_string_lossy().into_owned()
+}
+
+/// The traversal the widget tests read a built element with, shared with the
+/// game form's suite.
+///
+/// `Widget` has no `as_any` and iced has no downcast, so "which nodes did this
+/// builder compose, and what strings did it hand them" is invisible from outside
+/// a builder — the ids, the boxes and the text a real `Widget::operate` reports
+/// are the only observation there is. Two independent traversals of the same
+/// widgets would be two answers to the same question, which is why the game
+/// form's `UX-11` tests call these rather than growing a collector of their own
+/// (see [`crate::view::form`]).
+#[cfg(test)]
+pub(crate) mod harness {
+    use super::*;
+    use cosmic::iced::advanced::Layout;
+    use cosmic::iced::advanced::layout::Limits;
+    use cosmic::iced::advanced::widget::Operation;
+    use cosmic::iced::advanced::widget::Tree;
+    use cosmic::iced::advanced::widget::operation::Focusable;
+    use cosmic::iced::{Font, Pixels, Rectangle, Size};
+    use cosmic::widget::Id;
+
+    /// One thing the framework reports about the widget tree.
+    #[derive(Debug, Clone)]
+    pub(crate) struct Seen {
+        pub(crate) id: Option<Id>,
+        pub(crate) bounds: Rectangle,
+        pub(crate) text: Option<String>,
+    }
+
+    /// Collects what a traversal reports. `traverse` calls `operate(self)` so
+    /// the widgets keep descending — the contract `Operation` documents.
+    #[derive(Default)]
+    pub(crate) struct Collect(pub(crate) Vec<Seen>);
+
+    impl Operation for Collect {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
+
+        fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
+            self.0.push(Seen {
+                id: id.cloned(),
+                bounds,
+                text: None,
+            });
+        }
+
+        fn text(&mut self, _id: Option<&Id>, bounds: Rectangle, text: &str) {
+            self.0.push(Seen {
+                id: None,
+                bounds,
+                text: Some(text.to_string()),
+            });
+        }
+
+        /// Where a `cosmic::widget::button` reports its [`Id`].
+        ///
+        /// Not in [`Self::container`]: the button's `operate` calls
+        /// `operation.container(None, layout.bounds())` — always `None` — and
+        /// then `operation.focusable(Some(&self.id), …)`
+        /// (`libcosmic src/widget/button/widget.rs:345` and `:359`). So a test
+        /// that read only `container` would find a button's id nowhere and
+        /// conclude the control had none, which is the "check that cannot see
+        /// the thing it checks" shape. Recorded here rather than asserted
+        /// against a button built in the test, so the id is read off the same
+        /// traversal that reads the rest of the tree.
+        fn focusable(&mut self, id: Option<&Id>, bounds: Rectangle, _state: &mut dyn Focusable) {
+            self.0.push(Seen {
+                id: id.cloned(),
+                bounds,
+                text: None,
+            });
+        }
+    }
+
+    /// A real renderer, for measuring text.
+    ///
+    /// `iced_tiny_skia` is a pure-software backend, so this needs no display
+    /// and draws nothing — `layout` wants it only to ask the font stack how
+    /// wide a string is.
+    pub(crate) fn renderer() -> cosmic::Renderer {
+        cosmic::Renderer::new(Font::default(), Pixels(16.0))
+    }
+
+    /// Lay out a real element and traverse it, and report what the framework
+    /// was told.
+    ///
+    /// `pub(crate)` for the game form's suite, which draws the same preview
+    /// widgets through a page of its own (`UX-11`) — the ids those widgets carry
+    /// are the only place their composition is visible, so a form test that read
+    /// its own tree would be reading a different traversal of the same code.
+    pub(crate) fn traversal<M: Clone + 'static>(el: &mut Element<'_, M>) -> Vec<Seen> {
+        let renderer = renderer();
+        let mut tree = Tree::new(el.as_widget());
+        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
+        // `Widget::layout` and `Widget::operate` both take the renderer by
+        // shared reference — a widget measures text through it and does not
+        // draw — so neither needs a `&mut` here and clippy says so.
+        let node = el.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let mut collect = Collect::default();
+        el.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut collect);
+        collect.0
+    }
+
+    /// The ids the traversal reported, in the order it reported them.
+    pub(crate) fn ids(seen: &[Seen]) -> Vec<Id> {
+        seen.iter().filter_map(|seen| seen.id.clone()).collect()
+    }
+
+    /// The strings the traversal was handed, in order.
+    pub(crate) fn texts(seen: &[Seen]) -> Vec<&str> {
+        seen.iter()
+            .filter_map(|seen| seen.text.as_deref())
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::harness::{Collect, Seen, ids, renderer, texts, traversal};
     use super::*;
     use cosmic::iced::advanced::Layout;
     use cosmic::iced::advanced::layout::{Limits, Node};
-    use cosmic::iced::advanced::widget::operation::Focusable;
-    use cosmic::iced::advanced::widget::{Operation, Tree};
+    use cosmic::iced::advanced::widget::Tree;
     // The trait, not a value: `measure_image` is `Renderer`'s method and is not
     // in scope without it.
     use cosmic::iced::advanced::Shell;
     use cosmic::iced::advanced::image::Renderer as _;
     use cosmic::iced::{Event, Point, mouse};
-    use cosmic::iced::{Font, Pixels, Radius, Rectangle, Size};
+    use cosmic::iced::{Font, Radius, Rectangle, Size};
     use cosmic::widget::Id;
     use gamehandler_core::models::{Game, format_last_played};
 
@@ -1534,7 +1709,8 @@ mod tests {
             "a library tile draws the game's initials and nothing else"
         );
 
-        let mut picker: Element<'_, ()> = cover_preview(&cache, &game);
+        let plan = cover_plan(&cache, &game);
+        let mut picker: Element<'_, ()> = cover_preview(&cache, &game, &plan);
         assert_eq!(
             texts(&traversal(&mut picker)),
             [cover::NO_COVER_LABEL],
@@ -3069,85 +3245,6 @@ mod tests {
     // traversal. Both come from a genuine `Widget::layout` and a genuine
     // `Widget::operate` over a real element, not from a stand-in.
 
-    /// One thing the framework reports about the widget tree.
-    #[derive(Debug, Clone)]
-    struct Seen {
-        id: Option<Id>,
-        bounds: Rectangle,
-        text: Option<String>,
-    }
-
-    /// Collects what a traversal reports. `traverse` calls `operate(self)` so
-    /// the widgets keep descending — the contract `Operation` documents.
-    #[derive(Default)]
-    struct Collect(Vec<Seen>);
-
-    impl Operation for Collect {
-        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-            operate(self);
-        }
-
-        fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
-            self.0.push(Seen {
-                id: id.cloned(),
-                bounds,
-                text: None,
-            });
-        }
-
-        fn text(&mut self, _id: Option<&Id>, bounds: Rectangle, text: &str) {
-            self.0.push(Seen {
-                id: None,
-                bounds,
-                text: Some(text.to_string()),
-            });
-        }
-
-        /// Where a `cosmic::widget::button` reports its [`Id`].
-        ///
-        /// Not in [`Self::container`]: the button's `operate` calls
-        /// `operation.container(None, layout.bounds())` — always `None` — and
-        /// then `operation.focusable(Some(&self.id), …)`
-        /// (`libcosmic src/widget/button/widget.rs:345` and `:359`). So a test
-        /// that read only `container` would find a button's id nowhere and
-        /// conclude the control had none, which is the "check that cannot see
-        /// the thing it checks" shape. Recorded here rather than asserted
-        /// against a button built in the test, so the id is read off the same
-        /// traversal that reads the rest of the tree.
-        fn focusable(&mut self, id: Option<&Id>, bounds: Rectangle, _state: &mut dyn Focusable) {
-            self.0.push(Seen {
-                id: id.cloned(),
-                bounds,
-                text: None,
-            });
-        }
-    }
-
-    /// A real renderer, for measuring text.
-    ///
-    /// `iced_tiny_skia` is a pure-software backend, so this needs no display
-    /// and draws nothing — `layout` wants it only to ask the font stack how
-    /// wide a string is.
-    fn renderer() -> cosmic::Renderer {
-        cosmic::Renderer::new(Font::default(), Pixels(16.0))
-    }
-
-    /// Lay out a real element and traverse it, and report what the framework
-    /// was told.
-    fn traversal<M: Clone + 'static>(el: &mut Element<'_, M>) -> Vec<Seen> {
-        let renderer = renderer();
-        let mut tree = Tree::new(el.as_widget());
-        let limits = Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
-        // `Widget::layout` and `Widget::operate` both take the renderer by
-        // shared reference — a widget measures text through it and does not
-        // draw — so neither needs a `&mut` here and clippy says so.
-        let node = el.as_widget_mut().layout(&mut tree, &renderer, &limits);
-        let mut collect = Collect::default();
-        el.as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut collect);
-        collect.0
-    }
-
     /// The messages a real double click at `at` makes the element publish.
     ///
     /// A genuine `Widget::update` on a real element with a real `Shell`, so
@@ -3202,18 +3299,6 @@ mod tests {
         published
     }
 
-    /// The ids the traversal reported, in the order it reported them.
-    fn ids(seen: &[Seen]) -> Vec<Id> {
-        seen.iter().filter_map(|seen| seen.id.clone()).collect()
-    }
-
-    /// The strings the traversal was handed, in order.
-    fn texts(seen: &[Seen]) -> Vec<&str> {
-        seen.iter()
-            .filter_map(|seen| seen.text.as_deref())
-            .collect()
-    }
-
     /// The box a drawn string was laid out in.
     fn drawn<'a>(seen: &'a [Seen], text: &str) -> &'a Rectangle {
         seen.iter()
@@ -3249,28 +3334,6 @@ mod tests {
         let mut out = Vec::new();
         walk(&node, &mut out);
         out
-    }
-
-    /// The path to a real file with exactly these bytes.
-    ///
-    /// [`CoverSource::classify`] reads the file — a path that does not exist is
-    /// a [`CoverSource::Plate`] whatever it is called — so a test that wants a
-    /// photograph or an icon has to put bytes on disk. The name carries no
-    /// extension on purpose: which composition a cover gets is decided from the
-    /// content and never from the suffix (see [`super::cover`]'s module docs),
-    /// and a fixture called `.png` would leave that untested either way.
-    fn cover_fixture(stem: &str, bytes: &[u8]) -> String {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("gamehandler-widgets-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("a writable temporary directory");
-        // A distinct path per call, so no two tests can read a half-written
-        // file from the other.
-        let path = dir.join(format!("{stem}-{n}"));
-        std::fs::write(&path, bytes).expect("a writable fixture");
-        path.to_string_lossy().into_owned()
     }
 
     /// A game whose cover is a photograph: a real `.webp` that decodes.

@@ -1853,6 +1853,7 @@ impl Shell {
                 form,
                 library: &self.state.library,
                 runners: &self.state.runners,
+                covers: &self.state.cover_cache,
             });
         }
         let body = self.view_body();

@@ -46,8 +46,10 @@
 //! when P-65 wired them.
 //!
 //! Two of the reference's values are still drawn either way, because those are
-//! reads rather than writes: the cover row shows [`NO_COVER`] or the stored path,
-//! and the runner's *value* is visible in the Library row's subtitle even when the
+//! reads rather than writes: the cover row draws the *preview* — the picture
+//! itself, or the words the widget owns when there is no artwork, which is why
+//! this module has no string of its own for that state (UX-11) — and the
+//! runner's *value* is visible in the Library row's subtitle even when the
 //! selector is not drawn here.
 //!
 //! [`crate::Message::PickExeFile`]: crate::Message::PickExeFile
@@ -64,6 +66,7 @@ use gamehandler_core::runners::RunnerManager;
 
 use crate::Message;
 use crate::state::{FormField, GameForm};
+use crate::view::cover_cache::CoverCache;
 
 use super::a11y;
 
@@ -117,8 +120,15 @@ pub const LABEL_RUNNER: &str = "Runner:";
 /// [`models::UNCATEGORIZED`]: gamehandler_core::models::UNCATEGORIZED
 pub const CATEGORY_PLACEHOLDER: &str = gamehandler_core::models::UNCATEGORIZED;
 
-/// The two cover-art states (`:140`, `:149`).
-pub const NO_COVER: &str = "No cover yet";
+/// The Find-cover button's word (`:149`).
+///
+/// The reference gives two cover-art states — `:140` is the "No cover yet" label
+/// and this is the button — but the label is no longer a string of this module's.
+/// The cover row draws the preview widget, and the widget is where that word
+/// lives ([`crate::view::widgets::preview_label`]); a second copy here would be
+/// a constant the module does not draw, kept alive only by the test that checks
+/// it against the reference. That is the shape this audit files as a defect, so
+/// the copy is deleted rather than left in place (UX-11).
 pub const FIND_COVER: &str = "Find cover";
 
 /// The two browse buttons' hover hints, which are also their accessible names —
@@ -613,6 +623,16 @@ pub struct GameFormView<'a> {
     pub library: &'a Library,
     /// `runnerChoices` (`bridge.py:616-619`), for the selector's labels and ids.
     pub runners: &'a RunnerManager,
+    /// The cover row's preview (`UX-11`).
+    ///
+    /// The reference's row draws an `Image` (`GameFormPage.qml:140-146`) and the
+    /// port drew only a caption, which left the whole preview stack in
+    /// [`super::widgets`] constructed by nothing but its own tests — the state
+    /// the row calls "the state that misleads". The cache is what
+    /// [`super::widgets::cover_preview`] resolves the picture through, and it is
+    /// the same cache the library's tiles use, so the two cannot disagree about
+    /// what counts as artwork.
+    pub covers: &'a CoverCache,
 }
 
 /// A labelled row: the reference's `FormLayout` label on the left, the control on
@@ -852,16 +872,55 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
             .spacing(6)
             .width(Length::Fill)
     };
+    // The cover preview, decided once, here rather than inside the row's element
+    // expression.
+    //
+    // The `Game` is built from the **form**, not looked up in the library: a new
+    // game has no entry yet, and the preview has to work while the user is still
+    // filling the form in. It is a whole `Game` because that is what the preview
+    // stack reads — `cover_plan` names it for the initials a game with no
+    // artwork would draw — and because the form's own two fields are the only
+    // ones it consults ([`crate::state::GameForm::as_preview_game`]).
+    //
+    // The plan is hoisted for a second reason: the words the row shows when
+    // there is no artwork are *the plan's* (`CoverPlan::InitialsOnPlate`), so
+    // the same value has to reach both the drawing and the words. Deciding it
+    // inside the element expression would let the drawn cover and the declared
+    // state be two separate `classify` calls that could disagree.
+    let preview_game = form.as_preview_game();
+    let preview_plan = super::widgets::cover_plan(page.covers, &preview_game);
+
     body = body
         .push(section(SECTION_LIBRARY))
         .push(field_row(LABEL_CATEGORY, category_row.into()))
         .push(field_row(LABEL_COVER, {
-            let shown = if form.cover_path.is_empty() {
-                NO_COVER
-            } else {
-                form.cover_path.as_str()
-            };
-            let row = Row::new().push(text::caption(shown.to_string())).spacing(6);
+            // The reference's row, in its own order (`GameFormPage.qml:134-163`):
+            // `coverPreview`, then the "No cover yet" label **in its place**,
+            // then the two buttons. The preview is portrait and *fixed* — the
+            // QML's own `gridUnit * 2` × `gridUnit * 3` — and both of the first
+            // two come from one widget ([`super::widgets::cover_preview`]),
+            // because they are one decision: `visible: source !== ""` picks
+            // between them and never shows both.
+            //
+            // **The port used to draw neither of them.** The row drew
+            // `text::caption(form.cover_path)` — the *path*, as a string — where
+            // the reference draws a picture, and the preview widget that existed
+            // for it was reached from no page at all. That is UX-11, and the
+            // caption was the port's invention: there is no path label anywhere
+            // in the reference's row, which is what the test below reads the
+            // file to establish rather than taking on trust.
+            //
+            // `cover_preview` resolves the picture through `CoverCache`, so a
+            // cover just chosen shows before the save — which is the point the
+            // row makes ("the user picks a cover with no confirmation of what
+            // they picked").
+            let row = Row::new()
+                .push(super::widgets::cover_preview::<Message>(
+                    page.covers,
+                    &preview_game,
+                    &preview_plan,
+                ))
+                .spacing(6);
             // `token: 0`: the view cannot mint the lookup token (it holds no
             // `&mut State`), so the arm does — see `FetchCoverForForm`.
             row.push(
@@ -1189,11 +1248,13 @@ mod tests {
         form: &'a GameForm,
         library: &'a Library,
         runners: &'a RunnerManager,
+        covers: &'a CoverCache,
     ) -> Element<'a, Message> {
         view(GameFormView {
             form,
             library,
             runners,
+            covers,
         })
     }
 
@@ -1313,8 +1374,9 @@ mod tests {
             form: &GameForm,
             library: &Library,
             runners: &RunnerManager,
+            covers: &CoverCache,
         ) -> Vec<String> {
-            let mut element = page(form, library, runners);
+            let mut element = page(form, library, runners, covers);
             // The ring, counted on a build of this same element. Only the length
             // is used: a *toolkit* widget's id differs between two builds — that
             // is the premise of `view/a11y.rs` — so an id read here would be a
@@ -1369,7 +1431,8 @@ mod tests {
             inert.len()
         );
 
-        let flipped = names_enter_flips(&linux, &library, &runners);
+        let covers = CoverCache::new();
+        let flipped = names_enter_flips(&linux, &library, &runners, &covers);
         let reachable: Vec<&String> = flipped
             .iter()
             .filter(|name| inert.contains(&name.as_str()))
@@ -1395,7 +1458,8 @@ mod tests {
             "the rows this test calls inert must be live on a Windows form, or the \
              two halves are not the same rows and the control below proves nothing"
         );
-        let flipped = names_enter_flips(&windows, &library, &runners);
+        let covers = CoverCache::new();
+        let flipped = names_enter_flips(&windows, &library, &runners, &covers);
         assert!(
             !flipped.is_empty(),
             "on a Windows form every row is live, so Enter must flip at least one \
@@ -1415,7 +1479,8 @@ mod tests {
         let form = form_with_distinct_values();
         let library = library("form-controls", &[]);
         let runners = runners();
-        let mut element = page(&form, &library, &runners);
+        let covers = CoverCache::new();
+        let mut element = page(&form, &library, &runners, &covers);
 
         // Every name this form is expected to publish, with the role it must
         // announce as. The toggles are the two tables this module draws; the
@@ -1744,7 +1809,8 @@ mod tests {
         let form = form_with_distinct_values();
         let library = library("form-browse-names", &[]);
         let runners = runners();
-        let mut element = page(&form, &library, &runners);
+        let covers = CoverCache::new();
+        let mut element = page(&form, &library, &runners, &covers);
         let nodes = harness::published(&mut element);
 
         for hint in [BROWSE_EXE_HINT, BROWSE_COVER_HINT] {
@@ -1974,7 +2040,10 @@ mod tests {
             LABEL_CATEGORY,
             LABEL_COVER,
             LABEL_RUNNER,
-            NO_COVER,
+            // The word the cover row draws when there is no artwork, read from
+            // the widget that draws it rather than from a copy in this module —
+            // see [`FIND_COVER`].
+            crate::view::widgets::preview_label(),
             FIND_COVER,
             BROWSE_EXE_HINT,
             BROWSE_COVER_HINT,
@@ -2190,7 +2259,7 @@ mod tests {
         drawn.push(DESKTOP_SIZE_ROW.field);
         // Hand-built, and each for a stated reason rather than by omission:
         drawn.push(FormField::Category); // the editable combo (`:126-132`)
-        drawn.push(FormField::CoverPath); // the caption and Find cover (`:134-165`)
+        drawn.push(FormField::CoverPath); // the preview and Find cover (`:134-165`)
         drawn.push(FormField::Runner); // the selector, when it is drawn (`:172-183`)
 
         for field in &drawn {
@@ -3258,5 +3327,160 @@ mod tests {
         let source = qml();
         assert!(source.contains("title: isNew ? \"Add Game\" : \"Edit Game\""));
         assert!(source.contains("text: form.isNew ? \"Add\" : \"Save\""));
+    }
+
+    /// **UX-11: the cover row draws the reference's preview, and never the path
+    /// as text.**
+    ///
+    /// # What the row found, and what the row's own remedy missed
+    ///
+    /// The preview stack — [`super::widgets::cover_preview`] and the two helpers
+    /// under it — existed, agreed with the reference's numbers, and was
+    /// constructed by nothing but its own unit test. The row drew
+    /// `text::caption(form.cover_path)` in its place: the path, as a string,
+    /// where `GameFormPage.qml:140-150` draws an `Image` and hides the
+    /// "No cover yet" label under it.
+    ///
+    /// # The first version of this test asserted something the reference does
+    /// not say, and failed
+    ///
+    /// It asserted that the row labels the preview with the *path*, and cited
+    /// `GameFormPage.qml:147` for it. Reading the file to repair the failure is
+    /// what showed the citation was invented: `:134-163` is an `Image`, a
+    /// `QQC2.Label` reading "No cover yet", and two buttons, with **no path
+    /// string anywhere in it**. The invented premise is recorded rather than
+    /// quietly dropped, because "a citation that was never checked" is the exact
+    /// defect shape this audit exists to find — here in the audit's own work,
+    /// and here in the one test whose job was to catch it.
+    ///
+    /// So what is asserted is the reference's structure, read from the page:
+    ///
+    /// * nothing chosen — the picker's words, once, and nothing else;
+    /// * a real cover file — the picture and no text at all;
+    /// * a path that is not a cover file — the words, once, which is
+    ///   [`super::widgets::cover_preview`]'s documented divergence from
+    ///   `source !== ""`: the port shows the placeholder where the QML would
+    ///   show a broken image.
+    ///
+    /// and, in every case, that `apply` — the half that ships — carries the same
+    /// path into the saved game that the preview was drawn from. The path is
+    /// asserted **not** to be drawn in any of the three, which is the assertion
+    /// the old caption fails.
+    #[test]
+    fn the_cover_row_draws_the_reference_preview_and_never_the_path_as_text() {
+        use crate::view::widgets::harness::{ids, texts, traversal};
+        use crate::view::widgets::{PICTURE_ID, preview_label};
+        use cosmic::widget::Id;
+
+        let covers = CoverCache::new();
+        let library = library("form-cover-preview", &[]);
+        let runners = runners();
+        let photo = crate::view::widgets::cover_fixture("photo", &crate::view::widgets::WEBP_COVER);
+
+        // (label, cover path, does the path name a file that classifies as art?)
+        let cases: [(&str, String, bool); 3] = [
+            ("nothing chosen yet", String::new(), false),
+            ("a path the browse button returned", photo, true),
+            (
+                "a path typed by hand, pointing at no file",
+                " /tmp/typed.webp ".into(),
+                false,
+            ),
+        ];
+
+        for (label, cover_path, is_art) in cases {
+            let mut form = form();
+            form.cover_path = cover_path.clone();
+
+            let mut element = page(&form, &library, &runners, &covers);
+            let seen = traversal(&mut element);
+            let drew = texts(&seen);
+
+            assert!(
+                cover_path.is_empty() || !drew.contains(&cover_path.as_str()),
+                "the cover row drew the path itself as text for {label:?} — the \
+                 reference draws a picture there, and a path is not a picture; \
+                 the page drew {drew:?}"
+            );
+
+            if is_art {
+                assert!(
+                    ids(&seen).contains(&Id::from(PICTURE_ID)),
+                    "a path naming a real cover file must be drawn as a picture, \
+                     not as the placeholder; the page drew {drew:?} with ids {:?}",
+                    ids(&seen)
+                );
+                assert_eq!(
+                    drew.iter().filter(|word| **word == preview_label()).count(),
+                    0,
+                    "with a picture drawn, the label in its place must be hidden \
+                     — `visible: !coverPreview.visible`; the page drew {drew:?}"
+                );
+            } else {
+                assert_eq!(
+                    drew.iter().filter(|word| **word == preview_label()).count(),
+                    1,
+                    "with no picture, the preview's place is taken by its words \
+                     — once, not twice and not never; the page drew {drew:?}"
+                );
+            }
+
+            // The same state, through the half that ships: what the save writes.
+            // `apply` keeps this field untrimmed (`bridge.py:429-432`), which is
+            // why the typed case's spaces survive — if either half started
+            // trimming, this is where the two would part.
+            let game = form.apply(None).expect("a named form applies");
+            assert_eq!(
+                game.cover_path, cover_path,
+                "the game saved from the {label:?} form must carry the cover the \
+                 preview showed; asserted here so a preview drawn from something \
+                 other than the saved value cannot pass"
+            );
+        }
+    }
+
+    /// **The preview consults the cache the page was handed**, so what is drawn
+    /// is a function of the file on disk and not of `cover_path` being non-empty.
+    ///
+    /// [`super::widgets::cover_preview`] documents that it draws the picture
+    /// through `CoverCache`, and the page passes the shell's own
+    /// ([`crate::State::cover_cache`]) — a *different* cache instance has the
+    /// same answer, since the answer is the file's, so what this catches is
+    /// narrower and worth naming: a page that drew a picture whenever the field
+    /// was non-empty without asking the cache at all. The negative half is the
+    /// load-bearing one, and it is the case the QML gets wrong in the other
+    /// direction (`source !== ""` shows a broken image for a path with no file
+    /// behind it).
+    #[test]
+    fn the_cover_rows_picture_is_what_the_cache_classified() {
+        use crate::view::widgets::harness::{ids, traversal};
+        use cosmic::widget::Id;
+
+        let covers = CoverCache::new();
+        let library = library("form-cover-cache", &[]);
+        let runners = runners();
+        let photo = crate::view::widgets::cover_fixture("photo", &crate::view::widgets::WEBP_COVER);
+
+        let mut with_photo = form();
+        with_photo.cover_path = photo.clone();
+        let mut element = page(&with_photo, &library, &runners, &covers);
+        let seen = traversal(&mut element);
+        assert!(
+            ids(&seen).contains(&Id::from(crate::view::widgets::PICTURE_ID)),
+            "a real cover file on disk must be drawn as a picture, not as the \
+             placeholder; the row drew {:?}",
+            ids(&seen)
+        );
+
+        let mut without_photo = form();
+        without_photo.cover_path = "/tmp/definitely-not-a-cover-file".to_string();
+        let mut element = page(&without_photo, &library, &runners, &covers);
+        let seen = traversal(&mut element);
+        assert!(
+            !ids(&seen).contains(&Id::from(crate::view::widgets::PICTURE_ID)),
+            "a path that is not a cover file must fall back to the placeholder; \
+             the row drew {:?}",
+            ids(&seen)
+        );
     }
 }
