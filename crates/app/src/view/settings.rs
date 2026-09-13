@@ -41,12 +41,27 @@ use crate::Message;
 /// path both accept — so the selector cannot offer a value the model would
 /// reject. The labels are the QML's.
 ///
-/// **`"system"` is the first entry and `"dark"` is the fourth line of it, which
-/// is the whole of what this port can honour today.** The reference applies the
-/// scheme to a live theme (`theme.py:18-89`); here the choice is stored and
-/// nothing more, so "Match system" is not *more* honest than "Dark" — both are
-/// inert. It is listed first because the QML lists it first, not because it does
-/// anything.
+/// **All three of these are applied, and they are not the same thing.** The
+/// reference applies the scheme to a live theme (`theme.py:18-89`); so does this
+/// port. `Shell::update`'s `SetColorScheme` arm validates the value against
+/// [`COLOR_SCHEMES`], persists it, and returns [`crate::theme::apply`] — which is
+/// `cosmic::command::set_theme` over [`crate::theme::theme_for`], the one public
+/// writer of libcosmic's theme static. `theme_for` matches `"light"` and
+/// `"dark"` to the two pinned palettes and defers on anything else, so
+/// **"Match system" is the entry that follows the desktop** and the other two
+/// are the entries that override it. Listed first because the QML lists it
+/// first, which happens to also be the ordering that reads as the default.
+///
+/// **This comment used to say the opposite, and the earlier revision is worth
+/// naming rather than quietly replacing.** It read "here the choice is stored
+/// and nothing more, so "Match system" is not *more* honest than "Dark" — both
+/// are inert". Every clause of that was wrong by the time it was written: it was
+/// written when the app had no `theme()` hook and the selector genuinely did
+/// nothing, and the apply path landed after it without the sentence being
+/// re-read. `crates/app/src/main.rs`'s
+/// `setting_the_color_scheme_returns_the_apply_task` is the test that refutes
+/// it, and it was green in the same tree as this comment — which is the point:
+/// a sentence about behaviour is not a claim the suite was checking.
 pub const COLOR_SCHEME_OPTIONS: [(&str, &str); 3] = [
     ("system", "Match system"),
     ("light", "Light"),

@@ -258,7 +258,7 @@ What remains is this:
 |---|---|---|---|---|
 | 4.1 | `Message::RefreshPlugins` | n/a — **nothing sends it.** `crates/app/src/view/plugins.rs` has no refresh control; `crates/app/src/main.rs:2509` handles the variant and `crates/core/src/plugins.rs` is re-read on install (`crates/app/src/main.rs:2530`) | The handler works; the trigger is absent | **Parity, not a defect** — `gamehandler/qml/PluginsPage.qml` has no refresh button either, and `gamehandler/bridge.py:1003` (`refreshPlugins`) exists without a caller. However `crates/app/src/main.rs:1543-1548`'s `Message` doc block describes it as a live `T-26` handler, which reads as a wired control to anyone reading the enum. Comment accurate as of writing, stale as of now |
 | 4.2 | `Message::LaunchWatchTick` | n/a — no production producer | Empty arm at `crates/app/src/main.rs:2584`; the only construction is a test decoy (`crates/app/src/view/runners.rs:2229`) | **Dead variant, documented** — `crates/app/src/main.rs:1598` and `:2684` explain that the grace watch is a timeout rather than a poll, and `crates/app/src/main.rs:2580-2583` explains why the variant is not deleted yet |
-| 4.3 | `State::theme_manager: Option<()>` | n/a — never read | Written `None` at construction (`crates/app/src/state.rs:905`), declared at `:858`, and read by **nothing** in `crates/` (grep: two hits, both the declaration and the initialiser) | **Stub** — a field whose type (`Option<()>`) can carry no information. Vestigial from an earlier theme design; `theme::apply` (`crates/app/src/theme.rs:163`) is what actually changes the theme |
+| 4.3 | `State::theme_manager: Option<()>` | n/a — never read | **Gone.** Written `None` at construction, declared beside it, and read by nothing in `crates/` (grep: two hits, both the declaration and the initialiser) | **Stub, now deleted** (`UX-29`) — a field whose type (`Option<()>`) could carry no information. Vestigial from an earlier theme design; `theme::apply` (`crates/app/src/theme.rs:163`) is what actually changes the theme, and the row that carried it in `COSMIC-UX.md` now holds the deletion's measurements. The two rows here and §7 were the only other place in the tree that named the field, so both moved with it |
 | 4.4 | 15 toggles on a Linux-native game | `crates/app/src/view/form.rs:286`, `:341` | 8 of the 15 disable correctly via `row_enabled` (`:678-695`, `windows_only`); the Wine-specific ones are correctly gated | Complete — checked because "a toggle that renders enabled on a Linux game" is the obvious failure mode here, and it does not occur |
 | 4.5 | Settings' 13 toggles | `crates/app/src/view/settings.rs:470-480` | Each reads through `toggle_value` and writes through `toggle_selection` → `set_toggle`; every key in `DEFAULT_TOGGLES` is read and written | Complete — pinned by `every_toggle_in_the_table_reads_and_writes` (`:524`) |
 | 4.6 | `Ready` / `ReleasesStatus` | `crates/app/src/view/runners.rs:212` | A real state, reached from `ReleasesFetchFinished` (`:945`) | Complete — noted only because `docs/migration/REPORT.md:56-63` records that a past audit misread this variant as a status bar that does not exist |
@@ -322,10 +322,10 @@ Each is a one-line correction; none is a code defect.
 
 | Status | Rows |
 |---|---|
-| Complete | 100 |
+| Complete | 101 |
 | Partial | 4 (`P-38`, `P-68`, plus the two §4.1/§4.2 comment-accuracy items) |
 | Missing | 0 |
-| Stub | 1 (`State::theme_manager`, §4.3) |
+| Stub | 0 — the one row was `State::theme_manager` (§4.3), deleted by `UX-29` |
 | Stale documentation | 5 (§6) |
 
 **Re-synced against `PLAN.md` at `da3c4d5`.** Six rows above read `Partial`
