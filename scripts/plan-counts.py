@@ -27,6 +27,25 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PLAN = REPO / "docs" / "audit" / "PLAN.md"
+REPORT = REPO / "docs" / "audit" / "REPORT.md"
+
+# `REPORT.md`'s `Category` column, which names an owner role rather than a
+# document. Kept here so the report's table can be generated from the same rows
+# the two `PLAN.md` tables come from — the two disagreed (the report said 42
+# fixed where the rows said 47, and 5 open `P1` where there were none), and the
+# reason is that the report's numbers were maintained by hand from the plan's
+# instead of derived from the rows both summarise.
+ROLES = {
+    "BUG": "Bugs, reliability, feature completeness",
+    "ARCH": "Architecture, code quality",
+    "UX": "libcosmic / COSMIC UX",
+    "PERF": "Performance, resource",
+    "SEC": "Security, robustness",
+    "PKG": "Packaging, platform, QA",
+}
+# `REPORT.md`'s order, which is not the alphabetical one the `PLAN.md` family
+# table uses.
+REPORT_ORDER = ["BUG", "ARCH", "UX", "PERF", "SEC", "PKG"]
 
 # A row is `| `ID-nn` | ... |` — the id alone in the first cell, wrapped in
 # backticks. Anchored at the start of the line so a row *quoting* an id inside
@@ -63,6 +82,69 @@ def settled(status: str) -> bool:
     return status.startswith("FIXED") or status.startswith("WITHDRAWN")
 
 
+# The words a status cell may begin with.
+#
+# This exists because of a failure `--check` **could not see**. A row written as
+# ``| **FIXED** ... |`` — the emphasis marks PLAN.md puts around the id in its
+# other columns — was parsed, was classified by `settled()` as *not* settled
+# (correctly: `"**FIXED**".startswith("FIXED")` is false), and changed no count,
+# because a `FIXED` and an `OPEN` row differ in exactly one column of the
+# output. So the two tables stayed byte-identical to the file's stale ones,
+# every generated line was present verbatim, and `--check` exited 0 while the
+# file's own summary was wrong and the row's status unreadable.
+#
+# That is the defect this whole audit is about — a check that passes without
+# inspecting what it claims — sitting in the checker, so an unrecognised status
+# is a named problem rather than a silent non-match.
+#
+# The rule is *begins with*, not *is*, because the file's convention is a status
+# word followed by whatever the row needs to say about it: ``FIXED `26d56d3` ``,
+# `PARTIAL with BUG-21`, `FIXED — the paragraph was rewritten …`. Those tails
+# are prose the tables do not count and must not be read as part of the status.
+# What this catches is the word being *dressed up* — emphasised, quoted,
+# backticked as a whole, or misspelled — because every one of those makes the
+# row's status illegible to `settled()` without making it legible to a reader.
+# `CLOSED` is in the list because `BUGS.md` uses it for a row that describes
+# correct behaviour rather than a defect (see that row's own note).
+STATUS_WORDS = ("FIXED", "PARTIAL", "WITHDRAWN", "OPEN", "CLOSED")
+
+
+def status_cell(line: str) -> str:
+    """The status column of a finding row, backtick marks removed.
+
+    The marks are stripped because they wrap the *commit hash* rather than the
+    status — `FIXED `26d56d3`` — so a caller that stripped only the ends would
+    see `FIXED `26d56d3`. `parse()` did exactly that, which is harmless for a
+    prefix test and would not be for an equality one.
+    """
+    return line.split("|")[-2].strip().replace("`", "").strip()
+
+
+def status_problems(plan: str) -> list[str]:
+    """Rows whose status cell does not begin with a known status word."""
+    problems = []
+    section = None
+    for number, line in enumerate(plan.splitlines(), start=1):
+        header = SECTION.match(line)
+        if header:
+            section = header.group(1)
+            continue
+        if line.startswith("## "):
+            section = None
+            continue
+        if section is None or not ROW.match(line):
+            continue
+        status = status_cell(line)
+        word = status.split(" ")[0].rstrip("—-").strip()
+        if word not in STATUS_WORDS:
+            problems.append(
+                f"PLAN.md:{number}: status cell {status[:60]!r} does not begin "
+                f"with one of {STATUS_WORDS}. A status wrapped in markup reads "
+                f"as un-settled to this script and would leave the summary "
+                f"tables stale without `--check` noticing")
+    return problems
+
+
 def parse(plan: str):
     """`(severity, family, status)` per row, plus the section headers seen."""
     section = None
@@ -82,8 +164,7 @@ def parse(plan: str):
             continue
         row = ROW.match(line)
         if row and section is not None:
-            cells = line.split("|")
-            status = cells[-2].strip().strip("`").strip()
+            status = status_cell(line)
             rows.append((None if section == "Not a defect" else section,
                          row.group(1), status))
     return rows, headers
@@ -142,6 +223,88 @@ def tables(rows):
     return severity_table, family_table, by_severity, by_family
 
 
+def tail_lines() -> list[str]:
+    """The `Where the tails actually live` table's rows, from the documents.
+
+    That table is a *second* hand-maintained summary in `PLAN.md`, one section
+    away from the two this script already computes, and it had gone stale in the
+    same way: `ARCHITECTURE.md` was recorded as 7 tails against 8,
+    `COSMIC-UX.md` as 1 against 5, `SECURITY.md` as 2 against 3 and
+    `PACKAGING.md` as 4 against 5 — every one of them a fix that landed without
+    the table being recounted. Its own prose says it was "re-counted here from
+    the files on disk", which was true of the revision that wrote it and false
+    of every revision after.
+
+    The `Kinds` cell is derived too, and only for the three words the documents
+    actually use. The revision this replaces wrote the kind list by hand as
+    well, which is how it could say `2 FIXED` about a document with three.
+
+    `BUGS.md` reports 46 tailed rows rather than 47 because `BUG-11` is struck
+    through as withdrawn and its status is in the `Kind` cell; both the row
+    count and the tail count here match the document's own table.
+    """
+    pattern = re.compile(r"^\|\s*\*{0,2}(?:~~)?`?(BUG|ARCH|UX|PERF|SEC|PKG)-\d+")
+    kind = re.compile(r"Status:\s*([A-Z][A-Z ]{2,20})")
+    # The table's own order, which is not the alphabetical `FAMILIES` order the
+    # two summary tables use. Kept as written so the generated lines can be
+    # compared verbatim, which is what makes `--check` able to see a reordered
+    # column rather than only a wrong number.
+    order = ["BUG", "ARCH", "UX", "SEC", "PKG", "PERF"]
+    lines = []
+    for family in order:
+        document = REPO / "docs" / "audit" / DOCUMENTS[family]
+        rows = [line for line in document.read_text(encoding="utf-8").splitlines()
+                if pattern.match(line)]
+        tailed = [line for line in rows if "Status:" in line]
+        counts: dict[str, int] = {}
+        for line in tailed:
+            match = kind.search(line)
+            counts[match.group(1).strip() if match else "?"] = \
+                counts.get(match.group(1).strip() if match else "?", 0) + 1
+        kinds = ", ".join(f"{count} `{name.strip()}`" for name, count in counts.items())
+        lines.append(f"| `{DOCUMENTS[family]}` | {len(rows)} | {len(tailed)} | {kinds} |")
+    return lines
+
+
+def report_tables(rows):
+    """`REPORT.md`'s two tables, from the same rows.
+
+    The `Not a defect` column is derived rather than hardcoded at 2: it counts
+    the rows `parse()` bucketed as `None`, so a third refuted row reaches the
+    report without anyone remembering to change a number.
+    """
+    refuted = sum(1 for severity, _, _ in rows if severity is None)
+    refuted_by_family: dict[str, int] = {}
+    for severity, family, _ in rows:
+        if severity is None:
+            refuted_by_family[family] = refuted_by_family.get(family, 0) + 1
+
+    category = ["| Category | Role | Found | Fixed | Not a defect | Remaining |",
+                "|---|---|---|---|---|---|"]
+    for family in REPORT_ORDER:
+        found, fixed = len([1 for s, f, _ in rows
+                            if s is not None and f == family]), \
+            len([1 for s, f, st in rows
+                 if s is not None and f == family and settled(st)])
+        category.append(
+            f"| `{family}-xx` | {ROLES[family]} | {found} | {fixed} | "
+            f"{refuted_by_family.get(family, 0)} | {found - fixed} |")
+    total_found = sum(1 for s, _, _ in rows if s is not None)
+    total_fixed = sum(1 for s, _, st in rows if s is not None and settled(st))
+    category.append(f"| **Total** | | **{total_found}** | **{total_fixed}** | "
+                    f"**{refuted}** | **{total_found - total_fixed}** |")
+
+    severity = ["| Severity | Found | Fixed | Not a defect | Remaining |",
+                "|---|---|---|---|---|"]
+    for level in SEVERITIES:
+        found = sum(1 for s, _, _ in rows if s == level)
+        fixed = sum(1 for s, _, st in rows if s == level and settled(st))
+        severity.append(f"| {level} | {found} | {fixed} | 0 | {found - fixed} |")
+    severity.append(f"| **Total** | **{total_found}** | **{total_fixed}** | **0** | "
+                    f"**{total_found - total_fixed}** |")
+    return category, severity
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true",
@@ -161,7 +324,19 @@ def main() -> int:
     print()
     print(f"rows: {len(rows)}  defects: {defects}  not-a-defect: {refuted}")
 
-    problems = []
+    problems = status_problems(plan)
+    tails = tail_lines()
+    for line in tails:
+        if line not in plan:
+            problems.append(
+                f"tails-table line not present verbatim in PLAN.md: {line}")
+    if REPORT.exists():
+        report = REPORT.read_text(encoding="utf-8")
+        category, severity = report_tables(rows)
+        for line in category + severity:
+            if line.startswith("|") and line not in report:
+                problems.append(
+                    f"REPORT.md table line not present verbatim: {line}")
     for section, stated in headers:
         if stated is None:
             continue

@@ -62,24 +62,33 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 47 | 26 | 23 `FIXED`, 1 `CLOSED`, 2 `PARTIAL` |
-| `ARCHITECTURE.md` | 25 | 7 | 7 `FIXED` |
-| `COSMIC-UX.md` | 30 | 1 | 1 `FIXED` |
-| `SECURITY.md` | 10 | 2 | 2 `FIXED` (inside the `SEC-01` and `SEC-09` suggested-fix cells) |
-| `PACKAGING.md` | 9 | 4 | 4 `FIXED` |
+| `BUGS.md` | 46 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `CLOSED` |
+| `ARCHITECTURE.md` | 25 | 8 | 8 `FIXED` |
+| `COSMIC-UX.md` | 30 | 5 | 5 `FIXED` |
+| `SECURITY.md` | 10 | 3 | 3 `FIXED` |
+| `PACKAGING.md` | 10 | 5 | 5 `FIXED` |
 | `PERFORMANCE.md` | 8 | 3 | 3 `FIXED` |
 
-`BUGS.md`'s 21 tail-less rows are the 20 open `P3` rows and `BUG-11`, whose
-withdrawal is recorded in its ID cell rather than as a tail. The eight rows in
-`ARCHITECTURE.md`, `COSMIC-UX.md`, `SECURITY.md`, `PACKAGING.md` and
-`PERFORMANCE.md` that gained tails since the previous revision did so in the
-commits that fixed them (`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`,
-and `SEC-09`'s own), so the pair rule was kept where it applies. The paragraph above it, and the first
-revision of this table, are kept in the record because both were instances of the
-defect this file names: the table said `PACKAGING.md` carried 1 `FIXED` tail while
-the document carried 4, and `PERFORMANCE.md` carried none while it carried 3 —
-computed from the document as it stood several commits earlier and then read as
-current. Re-counted here from the files on disk.
+`BUGS.md`'s 20 tail-less rows are its open `P3` rows. Each of the other five
+documents gained tails in the commits that fixed the rows they describe
+(`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`, `41d4b34`, `8f7269e`,
+`6069056`, and `SEC-09`'s own), so the pair rule was kept where it applies.
+
+**This table has now been wrong twice, in the same way, and it is derived for
+that reason.** The first revision was computed from the documents as they stood
+several commits earlier and read as current — it said `PACKAGING.md` carried 1
+`FIXED` tail where the document carried 4, and `PERFORMANCE.md` none where it
+carried 3. The revision that replaced it fixed those two by hand and left the
+rest: `ARCHITECTURE.md` went to 8 tails against 7 recorded, `COSMIC-UX.md` to 5
+against 1, `SECURITY.md` to 3 against 2 and `PACKAGING.md` to 5 against 4, and
+the `BUGS.md` row count stayed at 47 after the withdrawable-row audit settled it
+at 46. Every one of those is a fix that landed without a recount, which is what a
+hand-maintained table beside a moving document does. The rows above are now
+computed by `scripts/plan-counts.py` from the documents themselves, on the same
+`--check` pass that recomputes the two summary tables, so a tail added without a
+recount fails a check rather than aging quietly. The `Kinds` cell is derived too
+— the previous revision wrote it by hand as well, which is how it could say
+`2 FIXED` about a document holding three.
 
 ## Owners
 
@@ -120,7 +129,8 @@ These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
 beside them. The two refuted rows (`BUG-11`, `BUG-15`) sit in their own `### Not a
 defect` section and in no severity bucket, which is why the family table counts 45
-`BUG-xx` rows against the 47 the document holds. `Remaining` counts `PARTIAL` as
+`BUG-xx` rows against the 46 `BUGS.md` holds — the 47th id, `BUG-11`, is the
+withdrawn one that sits in that section. `Remaining` counts `PARTIAL` as
 remaining, because a half-fixed finding is not closed; `Fixed` therefore excludes
 them and the two `PARTIAL` rows appear in `Remaining` until they are finished.
 
@@ -286,7 +296,7 @@ across families, not within them.
 | `PKG-07` | The AppStream validator is not clean under --pedantic: it prints a warning while exiting 0, and the validator the project's own meson test names could not be run at all | S6 | — | Resolve the warning under `--pedantic` and run the meson test the project names; verify both exit clean. | OPEN |
 | `PKG-08` | A comment in data/meson.build asserts a packaging regression that does not exist, and its cited evidence is falsified by the manifest | S6 | — | Correct or delete the comment; verify the cited evidence against the manifest. | OPEN |
 | `PKG-09` | flatpak-contents and cargo-sources both shell out to a bare python3 for their comparison helpers, independently of the interpreter chosen to run the generator | S6 | — | Use the same interpreter the generator was run with; verify by running both stages under a PATH without a bare `python3`. | OPEN |
-| `SEC-05` | The Proton runner archive is downloaded from a URL taken verbatim out of the releases JSON, with no scheme and no origin check — unlike the installer download path, which applies both | S4 | — | Apply the same scheme and origin check the installer path applies; verify with a releases payload naming a `file:` and an off-origin URL. | OPEN |
+| `SEC-05` | The Proton runner archive is downloaded from a URL taken verbatim out of the releases JSON, with no scheme and no origin check — unlike the installer download path, which applies both | S4 | — | Apply the same scheme and origin check the installer path applies; verify with a releases payload naming a `file:` and an off-origin URL. | PARTIAL `8106f1e` — `validate_runner_download_url` requires `https` through the same `url_parts` the installer allowlist uses, called from `install_with` before anything is staged, and the new `RunnerError::UntrustedOrigin { url }` carries what it refused. Four mutations fire on four distinct named tests, the fourth being the positive control that the request goes to the URL that was checked. The host-pin half of the suggested fix was **dropped after measurement, not skipped**: every asset of the live Proton-GE listing is on `github.com` and each redirects once to `release-assets.githubusercontent.com`, so no host allowlist is writable, and `RunnerFamily` has no `allowed_hosts` field to port. The redirect target is judged by nothing, and that residue is recorded on the specialist row. |
 | `SEC-06` | RunnerManager::get joins a games.json-sourced runner_id onto the runners directory without validating it, where three other sites validate the same kind of string | S4 | — | Validate the `runner_id` the way the three other sites do; verify with a `games.json` carrying `../../etc`. | OPEN |
 | `SEC-07` | open_url performs no scheme validation, and its message payload is a plain String rather than a catalogue-constant type | S4 | — | Validate the scheme in `open_url` itself and give the payload a catalogue-constant type; verify with a non-`http(s)` producer. | OPEN |
 | `SEC-08` | Three manifest permissions are justified only by the child process, with no direct launcher-code tie; the permissions that *do* tie to code are recorded here so the distinction is auditable | S4 | — | Record each permission's justification in the manifest beside it, or drop the ones with none; verify by reading the manifest against the code. | OPEN |

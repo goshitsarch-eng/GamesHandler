@@ -27,7 +27,7 @@ level up — and the fourth move is the proof of it: `88578db` marked `SEC-04`
 tables, so this file inherited a count that was three rows stale. That is now a
 `plan-counts` stage in `scripts/verify.sh` rather than an intention.
 
-**This is not a final report.** 86 of 128 defects are still open, most of them
+**This is not a final report.** 81 of 128 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -36,16 +36,16 @@ and the section *What remains, honestly* says which is which.
 | Category | Role | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 45 | 23 | 2 | 22 |
-| `ARCH-xx` | Architecture, code quality | 25 | 7 | 0 | 18 |
-| `UX-xx` | libcosmic / COSMIC UX | 30 | 1 | 0 | 29 |
+| `ARCH-xx` | Architecture, code quality | 25 | 8 | 0 | 17 |
+| `UX-xx` | libcosmic / COSMIC UX | 30 | 5 | 0 | 25 |
 | `PERF-xx` | Performance, resource | 8 | 3 | 0 | 5 |
 | `SEC-xx` | Security, robustness | 10 | 3 | 0 | 7 |
 | `PKG-xx` | Packaging, platform, QA | 10 | 5 | 0 | 5 |
-| **Total** | | **128** | **42** | **2** | **86** |
+| **Total** | | **128** | **47** | **2** | **81** |
 
 The `Found` column is defects; the two refuted rows are counted in `Not a defect`
-and in no other column, which is why `BUGS.md` holds 47 rows and this table says
-45. Those two rows used to be counted in both, which is what made the two totals
+and in no other column, which is why `BUGS.md` holds 46 id-bearing rows plus the
+withdrawn `BUG-11`, and this table says 45 defects. Those two rows used to be counted in both, which is what made the two totals
 disagree with each other and made a refuted row read as repaired work.
 
 By severity:
@@ -53,16 +53,18 @@ By severity:
 | Severity | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
-| P1 | 23 | 18 | 0 | 5 |
+| P1 | 23 | 23 | 0 | 0 |
 | P2 | 52 | 19 | 0 | 33 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **128** | **42** | **0** | **86** |
+| **Total** | **128** | **47** | **0** | **81** |
 
 `Not a defect` is not a euphemism for "wontfix": both rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`,
 `BUG-15`). Two of the rows counted as `Remaining` above are `PARTIAL` rather
 than untouched — `BUG-12` and `BUG-47` — and each row names the half that is
-still missing.
+still missing. `SEC-05` is a third, and it is `PARTIAL` for a measured reason
+rather than an unfinished one: the host half of its suggested fix is not
+writable, because every Proton-GE asset redirects off `github.com`.
 
 ## What this audit found that matters
 
@@ -101,33 +103,40 @@ dependency check that read no advisories and reported a clean bill of health
 **Nothing is blocked by anything outside this repository.** No finding is
 waiting on an upstream release, a missing tool, or a decision from anyone else.
 So the brief's standard — `Remaining` should be zero for actionable P0/P1/P2 —
-is **not met**, and the reason is that the work is unfinished, not that it is
-impossible. Stating that plainly is the point of this section.
+is **met for P0 and P1** and **not met for P2**, where the reason is that the
+work is unfinished rather than impossible. Stating that plainly is the point of
+this section.
 
-Where the 86 rows are:
+Where the 81 rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All four fixed and each verified by restoring the pre-fix body and watching the new test fail. |
-| P1 | 5 | Real and actionable. Four are `UX` (keyboard and accessibility gaps in dropdowns, togglers and text inputs — upstream libcosmic widget gaps; a local wrapper fixes most of each, and `UX-01`'s popup cannot be opened from the keyboard without an upstream patch, which the row says). The fifth, `ARCH-02`, is an architecture row of the same kind as those already fixed. |
-| P2 | 33 | Actionable. The largest concentration is `UX` (15) and `ARCH` (10); the rest are 3 `SEC`, 3 `PERF`, 2 `BUG` and 1 `PKG`. |
-| P3 | 49 | Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. The 20 open `BUG` rows are all here, along with 10 `UX`, 7 `ARCH`, 6 `SEC`, 4 `PKG` and 2 `PERF`. |
+| P1 | 0 | **Closed.** `UX-01`–`UX-03` were the four upstream-widget accessibility gaps plus `ARCH-02`; all five are fixed, and the three widget rows each record the residue that is upstream's rather than this port's. |
+| P2 | 33 | Actionable. The largest concentration is `UX` (15) and `ARCH` (10); the rest are 3 `PERF`, 2 `SEC`, 2 `BUG` and 1 `PKG`. |
+| P3 | 48 | Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. The 20 open `BUG` rows are all here, along with 10 `UX`, 7 `ARCH`, 5 `SEC`, 4 `PKG` and 2 `PERF`. |
 
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
 them for a backlog item:
 
 * **`UX-01`, `UX-02`, `UX-03` — the rows whose cause is outside this
-  repository.** Dropdowns, togglers and text inputs have no keyboard focus ring
-  and contribute no accessibility node, and the cause is in the *pinned*
-  libcosmic widgets: `toggler` has no `operate` at all. The local-wrapper route
-  is the one this audit takes — a module under `crates/app/src/view/` wraps each
-  control so the node exists and the focus ring is the app's, rather than
-  carrying a patch against the pinned revision — and the rows stay open until
-  that wrapping reaches every call site *and* the page tests assert the state a
-  node publishes, not merely that a node of the right kind is present. The
-  second half is the one worth watching: a suite that only counts nodes is a
-  check that passes without inspecting what it claims, which is the defect shape
-  named two sections above.
+  repository, and whose residue still is.** Dropdowns, togglers and text inputs
+  had no keyboard focus ring and contributed no accessibility node, and the
+  cause is in the *pinned* libcosmic widgets: `toggler` never had an `operate`
+  at all, and the dropdown's is commented out at the pinned revision. All three
+  are now fixed by the local-wrapper route — `crates/app/src/view/a11y.rs` wraps
+  each control so the node exists and the focus ring is the app's, rather than
+  carrying a patch against the pinned revision, and it reaches all 20 production
+  call sites (3 togglers, 4 `input`, 2 `input_with_id`, 11 dropdowns). What no wrapper can fix is upstream's: a dropdown's popup still cannot
+  be opened without a pointer, because the two operations that would open it are
+  commented out in the pinned widget, and the rows say so rather than claiming a
+  completeness they do not have. The verification half is worth keeping in view:
+  the page tests assert the state a node *publishes* — a combo's `value`, a
+  switch's `selected`, a toggler's activation message — because a suite that
+  only counts nodes of the right kind is a check that passes without inspecting
+  what it claims, which is the defect shape named two sections above. That shape
+  was found in this fix's own first test, which walked the tab ring to a stop it
+  never reached.
 * **`SEC-10`** — five live RustSec advisories, none reachable from the shipped
   binary, all transitive pins owned by libcosmic. There is no fix available at
   this layer, and the brief forbids upgrading for version numbers alone. The
@@ -160,12 +169,12 @@ flagging — and both now have those controls pinned in tests.
 |---|---|
 | `BASELINE.md` | The pre-audit baseline, and the withdrawn fabricated observation |
 | `FEATURES.md` | The feature matrix: what is advertised and whether it exists |
-| `BUGS.md` | 47 rows on correctness, reliability and completeness — 45 defects and 2 refuted |
+| `BUGS.md` | 47 ids on correctness, reliability and completeness — 45 defects, 2 refuted, 1 withdrawn |
 | `COSMIC-UX.md` | 30 findings on libcosmic and COSMIC conformance |
 | `PERFORMANCE.md` | 8 findings on CPU, memory and frame cost |
 | `SECURITY.md` | 10 findings on the sandbox, process launching and the dependency graph |
 | `ARCHITECTURE.md` | 25 findings on structure, contracts and code quality |
-| `PACKAGING.md` | 9 findings on the Flatpak, the desktop entry and the gate |
+| `PACKAGING.md` | 10 findings on the Flatpak, the desktop entry and the gate |
 | `PLAN.md` | All 130 rows: owner, dependencies, verification, status — 128 defects and the 2 refuted ones |
 | `DECISIONS.md` | The seven decisions this audit made (`D-57`–`D-63`) |
 
