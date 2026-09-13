@@ -203,7 +203,7 @@ pub struct TextRow {
     pub id: &'static str,
     /// The label, and the accessible name of the control this row builds.
     ///
-    /// Not `#[cfg(test)]`, unlike [`TextRow::id`] beside it: the label is the
+    /// Not `#[cfg(test)]`, unlike the `id` field beside it: the label is the
     /// text the control draws and the name a screen reader announces, so it is
     /// read by the page rather than only by the reference check.
     pub label: &'static str,

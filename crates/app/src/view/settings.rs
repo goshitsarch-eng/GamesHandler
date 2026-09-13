@@ -120,7 +120,10 @@ pub const DEFAULT_TOGGLES: [(&str, &str, &str); 13] = [
 /// state. That test is what makes the rows a claim rather than a list.
 ///
 /// It used to be printed under a caveat about focus, and the caveat is gone
-/// with the divergence that made it true: see [`IMPLEMENTED_SHORTCUTS`].
+/// with the divergence that made it true: see `IMPLEMENTED_SHORTCUTS`, which is
+/// `#[cfg(test)]` since ARCH-25 and so is named in prose rather than linked. A
+/// doc link to an item the doc build does not compile fails the `doc` stage
+/// with `broken_intra_doc_links`, which is how this line was caught.
 pub const SHORTCUTS: [(&str, &str); 4] = [
     ("Ctrl+N:", "Add a game"),
     ("Ctrl+F:", "Search the library"),
