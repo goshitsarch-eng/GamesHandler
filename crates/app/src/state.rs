@@ -722,6 +722,32 @@ pub struct State {
     /// holds it here for the same reason a QML property cannot be used: `view`
     /// is handed data and reads no globals. P-37.
     pub confirm_remove_runner: Option<PendingRunnerRemoval>,
+    /// The game whose actions layer is open, or `None` (**UX-16**).
+    ///
+    /// The keyboard route to the per-game actions. The reference opens the same
+    /// menu from two controls — a right-click and a per-tile "More actions"
+    /// `QQC2.ToolButton` (`LibraryPage.qml:209-213`, `:281-284`, both calling
+    /// `page.openGameMenu`) — and only the first of the two reached the port,
+    /// because the toolkit's `ContextMenu` opens from a pointer button release
+    /// alone (`src/widget/context_menu.rs:441-460`).
+    ///
+    /// # Why the open menu is a field here rather than widget state
+    ///
+    /// The toolkit keeps *its* menu in the widget's own `LocalState` and the app
+    /// cannot reach it: `context_menu`'s `LocalState` fields are private and the
+    /// `Menu` it renders through is `pub(crate)`
+    /// (`src/widget/menu.rs:81` — and `mod menu_inner` at `:71` is private, so
+    /// the struct's own fields are out of reach as well), so there is no
+    /// constructor, no way to open it from a `Message`, and no way to ask it
+    /// whether it is open. An app-drawn layer has to hold its own open/closed
+    /// fact, and holding it here is what makes it observable: a test reads it
+    /// back, where a widget's `LocalState` is reachable only by building the
+    /// widget.
+    ///
+    /// It holds a [`GameId`] rather than a bool for [`State::confirm_delete`]'s
+    /// reason, at a second site: the layer draws one game's actions, and which
+    /// game is the whole of its content.
+    pub game_menu: Option<GameId>,
     /// was `_search_text`.
     pub search_text: String,
     /// was `_category_filter`, defaulting to "All".
@@ -980,6 +1006,7 @@ impl State {
             game_form: None,
             confirm_delete: None,
             confirm_remove_runner: None,
+            game_menu: None,
             search_text: String::new(),
             category_filter: "All".to_string(),
             cover_cache: crate::view::cover_cache::CoverCache::new(),

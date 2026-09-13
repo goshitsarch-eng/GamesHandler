@@ -71,6 +71,14 @@ pub enum Icon {
     Edit,
     /// The menu's Find cover art.
     Image,
+    /// The card's and the row's "More actions" control (UX-16).
+    ///
+    /// `view-more-symbolic`, the name `LibraryPage.qml:210` and `:282` give it:
+    /// the three dots that mean "the rest of this item's actions". The keyboard
+    /// route the reference has and this port did not — the QQC2 `ToolButton`
+    /// that opens `gameMenu` — so it is drawn on both delegates, where the QML
+    /// draws it.
+    ViewMore,
 }
 
 impl Icon {
@@ -96,6 +104,7 @@ impl Icon {
             Icon::Warning => "data-warning",
             Icon::Edit => "edit-entry",
             Icon::Image => "viewimage",
+            Icon::ViewMore => "view-more-symbolic",
         }
     }
 }
@@ -118,6 +127,7 @@ fn bytes(icon: Icon) -> &'static [u8] {
         Icon::Warning => include_bytes!("icons/warning.svg"),
         Icon::Edit => include_bytes!("icons/edit.svg"),
         Icon::Image => include_bytes!("icons/image.svg"),
+        Icon::ViewMore => include_bytes!("icons/view-more.svg"),
     }
 }
 

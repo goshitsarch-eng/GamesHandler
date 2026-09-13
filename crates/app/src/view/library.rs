@@ -820,7 +820,13 @@ fn list_row<'a>(
     // inside the builder would also move the emission off this page, where
     // `tests/dispatch_coverage.rs` can see it.
     Element::from(context_menu(
-        widgets::row(covers, game, &labels, Message::LaunchGame(game.id.clone())),
+        widgets::row(
+            covers,
+            game,
+            &labels,
+            Message::LaunchGame(game.id.clone()),
+            Some(Message::OpenGameMenu(game.id.clone())),
+        ),
         Some(game_menu_trees(game)),
     ))
 }
@@ -1007,7 +1013,13 @@ fn grid_body<'a>(
         let label = widgets::resolved_runner_label(runners, game);
         // Built here rather than in the builder; see `list_body`.
         row = row.push(context_menu(
-            widgets::card(covers, game, &label, Message::LaunchGame(game.id.clone())),
+            widgets::card(
+                covers,
+                game,
+                &label,
+                Message::LaunchGame(game.id.clone()),
+                Some(Message::OpenGameMenu(game.id.clone())),
+            ),
             Some(game_menu_trees(game)),
         ));
     }
@@ -1249,6 +1261,103 @@ pub fn game_menu_trees<'a>(game: &'a Game) -> Vec<menu::Tree<Message>> {
     menu::items(&std::collections::HashMap::new(), items)
 }
 
+/// The id of the actions layer's `index`-th control, for a game (**UX-16**).
+///
+/// Indexed by position among the **items** of [`game_menu_spec`], counting from
+/// zero and skipping the two dividers, so the id a caller focuses and the
+/// control a user lands on are the same one. `Shell::update` focuses index 0
+/// when the layer opens; without that the keyboard user who opened the layer
+/// would be left on the button they pressed it with, with the rest of the page
+/// between them and the actions.
+///
+/// Per game, for [`widgets::play_button_id`]'s reason: the layer is drawn once
+/// per game that has one open, and the library can have many cards.
+pub fn game_menu_item_id(game_id: &str, index: usize) -> String {
+    format!("gamehandler.library.menu.{game_id}.{index}")
+}
+
+/// The message a game's menu action sends.
+///
+/// One function for the three things that must agree about it: the context menu
+/// item ([`game_menu_trees`]), the actions layer's control
+/// ([`game_menu_actions`]), and any caller that needs to know what choosing an
+/// action does. Each used to build the `GameMenuAction` itself, which is three
+/// chances to disagree about which message a "Winecfg" press carries.
+///
+/// The trait is reached through its path rather than imported: `menu::Action` is
+/// not in scope at this level, and importing a trait used in one expression
+/// would put a name in every reader's way.
+pub fn game_menu_message(game_id: &str, kind: GameMenuKind) -> Message {
+    menu::Action::message(&GameMenuAction { kind, game_id })
+}
+
+/// A game's actions as buttons — the layer the "More actions" control opens
+/// (**UX-16**).
+///
+/// # Why the app draws this rather than opening the toolkit's menu
+///
+/// The menu the port already renders ([`game_menu_trees`], through
+/// `context_menu()`) can only be opened by a pointer: `ContextMenu` acts on
+/// `Event::Mouse(ButtonReleased(Right))` and on the two-finger touch lift beside
+/// it (`src/widget/context_menu.rs:441-460`, predicate at `:626`) and on nothing
+/// else. There is no `Message`, no method and no `LocalState` field a caller
+/// outside libcosmic can reach to open it, and there is no way to reach the
+/// widget it renders either: `context_menu` builds a
+/// `crate::widget::menu::Menu` (`:573-590`) and that struct is `pub(crate)`
+/// (`src/widget/menu.rs:81`), declared in a private module (`mod menu_inner`,
+/// `:71`). So the app cannot reuse the toolkit's menu as a keyboard-opened one;
+/// what it can do is draw the same entries as ordinary buttons, which is what
+/// this is.
+///
+/// # The divergence from the reference, stated
+///
+/// `LibraryPage.qml:209-213` (card) and `:281-284` (row) draw a
+/// `QQC2.ToolButton` beside Play that calls `page.openGameMenu(modelData, this)`,
+/// and what opens is the real `QQC2.Menu` — a popup with eight items
+/// (`:298-343`). The port reaches the same eight entries through the same
+/// control, but the layer behind it is a modal dialog of buttons rather than a
+/// popup menu, because the widget that draws the popup is not constructible from
+/// outside libcosmic. What is *not* divergent is the content or the effect: the
+/// entries come from [`game_menu_spec`] and each control sends the message
+/// [`GameMenuAction`] gives for its entry, so the keyboard route and the context
+/// menu cannot disagree about what an action is.
+///
+/// # Disabled entries
+///
+/// The three prefix items are inert for a Linux game, exactly as the menu's
+/// `ButtonDisabled` items are (`:320, :326, :331`). They are drawn — with their
+/// labels and their accessible names, so a keyboard user is told the action
+/// exists and is unavailable rather than never learning of it — and they carry
+/// no `on_press`, which is the same shape `view/installers.rs` uses for the
+/// Install button while a download runs.
+pub fn game_menu_actions<'a>(game: &'a Game) -> Element<'a, Message> {
+    let mut column = Column::new().spacing(metrics::CARD_MARGIN);
+    let mut index = 0;
+    for entry in game_menu_spec(game) {
+        match entry {
+            MenuEntry::Divider => {
+                column = column.push(cosmic::widget::divider::horizontal::light());
+            }
+            MenuEntry::Item {
+                label,
+                enabled,
+                action,
+                ..
+            } => {
+                let message = game_menu_message(&game.id, action);
+                let control = button::text(label).id(game_menu_item_id(&game.id, index).into());
+                column = column.push(if enabled {
+                    control.on_press(message)
+                } else {
+                    control
+                });
+                index += 1;
+            }
+        }
+    }
+    column.into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1423,6 +1532,288 @@ mod tests {
                 "a spec entry never became a widget"
             );
         }
+    }
+
+    /// Every action in the layer is a **named, focusable, reachable control**,
+    /// one per menu entry, in the menu's order — and the three prefix entries a
+    /// Linux game disables are drawn, announced, and inert.
+    ///
+    /// UX-16, from the assistive-technology side. The keyboard half is
+    /// [`every_action_in_the_layer_sends_what_its_menu_item_sends`]; this half is
+    /// what a screen reader is told before any key is pressed, and the two are
+    /// asserted separately because a layer of anonymous buttons would satisfy the
+    /// second and not this one.
+    ///
+    /// The labels are compared against [`game_menu_spec`]'s own, so a layer that
+    /// reworded an entry — or drew seven of the eight — fails here rather than
+    /// matching itself.
+    #[test]
+    fn every_action_in_the_layer_is_a_named_control_and_the_disabled_ones_say_so() {
+        use super::a11y::harness;
+
+        for (game, disabled_are) in [(windows_game(), 0usize), (linux_game(), 3)] {
+            let mut layer = game_menu_actions(&game);
+            let nodes = harness::published(&mut layer);
+
+            let items: Vec<(&str, bool, GameMenuKind)> = game_menu_spec(&game)
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    MenuEntry::Divider => None,
+                    MenuEntry::Item {
+                        label,
+                        enabled,
+                        action,
+                        ..
+                    } => Some((label, enabled, action)),
+                })
+                .collect();
+            assert_eq!(
+                items.len(),
+                8,
+                "the fixture is the reference's eight entries"
+            );
+
+            // Selected by id rather than by position: each of these buttons
+            // publishes its label as a child node of its own, so the tree is
+            // twice as long as the layer and a positional walk would compare a
+            // button against a paragraph.
+            let controls: Vec<&harness::NodeFacts> = (0..items.len())
+                .map(|index| {
+                    let id = iced_accessibility::A11yId::from(Id::from(game_menu_item_id(
+                        &game.id, index,
+                    )));
+                    nodes.iter().find(|node| node.id == id).unwrap_or_else(|| {
+                        panic!(
+                            "nothing in the layer carries the id `Shell::update` focuses \
+                                 when it opens, so that focus lands nowhere. Published: {nodes:#?}"
+                        )
+                    })
+                })
+                .collect();
+            assert_eq!(
+                controls.len(),
+                items.len(),
+                "the layer drew {} controls for {} menu entries",
+                controls.len(),
+                items.len()
+            );
+            for (index, (node, (label, enabled, _))) in controls.iter().zip(&items).enumerate() {
+                assert_eq!(
+                    node.role,
+                    iced_accessibility::accesskit::Role::Button,
+                    "control {index} ({label})"
+                );
+                assert_eq!(
+                    node.label.as_deref(),
+                    Some(*label),
+                    "control {index} is not named with its menu entry's label"
+                );
+                assert!(
+                    node.focus,
+                    "control {index} ({label}) cannot be focused, so it is not a \
+                     keyboard route to anything"
+                );
+                assert_eq!(
+                    node.disabled, !*enabled,
+                    "control {index} ({label}) reports the wrong enabled state"
+                );
+            }
+
+            let disabled = controls.iter().filter(|node| node.disabled).count();
+            assert_eq!(
+                disabled, disabled_are,
+                "a {} game has {disabled} disabled entries, not {disabled_are}",
+                game.kind
+            );
+        }
+    }
+
+    /// **Pressing a control in the layer sends exactly what pressing the menu
+    /// item sends** — for all eight, on both a Windows and a Linux game.
+    ///
+    /// This is UX-16's load-bearing assertion: the layer is a *duplicate* of the
+    /// context menu in everything but the widget that draws it, and the only
+    /// thing that makes that duplication safe is that its messages are not
+    /// written twice. The expectations here are built from
+    /// [`game_menu_message`] — the same function the layer itself calls — so the
+    /// test cannot pass by agreeing with a second transcription of the mapping.
+    ///
+    /// The key is driven through the real widget tree: `tab_to` carries the
+    /// framework's own focus forward, and `dispatch` hands the widget the event
+    /// the runtime would, so a control that is drawn but not in the Tab ring
+    /// fails here rather than being counted.
+    #[test]
+    fn every_action_in_the_layer_sends_what_its_menu_item_sends() {
+        use super::a11y::harness;
+        use cosmic::iced::keyboard::{Key, key::Named};
+
+        for game in [windows_game(), linux_game()] {
+            let mut layer = game_menu_actions(&game);
+            let expected: Vec<(&str, bool, Message)> = game_menu_spec(&game)
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    MenuEntry::Divider => None,
+                    MenuEntry::Item {
+                        label,
+                        enabled,
+                        action,
+                        ..
+                    } => Some((label, enabled, game_menu_message(&game.id, action))),
+                })
+                .collect();
+
+            let stops = harness::focusables(&mut layer).len();
+            assert_eq!(
+                stops,
+                expected.len(),
+                "the layer reports {stops} Tab stops for {} entries — every entry, \
+                 disabled or not, is drawn as a button and libcosmic's button reports \
+                 itself focusable without consulting `on_press` \
+                 (`src/widget/button/widget.rs:357`)",
+                expected.len()
+            );
+
+            let (mut tree, node) = harness::built(&mut layer);
+            for (index, (label, enabled, want)) in expected.iter().enumerate() {
+                harness::tab_to(&mut layer, &mut tree, &node);
+                let mut messages = Vec::new();
+                let _ = harness::dispatch(
+                    &mut layer,
+                    &mut tree,
+                    &node,
+                    &harness::pressed(Key::Named(Named::Enter)),
+                    &mut messages,
+                );
+                if *enabled {
+                    assert_eq!(
+                        messages.len(),
+                        1,
+                        "Enter on control {index} ({label}) published {messages:?}"
+                    );
+                    // `Message` is not `PartialEq` — it carries a `ToastId`, a
+                    // `Task` and a `GameForm` — so the comparison is the derived
+                    // `Debug` shape, which is structural for every variant in it.
+                    assert_eq!(
+                        format!("{:?}", messages[0]),
+                        format!("{want:?}"),
+                        "control {index} ({label}) sends a different message from the \
+                         menu item it duplicates"
+                    );
+                } else {
+                    assert!(
+                        messages.is_empty(),
+                        "control {index} ({label}) is one the menu disables, and Enter on \
+                         it published {messages:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// **Enter at each Tab stop of the real Library page reaches each game's
+    /// own actions, and carries that card's id** (UX-16).
+    ///
+    /// The end of the route as a user meets it: the card's control is built by
+    /// the *page's* call site, which is where the game's id is in hand. Every
+    /// other test of this finding starts from a control with the message already
+    /// attached, so a call site that passed one game's id to every card — or
+    /// passed `LaunchGame`'s id into the actions control — would leave them all
+    /// green and give every card the first card's actions. That failure is the
+    /// one this walks the page for.
+    ///
+    /// The stops are walked rather than named, because the ring is the claim: a
+    /// control drawn but not focusable is not a keyboard route.
+    #[test]
+    fn enter_at_each_stop_of_the_real_page_reaches_each_games_actions() {
+        use super::a11y::harness;
+        use cosmic::iced::keyboard::{Key, key::Named};
+
+        let library = two_games_with_known_ids();
+        let covers = CoverCache::new();
+        let runners = RunnerManager::new(&gamehandler_core::runners::SystemLaunchEnv);
+        let mut element =
+            page_element(&library, LIST, ScrollGeometry::default(), &covers, &runners);
+
+        let stops = harness::focusables(&mut element).len();
+        assert!(
+            stops >= 4,
+            "this page draws two cards of two controls each, so a ring of {stops} \
+             cannot contain them"
+        );
+        let (mut tree, node) = harness::built(&mut element);
+        let mut messages = Vec::new();
+        for _ in 0..stops {
+            harness::tab_to(&mut element, &mut tree, &node);
+            let _ = harness::dispatch(
+                &mut element,
+                &mut tree,
+                &node,
+                &harness::pressed(Key::Named(Named::Enter)),
+                &mut messages,
+            );
+        }
+
+        let mut opened: Vec<String> = messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::OpenGameMenu(id) => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+        opened.sort_unstable();
+        assert_eq!(
+            opened,
+            ["alpha", "beta"],
+            "Enter at each Tab stop of the real page must reach each game's actions \
+             once, carrying that card's own id. Messages: {messages:?}"
+        );
+    }
+
+    /// A library of two games whose **ids are known**, for the route test above.
+    ///
+    /// [`categorised_library`] names its games and lets `new_id()` name the ids,
+    /// which is right for a test that reads names and wrong for one that has to
+    /// say which game a message is about.
+    fn two_games_with_known_ids() -> Library {
+        let root = std::env::temp_dir().join(format!(
+            "gh-lib-route-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut library = Library::new_at(Some(root.join("games.json")), 0.0);
+        for id in ["alpha", "beta"] {
+            let mut game = Game::new_named(id.to_string());
+            game.id = id.to_string();
+            library.add(game).expect("the temp library is writable");
+        }
+        library
+    }
+
+    /// The layer's ids are per game and per position, so two cards open two
+    /// layers and neither focus request can land on the other's control.
+    ///
+    /// Written because the alternative — one id derived from the entry alone —
+    /// compiles, draws, and reads correctly, and would make
+    /// `Shell::update`'s focus request a coin toss between two visible cards.
+    #[test]
+    fn the_layers_ids_name_the_game_and_the_position() {
+        assert_eq!(
+            game_menu_item_id("had-es", 0),
+            "gamehandler.library.menu.had-es.0"
+        );
+        assert_eq!(
+            game_menu_item_id("had-es", 7),
+            "gamehandler.library.menu.had-es.7"
+        );
+        assert_ne!(
+            game_menu_item_id("had-es", 0),
+            game_menu_item_id("ce-les-te", 0)
+        );
+        assert_ne!(
+            game_menu_item_id("had-es", 0),
+            game_menu_item_id("had-es", 1)
+        );
     }
 
     /// The keys the selector offers are the ones the settings loader accepts.

@@ -1376,6 +1376,18 @@ pub(crate) mod harness {
         pub(crate) bounds: Option<Rect>,
         pub(crate) click: bool,
         pub(crate) focus: bool,
+        /// `Node::is_disabled` — the property an assistive technology reads to
+        /// say "this control exists and you cannot use it".
+        ///
+        /// Added for UX-16: the actions layer draws a game's three prefix
+        /// entries for a Linux game exactly as the menu draws them — inert, but
+        /// announced — and a test that asserted only the *label* of those
+        /// controls would pass against a layer that silently omitted them, which
+        /// is the reading a keyboard user must not be given. Note that
+        /// libcosmic's button adds `Action::Click` to its node whether or not it
+        /// has an `on_press` (`src/widget/button/widget.rs:693`), so `click` is
+        /// **not** the property that distinguishes the two: this is.
+        pub(crate) disabled: bool,
         /// `Node::live` — `None` for every node that is not a live region.
         ///
         /// Added for UX-14: `Live` is the property that makes a screen reader
@@ -1396,6 +1408,7 @@ pub(crate) mod harness {
             bounds: raw.bounds(),
             click: raw.supports_action(Action::Click),
             focus: raw.supports_action(Action::Focus),
+            disabled: raw.is_disabled(),
             live: raw.live(),
         }
     }

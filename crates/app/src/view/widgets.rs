@@ -399,6 +399,100 @@ fn play_button<'a, M: Clone + 'static>(game_id: &str, on_play: M) -> Element<'a,
         .into()
 }
 
+/// The reference's own words for the "More actions" control, used for both its
+/// tooltip and its accessible name.
+///
+/// `QQC2.ToolTip.text: "More actions"` (`LibraryPage.qml:211`), one string
+/// bound twice for the reason UX-12's four sites record: a hint and a name that
+/// come from one constant cannot drift.
+pub const MORE_ACTIONS_LABEL: &str = "More actions";
+
+/// Play, and the "More actions" control beside it — the pair both delegates
+/// draw (`LibraryPage.qml:203-213`, `:275-284`).
+///
+/// One function for the two call sites, so the card and the row cannot disagree
+/// about the pair or about their spacing. `on_more` is an `Option` because the
+/// caller owns whether the actions are reachable: `None` draws Play alone, which
+/// is what a card whose actions have nowhere to open gets — a button that
+/// publishes a message nothing answers is worse than no button.
+fn action_row<'a, M: Clone + 'static>(
+    game_id: &str,
+    on_play: M,
+    on_more: Option<M>,
+) -> Element<'a, M> {
+    let mut row = Row::new()
+        .push(play_button(game_id, on_play))
+        .spacing(metrics::CARD_MARGIN)
+        .align_y(Alignment::Center);
+    row = row.push_maybe(on_more.map(|message| more_actions_button(game_id, message)));
+    row.into()
+}
+
+/// The id of a game's "More actions" control, on its card and on its row.
+///
+/// Per game, for the reason [`play_button_id`] is: the control exists once per
+/// game and the library draws every game at once.
+pub fn more_actions_id(game_id: &str) -> String {
+    format!("gamehandler.library.more.{game_id}")
+}
+
+/// The reference's "More actions" control, as both the card and the row draw
+/// it — the keyboard route to the per-game actions (**UX-16**).
+///
+/// `LibraryPage.qml:209-213` (card) and `:281-284` (row) each draw a
+/// `QQC2.ToolButton` beside Play with `icon.name: "view-more-symbolic"` and, on
+/// the card, `QQC2.ToolTip.text: "More actions"`; both call
+/// `page.openGameMenu(modelData, this)`, which pops the very `gameMenu` the
+/// port renders as a right-click context menu. **A `QQC2.ToolButton` is in the
+/// Tab ring**, so in the reference a keyboard user reaches every per-game
+/// action — including "Remove from library" — through this control.
+///
+/// The port had no such control, and the toolkit's context menu opens from a
+/// pointer button release alone (`src/widget/context_menu.rs:441-460`), so
+/// until this button existed the only keyboard-reachable control on a game was
+/// Play.
+///
+/// # Why it is built here and not at the two call sites
+///
+/// The card and the row must not drift — the same reason [`play_button`] is one
+/// function. The icon is embedded rather than looked up by name for the reason
+/// [`play_button`]'s doc records: `icon::from_name` resolves nowhere in this
+/// build.
+///
+/// # What its press sends
+///
+/// `on_more`, which each call site builds as `Message::OpenGameMenu` with that
+/// game's id — the arm that opens the layer
+/// [`crate::view::library::game_menu_actions`] draws. (Spelled as a plain code
+/// span rather than a link because this module may not name the app's
+/// `Message` type at all: `view/mod.rs`'s layer guard reads this file's text,
+/// and a link would carry the path it looks for.) It is *not* the menu's "Remove from library" action: the reference's
+/// control opens the menu, and a control labelled "More actions" that went
+/// straight to the destructive entry would skip the other seven and lie about
+/// itself. The message is the caller's rather than built here because
+/// `view/widgets.rs` names no `Message` of its own, which is the property that
+/// keeps its tests message-free.
+///
+/// # The accessible name
+///
+/// `button::icon` publishes a node with **no label**: it sets no `name`, and the
+/// only label source in `src/widget/button/widget.rs` is the `name` field the
+/// *text* variant's `From` impl fills from its label (`text.rs:143-146`). So the
+/// button is wrapped in [`crate::view::a11y::tooltipped_button`] with the
+/// reference's own tooltip text — the same repair UX-12 made at four other
+/// icon-only controls.
+fn more_actions_button<'a, M: Clone + 'static>(game_id: &str, on_more: M) -> Element<'a, M> {
+    crate::view::a11y::tooltipped_button(
+        button::icon(crate::icons::handle(crate::icons::Icon::ViewMore))
+            .id(more_actions_id(game_id).into())
+            .tooltip(MORE_ACTIONS_LABEL)
+            .on_press(on_more.clone()),
+        MORE_ACTIONS_LABEL,
+        Some(on_more),
+    )
+    .into()
+}
+
 /// A library grid tile: the cover, the name and the subtitle, with the Play
 /// control under them.
 ///
@@ -428,6 +522,7 @@ pub fn card<'a, M: Clone + 'static>(
     game: &'a Game,
     label: &str,
     on_play: M,
+    on_more: Option<M>,
 ) -> Element<'a, M> {
     let (cell_w, cell_h) = metrics::GRID_CELL;
     let spec = card_cover_spec();
@@ -435,7 +530,7 @@ pub fn card<'a, M: Clone + 'static>(
     let body = Column::new()
         .push(cover_box(cache, game, spec))
         .push(name_and_subtitle(game, subtitle_of(game, label)))
-        .push(play_button(&game.id, on_play.clone()))
+        .push(action_row(&game.id, on_play.clone(), on_more))
         .spacing(metrics::CARD_MARGIN)
         .width(Length::Fill);
 
@@ -504,11 +599,12 @@ pub fn row<'a, M: Clone + 'static>(
     game: &'a Game,
     labels: &RowLabels<'_>,
     on_play: M,
+    on_more: Option<M>,
 ) -> Element<'a, M> {
     let line = Row::new()
         .push(cover_box(cache, game, row_cover_spec()))
         .push(name_and_subtitle(game, row_subtitle_of(game, labels)))
-        .push(play_button(&game.id, on_play.clone()))
+        .push(action_row(&game.id, on_play.clone(), on_more))
         .spacing(metrics::CARD_MARGIN)
         .align_y(Alignment::Center);
 
@@ -1291,6 +1387,131 @@ mod tests {
         assert_eq!(resolved_runner_label(&manager, &linux), "Linux native");
     }
 
+    /// A message type of this module's own, for the two tests that press a
+    /// control. Same reason [`crate::view::a11y`]'s test module has one: the
+    /// app's `Message` has no `PartialEq` (it carries a `ToastId`, a `Task` and
+    /// a `GameForm`) so a comparison against it would have to be destructured,
+    /// and what is under test here is which message reaches the caller — not
+    /// which message the app happens to define.
+    #[derive(Debug, Clone, PartialEq)]
+    enum Msg {
+        Play,
+        More,
+    }
+
+    /// **UX-16: the "More actions" control is the card's and the row's second
+    /// Tab stop, and its press is the caller's message** — proved by driving the
+    /// key through a real widget tree rather than by reading the builder.
+    ///
+    /// The order is asserted, not just the presence: the reference draws Play
+    /// first and "More actions" beside it (`LibraryPage.qml:203-213`,
+    /// `:275-284`), and a Tab ring that reached the actions before the game's
+    /// own Play button would be a different page from the one the QML lays out.
+    /// The two keys are driven in sequence against **one** element and **one**
+    /// tree, because `tab_to` carries the framework's focus forward inside that
+    /// tree — a fresh tree per key would focus the first stop twice and the test
+    /// would pass against a widget that ignored the second key.
+    #[test]
+    fn the_more_actions_control_is_the_second_tab_stop_and_presses_the_callers_message() {
+        use crate::view::a11y::harness;
+        use cosmic::iced::keyboard::{Key, key::Named};
+
+        let game = Game::new_named("Half-Life 2");
+        let mut el: Element<'_, Msg> =
+            card(&cache(), &game, "System Wine", Msg::Play, Some(Msg::More));
+
+        let stops = harness::focusables(&mut el);
+        assert_eq!(
+            stops.len(),
+            2,
+            "the tile is Play and More actions — the reference's pair. Reported: \
+             {stops:?}"
+        );
+        assert!(
+            stops.iter().all(Option::is_some),
+            "a control in the ring that reports no id cannot be addressed, which \
+             is what `Shell::update`'s focus request does with the layer's first \
+             control: {stops:?}"
+        );
+
+        let (mut tree, node) = harness::built(&mut el);
+        let press_enter = |el: &mut Element<'_, Msg>, tree: &mut Tree, node: &Node| {
+            let mut messages = Vec::new();
+            let _ = harness::dispatch(
+                el,
+                tree,
+                node,
+                &harness::pressed(Key::Named(Named::Enter)),
+                &mut messages,
+            );
+            messages
+        };
+
+        harness::tab_to(&mut el, &mut tree, &node);
+        assert_eq!(
+            press_enter(&mut el, &mut tree, &node),
+            vec![Msg::Play],
+            "the first Tab stop is Play"
+        );
+        harness::tab_to(&mut el, &mut tree, &node);
+        assert_eq!(
+            press_enter(&mut el, &mut tree, &node),
+            vec![Msg::More],
+            "the second Tab stop is More actions, and Enter on it publishes \
+             exactly the message the caller handed the builder — one message, \
+             not one from the wrapper and one from the button under it"
+        );
+    }
+
+    /// **The row draws the same pair as the card**, which is the reason the two
+    /// are one function rather than two builders that agree.
+    ///
+    /// `LibraryPage.qml:275-284` draws the row's `ToolButton` beside its Play
+    /// button exactly as `:203-213` draws the card's; a port that wired the card
+    /// and forgot the row would still render, still focus, and leave the list
+    /// view with no keyboard route to a game's actions.
+    #[test]
+    fn the_row_draws_the_more_actions_control_too() {
+        use crate::view::a11y::harness;
+
+        let game = Game::new_named("Half-Life 2");
+        let labels = RowLabels {
+            runner: "System Wine",
+            last_played: "Never played",
+        };
+        let mut el: Element<'_, Msg> = row(&cache(), &game, &labels, Msg::Play, Some(Msg::More));
+        assert_eq!(
+            harness::focusables(&mut el).len(),
+            2,
+            "the row must offer Play and More actions, as the card does"
+        );
+    }
+
+    /// **With no actions message the tile draws Play alone** — the tile a caller
+    /// that has nowhere to open the actions gets.
+    ///
+    /// This is the `Option`'s whole purpose, and it is asserted because the
+    /// alternative is worse than it looks: a control whose press publishes a
+    /// message nothing answers is a button that does nothing, and it would still
+    /// be a Tab stop with an accessible name promising actions that never open.
+    #[test]
+    fn a_tile_with_no_actions_message_draws_play_alone() {
+        use crate::view::a11y::harness;
+
+        let game = Game::new_named("Half-Life 2");
+        let mut el: Element<'_, Msg> = card(&cache(), &game, "System Wine", Msg::Play, None);
+        assert_eq!(
+            harness::focusables(&mut el).len(),
+            1,
+            "the tile without an actions message must be Play and nothing else"
+        );
+        assert_eq!(
+            texts(&traversal(&mut el)),
+            ["HL", "Half-Life 2", "System Wine", "Play"],
+            "and it draws no label the actions control would have added"
+        );
+    }
+
     /// **The plate and the form's picker are different widgets.** The library
     /// tile shows initials and no words; the form's picker shows the words and
     /// no initials.
@@ -1343,7 +1564,7 @@ mod tests {
         let manager = RunnerManager::at("/nonexistent");
         let label = resolved_runner_label(&manager, &game);
 
-        let mut card: Element<'_, ()> = card(&cache(), &game, &label, ());
+        let mut card: Element<'_, ()> = card(&cache(), &game, &label, (), None);
         assert_eq!(
             texts(&traversal(&mut card)),
             ["HL", "Half-Life 2", "System Wine", "Play"]
@@ -1354,7 +1575,7 @@ mod tests {
             runner: &label,
             last_played: &played,
         };
-        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, ());
+        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, (), None);
         assert_eq!(
             texts(&traversal(&mut row)),
             ["HL", "Half-Life 2", "System Wine · Never played", "Play"]
@@ -1388,7 +1609,7 @@ mod tests {
             runner: &label,
             last_played: &played,
         };
-        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, ());
+        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, (), None);
         let row_seen = traversal(&mut row);
         let row_texts = texts(&row_seen);
         assert_eq!(
@@ -1401,7 +1622,7 @@ mod tests {
             ]
         );
 
-        let mut card: Element<'_, ()> = card(&cache(), &game, &label, ());
+        let mut card: Element<'_, ()> = card(&cache(), &game, &label, (), None);
         let card_seen = traversal(&mut card);
         let card_texts = texts(&card_seen);
         assert_eq!(
@@ -1440,7 +1661,7 @@ mod tests {
             runner: "System Wine",
             last_played: &played,
         };
-        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, ());
+        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, (), None);
 
         assert_eq!(
             texts(&traversal(&mut row)),
@@ -1485,7 +1706,7 @@ mod tests {
             last_played: &played,
         };
 
-        let mut card: Element<'_, ()> = card(&cache(), &game, &label, ());
+        let mut card: Element<'_, ()> = card(&cache(), &game, &label, (), None);
         let card_seen = traversal(&mut card);
         assert!(
             texts(&card_seen).contains(&PLAY_LABEL),
@@ -1499,7 +1720,7 @@ mod tests {
             ids(&card_seen)
         );
 
-        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, ());
+        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, (), None);
         let row_seen = traversal(&mut row);
         assert!(
             texts(&row_seen).contains(&PLAY_LABEL),
@@ -1545,7 +1766,7 @@ mod tests {
             last_played: &played,
         };
 
-        let mut card: Element<'_, &str> = card(&cache(), &game, &label, "launch");
+        let mut card: Element<'_, &str> = card(&cache(), &game, &label, "launch", None);
         let (cell_w, cell_h) = metrics::GRID_CELL;
         let card_hit = Point::new(cell_w / 2.0, cell_h / 2.0);
         assert_eq!(
@@ -1555,7 +1776,7 @@ mod tests {
              exactly once"
         );
 
-        let mut row: Element<'_, &str> = row(&cache(), &game, &labels, "launch");
+        let mut row: Element<'_, &str> = row(&cache(), &game, &labels, "launch", None);
         let row_hit = Point::new(20.0, metrics::LIST_ROW_HEIGHT / 2.0);
         assert_eq!(
             published_by_double_click(&mut row, row_hit),
@@ -1642,9 +1863,9 @@ mod tests {
         let available = metrics::GRID_CELL.0 - 2.0 * metrics::CARD_MARGIN;
         let one_line = metrics::CARD_NAME_SIZE * metrics::LINE_HEIGHT_RATIO;
 
-        let mut short_card: Element<'_, ()> = card(&cache(), &short, "", ());
+        let mut short_card: Element<'_, ()> = card(&cache(), &short, "", (), None);
         let short_parts = column_children_of(&mut short_card);
-        let mut long_card: Element<'_, ()> = card(&cache(), &long, "", ());
+        let mut long_card: Element<'_, ()> = card(&cache(), &long, "", (), None);
         let long_parts = column_children_of(&mut long_card);
         assert_eq!(
             long_parts.len(),
@@ -1709,7 +1930,7 @@ mod tests {
         let long_label = "Proton-GE-Proton9-20-x86_64 ".repeat(8);
         let subtitle = subtitle_of(&long, &long_label);
         let subtitle_line = metrics::CARD_SUBTITLE_SIZE * metrics::LINE_HEIGHT_RATIO;
-        let mut labelled_card: Element<'_, ()> = card(&cache(), &long, &long_label, ());
+        let mut labelled_card: Element<'_, ()> = card(&cache(), &long, &long_label, (), None);
         let labelled_parts = column_children_of(&mut labelled_card);
         assert_eq!(
             labelled_parts[1].height,
@@ -1734,7 +1955,7 @@ mod tests {
         );
 
         // The fix itself, stated as what it is: one line, in both delegates.
-        let mut card_el: Element<'_, ()> = card(&cache(), &long, "", ());
+        let mut card_el: Element<'_, ()> = card(&cache(), &long, "", (), None);
         let card_seen = traversal_at_width(&mut card_el, metrics::GRID_CELL.0);
         assert_eq!(
             drawn(&card_seen, &title_of(&long)).height,
@@ -1750,7 +1971,7 @@ mod tests {
         // Narrow on purpose: the row is a `Length::Fill` line inside the page, so
         // a wide window would never wrap its text and the row's half of this
         // would be untested.
-        let mut row_el: Element<'_, ()> = row(&cache(), &long, &labels, ());
+        let mut row_el: Element<'_, ()> = row(&cache(), &long, &labels, (), None);
         let row_seen = traversal_at_width(&mut row_el, 400.0);
         assert_eq!(
             drawn(&row_seen, &title_of(&long)).height,
@@ -1776,7 +1997,7 @@ mod tests {
         // 4, `../migration/REPORT.md` residual 4). Measured rather than argued,
         // because that finding and its retraction were both made from captures:
         // the name's *drawn* box must not exceed the width the cell gives it.
-        let mut card_for_width: Element<'_, ()> = card(&cache(), &long, "", ());
+        let mut card_for_width: Element<'_, ()> = card(&cache(), &long, "", (), None);
         let wide = traversal_at_width(&mut card_for_width, available);
         let name_box = drawn(&wide, &title_of(&long));
         assert!(
@@ -1908,7 +2129,7 @@ mod tests {
 
         // One element, read two ways: the layout node's sizes, and the bounds the
         // traversal reports for the strings inside it.
-        let mut card_el: Element<'_, ()> = card(&cache(), &game, "Shooter", ());
+        let mut card_el: Element<'_, ()> = card(&cache(), &game, "Shooter", (), None);
         let parts = column_children_of(&mut card_el);
         assert_eq!(
             parts[2].height,
@@ -1962,7 +2183,7 @@ mod tests {
             "a card must not answer to another game's key"
         );
 
-        let mut card: Element<'_, ()> = card(&cache(), &one, "", ());
+        let mut card: Element<'_, ()> = card(&cache(), &one, "", (), None);
         let seen = traversal(&mut card);
         assert!(
             !ids(&seen).contains(&Id::from(play_button_id(&two.id))),
@@ -2030,7 +2251,7 @@ mod tests {
 
         // "Halo" so that the initials "HA" cannot be confused with the name.
         let game = Game::new_named("Halo");
-        let mut card: Element<'_, ()> = card(&cache(), &game, "", ());
+        let mut card: Element<'_, ()> = card(&cache(), &game, "", (), None);
         let seen = traversal(&mut card);
         let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
 
@@ -2071,7 +2292,7 @@ mod tests {
             runner: "",
             last_played: "",
         };
-        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, ());
+        let mut row: Element<'_, ()> = row(&cache(), &game, &labels, (), None);
         let seen = traversal(&mut row);
         let ratio = drawn(&seen, "HA").height / drawn(&seen, "Halo").height;
 

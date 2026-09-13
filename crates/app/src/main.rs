@@ -646,6 +646,27 @@ pub enum Message {
     ConfirmDeleteGame(GameId),
     /// The user confirmed; do it. `removeGame()` past the dialog.
     DeleteGameConfirmed(GameId),
+    /// Open the game's actions layer — the keyboard route to the menu
+    /// (**UX-16**). `page.openGameMenu(game, opener)`.
+    ///
+    /// The reference reaches its `gameMenu` from two controls: a right-button
+    /// press on the card or row, and the per-tile "More actions"
+    /// `QQC2.ToolButton` (`LibraryPage.qml:209-213`, `:281-284`). Only the first
+    /// reached the port, because the toolkit's `ContextMenu` opens from a
+    /// pointer button release alone (`src/widget/context_menu.rs:441-460`), and
+    /// the menu the QML opens is the route to every per-game action — including
+    /// "Remove from library". The library's "More actions" control sends this;
+    /// [`Shell::update`]'s arm opens [`State::game_menu`].
+    ///
+    /// # Why it carries the id rather than a position
+    ///
+    /// The same reason [`Message::ConfirmDeleteGame`] does: the control is drawn
+    /// once per game, from that game's own builder
+    /// (`view/widgets.rs::more_actions_button`), so the id is what the control
+    /// already has in hand — a position would have to be resolved back to a game
+    /// at the moment the message is handled, through a list that re-sorts under
+    /// the user (the sort mode is a setting).
+    OpenGameMenu(GameId),
     /// Open the reference's `exeDialog` (`GameFormPage.qml:334-347`).
     ///
     /// This used to carry an `ExeField` naming one of four path fields. The
@@ -1250,6 +1271,40 @@ fn remove_game_dialog<'a>(
     dialog_over(body, popup)
 }
 
+/// A game's actions, as a layer over the page it belongs to (**UX-16**).
+///
+/// # Why a dialog and not the reference's popup menu
+///
+/// The reference opens a `QQC2.Menu` here (`LibraryPage.qml:209-213` calls
+/// `page.openGameMenu`). libcosmic's equivalent is not reachable from outside
+/// the crate — see [`view::library::game_menu_actions`] for the measurement, the
+/// short version of which is that the widget's `Menu` is `pub(crate)` in a
+/// private module (`src/widget/menu.rs:71`, `:81`) and `ContextMenu` opens on a
+/// pointer button release alone (`src/widget/context_menu.rs:441-460`). So the
+/// app draws the same entries with the widgets it does have, over the same
+/// `dialog_over` composition the two prompts use — which is also what gives the
+/// layer UX-06's input wall, so the page under it is not live while it is open.
+///
+/// # The title and the body
+///
+/// The menu names itself; a dialog has to name what it is showing. The title is
+/// the game and the body says what the eight controls are, because the raw
+/// alternative — a bare list of verbs under a bare game name — reads as a game
+/// detail page rather than as the actions the context menu also offers.
+fn game_menu_dialog<'a>(
+    body: cosmic::Element<'a, Message>,
+    game: &'a Game,
+) -> cosmic::Element<'a, Message> {
+    use cosmic::widget::{button, dialog};
+    let popup: cosmic::Element<'a, Message> = dialog()
+        .title(game.name.clone())
+        .body("The actions this game's context menu offers, as a list.")
+        .control(view::library::game_menu_actions(game))
+        .secondary_action(button::standard("Cancel").on_press(Message::CloseDialog))
+        .into();
+    dialog_over(body, popup)
+}
+
 fn remove_runner_dialog<'a>(
     body: cosmic::Element<'a, Message>,
     pending: &crate::state::PendingRunnerRemoval,
@@ -1753,11 +1808,26 @@ impl Shell {
             });
         }
         let body = self.view_body();
-        // The game dialog wraps first, so the runner dialog — when both are
+        // The actions layer wraps first, so it is the *lowest* of the three:
+        // choosing "Remove from library" from it clears the field and opens the
+        // delete prompt, and the two therefore do not normally coexist — the
+        // order here is the backstop, not the mechanism. An id the library no
+        // longer holds draws nothing: the layer is a list of that game's
+        // actions, and there are none for a game that is not there (the same
+        // silence `Message::OpenGameMenu` keeps on the way in).
+        let body = match self
+            .state
+            .game_menu
+            .as_ref()
+            .and_then(|id| self.state.library.get(id))
+        {
+            Some(game) => game_menu_dialog(body, game),
+            None => body,
+        };
+        // The game dialog wraps next, so the runner dialog — when both are
         // somehow pending — draws outermost. Both pending at once takes
         // opening one dialog from inside another's page, which the mutual
-        // clear in the two confirm arms already prevents; the order here is
-        // the backstop, not the mechanism.
+        // clear in the two confirm arms already prevents.
         let body = match &self.state.confirm_delete {
             Some(id) => {
                 let name = self
@@ -1807,9 +1877,17 @@ impl Shell {
     /// discarding a half-filled form are different promises, and only the first
     /// is the reference's.
     fn dismiss_dialogs(&mut self) -> bool {
-        let had = self.state.confirm_delete.is_some() || self.state.confirm_remove_runner.is_some();
+        let had = self.state.confirm_delete.is_some()
+            || self.state.confirm_remove_runner.is_some()
+            // Esc closes the actions layer too (**UX-16**), and it is the
+            // reference's own binding rather than an addition to it: the QML's
+            // `QQC2.Menu` closes on Escape, and the toolkit's context menu takes
+            // `close_on_escape: true` at `src/widget/context_menu.rs:34` for the
+            // pointer-opened path this one replaces.
+            || self.state.game_menu.is_some();
         self.state.confirm_delete = None;
         self.state.confirm_remove_runner = None;
+        self.state.game_menu = None;
         had
     }
 
@@ -1964,6 +2042,11 @@ impl Shell {
             // Add form under an "Edit Game" title. Doing nothing is the honest
             // version of that.
             Message::OpenEditGameForm(game_id) => {
+                // Choosing an action closes the layer it was chosen from
+                // (**UX-16**): the layer stands in for the reference's
+                // `gameMenu`, and a menu that stayed open after an item was
+                // chosen is the one thing a menu never does.
+                self.state.game_menu = None;
                 if let Some(game) = self.state.library.get(&game_id) {
                     self.state.game_form = Some(GameForm::from_game(game));
                     self.state.confirm_delete = None;
@@ -1973,6 +2056,9 @@ impl Shell {
                 self.state.game_form = None;
                 self.state.confirm_delete = None;
                 self.state.confirm_remove_runner = None;
+                // The actions layer is one of the things "whatever overlay is
+                // open" names (**UX-16**); its Cancel button sends this.
+                self.state.game_menu = None;
             }
             // `removeDialog.open()` (`LibraryPage.qml:346-360`): the pending id
             // the dialog draws. An id the library does not hold opens nothing
@@ -1981,6 +2067,11 @@ impl Shell {
             // not there. Opening one dialog closes the other: the port draws a
             // single modal layer, and two pending removals would nest.
             Message::ConfirmDeleteGame(game_id) => {
+                // Choosing an action closes the layer it was chosen from
+                // (**UX-16**): the layer stands in for the reference's
+                // `gameMenu`, and a menu that stayed open after an item was
+                // chosen is the one thing a menu never does.
+                self.state.game_menu = None;
                 if self.state.library.get(&game_id).is_some() {
                     self.state.confirm_delete = Some(game_id);
                     self.state.confirm_remove_runner = None;
@@ -2009,6 +2100,30 @@ impl Shell {
                                 .toast_task(format!("Could not remove “{name}”: {error}"));
                         }
                     }
+                }
+            }
+            // The keyboard route to the same actions the context menu holds
+            // (**UX-16**). An id the library does not hold opens nothing, for
+            // [`Message::ConfirmDeleteGame`]'s reason: there are no actions for
+            // a game that is not there.
+            //
+            // The task focuses the layer's first control. Without it the layer
+            // would open with the focus still on the "More actions" button that
+            // opened it, and the keyboard user's next Tab would walk the rest of
+            // the page before reaching the actions — the layer would be reachable
+            // and still not usable. The id is the view's, for
+            // [`Shell::focus_library_search`]'s reason: `view/library.rs` builds
+            // the widget that carries it, so the two cannot drift into a focus
+            // that names a control nothing draws. A `Task` has no accessor for
+            // the operation it carries — `units()` is the count and nothing more
+            // (`iced/runtime/src/task.rs:282`) — so what the layer's test reads is
+            // the state this writes plus the fact that work was asked for.
+            Message::OpenGameMenu(game_id) => {
+                if self.state.library.get(&game_id).is_some() {
+                    self.state.game_menu = Some(game_id.clone());
+                    return cosmic::iced::widget::operation::focus(
+                        view::library::game_menu_item_id(&game_id, 0),
+                    );
                 }
             }
             // `exeDialog` (`GameFormPage.qml:334-347`): "Select an executable"
@@ -2414,6 +2529,11 @@ impl Shell {
             // is "Select a game first", not silence — this is the one entry
             // point of the four that says so.
             Message::LaunchGame(game_id) => {
+                // Choosing an action closes the layer it was chosen from
+                // (**UX-16**): the layer stands in for the reference's
+                // `gameMenu`, and a menu that stayed open after an item was
+                // chosen is the one thing a menu never does.
+                self.state.game_menu = None;
                 let Some(game) = self.state.library.get(&game_id).cloned() else {
                     return self.state.toast_task("Select a game first".to_string());
                 };
@@ -2474,6 +2594,11 @@ impl Shell {
             // not hold returns silently, which is the reference's own first two
             // lines — unlike `playGame`, there is no "Select a game first" here.
             Message::RunPrefixTool { game_id, tool } => {
+                // Choosing an action closes the layer it was chosen from
+                // (**UX-16**): the layer stands in for the reference's
+                // `gameMenu`, and a menu that stayed open after an item was
+                // chosen is the one thing a menu never does.
+                self.state.game_menu = None;
                 let Some(game) = self.state.library.get(&game_id).cloned() else {
                     return cosmic::task::none();
                 };
@@ -2515,6 +2640,11 @@ impl Shell {
             // sentence for a Linux game, and no success notice at all: the file
             // manager window that opens *is* the report.
             Message::OpenPrefixFolder(game_id) => {
+                // Choosing an action closes the layer it was chosen from
+                // (**UX-16**): the layer stands in for the reference's
+                // `gameMenu`, and a menu that stayed open after an item was
+                // chosen is the one thing a menu never does.
+                self.state.game_menu = None;
                 let Some(game) = self.state.library.get(&game_id).cloned() else {
                     return cosmic::task::none();
                 };
@@ -2571,6 +2701,11 @@ impl Shell {
             // `shortcut_command` builds the command, so the shortcut reaches this
             // install the same way the reference's reaches its own.
             Message::CreateDesktopShortcut(game_id) => {
+                // Choosing an action closes the layer it was chosen from
+                // (**UX-16**): the layer stands in for the reference's
+                // `gameMenu`, and a menu that stayed open after an item was
+                // chosen is the one thing a menu never does.
+                self.state.game_menu = None;
                 let Some(game) = self.state.library.get(&game_id).cloned() else {
                     return cosmic::task::none();
                 };
@@ -2606,6 +2741,11 @@ impl Shell {
             // (D-48); the reply re-checks the game for the same reason
             // `bridge.py:547-549` does.
             Message::FetchCover(game_id) => {
+                // Choosing an action closes the layer it was chosen from
+                // (**UX-16**): the layer stands in for the reference's
+                // `gameMenu`, and a menu that stayed open after an item was
+                // chosen is the one thing a menu never does.
+                self.state.game_menu = None;
                 let Some(game) = self.state.library.get(&game_id).cloned() else {
                     return cosmic::task::none();
                 };
@@ -5563,6 +5703,11 @@ mod tests {
         // unwritten arm (D-34) — which is exactly what `"g"` did.
         Message::ConfirmDeleteGame(_) => ("ConfirmDeleteGame", Message::ConfirmDeleteGame("sample-game".to_string())),
         Message::DeleteGameConfirmed(_) => ("DeleteGameConfirmed", Message::DeleteGameConfirmed("g".to_string())),
+        // `"sample-game"`, for `ConfirmDeleteGame`'s reason exactly: the fixture
+        // presets the pending delete to `Some("g")`, and an id the library does
+        // not hold opens nothing — so `"g"` would be reported as an unwritten
+        // arm by its own guard. The fixture's library holds this one.
+        Message::OpenGameMenu(_) => ("OpenGameMenu", Message::OpenGameMenu("sample-game".to_string())),
         Message::PickExeFile => ("PickExeFile", Message::PickExeFile),
         Message::ExeFileChosen(_) => ("ExeFileChosen", Message::ExeFileChosen(Some("/tmp/g.exe".to_string()))),
         Message::PickCoverFile => ("PickCoverFile", Message::PickCoverFile),
@@ -6036,6 +6181,11 @@ mod tests {
             // reach here (see the removal tests for the unheld half).
             "ConfirmDeleteGame",
             "DeleteGameConfirmed",
+            // UX-16's route to the same menu. Live because the library's "More
+            // actions" control sends it and the arm opens the layer — the
+            // unknown-id silence is what the sample's held id keeps out of
+            // reach here (see the layer tests for the unheld half).
+            "OpenGameMenu",
             // U5's four. Live because the library's context menu sends
             // `FetchCover` (U2's entry point), the form's Find-cover button
             // sends `FetchCoverForForm`, and each request has its reply. The
@@ -9471,6 +9621,20 @@ mod tests {
             "Escape must clear the pending runner removal"
         );
 
+        // The actions layer (**UX-16**), which is the third thing Escape
+        // dismisses. The reference binds it too: the QML's `QQC2.Menu` closes on
+        // Escape, and the toolkit's pointer-opened context menu takes
+        // `close_on_escape: true` (`src/widget/context_menu.rs:34`).
+        shell.state.game_menu = Some("a-game".to_string());
+        assert!(
+            shell.dismiss_dialogs(),
+            "an open actions layer is something Escape dismissed"
+        );
+        assert!(
+            shell.state.game_menu.is_none(),
+            "Escape must clear the actions layer as well as the two prompts"
+        );
+
         // Both at once — the ordering backstop in `view_with_overlays` says this
         // state is reachable, so neither field may be left behind.
         shell.state.confirm_delete = Some("a-game".to_string());
@@ -9713,6 +9877,97 @@ mod tests {
         );
     }
 
+    /// **UX-16: the "More actions" control's message opens the actions layer,
+    /// and an id the library does not hold opens nothing.**
+    ///
+    /// The state half of the keyboard route. Its *widget* half — that the
+    /// control is a Tab stop and that Enter on it publishes this message — is
+    /// [`view::widgets`]'s
+    /// `the_more_actions_control_is_the_second_tab_stop_and_presses_the_callers_message`,
+    /// and the layer's own half is
+    /// [`view::library::tests::every_action_in_the_layer_sends_what_its_menu_item_sends`].
+    /// This is the arm the whole route lands in: the reference's `openGameMenu`
+    /// (`LibraryPage.qml:209-213`), as a `Message`.
+    #[test]
+    fn opening_the_actions_layer_holds_the_game_and_an_unknown_id_opens_nothing() {
+        let mut shell = shell_with_work_to_do();
+        assert!(
+            shell.state.game_menu.is_none(),
+            "a fresh shell has no layer open"
+        );
+
+        // An unknown id first, so the assertion is that nothing opened rather
+        // than that nothing *changed*: the fixture holds `"g"` and
+        // `"sample-game"`, and this is neither.
+        let _ = shell.update(Message::OpenGameMenu("absent".to_string()));
+        assert!(
+            shell.state.game_menu.is_none(),
+            "an id the library does not hold has no actions to list, so it opens nothing"
+        );
+
+        let _ = shell.update(Message::OpenGameMenu("sample-game".to_string()));
+        assert_eq!(
+            shell.state.game_menu.as_deref(),
+            Some("sample-game"),
+            "the layer must remember *which* game's actions it is showing — the \
+             focus request and the layer's contents both read it back"
+        );
+
+        // And an unknown id arriving while one is open leaves the open one
+        // alone: the arm's silence is the same on the way in as on the way out.
+        let _ = shell.update(Message::OpenGameMenu("absent".to_string()));
+        assert_eq!(
+            shell.state.game_menu.as_deref(),
+            Some("sample-game"),
+            "an unknown id must not close a layer that is already open"
+        );
+    }
+
+    /// **Choosing any action from the layer closes it** — all eight, derived
+    /// from the spec rather than listed here.
+    ///
+    /// A menu that stayed open after its item was chosen is the one thing a menu
+    /// never does, and the eight messages come from
+    /// [`view::library::game_menu_spec`] through
+    /// [`view::library::game_menu_message`], so this walks the real menu rather
+    /// than a transcription of it. Each message is driven on a shell whose layer
+    /// is open for the game that sent it; the returned tasks are dropped exactly
+    /// as `every_message` drops them, which is also what keeps the four that
+    /// would spawn something (`LaunchGame`, `RunPrefixTool`, `OpenPrefixFolder`,
+    /// `CreateDesktopShortcut`) from reaching the machine — every one of them
+    /// does its work inside `Task::perform`.
+    #[test]
+    fn choosing_any_action_from_the_layer_closes_it() {
+        let mut shell = shell_with_work_to_do();
+        let mut game = Game::new_named("Sample");
+        game.id = "sample-game".to_string();
+
+        let actions: Vec<(view::library::GameMenuKind, Message)> =
+            view::library::game_menu_spec(&game)
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    view::library::MenuEntry::Divider => None,
+                    view::library::MenuEntry::Item { action, .. } => {
+                        Some((action, view::library::game_menu_message(&game.id, action)))
+                    }
+                })
+                .collect();
+        assert_eq!(
+            actions.len(),
+            8,
+            "the fixture is the reference's eight entries"
+        );
+
+        for (kind, action) in actions {
+            shell.state.game_menu = Some(game.id.clone());
+            let _ = shell.update(action);
+            assert!(
+                shell.state.game_menu.is_none(),
+                "choosing {kind:?} left the actions layer open over the page"
+            );
+        }
+    }
+
     /// The delete dialog is a modal over the page the user was on: it names
     /// the entry, says what survives (covers, saves stay on disk), keeps the
     /// keyboard escape (Cancel), and leaves the page — here the other game —
@@ -9761,6 +10016,84 @@ mod tests {
         assert!(
             fallthrough.iter().any(|text| text == "Hades"),
             "the fall-through is the page, both games drawn; drawn: {fallthrough:?}"
+        );
+    }
+
+    /// **The actions layer is drawn, over the page, with the game's own eight
+    /// actions in it (UX-16).**
+    ///
+    /// The wiring half: every other test of this finding passes with the layer
+    /// never rendered at all — the state is written, the messages are sent, and
+    /// a `view_with_overlays` that ignored `game_menu` would leave all of them
+    /// green. This is the one that reads the built view.
+    ///
+    /// The labels are the menu's own, because the layer is built from
+    /// [`view::library::game_menu_spec`]; the page beneath is asserted to still
+    /// be drawn, for [`the_delete_dialog_is_a_modal_over_the_page_it_names`]'s
+    /// reason — the layer is a modal over the page, not a replacement for it.
+    #[test]
+    fn the_actions_layer_is_drawn_over_the_page_with_the_games_own_actions() {
+        let (_root, library) = library_with("u16-actions", &[("g1", "Hades"), ("g2", "Celeste")]);
+        let mut shell = Shell::new();
+        shell.state.library = library;
+        shell.state.page = Page::Library;
+
+        let without = drawn_strings(shell.view_with_overlays());
+        assert!(
+            !without.iter().any(|text| text == "Remove from library"),
+            "no layer is open, so no game's actions are drawn; drawn: {without:?}"
+        );
+
+        // The arm asks the runtime for work — the focus operation that puts the
+        // keyboard on the layer's first control. What a `Task` can be asked is
+        // its *unit count* and nothing else (`iced/runtime/src/task.rs:282`), so
+        // this is the strongest available statement that the request is there:
+        // it does not say *which* control, and the id it names is pinned
+        // instead by
+        // `view::library::tests::every_action_in_the_layer_is_a_named_control_and_the_disabled_ones_say_so`.
+        assert!(
+            shell
+                .update(Message::OpenGameMenu("g1".to_string()))
+                .units()
+                > 0,
+            "opening the layer must ask the runtime to move the focus into it, \
+             or the keyboard user's next Tab walks the page first"
+        );
+        let drawn = drawn_strings(shell.view_with_overlays());
+
+        let mut expected = vec![
+            "Remove from library".to_string(),
+            "Create desktop shortcut".to_string(),
+            "Find cover art".to_string(),
+        ];
+        expected.sort();
+        let mut drawn_actions: Vec<String> = drawn
+            .iter()
+            .filter(|text| expected.contains(text))
+            .cloned()
+            .collect();
+        drawn_actions.sort();
+        assert_eq!(
+            drawn_actions, expected,
+            "the layer must draw the menu's own entries; drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == "Cancel"),
+            "Cancel is the layer's keyboard escape; drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == "Celeste"),
+            "the page stays drawn beneath the layer; drawn: {drawn:?}"
+        );
+
+        // A game that vanished between opening and drawing draws no layer: the
+        // list is that game's actions, and there are none for a game that is
+        // not there.
+        shell.state.game_menu = Some("missing".to_string());
+        let vanished = drawn_strings(shell.view_with_overlays());
+        assert!(
+            !vanished.iter().any(|text| text == "Remove from library"),
+            "a layer for an absent game must draw nothing; drawn: {vanished:?}"
         );
     }
 
