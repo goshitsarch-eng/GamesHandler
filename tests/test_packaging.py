@@ -52,9 +52,17 @@ class PackagingTests(unittest.TestCase):
         # recorded in docs/migration/packaging.md section 3, not a default:
         # network for runner downloads, multiarch for 32-bit Windows games and
         # downloaded Wine/Proton builds, home for libraries in arbitrary
-        # locations, gvfs for network-share games, and --device=all for
-        # controllers passed through to launched games (PLAN.md Q-2 keeps it
-        # until a real gamepad test justifies narrowing it to --device=dri).
+        # locations, gvfs for network-share games.
+        #
+        # Devices are the narrow form, not --device=all (SEC-01). The three
+        # classes are what a launched game needs and nothing else: dri for the
+        # GPU, input for controllers and the event devices SDL reads, usb so
+        # /dev/bus/usb exists for device enumeration. Measured in the sandbox,
+        # the narrow grant removes /dev/mem, /dev/kvm, /dev/nvme0n1,
+        # /dev/vfio, /dev/vhost-net, /dev/watchdog, /dev/nvram and the raw
+        # serial ports -- every one of which --device=all had put inside the
+        # sandbox third-party game binaries run in, and none of which any code
+        # in crates/ opens.
         finish_args = manifest["finish-args"]
         for argument in (
             "--share=network",
@@ -63,13 +71,27 @@ class PackagingTests(unittest.TestCase):
             "--socket=wayland",
             "--socket=pulseaudio",
             "--allow=multiarch",
-            "--device=all",
+            "--device=dri",
+            "--device=input",
+            "--device=usb",
             "--filesystem=home",
             "--filesystem=xdg-run/gvfs",
             "--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro",
         ):
             with self.subTest(argument=argument):
                 self.assertIn(argument, finish_args)
+
+        # And the wide grant must not come back by habit. This is the check
+        # that would have caught it: the list above is satisfied by a manifest
+        # that also carries --device=all, because --device=all subsumes all
+        # three of the narrow entries.
+        self.assertNotIn(
+            "--device=all",
+            finish_args,
+            "--device=all exposes raw disks, /dev/mem and every input device to "
+            "launched games; the narrow device classes are justified in "
+            "docs/migration/packaging.md section 3 (SEC-01)",
+        )
 
         # 32-bit GL and the i386 compat layer are Wine needs, not Qt needs.
         self.assertIn("org.freedesktop.Platform.Compat.i386", manifest["inherit-extensions"])

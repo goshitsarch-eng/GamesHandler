@@ -202,8 +202,18 @@ its DER SHA-256 is
 Unlike a document-oriented app, a game launcher must execute user-selected
 games and compatibility tools from arbitrary library locations and pass through
 controllers and other game hardware. The Flatpak therefore deliberately keeps
-`--filesystem=home` and `--device=all`. These are reviewed functionality
-exceptions, not permissions for package management or unrelated host changes.
+`--filesystem=home`, and grants exactly the three device classes a launched
+game needs — `--device=dri`, `--device=input`, `--device=usb`. These are
+reviewed functionality exceptions, not permissions for package management or
+unrelated host changes.
+
+The device grant is deliberately **not** `--device=all`. That was the previous
+value, and measuring what it actually put in the sandbox showed it exposed the
+raw disk nodes, `/dev/mem`, `/dev/kvm`, the virtualisation and vhost nodes,
+the watchdog, NVRAM and the raw serial ports to every game the launcher starts
+— none of which any code here opens, and none of which a game needs. The three
+narrow classes cover the GPU and the controller path; see
+`docs/migration/packaging.md` section 3 for the before-and-after listing.
 
 The Plugins page does **not** run `apt`, `dnf`, `pacman`, `zypper`, `sudo`, or
 `pkexec` inside Flatpak. Host packages are not visible merely because they were
