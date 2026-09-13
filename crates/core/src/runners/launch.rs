@@ -10,7 +10,7 @@
 //! grace period and reports what the runner said. Everything in this module
 //! exists to serve that one function.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::Read;
 use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
@@ -88,8 +88,28 @@ pub struct ErrorTail {
 }
 
 struct TailState {
-    chunks: Mutex<Vec<u8>>,
+    chunks: Mutex<TailBuffer>,
     stop: AtomicBool,
+}
+
+/// The rolling window as Python keeps it: a list of chunks plus their total
+/// size, not one flat buffer.
+///
+/// The shape is load-bearing, and a flat `Vec<u8>` silently loses it. The
+/// eviction guard is `self._size > self._limit and len(self._chunks) > 1` —
+/// a *chunk* count — so the newest `read` is always kept whole even when it
+/// alone exceeds the limit: it is the message this buffer exists to carry.
+/// The flat buffer this replaces had no chunk boundaries at all, so its
+/// `len() > 1` was a byte count, always true once a second byte had arrived
+/// — dead code that read as Python's guard while the newest chunk was in
+/// fact trimmed at exactly `limit` bytes (BUG-24).
+#[derive(Default)]
+struct TailBuffer {
+    /// One element per `read`, as `_chunks` is a `list`.
+    chunks: VecDeque<Vec<u8>>,
+    /// `self._size` — the total across `chunks`, kept incrementally so
+    /// eviction never has to sum the deque.
+    size: usize,
 }
 
 impl ErrorTail {
@@ -101,7 +121,7 @@ impl ErrorTail {
     pub fn spawn(stream: ChildStderr, limit: usize) -> Self {
         let nonblocking = set_nonblocking(&stream).is_ok();
         let shared = Arc::new(TailState {
-            chunks: Mutex::new(Vec::new()),
+            chunks: Mutex::new(TailBuffer::default()),
             stop: AtomicBool::new(false),
         });
         let worker = Arc::clone(&shared);
@@ -118,12 +138,21 @@ impl ErrorTail {
     /// Wine's output is not reliably UTF-8 and a decode failure here would
     /// discard the very message this exists to carry.
     pub fn text(&self) -> String {
-        let chunks = self
+        let tail = self
             .shared
             .chunks
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        String::from_utf8_lossy(&chunks).into_owned()
+        // `b"".join(self._chunks).decode("utf-8", "replace")`.
+        String::from_utf8_lossy(
+            &tail
+                .chunks
+                .iter()
+                .flat_map(|chunk| chunk.as_slice())
+                .copied()
+                .collect::<Vec<u8>>(),
+        )
+        .into_owned()
     }
 
     /// Drain to completion, then return the text. See the type's note on B-07.
@@ -159,17 +188,19 @@ fn drain(mut stream: ChildStderr, state: Arc<TailState>, limit: usize, nonblocki
     let stop_requested = || state.stop.load(Ordering::SeqCst);
 
     let append = |bytes: &[u8]| {
-        let mut chunks = state
+        let mut tail = state
             .chunks
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        chunks.extend_from_slice(bytes);
-        // Trim from the front, keeping at least one chunk so a single write
-        // larger than the limit is not discarded entirely. Python's loop has
-        // the same `len(self._chunks) > 1` guard.
-        while chunks.len() > limit && chunks.len() > 1 {
-            let excess = chunks.len() - limit;
-            chunks.drain(..excess);
+        tail.chunks.push_back(bytes.to_vec());
+        tail.size += bytes.len();
+        // `while self._size > self._limit and len(self._chunks) > 1: pop(0)` —
+        // whole oldest chunks out, and the newest is never cut into even when
+        // it alone exceeds the limit.
+        while tail.size > limit && tail.chunks.len() > 1 {
+            if let Some(oldest) = tail.chunks.pop_front() {
+                tail.size -= oldest.len();
+            }
         }
     };
 
@@ -1089,12 +1120,21 @@ mod tests {
     /// The trim itself, at a limit small enough to reach without 64 KB of
     /// fixture.
     ///
-    /// The buffer is a **byte** ring, not a line buffer, so the honest
-    /// expectation for a 4-byte limit over `first` then `SECOND` is the last
-    /// four bytes — `COND`. Asserting on whole words here would be asserting
-    /// something the implementation does not promise.
+    /// The buffer is a **chunk** ring, not a byte ring: eviction drops whole
+    /// oldest chunks while `size > limit and len(chunks) > 1`, so the newest
+    /// `read` is kept whole even when it alone overshoots. The honest
+    /// expectation for a 4-byte limit over `first` then `SECOND` — two
+    /// writes, fifty milliseconds apart, so two chunks on any scheduler that
+    /// honours the poll — is `"SECOND"`, all six bytes of it. `"COND"` is the
+    /// byte-precise answer the flat `Vec<u8>` used to give, where the
+    /// `len() > 1` guard counted bytes and was dead (BUG-24).
+    ///
+    /// The gap between the writes is what makes them separate chunks for the
+    /// non-blocking reader (a poll every `DRAIN_POLL` cannot merge writes
+    /// fifty milliseconds apart), which is the same thing that separates them
+    /// for Python's blocking `read(4096)`.
     #[test]
-    fn the_tail_buffer_trims_from_the_front_to_its_limit() {
+    fn the_tail_buffer_keeps_the_newest_chunk_whole() {
         let mut child = std::process::Command::new("/bin/sh")
             .arg("-c")
             .arg("printf 'first' >&2; sleep 0.05; printf 'SECOND' >&2; sleep 0.3")
@@ -1108,9 +1148,39 @@ mod tests {
         std::thread::sleep(Duration::from_millis(200));
         let text = errors.finish();
         assert_eq!(
-            text, "COND",
-            "the last four bytes, which is what a byte ring keeps"
+            text, "SECOND",
+            "the newest chunk is kept whole even when it alone exceeds the \
+             limit — Python's `len(self._chunks) > 1` guard, which a flat \
+             buffer cannot express"
         );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    /// The eviction side of the same rule: chunks older than the newest are
+    /// dropped oldest-first until the total fits. Three writes over a 6-byte
+    /// limit keep the last two, whole.
+    #[test]
+    fn the_tail_buffer_evicts_oldest_chunks_first() {
+        let mut child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(
+                "printf 'AAA' >&2; sleep 0.05; printf 'BBB' >&2; sleep 0.05; \
+                   printf 'CC' >&2; sleep 0.3",
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stream = child.stderr.take().unwrap();
+        let errors = ErrorTail::spawn(stream, 6);
+        std::thread::sleep(Duration::from_millis(300));
+        let text = errors.finish();
+        // size runs 3 → 6 → 8; at 8 the loop pops "AAA", leaving
+        // ["BBB", "CC"] at 5 ≤ 6 — the whole "CC" survives because the guard
+        // counts chunks. A byte ring answers the last six bytes, "ABBBCC".
+        assert_eq!(text, "BBBCC");
         let _ = child.kill();
         let _ = child.wait();
     }

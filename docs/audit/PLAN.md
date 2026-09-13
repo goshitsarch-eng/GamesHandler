@@ -62,7 +62,7 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 41 | 39 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
+| `BUGS.md` | 48 | 42 | 40 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 25 | 20 `FIXED`, 3 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
@@ -136,18 +136,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 31 | 0 | 18 |
-| **Total** | **130** | **106** | **0** | **24** |
+| P3 | 49 | 32 | 0 | 17 |
+| **Total** | **130** | **107** | **0** | **23** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 23 | 0 | 2 |
-| `BUG-xx` | `BUGS.md` | 46 | 39 | 0 | 7 |
+| `BUG-xx` | `BUGS.md` | 46 | 40 | 0 | 6 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 20 | 0 | 9 |
-| **Total** | | **130** | **106** | **0** | **24** |
+| **Total** | | **130** | **107** | **0** | **23** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -312,7 +312,7 @@ across families, not within them.
 | `BUG-21` | Four .trim()-where-Python-has-a-truthiness-test divergences on paths and identifiers, each of which shifts a value in the permissive direction | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** All three sites read the value as stored: `working_directory` gates on `is_empty()` of the raw string, `tool_command` uses `super::game_prefix`, and `stripped_var` (whose doc conflated `:1043`'s strip with `:1399`'s truthiness) is replaced by `prefix_dir_to_create`. Three mutation-proved regression tests; a `" "`-vs-`"\t"` inter-test race that surfaced during verification is recorded in the row and in the test's docblock. | FIXED |
 | `BUG-22` | merge_dll_overrides trims ; from both ends where Python rstrips only, so a leading ; survives the reference and is removed here | S1 | — | `b3ad80b` — `python_rstrip_char` where the reference `rstrip`s; a seventh merge case covers the leading `;` and fails under the old helper.| FIXED |
 | `BUG-23` | Three ways a launch failure is turned into a non-failure | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. **Status: FIXED.** (a) `failure` returns `Result<Option<String>, io::Error>` and `try_wait` errors propagate; the GUI's `Err` arm toasts the bare error without the window restore (`_async`'s catch-all, `fail` unset), the CLI prints and exits 1. (b) both execute checks are `rustix::fs::access(path, EXEC_OK)` — `os.access` verbatim; the mode-bits tests gained a `0o001` owner-class case each and fail under the old check (mutation-verified, uid-0 guarded). (c) the helper `Child` is reaped on a detached thread — verified by reading; a reaped zombie is not observable from a test. The `Err` arm is pinned by `a_failed_watch_toasts_the_error_without_restoring_the_window`. | FIXED |
-| `BUG-24` | The rolling stderr buffer trims to exactly limit bytes where Python keeps the trailing chunk, and the port's chunks.len() > 1 clause is dead code: Python compares *chunk counts* and keeps the last chunk even when it overshoots, while the Rust buffer is one flat Vec<u8> where the same expression is a byte count, subsumed by chunks.len() > limit. The test pins the port's behaviour and its docstring describes Python's guard | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-24` | The rolling stderr buffer trims to exactly limit bytes where Python keeps the trailing chunk, and the port's chunks.len() > 1 clause is dead code: Python compares *chunk counts* and keeps the last chunk even when it overshoots, while the Rust buffer is one flat Vec<u8> where the same expression is a byte count, subsumed by chunks.len() > limit. The test pins the port's behaviour and its docstring describes Python's guard | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** The buffer is the faithful port rather than a reworded comment: `TailBuffer` is a `VecDeque<Vec<u8>>` plus a running `size`, one element per `read`, and eviction pops whole oldest chunks while `size > limit && len(chunks) > 1` — so the newest chunk is kept whole even when it alone overshoots. The test the row named asserted the defect (`"COND"`); it is replaced by `the_tail_buffer_keeps_the_newest_chunk_whole` (`"SECOND"`) plus a new `the_tail_buffer_evicts_oldest_chunks_first` (`"BBBCC"`), and both fail under a flattened `append` with the byte-ring answers the old code gave. | FIXED |
 | `BUG-25` | Two functions apply opposite policies to the same input | S1 | — | `08da989` — both joins validate through `install_directory`; two tests, and the mutation that matters is on `install_directory` itself, because no production input reaches the guard.| FIXED |
 | `BUG-26` | The archive's containment root falls back to an unresolved path: if canonicalize(destination) fails, the root stays unresolved while the member path goes through resolve_missing, which resolves as far as it can — so a resolved member is starts_with-compared against an unresolved root. Members are lexically stripped of .. first, so the reachable outcome is a *false rejection* rather than an accepted escape; I could not construct the accepting case and am not claiming one | S1 | — | `b3ad80b` — `containment_root` refuses (`DestinationUnresolvable`) instead of comparing against an unresolved root; both call sites use it. Mutation-checked both ways.| FIXED |
 | `BUG-27` | A typo in the Steam AppID field is silent: "abc" or "12 34" parses to 0, i.e | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** `apply` reports an unreadable appid through the `Err` arm it already had, reading it with `python_int` so `int()`'s own tolerance comes along; a deliberate divergence from `saveGame`'s silent `0`, recorded as one. The old `an_unparseable_appid_is_zero` **asserted the defect**; the replacement fails on the pre-fix body with `left: Ok(0)`, `right: Err("refused")` for `"half"`. | FIXED |
