@@ -62,7 +62,7 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 45 | 43 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
+| `BUGS.md` | 48 | 47 | 45 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 25 | 20 `FIXED`, 3 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
@@ -136,18 +136,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 35 | 0 | 14 |
-| **Total** | **130** | **110** | **0** | **20** |
+| P3 | 49 | 37 | 0 | 12 |
+| **Total** | **130** | **112** | **0** | **18** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 23 | 0 | 2 |
-| `BUG-xx` | `BUGS.md` | 46 | 43 | 0 | 3 |
+| `BUG-xx` | `BUGS.md` | 46 | 45 | 0 | 1 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 20 | 0 | 9 |
-| **Total** | | **130** | **110** | **0** | **20** |
+| **Total** | | **130** | **112** | **0** | **18** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -322,9 +322,9 @@ across families, not within them.
 | `BUG-31` | Three scripts/verify.sh hygiene defects, all of which make a run look cleaner than it was | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **All three done, and the regression evidence is probes rather than Rust tests** — the subject is the gate script itself, so what is measured is the script's behaviour, which is the strongest evidence available for it. **(a)** the `flock`-absent branch returns 99 instead of 0, so the four `build-flatpak/` stages become *unrequested* skips and the run exits 3, rather than the old path that reported them `ok` from a tree it could not lock. `--skip-flatpak` and `--skip-smoke` mark only the stages they name as requested, so `desktop-metainfo` and `flatpak-contents` — which read `build-flatpak/` and which neither flag covers — stay unrequested skips under every flag combination. Probed in six configurations with a `PATH` directory symlinking every binary but `flock`: no flags → `req=[] unreq=[cargo-sources-fresh flatpak-build smoke-test desktop-metainfo flatpak-contents]`, exit 3; `--skip-flatpak` → `req=[flatpak-build smoke-test]`; `--skip-smoke` → `req=[smoke-test]`; both → `req=[flatpak-build smoke-test]`. **The first version of this fix failed its own probe** — it let `--skip-flatpak` bypass the refusal, and the probe then measured `ok desktop-metainfo` and `ok flatpak-contents` running with no lock held, which is the precise hazard the lock exists to prevent. **(b)** `git status` reads through `status_probe`, which tests the command's exit status instead of discarding stderr into an empty string; a failed first read exits 3 (probed outside any repository: `fatal: not a git repository`, `did not run (the tree's state could not be read)`, all sixteen stages listed), and a failed second read is a third state reported as "T-17 is unverified" rather than as `"" != ""` agreeing with the first. **(c)** `banner_check` gained two line-number comparisons: the file order of the `stage_*` definitions must equal STAGES' function column — mutation-proved by `cli -> stage_test` with `test -> stage_cli`, which exits 2 naming both lists — and each stage's function must be defined after its own banner and before the next, mutation-proved by moving a banner down one function. The old code's comment declared this case undetectable; it is undetectable by a sequence of *names*, which is all that version compared. **Checked rather than assumed:** no banner was misplaced in this tree, so (c) closes a hole rather than a live defect, and that is stated because this row's first draft claimed the code already checked it. | FIXED |
 | `BUG-32` | Two smaller unbounded checks | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** Probes rather than Rust tests — the subject is the gate script. (a) probing revealed bare `xargs sha256sum` hashes empty stdin, so the read-only check compared two identical hashes-of-nothing on a missing dir; `xargs -r` + an up-front `before` floor now fail with "the oracle is absent, not stale" before the generators run. (b) `DECLARES_PY` scoped to the gamehandler module and destination-matched via `rel()` from a fixed root; wrong-module and extra-prefix manifests exit 1, all nine real entries still match. | FIXED |
 | `BUG-33` | The EasyInstall toast's Play action launches the game but does not dismiss the toast, so a stale "Installed … ▶ Play" toast (duration Long, 15 s) sits over the Library the user was just navigated to | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
-| `BUG-34` | The Library card's and row's "More actions" button and tooltip have no port equivalent | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-34` | The Library card's and row's "More actions" button and tooltip have no port equivalent | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED** by `9bdaa00` (UX-16) — the row's evidence was stale at filing: `widgets.rs` now draws `more_actions_button` (ViewMore icon, "More actions" tooltip + a11y name) beside Play on both delegates, press → `Message::OpenGameMenu`, which opens the same layer right-click draws. Press opens the menu rather than firing the first entry — the reference's own semantics. Verified by the `update` arm (`main.rs:1746`) and its tests. | FIXED |
 | `BUG-42` | Three path/identifier conversions that do not do what the code around them says | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED**, all three. (a) `join_all` drops `.`/empty components, so a trailing `/.` resolves; mutation gives `left: "sftp://server/pub/game.exe/."` — the URL `resolve_game_paths` reports as unmounted. (b) the lossy return is replaced by `local_path_if_it_exists` (exists **and** valid UTF-8, else the URL), which turns the invented path into a recorded false negative — the signature is a `String`; mutation gives the `j\u{fffd}rg` path. (c) `version` uses `pure_posix_name`; mutation gives `left: ""`, `right: ".."`. | FIXED |
-| `BUG-43` | Two more "the doc says the two agree" pairs, both verified sound-but-for-the-claim | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-43` | Two more "the doc says the two agree" pairs, both verified sound-but-for-the-claim | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** (a) `sections_and_resource_root` now splits "view too short" (`clipped`) from "the file's own negative answer"; `bounded_attempt` answers `Decided`/`NeedFull`, decides iconless exes from the probe alone, and widens a clipped parse once to `sections_end` before paying the full read. Mutation-proved via the `Decided(None)` pin; the overlay-directory test pins that `NeedFull` still exists. (b) recorded as `netpaths` module-doc item 4; the two raise-inputs are pinned by `the_inputs_the_reference_raises_on_get_an_answer_here`, measured against CPython first. | FIXED |
 | `BUG-44` | An unreadable runners directory renders as a normal, empty, system-Wine-only list | S1 | — | `c7d4299` — `scan_installed` answers `Complete`/`Partial`/`Unreadable`; a real `chmod 000` directory, and the entry-level half is recorded as untestable rather than mocked.| FIXED |
 | `BUG-45` | python_repr's string branch is not repr() and duplicates — incorrectly — the python_str_repr twelve lines above it | S1 | — | `1143aed` — the string arm delegates to `python_str_repr`; a regression test compares the two functions and fails on the old body.| FIXED |
 | `PERF-07` | The 27 threads are all demand-spawned runtime workers; none polls, and two of them exit on their own | S3 | — | Recorded as not-a-finding unless a poller is found; verify by re-running the thread-naming probe over a 60 s idle run. | OPEN |

@@ -25,14 +25,17 @@
 //!
 //! - The reference memory-maps the executable so a cover lookup never buffers
 //!   a whole game (`exe_icons.py:248-252`). `std` has no mmap and this crate
-//!   takes no dependency for one, so [`extract_icon`] reads in two phases: a
-//!   small header probe, then a bounded read through the resource section's
-//!   raw bytes, falling back to a full read when the bounded view is
-//!   *inconclusive* — which is "found no icon" **and** "could not read a byte
-//!   it asked for", because the two are not the same question (see
-//!   [`bounded_attempt`]). Same observable contract (`None` for anything
-//!   unreadable), same worst case ([`MAX_EXECUTABLE_BYTES`], checked before
-//!   any read).
+//!   takes no dependency for one, so [`extract_icon`] reads in stages: a
+//!   header probe, a read through the resource section's raw bytes, a read
+//!   through the furthest section's raw end when the first view clipped, and
+//!   the whole file only for the two shapes no bound can name — headers past
+//!   the probe, or a directory target outside every section (see
+//!   [`bounded_attempt`]). An executable the headers already rule out — not
+//!   a PE, or no resource directory — is decided from the probe and never
+//!   buffered at all, which is the case a library scan hits constantly
+//!   (`BUG-43`). Same observable contract (`None` for anything unreadable);
+//!   the worst case is still [`MAX_EXECUTABLE_BYTES`], checked before any
+//!   read, but it is now paid only where the file's own shape requires it.
 //! - Reads are clamped to the bytes actually in hand, exactly as the
 //!   reference's `data[offset : offset + size]` clamps (`exe_icons.py:212`) —
 //!   `mmap` clamps a slice that runs past the end just as `bytes` does, so a
@@ -138,11 +141,13 @@ fn parse_view(data: &[u8]) -> Parsed {
     let Some((sections, resource_rva, _resource_size)) =
         sections_and_resource_root(data, &mut clipped)
     else {
-        // The headers themselves may be past the end of this view, so a
-        // failure to find them settles nothing.
+        // `clipped` carries the difference between "the headers ran past this
+        // view" and "the headers this view does hold answer no" — a missing
+        // resource directory is the file's own answer, not a short read, and
+        // a longer view cannot overturn it (`BUG-43`).
         return Parsed {
             icon: None,
-            clipped: true,
+            clipped,
         };
     };
     let Some(base) = file_offset(&sections, resource_rva, 16) else {
@@ -248,12 +253,13 @@ fn parse_view(data: &[u8]) -> Parsed {
 /// anything the parser rejects all yield `None` rather than an error.
 ///
 /// Files up to [`PROBE_BYTES`] are read whole — one syscall, one parse. Larger
-/// files take the bounded path: parse the headers from a probe, read through
-/// the end of the resource section's raw bytes, and fall back to a full read
-/// whenever that view is inconclusive ([`bounded_attempt`]). The fallback
-/// matters: headers past the probe, or resource data pointing outside the
-/// resource section, are legal, and a bounded-only read would miss icons the
-/// reference finds — or, worse, answer with a different one.
+/// files take the staged path: parse the headers from a probe, read through
+/// the resource section's raw bytes, widen once to the furthest section's raw
+/// end if that view clipped, and fall back to a full read only for what no
+/// bound can name ([`bounded_attempt`]). The fallback matters: headers past
+/// the probe, or a resource tree pointing outside every section, are legal,
+/// and a bounded-only read would miss icons the reference finds — or, worse,
+/// answer with a different one.
 pub fn extract_icon(exe_path: &Path) -> Option<Vec<u8>> {
     let len = std::fs::metadata(exe_path).ok()?.len();
     if !(64..=MAX_EXECUTABLE_BYTES).contains(&len) {
@@ -264,48 +270,99 @@ pub fn extract_icon(exe_path: &Path) -> Option<Vec<u8>> {
         return icon_bytes(&read_prefix(exe_path, len)?);
     }
     let probe = read_prefix(exe_path, PROBE_BYTES)?;
-    if let Some(ico) = bounded_attempt(exe_path, len, &probe) {
-        return Some(ico);
+    match bounded_attempt(exe_path, len, &probe) {
+        Attempt::Decided(icon) => icon,
+        Attempt::NeedFull => icon_bytes(&read_prefix(exe_path, len)?),
     }
-    icon_bytes(&read_prefix(exe_path, len)?)
+}
+
+/// What a bounded pass could decide before paying for the whole file.
+///
+/// `Option<Option<Vec<u8>>>` would carry the same shape but read as an
+/// accident, so the two answers get names.
+enum Attempt {
+    /// The probe — or a bound it implied — settled the question: an icon, or
+    /// provably none.
+    Decided(Option<Vec<u8>>),
+    /// Only the whole file answers: the headers themselves ran past the
+    /// probe, or the resource tree asked for bytes no section maps.
+    NeedFull,
 }
 
 /// Try the resource section's raw bytes before paying for a full read.
 ///
-/// Returns `None` when the bounded view is *inconclusive*, which is two
-/// different things and both of them matter:
+/// Three outcomes rather than the old two. The headers decide the first:
+/// when the probe holds them whole, "no resource directory" — and "not a PE"
+/// — are the file's own answers, identical on any longer view, so they are
+/// `Decided(None)` and the scan of an iconless executable costs one probe
+/// rather than a half-gigabyte buffer. That was the live case the old
+/// `Option` return could not express: `bounded_end` folded it into the same
+/// `None` as "headers past the probe", and the fallback read ran
+/// unconditionally (`BUG-43`).
 ///
-/// - the view held **no** icon, or
-/// - the view held an icon but a read ran past its end.
-///
-/// The second is not a detail. A parse that yields an icon is *not* final,
-/// because the group loop takes the lowest-numbered group it can *read*
-/// (`exe_icons.py:228`), so a group the bounded view cannot reach simply
-/// hands the answer to the next one — the bounded parse returns a real,
-/// well-formed icon that is the wrong one (`BUG-40`). Clipping is therefore
-/// the signal to read the whole file and let the full parse decide.
-fn bounded_attempt(exe_path: &Path, len: usize, probe: &[u8]) -> Option<Vec<u8>> {
-    let end = bounded_end(probe)?.min(len);
-    let parsed = if end <= probe.len() {
-        parse_view(probe)
-    } else {
-        parse_view(&read_prefix(exe_path, end)?)
+/// When there *is* a resource directory, the first bound is that section's
+/// raw end. A parse that clips it is not final — the group loop takes the
+/// lowest-numbered group it can *read* (`exe_icons.py:228`), so a group the
+/// view cannot reach hands its place to the next one and the bounded parse
+/// returns a real, well-formed, wrong icon (`BUG-40`). Clipping therefore
+/// widens once, to the furthest raw end any section claims: every payload
+/// read is resolved by [`file_offset`], which only returns offsets inside a
+/// section's raw bytes, so that bound covers them all. A parse that *still*
+/// clips is walking a directory target outside every section — legal, since
+/// directory offsets are added to the resource root unchecked — and only the
+/// whole file answers it.
+fn bounded_attempt(exe_path: &Path, len: usize, probe: &[u8]) -> Attempt {
+    let mut clipped = false;
+    let Some((sections, resource_rva, _size)) = sections_and_resource_root(probe, &mut clipped)
+    else {
+        return if clipped {
+            Attempt::NeedFull
+        } else {
+            Attempt::Decided(None)
+        };
     };
-    if parsed.clipped {
-        return None;
+
+    // The resource RVA may map to no section at all; the probe still answers,
+    // because `file_offset` fails on those same bytes in any view.
+    let end = resource_section_end(&sections, resource_rva)
+        .unwrap_or(probe.len())
+        .min(len);
+    let mut parsed = match read_to(exe_path, end, probe) {
+        Some(parsed) => parsed,
+        None => return Attempt::Decided(None),
+    };
+    if !parsed.clipped {
+        return Attempt::Decided(parsed.icon);
     }
-    parsed.icon
+
+    let wider = sections_end(&sections).map_or(len, |end| end.min(len));
+    if wider > end {
+        parsed = match read_to(exe_path, wider, probe) {
+            Some(parsed) => parsed,
+            None => return Attempt::Decided(None),
+        };
+        if !parsed.clipped {
+            return Attempt::Decided(parsed.icon);
+        }
+    }
+    Attempt::NeedFull
+}
+
+/// Parse the probe when it already covers `end`, else read that far.
+fn read_to(exe_path: &Path, end: usize, probe: &[u8]) -> Option<Parsed> {
+    if end <= probe.len() {
+        return Some(parse_view(probe));
+    }
+    // A failed read means the file shrank past `end`; the whole-file read
+    // would fail the same way, so `None` is decided rather than deferred.
+    read_prefix(exe_path, end).map(|view| parse_view(&view))
 }
 
 /// End offset of a bounded read: through the resource section's raw bytes.
 ///
-/// `None` when the probe does not hold parseable headers — the signal to skip
-/// the bounded view and read the whole file.
-fn bounded_end(probe: &[u8]) -> Option<usize> {
-    // A section table the probe cuts short can only make `end` too small,
-    // which `parse_view` reports as a clipped parse; the flag has no second
-    // effect here.
-    let (sections, resource_rva, _size) = sections_and_resource_root(probe, &mut false)?;
+/// `None` when the resource RVA maps to no section — the probe then answers
+/// by itself, since `file_offset` fails on the same header bytes in any view.
+fn resource_section_end(sections: &[Section], resource_rva: u32) -> Option<usize> {
     let rva = u64::from(resource_rva);
     sections.iter().find_map(|section| {
         let start = u64::from(section.virtual_address);
@@ -317,6 +374,16 @@ fn bounded_end(probe: &[u8]) -> Option<usize> {
             None
         }
     })
+}
+
+/// End offset covering every section's raw bytes — the furthest a payload
+/// read can reach, because [`file_offset`] only resolves inside them.
+fn sections_end(sections: &[Section]) -> Option<usize> {
+    sections
+        .iter()
+        .map(|section| u64::from(section.raw_pointer) + u64::from(section.raw_size))
+        .max()
+        .and_then(|end| usize::try_from(end).ok())
 }
 
 /// Read exactly the first `len` bytes of a file.
@@ -343,7 +410,18 @@ fn read_prefix(exe_path: &Path, len: usize) -> Option<Vec<u8>> {
 /// — the reference simply walks fewer sections there, so this is a read the
 /// view could not serve rather than a verdict about the file (`BUG-40`).
 fn sections_and_resource_root(data: &[u8], clipped: &mut bool) -> Option<(Vec<Section>, u32, u32)> {
-    if data.len() < 64 || data.get(0..2)? != b"MZ" {
+    // Every `None` here is one of two different answers, and `clipped` is how
+    // the caller tells them apart: an exit on a read the view could not serve
+    // is "ask again with more bytes", while an exit on bytes the view *did*
+    // hold is the file's own answer, identical on any longer view — a prefix
+    // read and the whole file share their header bytes. The old code folded
+    // both into a bare `None`, which is how `extract_icon` came to buffer a
+    // whole executable just to re-derive "no resource directory" (BUG-43).
+    if data.len() < 64 {
+        *clipped = true;
+        return None;
+    }
+    if data.get(0..2)? != b"MZ" {
         return None;
     }
     let lfanew = u32_at(data, 0x3C)?;
@@ -351,7 +429,8 @@ fn sections_and_resource_root(data: &[u8], clipped: &mut bool) -> Option<(Vec<Se
         return None;
     }
     let lfanew = lfanew as usize;
-    if lfanew.checked_add(24)? > data.len() {
+    if lfanew.checked_add(24).is_none_or(|end| end > data.len()) {
+        *clipped = true;
         return None;
     }
     if data.get(lfanew..lfanew.checked_add(4)?)? != b"PE\x00\x00" {
@@ -361,7 +440,14 @@ fn sections_and_resource_root(data: &[u8], clipped: &mut bool) -> Option<(Vec<Se
     let section_count = u16_at(data, lfanew.checked_add(6)?)?;
     let optional_size = u16_at(data, lfanew.checked_add(20)?)?;
     let optional = lfanew.checked_add(24)?;
-    if optional_size < 2 || optional.checked_add(optional_size as usize)? > data.len() {
+    if optional_size < 2 {
+        return None;
+    }
+    if optional
+        .checked_add(optional_size as usize)
+        .is_none_or(|end| end > data.len())
+    {
+        *clipped = true;
         return None;
     }
     let magic = u16_at(data, optional)?;
@@ -371,9 +457,10 @@ fn sections_and_resource_root(data: &[u8], clipped: &mut bool) -> Option<(Vec<Se
         _ => return None,
     };
     let directories_end = optional
-        .checked_add(directory_offset)?
-        .checked_add(8 * (RESOURCE_DIRECTORY_INDEX + 1))?;
-    if directories_end > data.len() {
+        .checked_add(directory_offset)
+        .and_then(|base| base.checked_add(8 * (RESOURCE_DIRECTORY_INDEX + 1)));
+    if directories_end.is_none_or(|end| end > data.len()) {
+        *clipped = true;
         return None;
     }
     let directory_count = u32_at(data, optional.checked_add(count_offset)?)?;
@@ -660,7 +747,7 @@ pub(crate) mod builders {
     /// Where the resource section's bytes sit in the file (`test_exe_icons.py:17`).
     pub(crate) const RSRC_FILE_OFFSET: usize = 0x400;
     const SUBDIRECTORY: u32 = 0x80000000;
-    const LANGUAGE: u32 = 0x409;
+    pub(crate) const LANGUAGE: u32 = 0x409;
 
     /// A real BITMAPINFOHEADER icon image of `side`×`side` 32-bit pixels.
     pub(crate) fn dib_icon(side: u32, fill: u8) -> Vec<u8> {
@@ -713,7 +800,7 @@ pub(crate) mod builders {
         out
     }
 
-    fn directory(entries: &[(u32, usize, bool)]) -> Vec<u8> {
+    pub(crate) fn directory(entries: &[(u32, usize, bool)]) -> Vec<u8> {
         // `IIHHHH`: characteristics, timestamp, major, minor, named count,
         // numbered count — 16 bytes, all zero but the last.
         let mut out = vec![0u8; 12];
@@ -732,7 +819,7 @@ pub(crate) mod builders {
         out
     }
 
-    fn put(blob: &mut [u8], offset: usize, data: &[u8]) {
+    pub(crate) fn put(blob: &mut [u8], offset: usize, data: &[u8]) {
         blob[offset..offset + data.len()].copy_from_slice(data);
     }
 
@@ -1205,12 +1292,13 @@ mod tests {
     }
 
     #[test]
-    fn resource_data_outside_the_bounded_view_resolves_through_the_full_read() {
+    fn resource_data_in_another_section_resolves_through_the_widened_bound() {
         // The icon image lives in a second section past the probe while the
-        // directories stay in `.rsrc`: the bounded view parses the headers
-        // but cannot reach the payload, so only the full fallback finds it.
-        // Inserting the second header shifts `.rsrc`'s raw bytes, and its raw
-        // pointer follows them.
+        // directories stay in `.rsrc`: the resource-section view parses the
+        // headers but cannot reach the payload, so it clips — and the widened
+        // bound (the furthest section's raw end) finds it without paying for
+        // the whole file (`BUG-43`). Inserting the second header shifts
+        // `.rsrc`'s raw bytes, and its raw pointer follows them.
         const DATA_RVA: u32 = 0x2000;
         const PAYLOAD_OFF: usize = 96 * 1024;
         let payload = dib_icon(16, 0xAB);
@@ -1245,7 +1333,7 @@ mod tests {
         let dir = scratch_dir("bound");
         let path = dir.join("split.exe");
         std::fs::write(&path, &pe).expect("write the fixture");
-        let blob = extract_icon(&path).expect("the fallback reads the whole file");
+        let blob = extract_icon(&path).expect("the widened bound reaches .data");
         assert_eq!(
             read_ico(&blob)
                 .iter()
@@ -1319,6 +1407,152 @@ mod tests {
         let images = read_ico(&blob);
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].2, first);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_header_the_view_cannot_hold_is_clipped_not_negative() {
+        // The split `BUG-43` depends on: a header read the view cannot serve
+        // is `clipped` — a longer view may still answer — while a negative
+        // read of header bytes the view *does* hold is the file's own answer
+        // and no view overturns it.
+        let (exe, _) = single_icon(0x66);
+        let mut clipped = false;
+        // The optional header is cut mid-field: `optional + optional_size`
+        // runs past this prefix.
+        assert!(sections_and_resource_root(&exe[..0x80 + 24 + 10], &mut clipped).is_none());
+        assert!(
+            clipped,
+            "a truncated optional header is a short view, not an answer"
+        );
+        // "No resource directory" is complete in any view that holds the
+        // headers — `build_pe(.., Some(0))` writes `resource_size = 0`.
+        let iconless = build_pe(&[], false, Some(0));
+        let mut clipped = false;
+        assert!(sections_and_resource_root(&iconless, &mut clipped).is_none());
+        assert!(
+            !clipped,
+            "no resource directory is the file's answer, not a short view"
+        );
+    }
+
+    #[test]
+    fn an_iconless_executable_is_decided_from_the_probe_not_the_full_read() {
+        // The case `BUG-43` is about: a >64 KiB executable whose headers
+        // parse cleanly and say *no resource directory* can never hold an
+        // icon — yet the old code buffered the whole file anyway, because
+        // `bounded_end` folded that answer into the same `None` as "headers
+        // past the probe". `Decided(None)` is the pin: it is reachable only
+        // because the header parse now tells a short view from a negative
+        // answer, and under the old shape this branch could not exist.
+        let mut pe = build_pe(&[], false, Some(0));
+        pe.resize(PROBE_BYTES + 4096, 0);
+
+        let dir = scratch_dir("iconless");
+        let path = dir.join("iconless.exe");
+        std::fs::write(&path, &pe).expect("write the fixture");
+        let probe = read_prefix(&path, PROBE_BYTES).expect("the probe read");
+        assert!(
+            matches!(
+                bounded_attempt(&path, pe.len(), &probe),
+                Attempt::Decided(None)
+            ),
+            "an iconless header set is the file's own answer — no full read"
+        );
+        assert_eq!(extract_icon(&path), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_resource_tree_in_the_overlay_still_resolves_through_the_full_read() {
+        // The one shape no section bound covers: a resource *directory*'s
+        // target is added to the root's file offset unchecked
+        // (`collect_resources`), so it can point into overlay data past every
+        // section. Both bounded views clip on it, `sections_end` adds nothing
+        // — `.rsrc` is the only section — and only the whole file holds the
+        // subdirectories. This is what `NeedFull` is still for.
+        const ICON_DIR: usize = 0x20000;
+        const ICON_LANG: usize = 0x20100;
+        const ICON_DATA: usize = 0x20200;
+        const GROUP_DIR: usize = 0x20300;
+        const GROUP_LANG: usize = 0x20400;
+        const GROUP_DATA: usize = 0x20500;
+
+        let payload = dib_icon(16, 0xCC);
+        let group = group_icon(&[(16, payload.len(), 1)]);
+        // `.rsrc` holds the root directory — whose two targets live in the
+        // overlay — plus the icon and group payloads.
+        let icon_at = 16 + 2 * 8;
+        let group_at = icon_at + payload.len();
+        let mut section = directory(&[
+            (super::RT_ICON, ICON_DIR, true),
+            (super::RT_GROUP_ICON, GROUP_DIR, true),
+        ]);
+        section.extend_from_slice(&payload);
+        section.extend_from_slice(&group);
+
+        let mut file = build_pe(&section, false, None);
+        let data_entry = |rva: u32, size: usize| {
+            let mut entry = Vec::new();
+            entry.extend_from_slice(&rva.to_le_bytes());
+            entry.extend_from_slice(&(size as u32).to_le_bytes());
+            entry.extend_from_slice(&0u32.to_le_bytes());
+            entry.extend_from_slice(&0u32.to_le_bytes());
+            entry
+        };
+        file.resize(RSRC_FILE_OFFSET + GROUP_DATA + 16, 0);
+        put(
+            &mut file,
+            RSRC_FILE_OFFSET + ICON_DIR,
+            &directory(&[(1, ICON_LANG, true)]),
+        );
+        put(
+            &mut file,
+            RSRC_FILE_OFFSET + ICON_LANG,
+            &directory(&[(LANGUAGE, ICON_DATA, false)]),
+        );
+        put(
+            &mut file,
+            RSRC_FILE_OFFSET + ICON_DATA,
+            &data_entry(RSRC_RVA + icon_at as u32, payload.len()),
+        );
+        put(
+            &mut file,
+            RSRC_FILE_OFFSET + GROUP_DIR,
+            &directory(&[(1, GROUP_LANG, true)]),
+        );
+        put(
+            &mut file,
+            RSRC_FILE_OFFSET + GROUP_LANG,
+            &directory(&[(LANGUAGE, GROUP_DATA, false)]),
+        );
+        put(
+            &mut file,
+            RSRC_FILE_OFFSET + GROUP_DATA,
+            &data_entry(RSRC_RVA + group_at as u32, group.len()),
+        );
+
+        // The bounded pass must clip twice and defer — the directories are at
+        // 128 KiB+, past both the probe and every section's raw end.
+        let dir = scratch_dir("overlay");
+        let path = dir.join("overlay.exe");
+        std::fs::write(&path, &file).expect("write the fixture");
+        let probe = read_prefix(&path, PROBE_BYTES).expect("the probe read");
+        assert!(
+            matches!(
+                bounded_attempt(&path, file.len(), &probe),
+                Attempt::NeedFull
+            ),
+            "a directory tree outside every section is the full read's case"
+        );
+        let blob = extract_icon(&path).expect("the full read reaches the overlay");
+        assert_eq!(
+            read_ico(&blob)
+                .iter()
+                .map(|(_, _, p)| p)
+                .collect::<Vec<_>>(),
+            [&payload]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -23,7 +23,7 @@
 //! warning to the backlog `verify.sh` already carries and deliberately does not
 //! deny. [`crate::paths`] sets the same precedent for `FakeEnv`.
 //!
-//! # What is faithful, and the three things that are not
+//! # What is faithful, and the four things that are not
 //!
 //! Every rule below was measured against the reference on this machine rather
 //! than recalled, and the measured values are in the tests at the foot of this
@@ -47,6 +47,21 @@
 //!    found", which is the same outcome as the directory not existing, and that
 //!    is the reference's own behaviour on the `OSError` path at
 //!    `netpaths.py:114`.
+//! 4. **This module answers where the reference raises.** `url_parts` is a
+//!    lenient port of `urlsplit` — it reports `port: None` for a port that is
+//!    not ASCII digits, and it does not reject a malformed bracketed netloc.
+//!    CPython is stricter in two places this module touches: `.port` raises
+//!    `ValueError` on `sftp://server:notaport/...` (inside
+//!    `_mount_candidates`, `netpaths.py:99`, so `as_local_path` propagates
+//!    it), and `urlsplit` itself raises on `file://us:er[fe80::1%25eth0]:x/...`
+//!    ("Invalid IPv6 URL"), taking even `is_remote_url` with it. Here those
+//!    inputs get an answer instead: the first resolves like any unmounted
+//!    `sftp` share — the raw URL back — and the second unwraps to
+//!    `/pub/game.exe`, the path component it plainly carries. `None` cannot
+//!    crash, and the inputs are ones the reference cannot handle at all, so
+//!    the divergence is strictly safer; it is recorded rather than replicated
+//!    because a `ValueError` out of a path helper is the bug, not the contract
+//!    (`installers`' `url_parts` doc has the parser-side record).
 //!
 //! # Where this is stricter than the reference, on purpose
 //!
@@ -1045,6 +1060,33 @@ mod tests {
             // `resolve_game_paths` turns into `UnreachableShare`.
             assert!(is_remote_url(value));
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_inputs_the_reference_raises_on_get_an_answer_here() {
+        // `BUG-43`'s recorded divergence (module doc, item 4), measured against
+        // CPython on this machine: `.port` raises `ValueError` on the `sftp`
+        // URL inside `_mount_candidates` (`netpaths.py:99`), so
+        // `as_local_path` propagates it; and `urlsplit` itself raises
+        // "Invalid IPv6 URL" on the `file://` URL, taking `is_remote_url`
+        // with it. Both answers below are pinned so the divergence is a
+        // choice a test watches, not an accident nobody noticed.
+        let (env, root) = gvfs("netpaths-raises");
+        assert!(is_remote_url("sftp://server:notaport/pub/game.exe"));
+        assert_eq!(
+            as_local_path_in("sftp://server:notaport/pub/game.exe", &env),
+            "sftp://server:notaport/pub/game.exe",
+            "an unparseable port is absent here — the share is simply unmounted"
+        );
+        assert!(!is_remote_url(
+            "file://us:er[fe80::1%25eth0]:x/pub/game.exe"
+        ));
+        assert_eq!(
+            as_local_path_in("file://us:er[fe80::1%25eth0]:x/pub/game.exe", &env),
+            "/pub/game.exe",
+            "the file: arm unwraps the path a strict parser would have rejected"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
