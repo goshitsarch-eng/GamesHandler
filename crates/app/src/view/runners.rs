@@ -1942,13 +1942,38 @@ mod tests {
     /// dropdown rule.
     fn link_button_sources() -> Vec<(String, String)> {
         let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(crate_dir.join("src/view"))
-            .expect("`src/view` is where this crate keeps its pages")
-            .map(|entry| entry.expect("a readable directory entry").path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
-            .collect();
-        paths.push(crate_dir.join("src/main.rs"));
+        // Discovered, not listed. This used to read `src/view` and then push
+        // `src/main.rs` by hand, which made the haystack an enumeration: the
+        // day ARCH-11 moved a region of `main.rs` into `src/easy_install.rs`,
+        // this scanner quietly stopped reading that region. It found nothing
+        // there, so nothing went red — which is the whole problem. A scanner
+        // that covers less than it claims passes on the defect it exists to
+        // catch, and it does so silently. A directory read cannot go stale that
+        // way: a new top-level module is scanned the moment it is a file.
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        for dir in ["src", "src/view"] {
+            paths.extend(
+                std::fs::read_dir(crate_dir.join(dir))
+                    .unwrap_or_else(|error| {
+                        panic!("`{dir}` is where this crate keeps its code: {error}")
+                    })
+                    .map(|entry| entry.expect("a readable directory entry").path())
+                    .filter(|path| path.extension().is_some_and(|ext| ext == "rs")),
+            );
+        }
         paths.sort();
+        // Anti-vacuity, in the shape the rest of this audit uses: the two
+        // directories this reads are asserted to have been read. Emptying the
+        // list would otherwise report every source clean.
+        assert!(
+            paths.len() >= 20,
+            "the scan found only {} source files, so it is not reading the tree: {paths:?}",
+            paths.len()
+        );
+        assert!(
+            paths.iter().any(|path| path.ends_with("src/main.rs")),
+            "the scan did not find `src/main.rs`: {paths:?}"
+        );
 
         paths
             .into_iter()
