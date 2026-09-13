@@ -317,6 +317,28 @@ fn wait_with_timeout(child: &mut Child, timeout: Duration) -> Option<i32> {
 /// 6. `apply_launch_options`, which re-applies the environment block so a
 ///    user's value still wins over the toggles.
 ///
+/// `Path("")` is `Path(".")` in Python, and `Rust`'s `PathBuf::from("")` is not.
+///
+/// A path type that keeps the empty string as "the empty path" is useful in
+/// Rust — it is what `Path::new("")` means in `Path::join`, and changing the
+/// type is not on the table — so the equivalence Python gets for free has to be
+/// applied at the points where a *value* from the environment becomes a path to
+/// be tested. `BUG-06` is the instance that mattered: an empty
+/// `GAMEHANDLER_DXVK_ROOT` passed `Path(".").is_dir()` in Python and failed
+/// `PathBuf::from("").is_dir()` here, so a gate that refuses became a gate that
+/// silently skipped.
+///
+/// Only the empty string is rewritten. Every other value — including one that
+/// merely does not exist — keeps its own meaning, which is what the DXVK
+/// override's "point nowhere and we refuse" behaviour depends on.
+fn empty_as_dot(path: PathBuf) -> PathBuf {
+    if path.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        path
+    }
+}
+
 /// `extra` — `game.additional_app` — is started *before* the main process and
 /// without waiting, which is Python's behaviour and what makes a tool like
 /// `gamescope` or a trainer usable alongside the title.
@@ -362,9 +384,20 @@ pub fn launch(
         // environment block cannot redirect where the runtime is copied from.
         // `Env::var` and `LaunchEnv::var` both exist and `LaunchEnv: Env`
         // re-declares it, so the call is qualified rather than left ambiguous.
-        let dxvk_root = crate::paths::Env::var(env, DXVK_ROOT_ENV)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(DXVK_ROOT));
+        //
+        // The `is_dir()` test below is Python's gate, and Python's `Path("")` is
+        // `Path(".")` whose `is_dir()` is `True` — so an override that is *set
+        // but empty* (a common way to try to "unset" it) **enters** the install
+        // and fails with `Bundled DXVK runtime is unavailable`. `PathBuf::from("")`
+        // did not: an empty path is `ENOENT`, so `is_dir()` was `false`, the gate
+        // was skipped, and the title launched with no DXVK DLLs and no DXVK
+        // `WINEDLLOVERRIDES` — silently, on a box where the reference refuses.
+        // `empty_as_dot` restores the equivalence. See `BUG-06`.
+        let dxvk_root = empty_as_dot(
+            crate::paths::Env::var(env, DXVK_ROOT_ENV)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(DXVK_ROOT)),
+        );
         if game.dxvk && !uses_proton && dxvk_root.is_dir() {
             install_bundled_dxvk(&mut environment, Some(&dxvk_root), env)?;
         }
@@ -1413,6 +1446,62 @@ mod tests {
         .err()
         .expect("a title with no executable must be refused");
         assert_eq!(error.to_string(), "No executable is configured");
+    }
+
+    /// An **empty** `GAMEHANDLER_DXVK_ROOT` refuses the launch, as it does in
+    /// Python, rather than silently launching without DXVK.
+    ///
+    /// `BUG-06`: `Path("")` is `Path(".")` in Python, whose `is_dir()` is `True`,
+    /// so the override enters `install_bundled_dxvk` and fails with
+    /// `Bundled DXVK runtime is unavailable`. `PathBuf::from("")` is `ENOENT`, so
+    /// the gate read `false`, skipped the install, and the title launched with no
+    /// DXVK DLLs and no `WINEDLLOVERRIDES` — no message at any point.
+    ///
+    /// The two cases are asserted together on purpose: only the empty override
+    /// changed behaviour, and a fix that made *every* override fail would pass a
+    /// test that checked just the first.
+    #[test]
+    fn an_empty_dxvk_override_refuses_instead_of_quietly_skipping() {
+        let root = scratch("launch-dxvk-empty");
+        let prefix = root.join("prefix");
+        std::fs::create_dir_all(&prefix).unwrap();
+        // A real wine, or the launch is refused for a different reason before
+        // the DXVK gate is ever consulted.
+        let wine = root.join("wine");
+        write_script(&wine, "#!/bin/sh\nexit 0\n");
+
+        let mut game = windows_game("wine-system");
+        game.prefix_path = prefix.to_string_lossy().into_owned();
+        game.dxvk = true;
+
+        // Empty: Python's `Path("")`, which is the current directory. The
+        // bundled runtime is not in it, so the refusal is the honest answer.
+        let host = FakeLaunchEnv::new()
+            .with_which("wine", wine.to_str().unwrap())
+            .with_vars(&[(DXVK_ROOT_ENV, "")]);
+        let error = launch(&game, &RunnerManager::at("/nonexistent"), &host, &NoShares)
+            .err()
+            .expect("an empty override must not silently skip the DXVK install");
+        assert_eq!(error.to_string(), "Bundled DXVK runtime is unavailable");
+
+        // A path that simply does not exist is **not** refused, and that is
+        // Python's behaviour rather than a gap in this fix: `Path("/typo").is_dir()`
+        // is `False` there too, so the gate is skipped and the title launches
+        // without DXVK — the same silence, in both implementations, from a
+        // different input. Pinned here as the anti-vacuity half: it proves the
+        // change is narrow (only the empty string moved) and did not turn every
+        // override into a refusal. Making a typo'd override loud would be a
+        // divergence worth taking, but it is a *separate* decision from `BUG-06`
+        // and is recorded as such rather than smuggled in with this fix.
+        let missing = root.join("not-a-dxvk-root");
+        let host = FakeLaunchEnv::new()
+            .with_which("wine", wine.to_str().unwrap())
+            .with_vars(&[(DXVK_ROOT_ENV, missing.to_str().unwrap())]);
+        let mut running =
+            launched_or_busy_retry(&game, &RunnerManager::at("/nonexistent"), &host, &NoShares)
+                .expect("an override pointing nowhere is skipped, as in Python");
+        let _ = running.child_mut().kill();
+        let _ = running.child_mut().wait();
     }
 
     /// A helper in `additional_app` that cannot start fails the launch, as it
