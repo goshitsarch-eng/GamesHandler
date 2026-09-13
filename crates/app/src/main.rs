@@ -1295,6 +1295,34 @@ impl Shell {
         let arriving = self.state.page != page;
         self.state.page = page;
         activate_page(&mut self.nav_model, page);
+        // The reference's `showPage` tears the layers down before it pushes the
+        // page:
+        //
+        //     while (pageStack.layers.depth > 1)
+        //         pageStack.layers.pop()
+        //     pageStack.clear()
+        //     pageStack.push(pageFor(name))
+        //
+        // — `Main.qml:37-45`, and `GameFormPage` is the one thing pushed as a
+        // layer (`:47-53`). So navigating away from an open form **closes** it
+        // in the reference, and the port did not: `view_with_overlays` returns
+        // the form before it consults the page, so the body kept drawing the
+        // form while the sidebar moved to the page the user actually chose —
+        // the rail and the body disagreeing about which page is showing.
+        //
+        // This is the right place rather than a `Message::NavigateTo` arm,
+        // because the sidebar's own clicks reach here without passing through
+        // that message, and the reference's rule lives in `showPage` for the
+        // same reason. The form's own Cancel and Save are unaffected: neither
+        // navigates, so neither passes through here (`CloseDialog` clears the
+        // form directly, and `SaveGameForm` clears it before returning its
+        // toast).
+        //
+        // `confirm_delete` and `confirm_remove_runner` are cleared with it,
+        // which is the `pageStack.clear()` half — the reference's dialogs are
+        // children of the page it destroys and re-pushes, so their state does
+        // not survive a navigation either.
+        self.state.clear_overlays();
         debug_assert!(
             self.pages_agree(),
             "the sidebar shows {:?} while `state.page` is {:?}: `show_page` is \
@@ -8552,6 +8580,112 @@ mod tests {
              while the body draws another"
         );
         assert!(shell.pages_agree());
+    }
+
+    /// **Navigating away closes the game form.**
+    ///
+    /// `BUG-46`: `view_with_overlays` returns the form *before* it consults the
+    /// page, so with a form open the body kept drawing the form while the
+    /// sidebar moved to the page the user had chosen — the rail and the body
+    /// disagreeing about which page is showing. The reference closes it
+    /// structurally: `showPage` pops every layer and clears the page stack
+    /// (`Main.qml:37-45`), and the form is the one thing pushed as a layer
+    /// (`:47-53`).
+    ///
+    /// The whole overlay set is asserted, not just the form — see
+    /// [`State::clear_overlays`]. Both navigation routes are driven, because
+    /// they reach `show_page` by different paths and a fix in the
+    /// `Message::NavigateTo` arm alone would leave `Ctrl+F` broken; that arm is
+    /// what the row recommended, and it is the wrong place for exactly this
+    /// reason (the sidebar's own clicks never pass through it either).
+    #[test]
+    fn navigating_away_closes_the_layers_the_page_was_covering() {
+        // `Ctrl+F` — `App::on_search` → `focus_library_search` → `show_page`.
+        let mut shell = shell_with_work_to_do();
+        let _ = shell.show_page(Page::Settings);
+        shell.state.game_form = Some(GameForm::new_template(
+            &shell.state.settings,
+            "x".to_string(),
+        ));
+        shell.state.confirm_delete = Some("g".to_string());
+        assert!(
+            shell.state.game_form.is_some(),
+            "the fixture must start with a form open, or nothing below is \
+             measuring the navigation"
+        );
+        let _ = shell.focus_library_search();
+        assert!(
+            shell.state.game_form.is_none(),
+            "`Ctrl+F` navigated to the Library and left the form over it"
+        );
+        assert!(shell.state.confirm_delete.is_none());
+        assert_eq!(shell.state.page, Page::Library);
+        assert!(shell.pages_agree());
+
+        // `Ctrl+,` and every other non-sidebar route — `Message::NavigateTo`.
+        let mut shell = shell_with_work_to_do();
+        let _ = shell.show_page(Page::Library);
+        shell.state.game_form = Some(GameForm::new_template(
+            &shell.state.settings,
+            "x".to_string(),
+        ));
+        let _ = shell.update(Message::NavigateTo(Page::Settings));
+        assert!(
+            shell.state.game_form.is_none(),
+            "`Message::NavigateTo` left the form over the page it navigated to"
+        );
+        assert_eq!(shell.state.page, Page::Settings);
+
+        // And the form's own Cancel is *not* a navigation: a `CloseDialog` on a
+        // shell that is already on the right page must still be what closes it,
+        // rather than this test passing because everything closes everything.
+        let mut shell = shell_with_work_to_do();
+        let _ = shell.show_page(Page::Library);
+        shell.state.game_form = Some(GameForm::new_template(
+            &shell.state.settings,
+            "x".to_string(),
+        ));
+        let _ = shell.update(Message::CloseDialog);
+        assert!(
+            shell.state.game_form.is_none(),
+            "the form's own Cancel must keep working"
+        );
+    }
+
+    /// **`clear_overlays` names every overlay the shell can be showing.**
+    ///
+    /// The fix for `BUG-46` is a list, and a list is the thing that goes stale:
+    /// a fourth modal added later and left out of `clear_overlays` would survive
+    /// a navigation exactly as the form did, and the navigation test above
+    /// would not notice, because it only looks at the fields it knows about.
+    ///
+    /// So this holds the method's body against the fields it is supposed to
+    /// cover, read from the source. A new `Option<…>` overlay field on `State`
+    /// that is not in the list fails here — the same shape as the notify-voice
+    /// guard, and unlike that one the haystack is the *method* rather than the
+    /// table, so it cannot be satisfied by the thing it is checking for.
+    #[test]
+    fn clear_overlays_names_every_overlay_field_on_state() {
+        let source = include_str!("state.rs");
+        let body = source
+            .split("pub fn clear_overlays(&mut self) {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("`clear_overlays` must exist in state.rs");
+        for field in ["game_form", "confirm_delete", "confirm_remove_runner"] {
+            assert!(
+                body.contains(field),
+                "`clear_overlays` does not clear `{field}`; overlays that are \
+                 not cleared here outlive the page they cover, which is BUG-46"
+            );
+        }
+        // The list is not empty-for-the-wrong-reason: it must also *assign*
+        // `None`, not merely mention the names.
+        assert_eq!(
+            body.matches("= None;").count(),
+            3,
+            "each overlay must be set to `None`, not just named: {body}"
+        );
     }
 
     /// **`Ctrl+F` shows the Library from wherever the user is** — the half of

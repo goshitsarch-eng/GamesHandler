@@ -918,6 +918,26 @@ impl State {
         self.plugins_intro = plugins::plugins_intro(env);
     }
 
+    /// Dismiss every modal layer the shell can be showing.
+    ///
+    /// One function rather than three field writes at the call site, because
+    /// the *set* is the thing that has to stay right: a new overlay that this
+    /// does not name is one that survives a navigation, which is exactly the
+    /// defect this exists to close (`BUG-46`, where the game form outlived the
+    /// page it belonged to). `clear_overlays_is_every_overlay` holds the set
+    /// against the fields, so adding a layer without adding it here fails a
+    /// test rather than shipping.
+    ///
+    /// The reference's equivalent is structural rather than written: its
+    /// `showPage` pops every layer and clears the page stack
+    /// (`Main.qml:37-45`), and its two dialogs are children of the page it
+    /// destroys, so their pending state goes with it.
+    pub fn clear_overlays(&mut self) {
+        self.game_form = None;
+        self.confirm_delete = None;
+        self.confirm_remove_runner = None;
+    }
+
     /// `bridge.py:719-720` — the spinner is on when either long job is.
     pub fn busy(&self) -> bool {
         self.runner_busy || self.easy_busy
