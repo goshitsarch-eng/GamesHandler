@@ -63,13 +63,23 @@
 //! points exist at all.
 //!
 //! [`CoverCache::clear`] is the other one, and it has **no caller in production
-//! code today**: `State::new` loads the library once
-//! (`crates/app/src/main.rs:186`) and nothing replaces `state.library` at
+//! code today**: the library is read once, in `App::init`
+//! (`crates/app/src/main.rs:3862`), and nothing replaces `state.library` at
 //! runtime, so there is no re-read to hang it off. It exists because that
 //! re-read is the event it belongs to and the cache's own invariants are
 //! incomplete without it, and it is exercised in tests. Written down rather than
 //! left as an apparent gap: a reader who greps for its callers will find none,
 //! and that is the current state of the app rather than an oversight.
+//!
+//! That sentence used to read "`State::new` loads the library once
+//! (`crates/app/src/main.rs:186`)". All three parts were wrong, and the third
+//! was the one that mattered: `State::new` is in `state.rs` and takes the
+//! library as a *parameter* — it is `App::init` that reads it — and line 186 of
+//! `main.rs` was inside `list_games`, which the CLI runs and which is nowhere
+//! near startup. The rule the claim states survived the correction unchanged
+//! (nothing replaces `state.library` at runtime, so `clear` has no caller); it
+//! was the evidence offered for it that did not exist, which is `ARCH-16`'s
+//! shape — a pointer nobody re-checks because it is trusted.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

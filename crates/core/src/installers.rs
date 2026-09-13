@@ -18,15 +18,14 @@
 //! the file "has no *caller*" and that five named functions "have no call site
 //! outside their own tests" — and every clause of that was false by the time it
 //! was read. The easy-install worker
-//! ([`easy_install_worker`](crate::installers)) lives in the app crate at
-//! `crates/app/src/main.rs:3160`, wired there by T-38, and it drives this file's
-//! download and wizard halves directly:
+//! ([`easy_install_worker`](crate::installers)) lives in the app crate, wired
+//! there by T-38, and it drives this file's download and wizard halves directly:
 //!
 //! | Function | Production call site |
 //! |---|---|
-//! | [`download_installer`] | `crates/app/src/main.rs`, in `easy_install_worker` |
-//! | [`wait_for_installer`] | `crates/app/src/main.rs`, in `easy_install_worker` |
-//! | [`wait_for_prefix_idle`] | `crates/app/src/main.rs`, in `easy_install_worker` |
+//! | [`download_installer`] | `crates/app/src/easy_install.rs`, in `easy_install_worker` |
+//! | [`wait_for_installer`] | `crates/app/src/easy_install.rs`, in `easy_install_worker` |
+//! | [`wait_for_prefix_idle`] | `crates/app/src/easy_install.rs`, in `easy_install_worker` |
 //! | [`verify_installer_authenticity`] | `crates/core/src/installers.rs`, in `download_into` |
 //! | [`wineserver_binary`] | `crates/core/src/installers.rs`, in `wait_for_prefix_idle` |
 //!
