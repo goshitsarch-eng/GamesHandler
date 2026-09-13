@@ -347,11 +347,18 @@ Discovery itself never imports the stub’s Qt types.
 cargo test
 ```
 
-It runs with `DISPLAY` and `WAYLAND_DISPLAY` unset — `crates/core` has no GUI
-dependency, so the logic tests need no display server and no GPU. The Rust
-equivalents assert *behaviour* against the same cases the Python suite covers
-(archive-extraction confinement, desktop-file escaping, runner environment
-construction, JSON round-trips) rather than matching pixels.
+It needs no display server and no GPU, and that is a property of the code rather
+than of the ambient environment: `crates/core` has no GUI dependency at all, so
+the logic tests cannot reach a display even when `DISPLAY` and `WAYLAND_DISPLAY`
+are set. (An earlier version of this paragraph said the suite "runs with" those
+variables unset and implied plain `cargo test` was what unset them — it is not.
+`bash scripts/verify.sh` is what unsets them, at `scripts/verify.sh:851`, and it
+does so in the pipeline rather than in `cargo test`. The suite passes either way;
+measured with both variables set, the whole workspace is green. `ARCH-08`.)
+
+The Rust equivalents assert *behaviour* against the same cases the Python suite
+covers (archive-extraction confinement, desktop-file escaping, runner
+environment construction, JSON round-trips) rather than matching pixels.
 
 `bash scripts/verify.sh` runs both suites together with the rest of the pipeline,
 including a check that fails when `build-aux/flatpak/cargo-sources.json` is stale

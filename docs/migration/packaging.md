@@ -504,6 +504,26 @@ plus the tail of that stage's log and exits non-zero immediately (no point
 running the smoke test if clippy failed). `--keep-going` runs every stage and
 prints the full table instead, for a diagnostic sweep.
 
+**The list below is no longer the authority, and `scripts/verify.sh --help`
+prints the current one.** The `STAGES` array in `scripts/verify.sh` is the
+single source of truth, and `banner_check` makes a stale copy there a hard
+error rather than a plausible-looking one. This numbered list was a *second*
+copy of that order, maintained by hand, and it had already drifted: it was
+missing `doc`, `cargo-lock` and `plan-counts`, and it had never been renumbered
+after one of them was inserted. Nothing checked it — `packaging.md` is prose,
+and a stage list in prose is exactly the shape this project has now filed five
+times: a description of the code that the code does not agree with, read by
+everyone and checked by nobody (`BUG-16`–`BUG-18`, `ARCH-05`, `ARCH-07`).
+So the numbering stays, because each entry carries reasoning that is worth
+keeping, but the numbers are **not** stage indices any more and a reader who
+needs the order should ask the script. `fmt` (`ARCH-07`) was added to the
+pipeline without renumbering anything here, which is the point.
+
+Earlier in this same section is the argument for why a name is better than a
+number — "names do not move", written when `cli` was inserted and moved every
+number after it. This list kept its numbers anyway. That is the second time this
+document has made the same mistake about the same thing.
+
 1. `build` — `cargo build` (workspace root). Catches compile breaks first;
    keeps later stages' errors meaningful.
 2. `clippy` — `cargo clippy --all-targets -- -D warnings`. **Runs at OUR

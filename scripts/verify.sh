@@ -187,6 +187,7 @@ STOPPED=""
 # "only the oracle is broken" (task #29; the lead read it that way himself).
 STAGES=(
     "build|stage_build|the workspace builds"
+    "fmt|stage_fmt|cargo fmt --all --check (ARCH-07)"
     "clippy|stage_clippy|cargo clippy --all-targets -- -D warnings (workspace root ONLY, D-08)"
     "doc|stage_doc|rustdoc resolves every intra-doc link (-D rustdoc::broken_intra_doc_links, task #75)"
     "test|stage_test|the test suite, in BOTH feature configurations (task #27)"
@@ -688,6 +689,30 @@ require_tool() {
 # ---------------------------------------------------------------------------
 stage_build() {
     cargo build
+}
+
+# ---------------------------------------------------------------------------
+# Stage: fmt — the tree is rustfmt-clean (ARCH-07)
+#
+# Formatting was not a stage at all, so nothing a contributor was asked to run
+# could fail on it, and the architecture report measured 542 `Diff in` lines
+# across 36 files at HEAD. Those were applied in `eaddd00` (`style: apply cargo
+# fmt to the workspace`), which is why this stage starts green and is here to
+# keep it that way rather than to fix anything.
+#
+# `--all` and not the bare form: `cargo fmt` alone formats the *current*
+# package's targets, so at the workspace root it would silently skip
+# `crates/core` and pass on a tree whose other crate is unformatted. `--check`
+# takes no lock and writes nothing, so it is safe in the middle of a run for the
+# same reason `doc` is.
+#
+# It is placed directly after `build` rather than at the end: it is the cheapest
+# stage in the pipeline and the one whose failure is the most trivially fixable,
+# so paying three minutes of clippy to learn about a trailing space is the wrong
+# order.
+# ---------------------------------------------------------------------------
+stage_fmt() {
+    cargo fmt --all --check
 }
 
 # ---------------------------------------------------------------------------
@@ -2225,6 +2250,7 @@ run_stage() {
 }
 
 run_stage build
+run_stage fmt
 run_stage clippy
 run_stage doc
 run_stage test
