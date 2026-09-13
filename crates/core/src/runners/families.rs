@@ -504,15 +504,25 @@ pub(crate) fn python_str_repr(value: &str) -> String {
     out
 }
 
+/// `repr()` of any value — a string goes through [`python_str_repr`], everything
+/// else through [`python_str`].
+///
+/// The string arm used to be a second, worse implementation of the same rule:
+/// the double-quote branch escaped nothing, and the single-quote branch escaped
+/// only `\` and `'`, so every control character went out raw (BUG-45). It was
+/// reached only from [`python_str`]'s container arms, which is the path a
+/// GitHub asset `name` that is an array or object takes — pathological input
+/// rather than merely unusual, which is why all 760 oracle vectors passed
+/// without it and why `run_runners_vectors.py`'s `_name_cases` carries no
+/// escaping array case.
+///
+/// The defect was the *shape* rather than the blast radius: the correct rule
+/// already existed twelve lines above and this arm did not use it, so the file
+/// held two answers to one question and only one of them was right. Delegating
+/// is the fix, and the two cannot disagree now because there is one of them.
 pub(crate) fn python_repr(value: &Value) -> String {
     match value {
-        Value::String(text) => {
-            if text.contains('\'') && !text.contains('"') {
-                format!("\"{text}\"")
-            } else {
-                format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
-            }
-        }
+        Value::String(text) => python_str_repr(text),
         other => python_str(other),
     }
 }
@@ -811,6 +821,43 @@ mod tests {
         ];
         for (value, expected) in cases {
             assert_eq!(&python_str_repr(value), expected, "for {value:?}");
+        }
+    }
+
+    /// `python_repr` renders a string exactly as `python_str_repr` does.
+    ///
+    /// This is BUG-45's regression, and it is deliberately an *equality between
+    /// the two functions* rather than a second table of expected strings. A
+    /// table is what let the defect through: the string arm was reached only
+    /// from the container path with an escalated `name`, so no vector exercised
+    /// it, and a hand-written table would have had to guess the same inputs the
+    /// oracle already misses. Comparing the two implementations instead turns
+    /// "these agree" into something that fails when either one moves, which is
+    /// the property the fix created and the one worth holding.
+    ///
+    /// Checked both ways round: the string arm is reached through
+    /// `Value::String` directly, and through a `Value::Array` element, which is
+    /// the path a GitHub asset `name` takes when it is not a plain string.
+    #[test]
+    fn python_repr_renders_a_string_the_way_python_str_repr_does() {
+        let cases = [
+            "plain", "a'b", "a\"b", "a'b\"c", "a\nb", "a\tb", "a\\b", "a\u{0}b", "a\u{7f}b",
+            "a\u{85}b", "a\u{1b}b",
+        ];
+        for value in cases {
+            let expected = python_str_repr(value);
+            assert_eq!(
+                python_repr(&Value::String(value.to_string())),
+                expected,
+                "the string arm diverged for {value:?}"
+            );
+            assert_eq!(
+                python_repr(&Value::Array(vec![Value::String(value.to_string())])),
+                format!("[{expected}]"),
+                "the container path diverged for {value:?} — this is the path \
+                 BUG-45 was reached by, a GitHub asset `name` that is not a \
+                 plain string"
+            );
         }
     }
 
