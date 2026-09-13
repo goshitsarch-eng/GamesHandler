@@ -2187,9 +2187,11 @@ impl Shell {
                     cosmic::Action::App,
                 );
             }
-            // The only silent success in the launch flow, and it is the
-            // reference's: `QDesktopServices.openUrl` reports nothing when it
-            // works (`bridge.py:517`).
+            // A silent success, and it is the reference's: `openPrefix`
+            // (`bridge.py:509-517`) prints nothing once the directory exists and
+            // the file manager has been asked to open it. Since `BUG-04` the
+            // *asking* can fail (`xdg-open` missing), and that failure is not
+            // silent — it takes the `Err` arm below.
             Message::PrefixFolderOpened { result } => {
                 return match result {
                     Ok(()) => cosmic::task::none(),
@@ -2795,13 +2797,63 @@ fn start_prefix_tool(game: &Game, runners: &RunnerManager, tool: PrefixTool) -> 
         .map_err(|error| error.to_string())
 }
 
+/// The command that opens the prefix folder in the user's file manager.
+///
+/// Split out for the same reason [`open_url_command`] is: the argument list is
+/// then *readable*, rather than trusted to be a path and not something a shell
+/// would split.
+fn prefix_folder_command(target: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(target);
+    command
+}
+
+/// Start a detached helper and report only the failure that means it never
+/// started.
+///
+/// Both `xdg-open` call sites need exactly this, and they had drifted into two
+/// different answers for the same failure — [`open_url`] reported it and
+/// [`open_prefix_folder`] discarded it, which is `BUG-04`. Sharing the spawn
+/// makes the divergence impossible to reintroduce, and it makes the failure
+/// **drivable from a test**: the program name is a parameter, so a test can
+/// point it at something that does not exist instead of asserting a string it
+/// made up.
+///
+/// The three `Stdio::null()`s are the point of the call rather than incidental:
+/// this process must not hold the helper's pipes open, because a browser or a
+/// file manager that inherits them outlives the app that started it. The child
+/// is deliberately left unreaped for the same reason — a browser window is not
+/// something to wait for.
+///
+/// `what` is the thing that could not be opened, already phrased as the object
+/// of the sentence: `"the prefix folder"`, or a URL.
+fn spawn_detached(command: &mut std::process::Command, what: &str) -> Result<(), String> {
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_child| ())
+        .map_err(|error| format!("Could not open {what}: {error}"))
+}
+
 /// `openPrefix`'s body from the prefix resolution down (`bridge.py:509-517`).
 ///
-/// The one reportable failure is the directory creation — the reference prints
-/// `Could not open the prefix folder: {exc}` and returns *without* opening
-/// anything, because a file manager pointed at a path that does not exist is a
-/// worse answer than a sentence. `QDesktopServices.openUrl`'s own return value
-/// is discarded in the reference (`:517`) and is discarded here.
+/// The one failure the reference itself reports is the directory creation — it
+/// prints `Could not open the prefix folder: {exc}` and returns *without*
+/// opening anything, because a file manager pointed at a path that does not
+/// exist is a worse answer than a sentence.
+///
+/// `QDesktopServices.openUrl`'s return value is discarded in the reference
+/// (`:517`), and for a while this discarded `xdg-open`'s too, on the argument
+/// that a discarded value is what fidelity requires. That argument only holds
+/// where the two are the same kind of thing, and they are not: Qt's `openUrl`
+/// returning `false` means the platform was asked and declined, while
+/// `Command::spawn` failing means the helper was **never started at all** —
+/// `ENOENT`, `xdg-open` not on `PATH`, which is a minimal flatpak's and a
+/// container's normal condition. Discarding that made the menu item do nothing
+/// and say nothing, and it contradicted [`open_url`] thirty lines below, which
+/// maps the identical failure to a message that gets toasted. See `BUG-04`.
 fn open_prefix_folder(game: &Game) -> Result<(), String> {
     let prefix = prefix_folder(game);
     let target = match prefix_drive_c(&prefix) {
@@ -2818,13 +2870,7 @@ fn open_prefix_folder(game: &Game) -> Result<(), String> {
     // fallback is the unresolved path rather than an error: the reference has no
     // failure to report at this point.
     let resolved = target.canonicalize().unwrap_or(target);
-    let _ = std::process::Command::new("xdg-open")
-        .arg(&resolved)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    Ok(())
+    spawn_detached(&mut prefix_folder_command(&resolved), "the prefix folder")
 }
 
 /// The command that opens `url` in the user's browser.
@@ -2852,16 +2898,11 @@ fn open_url_command(url: &str) -> std::process::Command {
 ///
 /// The `Result` is real rather than decorative: `spawn` fails when `xdg-open`
 /// is not on the path, which is the flatpak's failure mode as much as a
-/// container's, and `the_open_url_error_arm_is_not_a_fabricated_string` drives
-/// that arm with a program that does not exist instead of asserting the string.
+/// container's. `spawn_detached` is where the failure is turned into a sentence;
+/// `a_detached_spawn_that_cannot_start_says_so` drives it with a program that
+/// does not exist instead of asserting a string the test invented.
 fn open_url(url: &str) -> Result<(), String> {
-    open_url_command(url)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_child| ())
-        .map_err(|error| format!("Could not open {url}: {error}"))
+    spawn_detached(&mut open_url_command(url), url)
 }
 
 /// A game's Wine prefix: its own `prefix_path`, or `<prefixes_dir>/<id>`.
@@ -9564,6 +9605,30 @@ mod tests {
         assert_eq!(
             names, ours,
             "the shell's icons must be the reference's, in the reference's order"
+        );
+    }
+
+    /// The shared detached spawn reports the failure that means the helper never
+    /// started, and does so with a real `io::Error` rather than a string the
+    /// test chose.
+    ///
+    /// This is the assertion `BUG-04` was missing: before it, the prefix
+    /// folder's spawn discarded its `Result` outright, and the doc comment that
+    /// described this area named a test that had never been written — the same
+    /// defect class as a check that passes without looking.
+    #[test]
+    fn a_detached_spawn_that_cannot_start_says_so() {
+        let mut missing = std::process::Command::new("/nonexistent/xdg-open-for-test");
+        let error = spawn_detached(&mut missing, "the prefix folder")
+            .expect_err("a program that does not exist cannot be spawned");
+        assert!(
+            error.starts_with("Could not open the prefix folder: "),
+            "the message must name what failed: {error:?}"
+        );
+        // And it carries the OS's own reason, not a placeholder.
+        assert_eq!(
+            error,
+            "Could not open the prefix folder: No such file or directory (os error 2)"
         );
     }
 }
