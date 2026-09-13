@@ -761,8 +761,36 @@ pub fn validate_staged_runner(
 /// `os.walk(..., followlinks=False)` in Python; the recursion is bounded by the
 /// tree depth of an archive we have already extracted, and symlinked
 /// directories are not descended into.
-fn walk_links(root: &Path) -> Result<(), ArchiveError> {
-    let entries = match fs::read_dir(root) {
+///
+/// # Two paths, and why the recursion carries both
+///
+/// A link's parent directory is measured against **`base`** — the tree that
+/// will be renamed into place — while the scan walks **`current`**. The
+/// reference keeps those apart (`os.walk` yields `current`; `candidate` is
+/// closed over) and this function has to carry both for the same reason.
+///
+/// Carrying one was a P0: `walk_links(root)` recursed as `walk_links(&path)`,
+/// so `strip_prefix(root)` where `root` was also the directory being scanned
+/// yielded the bare file name and `.parent()` was **always `""`**. That made
+/// the escape test `normpath("" + "/" + target)`, i.e. `normpath(target)`, so
+/// **any** target beginning `..` was judged to escape however far inside the
+/// tree it landed — and Wine builds are full of them. Measured against a real
+/// `Proton-CachyOS Latest`: 2,068 symlinks, the reference's rule refuses 0 of
+/// them, this rule refused 1,818. The check is only ever *over*-strict, so
+/// nothing escaped and it was never a security hole — it was a functional
+/// break that refused every runner install after the download completed.
+///
+/// The two existing symlink tests could not see it: one is a depth-1 link with
+/// no `..`, and the other uses `../bridge/back`, which both rules refuse.
+/// `a_relative_symlink_from_a_subdirectory_that_stays_inside_is_allowed` is the
+/// case neither covered, and it is the shape Wine actually ships.
+fn walk_links(base: &Path) -> Result<(), ArchiveError> {
+    walk_links_in(base, base)
+}
+
+/// The recursion. [`walk_links`] is the entry point; `base` never changes.
+fn walk_links_in(base: &Path, current: &Path) -> Result<(), ArchiveError> {
+    let entries = match fs::read_dir(current) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(ArchiveError::Io(error)),
@@ -775,8 +803,11 @@ fn walk_links(root: &Path) -> Result<(), ArchiveError> {
             if target.is_absolute() {
                 return Err(ArchiveError::EscapingLink(path));
             }
+            // Relative to `base`, not to `current`: the question is where the
+            // link lands once `base` is moved, and `current` is not where it
+            // started from.
             let relative_parent = path
-                .strip_prefix(root)
+                .strip_prefix(base)
                 .unwrap_or(Path::new(""))
                 .parent()
                 .unwrap_or(Path::new(""));
@@ -799,7 +830,7 @@ fn walk_links(root: &Path) -> Result<(), ArchiveError> {
                 return Err(ArchiveError::EscapingLink(path));
             }
         } else if metadata.is_dir() {
-            walk_links(&path)?;
+            walk_links_in(base, &path)?;
         }
     }
     Ok(())
@@ -1440,5 +1471,166 @@ mod tests {
         std::os::unix::fs::symlink("bin/wine", tree.join("wine")).unwrap();
 
         validate_staged_runner(&tree, &root).unwrap();
+    }
+
+    /// **A `..`-relative link from a subdirectory that lands inside is allowed.**
+    ///
+    /// This is the shape Wine actually ships and the case the two tests above
+    /// cannot see: `a_relative_symlink_that_stays_inside_is_allowed` is a
+    /// depth-1 link with no `..` at all, and
+    /// `a_symlink_that_escapes_once_moved_is_refused` uses `../bridge/back`,
+    /// which *both* the correct rule and the broken one refuse. So the pair
+    /// passed while every real runner install was refused
+    /// (`audit/BUGS.md` BUG-35).
+    ///
+    /// The parent directory has to be measured against the tree root, not
+    /// against the directory being scanned. When those were one variable,
+    /// `strip_prefix` returned the bare file name, `.parent()` was always `""`,
+    /// and the escape test collapsed to `normpath(target)` — which refuses
+    /// *any* target starting `..`, however far inside it lands.
+    ///
+    /// Reproduced here in both depths from the real case: `bin/link -> ../wine`
+    /// and `bin/i386/link -> ../../wine`, the second being the two-level form
+    /// (1,818 of 2,068 links in a real `Proton-CachyOS Latest` take).
+    #[test]
+    fn a_relative_symlink_from_a_subdirectory_that_stays_inside_is_allowed() {
+        let scratch = Scratch::new("sublink");
+        let root = scratch.join("stage");
+        let tree = root.join("runner");
+        fs::create_dir_all(tree.join("bin/i386")).unwrap();
+        fs::write(tree.join("wine"), b"wine").unwrap();
+        // One level up: from `bin/` to the root's own `wine`.
+        std::os::unix::fs::symlink("../wine", tree.join("bin/wine")).unwrap();
+        // Two levels up: the deeper form, and the one that most of a real
+        // build's links take.
+        std::os::unix::fs::symlink("../../wine", tree.join("bin/i386/wine")).unwrap();
+
+        validate_staged_runner(&tree, &root).unwrap_or_else(|error| {
+            panic!(
+                "a `..`-relative link that lands inside the tree must be allowed — this is \
+                 what Wine ships, and refusing it refuses every runner install after the \
+                 download: {error}"
+            )
+        });
+    }
+
+    /// The other half of the same rule, so the fix above cannot be "allow every
+    /// `..`": a link from a subdirectory that genuinely leaves the tree is still
+    /// refused.
+    #[test]
+    fn a_relative_symlink_from_a_subdirectory_that_escapes_is_still_refused() {
+        let scratch = Scratch::new("subescape");
+        let root = scratch.join("stage");
+        let tree = root.join("runner");
+        fs::create_dir_all(tree.join("bin")).unwrap();
+        fs::write(tree.join("bin/wine"), b"wine").unwrap();
+        // `bin/` -> `../../outside`: one `..` leaves the tree.
+        std::os::unix::fs::symlink("../../outside", tree.join("bin/escape")).unwrap();
+
+        let error = validate_staged_runner(&tree, &root).unwrap_err();
+        assert!(
+            matches!(error, ArchiveError::EscapingLink(_)),
+            "expected an escaping-link refusal for a link that leaves the tree, got {error}"
+        );
+    }
+
+    /// **The staged-tree walk survives a real Proton build.**
+    ///
+    /// The two synthetic tests above pin the rule; this one is the measurement
+    /// that found the defect, and it is the check that would have caught it
+    /// before it shipped. A real `compatibilitytools.d` build is not a fixture
+    /// anybody has to invent: it is 2,068 symlinks of exactly the `..`-relative
+    /// shape Wine ships, and the broken rule refused 1,818 of them.
+    ///
+    /// `#[ignore]`d rather than run by default, because the file it needs is a
+    /// multi-gigabyte Steam install that this repository must not require. Run
+    /// it deliberately:
+    ///
+    /// ```text
+    /// cargo test -p gamehandler-core -- --ignored a_real_proton_build
+    /// ```
+    ///
+    /// It also asserts the *shape* it needs is present, so a build that happens
+    /// to contain no `..` links fails loudly here instead of passing vacuously —
+    /// the failure mode that let the original defect through two tests.
+    #[test]
+    #[ignore = "needs a real Proton build under ~/.local/share/Steam/compatibilitytools.d"]
+    fn a_real_proton_build_staged_tree_validates() {
+        let Some(build) = real_proton_build() else {
+            panic!(
+                "no Proton build found under ~/.local/share/Steam/compatibilitytools.d — this \
+                 test cannot run here, and it is `#[ignore]`d so that is not a failure of the \
+                 suite; run it on a machine that has one"
+            );
+        };
+
+        // The shape that matters: `..`-relative links, which are the ones the
+        // one-variable rule refused.
+        let mut total = 0usize;
+        let mut parent_relative = 0usize;
+        collect_link_shape(&build, &mut total, &mut parent_relative);
+        assert!(
+            parent_relative > 0,
+            "{build:?} has {total} symlinks and none of them are `..`-relative, so this test \
+             would pass against the broken rule too. Pick a build with the shape it is for."
+        );
+
+        // `validate_staged_runner` resolves the candidate against the extraction
+        // root, so the build has to be its own staging root for the check to be
+        // about the links rather than about the containment pre-check.
+        let root = build.parent().expect("a build has a parent directory");
+        match validate_staged_runner(&build, root) {
+            Ok(()) => {}
+            Err(ArchiveError::EscapingLink(path)) => panic!(
+                "refused {path:?} as escaping in a real Proton build with {parent_relative} \
+                 `..`-relative links — a link's parent directory is measured against the tree \
+                 root, not against the directory being scanned (BUG-35)"
+            ),
+            Err(error) => panic!("{build:?} failed validation for a different reason: {error}"),
+        }
+    }
+
+    /// The first real Proton build this machine has, if any.
+    #[cfg(test)]
+    fn real_proton_build() -> Option<PathBuf> {
+        let home = std::env::var_os("HOME")?;
+        let dir = PathBuf::from(home).join(".local/share/Steam/compatibilitytools.d");
+        let mut builds: Vec<PathBuf> = fs::read_dir(dir)
+            .ok()?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        builds.sort();
+        builds.into_iter().next()
+    }
+
+    /// Count every symlink under `root`, and how many take a `..` step.
+    #[cfg(test)]
+    fn collect_link_shape(root: &Path, total: &mut usize, parent_relative: &mut usize) {
+        let Ok(entries) = fs::read_dir(root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                *total += 1;
+                if fs::read_link(&path)
+                    .map(|target| {
+                        target
+                            .components()
+                            .any(|c| matches!(c, Component::ParentDir))
+                    })
+                    .unwrap_or(false)
+                {
+                    *parent_relative += 1;
+                }
+            } else if metadata.is_dir() {
+                collect_link_shape(&path, total, parent_relative);
+            }
+        }
     }
 }
