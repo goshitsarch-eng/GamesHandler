@@ -112,29 +112,14 @@ pub const DEFAULT_TOGGLES: [(&str, &str, &str); 13] = [
 /// shortcut actually works, and this page only prints them — the accelerators
 /// are the shell's. A row here that the shell does not honour is the page lying
 /// about the shell, which is why what this page asserts is not that the rows are
-/// printed but that they are *accounted for*: every row must be either
-/// implemented or named in [`IMPLEMENTED_SHORTCUTS`]' complement, and
-/// `the_page_does_not_claim_a_shortcut_the_shell_does_not_implement` is what
-/// holds the two together.
-/// The sentence the page prints under the shortcut table.
+/// printed but that they are *answered*:
+/// `every_row_this_page_prints_is_a_key_the_window_answers` drives each row's own
+/// key through the subscriptions that run in a window — the shell's and
+/// libcosmic's — and requires exactly one of them to answer it in each focus
+/// state. That test is what makes the rows a claim rather than a list.
 ///
-/// It exists because three of the four accelerators **do not fire while a text
-/// field has focus** (`BUG-12`), which is where a user reaching for one is most
-/// often standing — an Add-game form with the name half-typed, or the library
-/// search. The divergence is measured and recorded at
-/// `crates/app/src/shortcuts.rs:86-102`; a focused `text_input` swallows these
-/// keys despite not binding them, so Qt's `Qt.ApplicationShortcut` semantics —
-/// active whenever any window of the application is active, whatever holds
-/// focus — are not reproduced.
-///
-/// The page a user visits *to learn the shortcuts* was the wrong place to stay
-/// silent about that, and this constant is the row's own recommended first
-/// remedy: print the caveat rather than leave the list reading as
-/// unconditional. The second remedy — the guard asserting the caveat is
-/// **rendered** rather than that a word appears in `main.rs` — is
-/// `the_shortcut_caveat_is_drawn_with_the_rows_it_qualifies`.
-pub const SHORTCUT_FOCUS_CAVEAT: &str = "These work anywhere in the window except while you are typing in a field — leave the field first if a key does nothing.";
-
+/// It used to be printed under a caveat about focus, and the caveat is gone
+/// with the divergence that made it true: see [`IMPLEMENTED_SHORTCUTS`].
 pub const SHORTCUTS: [(&str, &str); 4] = [
     ("Ctrl+N:", "Add a game"),
     ("Ctrl+F:", "Search the library"),
@@ -175,26 +160,53 @@ pub const SHORTCUTS: [(&str, &str); 4] = [
 /// the list was updated — `the_page_does_not_claim_a_shortcut_the_shell_does_not_implement`
 /// is what failed when the subscription landed.
 ///
+/// # The second of those two bullets was false, and this is where it was fixed
+///
+/// The paragraph above is kept because it is *almost* right and the way it is
+/// wrong is the whole of `BUG-12`. "A focused `text_input` keeps its own editing
+/// keys" is true; "and these three pass through" does not follow from it. A
+/// focused field captures **every** key, including the ones it does nothing with
+/// — `shell.capture_event()` is the last line of its focused branch
+/// (`src/widget/text_input/input.rs:2261-2262`) — so the editing-bindings list
+/// was the list of keys it *acts* on, and reading that as the list of keys it
+/// *claims* made a swallowed accelerator look like a design decision.
+///
+/// Measured, not read: with the Library's search box focused, `Ctrl+N`, `Ctrl+,`
+/// and `Ctrl+Q` all left `Captured`, which is the status `keyboard::listen()`
+/// filters out — so all three were dead in the state a user reaching for a
+/// shortcut is most often standing in, and `Ctrl+F` was dead too, behind
+/// libcosmic's identical `Ignored` gate (`src/keyboard_nav.rs:20-23`). The
+/// subscription is now `shortcuts::subscription()`, which answers all four in
+/// every status, and the *measurement* is what
+/// `every_row_this_page_prints_is_a_key_the_window_answers` drives. See
+/// [`crate::shortcuts`] for the plumbing and the argument that nothing typed is
+/// displaced.
+///
 /// # Two things this still does not claim
 ///
-/// * `Ctrl+Shift+F` reaches the `on_search` hook (`main.rs`), because libcosmic's
-///   match tests Control and does not reject Shift, where Qt's `Shortcut` would
-///   not match it. It is the framework's binding; the divergence is recorded
-///   here because this is the page that advertises the key.
+/// * `Ctrl+Shift+F` reaches the search navigation, because libcosmic's match
+///   tests Control and does not reject Shift, where Qt's `Shortcut` would not
+///   match it. It is the framework's binding and the shell's arm mirrors its
+///   predicate deliberately, so that the key does not change meaning with the
+///   focus. It is a superset of the advertised key rather than a failure of it,
+///   and it is recorded here because this is the page that advertises the key.
 /// * That a key press actually arrives is a claim about a running window.
 ///   Nothing here is observable without one, so it is T-19's to walk in the
 ///   Flatpak — the same bound P-68's own acceptance criteria name.
 ///
-/// **What "implemented" means here is narrower than it reads, and the page now
-/// says so.** Membership means the shell answers the key *when it reaches the
-/// shell's subscription* — not that it reaches it from wherever the user is
-/// standing. Three of the four do not arrive while a text field has focus
-/// (`BUG-12`), which is a limitation of this list rather than of the
-/// accelerators: the list is keyed on the *accelerator*, and the condition is
-/// about focus, so neither this list nor [`UNWIRED_SHORTCUTS`] can express it.
-/// Rather than leave the page printing a list that reads as unconditional,
-/// [`SHORTCUT_FOCUS_CAVEAT`] is rendered under the rows and
-/// `the_shortcut_caveat_is_drawn_with_the_rows_it_qualifies` holds it there.
+/// # What "implemented" means here, now that the caveat is gone
+///
+/// Membership means the shell answers the key **from anywhere in the window**,
+/// which is the property the guard measures rather than a reading of this list.
+/// This constant used to be qualified by a printed caveat about focus
+/// (`SHORTCUT_FOCUS_CAVEAT`), because membership meant only "the shell answers
+/// it if it arrives". With the subscription answering every status, that caveat
+/// would have been false for three of the four rows, so it went with the
+/// divergence: a page that apologises for a defect it no longer has is the same
+/// lie as one that stays silent about a defect it does.
+///
+/// The list is kept as data rather than deleted, and so is
+/// [`UNWIRED_SHORTCUTS`], for the reason the complement's own doc gives.
 pub const IMPLEMENTED_SHORTCUTS: [&str; 4] = ["Ctrl+N:", "Ctrl+F:", "Ctrl+,:", "Ctrl+Q:"];
 
 /// Every row [`SHORTCUTS`] prints that [`IMPLEMENTED_SHORTCUTS`] does not.
@@ -657,9 +669,6 @@ pub fn view<'a>(page: SettingsPage<'a>) -> Element<'a, Message> {
     for (keys, what) in SHORTCUTS {
         body = body.push(row(keys, text::body(what).into()));
     }
-    // Directly under the rows it qualifies, so it is read as part of them
-    // rather than as a general note about the page.
-    body = body.push(text::caption(SHORTCUT_FOCUS_CAVEAT));
 
     container(scrollable(body)).padding(18).into()
 }
@@ -821,37 +830,24 @@ mod tests {
     /// - if a row is added to [`SHORTCUTS`] that is in neither list, the second
     ///   fires.
     ///
-    /// The "does the shell handle keys at all" half reads `main.rs`, because
-    /// that is where the answer lives and there is no runtime observable for
-    /// "a key would do something" without a window.
+    /// # The "does the shell handle keys at all" half no longer reads `main.rs`
+    ///
+    /// It did, and `BUG-12` is why it must not: `main.rs.contains("fn subscription")
+    /// && …contains("keyboard")` is a source-text check standing in for a
+    /// behaviour check, and it passed for the whole time three of the four
+    /// accelerators were dead while a text field had focus — the word `keyboard`
+    /// was in the file and the key was not delivered. It is not that the grep was
+    /// too weak; it is that no grep can answer this.
+    ///
+    /// The answer is measured now, in
+    /// [`every_row_this_page_prints_is_a_key_the_window_answers`], which drives
+    /// each row's own key through the real subscriptions and reads the messages
+    /// back. What is left here is the accounting those rows must satisfy — a
+    /// property of the two lists rather than of the shell — and the two are
+    /// deliberately separate, because a test that both measured the shell and
+    /// checked the list could satisfy itself by editing the list.
     #[test]
     fn the_page_does_not_claim_a_shortcut_the_shell_does_not_implement() {
-        let main_rs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs");
-        let text = std::fs::read_to_string(&main_rs).expect("main.rs should be readable");
-
-        // A `subscription()` that listens for keyboard events is how a shortcut
-        // would arrive. Neither string alone is enough — `subscription` is a
-        // trait method that appears in comments, `keyboard` appears in prose —
-        // so the signal is their co-occurrence in a `fn subscription` body.
-        let handles_keys = text.contains("fn subscription")
-            && text
-                .split("fn subscription")
-                .skip(1)
-                .any(|body| body[..body.len().min(600)].contains("keyboard"));
-
-        assert_eq!(
-            handles_keys,
-            !IMPLEMENTED_SHORTCUTS.is_empty(),
-            "`main.rs` {} a keyboard subscription while IMPLEMENTED_SHORTCUTS lists \
-             {}. These must agree: if the shell now handles keys, fill in the \
-             record (and delete the rows it still does not honour from it); if it \
-             does not, the record is right and the page is printing four \
-             shortcuts the shell ignores — which is P-68 unmet and must be \
-             reported, not hidden",
-            if handles_keys { "has" } else { "has no" },
-            IMPLEMENTED_SHORTCUTS.len()
-        );
-
         let mut accounted: Vec<&str> = IMPLEMENTED_SHORTCUTS.to_vec();
         accounted.extend(UNWIRED_SHORTCUTS);
         let mut accounted_sorted = accounted.clone();
@@ -873,90 +869,173 @@ mod tests {
         );
     }
 
-    /// **The caveat about focus is drawn, with the rows it qualifies.**
+    /// **Each of the four rows is a key the window really answers, whichever
+    /// widget has the focus.**
     ///
-    /// `BUG-12`: three of the four accelerators do not fire while a text field
-    /// has focus, and this page — the one a user visits *to learn the
-    /// shortcuts* — printed the four rows with no mention of it. The row's own
-    /// recommended remedy was to render the caveat rather than leave the list
-    /// reading as unconditional, and then to make the guard assert the caveat is
-    /// **rendered** rather than that some word appears in `main.rs`.
+    /// This is the check `BUG-12` asked for, and it replaces the two that could
+    /// not give it. The predecessor asserted `main.rs.contains("fn subscription")
+    /// && …contains("keyboard")` — a source-text check standing in for a
+    /// behaviour check — and it passed for the whole time three of the four
+    /// accelerators were dead while a text field had focus. A word appearing in
+    /// a file is not a key being delivered, and no grep closes that gap.
     ///
-    /// This asserts three things, and the middle one is why it walks the built
-    /// tree instead of checking a constant:
+    /// So this measures, three layers down and with no source read anywhere:
     ///
-    /// 1. the caveat's text is among the strings the page actually draws;
-    /// 2. it is drawn **after the last shortcut row**, so it reads as a note on
-    ///    those rows rather than as a general remark about the page — a caveat
-    ///    rendered above the section header, or on a different page, would
-    ///    satisfy (1) alone;
-    /// 3. no shortcut row is drawn *after* it, which is the same claim from the
-    ///    other side.
+    /// 1. **the row's own key is parsed out of [`SHORTCUTS`]** — the page's own
+    ///    data, so a row whose key changed is driven as its new key rather than
+    ///    as a restatement of the old one;
+    /// 2. **it is handed to the subscriptions that run in a window**, as a real
+    ///    runtime event, in *both* statuses a widget traversal can leave: the
+    ///    shell's ([`crate::shortcuts::subscription`], which is what
+    ///    `App::subscription` returns) and libcosmic's own
+    ///    `keyboard_nav::subscription()`, which the framework composes in
+    ///    (`src/app/cosmic.rs:674`) and which routes `Ctrl+F` to
+    ///    `Application::on_search`. `Ignored` is the unfocused case and
+    ///    `Captured` the one a focused text field leaves — the case that was
+    ///    broken, and the reason a test that only drove `Ignored` would have
+    ///    passed throughout;
+    /// 3. **exactly one of the two answers each time**, and when the shell's does
+    ///    it is the reference's own message.
     ///
-    /// The constant is compared against the *drawn* string rather than the
-    /// assertion being written on the literal, so a page that stopped rendering
-    /// it fails here even though the constant still exists.
+    /// The "exactly one" half is not decoration. It is the double-fire check:
+    /// `Ctrl+F` is bound by the framework *and* by the shell's new arm, and the
+    /// two are exclusive only because they gate on opposite statuses. A test that
+    /// counted the messages from the shell alone would be satisfied by binding
+    /// `Ctrl+F` twice and navigating twice for one press.
+    ///
+    /// What this cannot reach is the window itself: that winit delivers the key
+    /// to the runtime, and that `on_search`'s focus operation lands on the search
+    /// box. Those stay T-19's to walk in the Flatpak, as P-68's acceptance says.
     #[test]
-    fn the_shortcut_caveat_is_drawn_with_the_rows_it_qualifies() {
-        let drawn = page_strings();
+    fn every_row_this_page_prints_is_a_key_the_window_answers() {
+        use crate::Page;
+        use crate::shortcuts;
+        use cosmic::iced::event::Status;
+        use cosmic::iced::keyboard::Modifiers;
 
-        let caveat_at = drawn
-            .iter()
-            .position(|text| text == SHORTCUT_FOCUS_CAVEAT)
-            .unwrap_or_else(|| {
-                panic!(
-                    "the Settings page draws four shortcuts and no caveat about \
-                     focus. Three of them do not fire while a text field has \
-                     focus (BUG-12), and this is the page a user reads to learn \
-                     them; drawn: {drawn:?}"
-                )
-            });
+        /// What the row's key must produce, and where from.
+        ///
+        /// `Ctrl+F` is the odd one: the framework answers it when the event is
+        /// ignored, and the shell answers it when it is not, so both halves are
+        /// named and exactly one must fire.
+        struct Answer {
+            row: &'static str,
+            character: &'static str,
+            reference: &'static str,
+            is_it: fn(&Message) -> bool,
+        }
 
-        // The description column of each row, which is what `SHORTCUTS` holds.
-        let last_row = SHORTCUTS
-            .iter()
-            .filter_map(|(_, what)| drawn.iter().position(|text| text == what))
-            .max()
-            .expect("the shortcut rows must be drawn at all, or this test is vacuous");
-        assert!(
-            caveat_at > last_row,
-            "the caveat is drawn before the rows it qualifies (row at {last_row}, \
-             caveat at {caveat_at}), so it does not read as a note on them; \
-             drawn: {drawn:?}"
+        let answers = [
+            Answer {
+                row: "Ctrl+N:",
+                character: "n",
+                reference: "`root.openGameForm(\"\")` (Main.qml:121-125)",
+                is_it: |message| matches!(message, Message::OpenNewGameForm),
+            },
+            Answer {
+                row: "Ctrl+F:",
+                character: "f",
+                reference: "`root.showPage(\"library\"); focusSearch()` (Main.qml:126-134)",
+                is_it: |message| matches!(message, Message::FocusLibrarySearch),
+            },
+            Answer {
+                row: "Ctrl+,:",
+                character: ",",
+                reference: "`root.showPage(\"settings\")` (Main.qml:135-139)",
+                is_it: |message| matches!(message, Message::NavigateTo(Page::Settings)),
+            },
+            Answer {
+                row: "Ctrl+Q:",
+                character: "q",
+                reference: "`backend.quit()` (Main.qml:140-143)",
+                is_it: |message| matches!(message, Message::Quit),
+            },
+        ];
+
+        // Every row the page prints is driven, and none is invented here: the
+        // table's rows must be the page's rows, in the page's order.
+        let rows: Vec<&str> = SHORTCUTS.iter().map(|(keys, _)| *keys).collect();
+        let driven: Vec<&str> = answers.iter().map(|answer| answer.row).collect();
+        assert_eq!(
+            driven, rows,
+            "this guard must drive the keys the page prints, or it is measuring \
+             a list of its own"
         );
-        assert!(
-            !drawn[last_row + 1..caveat_at]
-                .iter()
-                .any(|text| SHORTCUTS.iter().any(|(_, what)| what == text)),
-            "a shortcut row is drawn between the last one and the caveat"
-        );
+
+        for answer in &answers {
+            for status in [Status::Ignored, Status::Captured] {
+                // A real press: `text` carries the character a keyboard would
+                // type, which is what a focused field reads before deciding
+                // whether to insert, and Control is held — as it is for every
+                // accelerator here.
+                let event = shortcuts::pressed_event(
+                    answer.character,
+                    Modifiers::CTRL,
+                    Some(answer.character),
+                    false,
+                );
+
+                let shell =
+                    shortcuts::messages_for(shortcuts::subscription(), event.clone(), status);
+                let framework =
+                    shortcuts::messages_for(cosmic::keyboard_nav::subscription(), event, status);
+
+                assert_eq!(
+                    shell.len() + framework.len(),
+                    1,
+                    "`{}` — {} — produced {} message(s) from the shell and {} from \
+                     libcosmic when the key arrived {status:?}. Exactly one of the \
+                     two must answer: none is the accelerator being dead, and two \
+                     is it firing twice for one press. Shell: {shell:?}, \
+                     framework: {framework:?}",
+                    answer.row,
+                    answer.reference,
+                    shell.len(),
+                    framework.len()
+                );
+
+                if !shell.is_empty() {
+                    assert!(
+                        matches!(shell.as_slice(), [only] if (answer.is_it)(only)),
+                        "`{}` — {} — produced {shell:?} rather than the \
+                         reference's message",
+                        answer.row,
+                        answer.reference
+                    );
+                } else {
+                    // The framework's half, which is only ever `Ctrl+F`: pinned
+                    // as the `Action` `Cosmic::update` turns into `on_search`, so
+                    // that a change in what the framework emits is a failure here
+                    // rather than a row that quietly stops navigating.
+                    assert!(
+                        matches!(framework.as_slice(), [cosmic::keyboard_nav::Action::Search]),
+                        "`{}` was answered by libcosmic rather than by the shell, \
+                         and the framework must have answered it with \
+                         `Action::Search` — the action `Cosmic::update` routes to \
+                         `Application::on_search`. Got {framework:?}",
+                        answer.row
+                    );
+                }
+            }
+        }
     }
 
-    /// **The old guard read `main.rs` for a word; this one reads the page for
-    /// the property.**
+    /// **The record beside the list says where the behaviour lives.**
     ///
-    /// The predecessor to the caveat test asserted
-    /// `main.rs.contains("fn subscription") && …contains("keyboard")` — a
-    /// source-text check standing in for a behaviour check, over a divergence
-    /// that is conditional on focus rather than on existence. `BUG-12`'s note is
-    /// that the guard "cannot" catch a mismatch, because a word appearing in a
-    /// file is not a key being delivered.
-    ///
-    /// What replaces it is not a stronger grep. The focus divergence is recorded
-    /// in exactly one place — [`SHORTCUT_FOCUS_CAVEAT`]'s doc, citing
-    /// `crates/app/src/shortcuts.rs:86-102` — and the thing worth guarding is
-    /// that the page **renders** it, which
-    /// `the_shortcut_caveat_is_drawn_with_the_rows_it_qualifies` does by walking
-    /// the built tree. This test holds the remaining half: that the divergence
-    /// has not been silently dropped from `IMPLEMENTED_SHORTCUTS`' own doc, so a
-    /// reader of the constant cannot come away thinking the four are
-    /// unconditional.
+    /// [`IMPLEMENTED_SHORTCUTS`] used to carry a printed caveat under the rows
+    /// claiming three of the four did not fire while a text field had focus. That
+    /// stopped being true when the shell's subscription started answering every
+    /// status, and a page apologising for a defect it no longer has is the same
+    /// lie as one silent about a defect it does — so the caveat is gone and this
+    /// holds the record that replaced it: the constant's own doc must name
+    /// [`crate::shortcuts::subscription`], so a reader of the list finds where
+    /// the four are answered rather than a claim about their limits.
     ///
     /// It reads the source because the property *is* about the documentation,
     /// which has no runtime representation — the one case where a source read is
     /// the honest instrument rather than a substitute for one.
     #[test]
-    fn the_focus_divergence_is_recorded_where_a_reader_of_the_list_will_find_it() {
+    fn the_record_beside_the_rows_names_where_they_are_answered() {
         let source = include_str!("settings.rs");
         let doc = source
             .split("pub const IMPLEMENTED_SHORTCUTS")
@@ -969,10 +1048,20 @@ mod tests {
             .next()
             .unwrap_or(doc);
         assert!(
-            doc.contains("BUG-12") || doc.contains("focus"),
-            "`IMPLEMENTED_SHORTCUTS`' doc no longer records that three of the \
-             four do not fire while a text field has focus. A reader of the list \
-             takes it as unconditional, which is the defect BUG-12 describes"
+            doc.contains("shortcuts::subscription"),
+            "`IMPLEMENTED_SHORTCUTS`' doc no longer names the subscription that \
+             answers the four accelerators, so a reader of the list cannot tell \
+             where to look when one of them stops working — and `BUG-12` is what \
+             happens when that gap is filled with a reading of the framework \
+             instead of a measurement of it"
+        );
+        assert!(
+            !doc.contains("do not fire while a text field has focus"),
+            "`IMPLEMENTED_SHORTCUTS`' doc still claims the accelerators do not \
+             fire while a text field has focus. They do: the subscription answers \
+             every status, and `every_row_this_page_prints_is_a_key_the_window_\
+             answers` is what measures it. A stale caveat here is how the page \
+             would come to print one again"
         );
     }
 

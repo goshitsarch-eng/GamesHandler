@@ -614,6 +614,20 @@ pub enum Message {
     // Replaces the QML `pageStack` and the helpers in `Main.qml`.
     /// Show a top-level page.
     NavigateTo(Page),
+    /// Focus the Library's search box. `Ctrl+F` — `root.showPage("library")`
+    /// plus `root.libraryPage.focusSearch()` (`Main.qml:126-134`) — for the one
+    /// state libcosmic's own binding cannot reach.
+    ///
+    /// `Ctrl+F` is normally answered by the framework and not by this app:
+    /// `keyboard_nav::subscription()` matches it and `Cosmic::update` calls
+    /// `Application::on_search` (`src/app/cosmic.rs:850`), which is [`App`]'s
+    /// reply below. That subscription delivers only events whose status is
+    /// `Ignored` (`src/keyboard_nav.rs:20-23`), so it is silent exactly while a
+    /// text field has focus — the state `BUG-12` is about — and
+    /// [`shortcuts::search_the_framework_cannot_reach`] answers the key there
+    /// instead. Both routes end in the same [`Shell::focus_library_search`], and
+    /// they are exclusive by construction, so one press navigates once.
+    FocusLibrarySearch,
     /// Open the add-game form, with a fresh template. `newGameTemplate()`.
     OpenNewGameForm,
     /// Open the edit form for an existing game. `getGame(id)` + push.
@@ -1899,6 +1913,14 @@ impl Shell {
             // function for why the two must not be written separately.
             Message::NavigateTo(page) => {
                 return self.show_page(page);
+            }
+            // `Ctrl+F` while a text field has focus. The same navigation as
+            // `App::on_search`, through the same function, because the two are
+            // one accelerator: the framework answers it when the event is
+            // `Ignored` and `shortcuts` answers it when it is not, and both
+            // end here. See [`Message::FocusLibrarySearch`].
+            Message::FocusLibrarySearch => {
+                return self.focus_library_search();
             }
             // `newGameTemplate()` (`bridge.py:382-399`): a fresh id, the stored
             // default runner, and the fifteen toggles from
@@ -4115,25 +4137,37 @@ impl cosmic::Application for App {
         cosmic::task::none()
     }
 
-    /// P-68, the three accelerators libcosmic does not bind.
+    /// P-68, all four accelerators `Main.qml:121-143` binds, from anywhere in
+    /// the window.
     ///
-    /// `keyboard::listen()` delivers an event only when no widget took it
-    /// (`iced/futures/src/keyboard.rs:9-19`), so a focused text field keeps its
-    /// own keystrokes — which is what [`shortcuts`]' own doc records, along with
-    /// why `Ctrl+F` is absent here: the framework already binds it and routes it
-    /// to [`cosmic::Application::on_search`] below, and binding it twice would
-    /// fire it twice.
+    /// The subscription itself is [`shortcuts::subscription`], and it moves
+    /// there rather than staying a body here for the reason this doc used to
+    /// claim the opposite: a `Subscription` **does** have an accessor.
+    /// `into_recipes` and `Recipe::stream` are public (`iced/src/advanced.rs`),
+    /// so `shortcuts`'s tests hand the subscription a real runtime event and
+    /// read the messages back — including the status a focused `text_input`
+    /// leaves, measured rather than assumed. A body here could not be reached
+    /// from a test at all: `App` cannot be built off a display, and
+    /// `Application::subscription` takes `&self`.
     ///
-    /// The mapping is [`shortcuts::shortcut_for`], a pure function, because this
-    /// one is not testable: a `Subscription` has no accessor, so nothing can
-    /// read back what was composed here.
+    /// What this line still owns is the wiring, and it is one call: the state
+    /// machine's dispatcher is [`Shell::update`], and the keyboard plumbing is
+    /// `shortcuts`.
     fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
-        cosmic::iced::keyboard::listen().filter_map(|event| shortcuts::shortcut_for(&event))
+        shortcuts::subscription()
     }
 
     /// `Ctrl+F` — libcosmic's own `Action::Search`, emitted by
     /// `keyboard_nav::subscription()` (`src/keyboard_nav.rs:50-55`) and routed
     /// here by `Cosmic::update` (`src/app/cosmic.rs:850`).
+    ///
+    /// **This is one of the two routes `Ctrl+F` takes, and the quieter one.**
+    /// The framework's subscription is gated on the event being `Ignored`
+    /// (`src/keyboard_nav.rs:20-23`), so this hook never runs while a text field
+    /// has the focus; that half arrives as [`Message::FocusLibrarySearch`] and
+    /// its arm in [`Shell::update`] calls the same
+    /// [`Shell::focus_library_search`] this does. Both halves fire on the same
+    /// press exactly once, because the gates are complementary.
     ///
     /// Delegated so the navigation half is testable; see
     /// [`Shell::focus_library_search`], which also records why the returned
@@ -4145,7 +4179,10 @@ impl cosmic::Application for App {
     /// binding rather than one written here; the alternative — a second binding
     /// in [`subscription`](cosmic::Application::subscription) with the
     /// exact-modifier guard — would fire the same key twice, which is worse than
-    /// being liberal in this one case.
+    /// being liberal in this one case. `shortcuts`' half inherits the same
+    /// predicate deliberately, so the key does not change meaning with the
+    /// focus. See [`shortcuts::shortcut_for`] for the exact-modifier guard the
+    /// other three *do* use, and why the two differ.
     fn on_search(&mut self) -> cosmic::app::Task<Self::Message> {
         self.shell.focus_library_search()
     }
@@ -5446,6 +5483,7 @@ mod tests {
     // the payload.
     message_variants! {
         Message::NavigateTo(_) => ("NavigateTo", Message::NavigateTo(Page::Settings)),
+        Message::FocusLibrarySearch => ("FocusLibrarySearch", Message::FocusLibrarySearch),
         Message::OpenNewGameForm => ("OpenNewGameForm", Message::OpenNewGameForm),
         Message::OpenEditGameForm(_) => ("OpenEditGameForm", Message::OpenEditGameForm("g".to_string())),
         Message::CloseDialog => ("CloseDialog", Message::CloseDialog),
@@ -5915,6 +5953,12 @@ mod tests {
 
         let mut expected: Vec<&str> = vec![
             "NavigateTo",
+            // `Ctrl+F` when the framework's own binding is silent — a text field
+            // has the focus. Live because `shortcuts` emits it from the shell's
+            // keyboard subscription and the arm navigates; see
+            // [`Message::FocusLibrarySearch`] for why it is not simply bound to
+            // `on_search`'s path as well.
+            "FocusLibrarySearch",
             "CloseDialog",
             // U3's pair. Live because the library's context menu sends the
             // first and the dialog it opens sends the second; the unknown-id
