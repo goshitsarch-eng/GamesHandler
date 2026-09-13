@@ -63,7 +63,7 @@ those rows contain `Status:`:
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
 | `BUGS.md` | 48 | 30 | 28 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
-| `ARCHITECTURE.md` | 26 | 15 | 15 `FIXED` |
+| `ARCHITECTURE.md` | 26 | 16 | 15 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 15 | 13 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 7 `FIXED` |
 | `PACKAGING.md` | 10 | 8 | 6 `FIXED`, 2 `PARTIAL` |
@@ -129,18 +129,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 51 | 38 | 0 | 13 |
-| P3 | 50 | 8 | 0 | 42 |
-| **Total** | **130** | **75** | **0** | **55** |
+| P3 | 49 | 8 | 0 | 41 |
+| **Total** | **129** | **75** | **0** | **54** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 26 | 15 | 0 | 11 |
+| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 15 | 0 | 10 |
 | `BUG-xx` | `BUGS.md` | 46 | 28 | 0 | 18 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 6 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 13 | 0 | 16 |
-| **Total** | | **130** | **75** | **0** | **55** |
+| **Total** | | **129** | **75** | **0** | **54** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -278,7 +278,7 @@ across families, not within them.
 | `UX-18` | No text_input in the app is ever given .label() or .helper_text(), and the visible labels are unassociated sibling text widgets in a Row, so they identify a field to a sighted user and to nothing else | S2 | — | Give each `text_input` a label or helper text; verify the field's accessible name. **Half done, half refuted, and the refuted half is the one the row proposed.** The verification half holds and is what closes the finding: `crates/app/src/view/a11y.rs::input`/`input_with_id` publish a `Role::TextInput` node whose `label` is the field's caption and whose `value` is its contents, read off the real page by `form.rs`'s `every_wrapped_control_on_the_real_form_is_a_tab_stop_and_a_named_node`. The `.label(...)` half is **refused on measurement**: the toolkit paints its label *inside* the widget in a layout child above the box (`.../a401af8/src/widget/text_input/input.rs:2606-2614`, `:2716-2732`), and a caption is already drawn at all four sites — `field_row`'s `text::body(row.label)` beside the control (`view/form.rs:602-609`, the reference's own beside-the-field arrangement at `gamehandler/qml/GameFormPage.qml:83`, `:111`, `:117`), `LABEL_CATEGORY` for the category field, and the search boxes' placeholders — so `.label(...)` would draw each string twice and the category field's three times. `TextInput::label` is also not what carries accessibility here: libcosmic's `src/` holds five `accesskit` occurrences, all in `button/widget.rs` and `wayland/tooltip/widget.rs`, so no node exists for a labelled input in this stack either way. **The defect that was actually here was in the test asserting the row**: `a_text_input_publishes_its_label_and_value` took `"Name"` for both placeholder and caption, so a wrapper forwarding the placeholder passed it — the audit's own recurring shape, inside a test written to close this row. Repaired to `text_input("Half-Life", "Half-Life")` against the caption `"Game name"`; mutation-proved by replacing the wrapper's caption with `String::new()`, which fails `left: Some("")`, `right: Some("Game name")`. | FIXED |
 | `UX-19` | Card surfaces are hand-built three times as a local card_style closure, and two of the three hardcode the radius their own comment says is kept in sync | S2 | — | `5a03977` — same fix as `ARCH-17`; one surface, three pages. The class route the row suggested was measured and rejected as a restyle (radius 8.0/component vs 14.0/window).| FIXED |
 | `UX-20` | libcosmic's purpose-built settings widgets are used nowhere in the app | S2 | — | Adopt `settings::section`/`item`/`item_row`, or record why the hand-built rows are kept; verify by reading the settings view. | OPEN |
-### P3 — 50
+### P3 — 49
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
@@ -287,7 +287,7 @@ across families, not within them.
 | `ARCH-21` | The shortcut guard test is not enforced by the gate that is supposed to enforce it | S5 | — | Delete one of the two constants and observe the gate stay green (pre-fix), then fail (post-fix) once the guard is wired into a stage. | OPEN |
 | `ARCH-22` | A 58-line dialog docblock describes the runner dialog but sits above the game dialog, leaving the runner dialog undocumented | S5 | — | Move the docblock onto the runner dialog and write one for the game dialog; verify both dialogs have a doc comment naming them. | OPEN |
 | `ARCH-23` | The page-handler convention is inconsistent: two page modules own an update, the third does not | S5 | — | Adopt one convention across the three page modules, or record why Plugins differs; verify by reading the three signatures. | OPEN |
-| `ARCH-24` | Three launch settings are written, persisted and never read by anything | S5 | — | Either read the three settings at launch, or stop persisting and surfacing them; verify with a call site for each, or none in the UI. | OPEN |
+
 | `ARCH-25` | A module-level #[allow(dead_code)] covers the whole view layer, suppressing fifteen never-used items, including an entire dead widget stack | S5 | — | Narrow the allow to the items that need it and delete the dead widget stack; verify the crate still builds with `-D warnings`. | OPEN |
 | `ARCH-26` | Four comments cite `RunnerManager::choices` at line numbers that hold `system_wine` instead, and they had drifted before this session's merges rather than because of them | S5 | — | Point all four at `runners/mod.rs:1322` and check each against the tree. **Status: FIXED.** `settings.rs:275` and `form.rs:2087`, `:2710`, `:2772` now name `:1322`/`:1322-1327`, where `choices` is; `widgets.rs:708` also names `:1119` and is **correct as written**, because it is a historical note about where the number was at the time of an earlier correction. | FIXED |
 | `BUG-19` | sanitize accepts a bare - as the number null, so [-], [-]-style malformed numbers and {"last_played":-} parse where Python raises JSONDecodeError | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
@@ -333,11 +333,11 @@ across families, not within them.
 | `UX-30` | A page body's scrollable does not put the page's own primary action within reach, and the page reports this as a layout failure twice | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `SEC-10` | Dependency hygiene: five live RustSec advisories against the locked graph, none reachable from the shipped binary, and no unused or duplicated direct dependency | S4 | — | Controls for the advisory matcher (it flags `time 0.1.0` and `openssl 0.10.0`; it clears `time 0.3.44` and `openssl 0.10.99`), plus `strings` over the shipped binary for the renderer reachability claim (44,912 `tiny_skia` matches, 0 `wgpu`) and a `grep` over `xkbcommon`'s source for the six affected `memmap2` functions | OPEN |
 
-### Not a defect — 3
+### Not a defect — 4
 
-Refuted by measurement rather than fixed. All three rows are kept because a reader
+Refuted by measurement rather than fixed. All four rows are kept because a reader
 who has heard the claim should see it was tested. They carry a severity cell of `—` in
-`BUGS.md` for the same reason they sit outside the severity counts here: a refuted
+the specialist document for the same reason they sit outside the severity counts here: a refuted
 row that stays inside a severity bucket gets scored as a repaired one, which is
 exactly what had happened to `BUG-15`.
 
@@ -346,6 +346,7 @@ exactly what had happened to `BUG-15`.
 | `BUG-15` | An unknown runner family id silently becomes the default family instead of erroring, so fetch_available fetches and returns *a different family's releases* | S1 | — | Three assertions pinning default, named and unknown; reintroducing the conflation (a `match` falling back to the default for any unresolvable id) fails the test | CLOSED — **not a defect.** the recorded behaviour does not occur. `resolve_family` applies `unwrap_or` to the `Option` *inside* a call returning `Result`, so `None` takes the default and `Some("nonsense")` propagates Python's text byte-identically. The function had no test at all, which is how the row was written without the measurement to settle it; it now pins default, named and unknown as three separate assertions |
 | ~~`BUG-11`~~ | Case-variant categories are lost by `dedup` after the sort, where Python's `set` keeps them | S1 | — | Refuted by measurement: both implementations return 39 entries on a 40-game fixture, with the same ten fold-groups. The regression the finding was reaching for is real and *is* guarded — changing the sort's primary term to `a.cmp(b)` reproduces the symptom exactly (28 groups instead of 10) and `case_variant_categories_fold_into_the_same_groups_as_python` fails on it | WITHDRAWN |
 | ~~`UX-08`~~ | Both dialogs are a fixed 570 px wide and are laid out inside the page column, so below roughly 570 px plus the nav bar they are clipped on both sides — including their buttons | S2 | — | Refuted by measurement, and the recommended fix is a measured no-op: iced resolves a `Fixed` length as `amount.min(limits.max.width)` (`iced/core/src/layout/limits.rs:168`), so the dialog is **clamped** to the window rather than clipped by it; libcosmic's dialog already applies `Length::Fixed(570.0)` as its default (`src/widget/dialog.rs:169`), which makes `container(popup).max_width(570.0)` inert; and no dialog string is drawn beyond the window at any width from 1200 px down to the 420 px floor. The `Remaining` count moves with this row, which is why it is withdrawn rather than deleted. What is genuinely open in this area is a floor, not a ceiling, and that is `UX-04`. | WITHDRAWN |
+| `ARCH-24` | Three launch settings are written, persisted and never read by anything | S5 | — | **Refuted by measurement.** `game.gamemode` is read at `crates/core/src/runners/launch_opts.rs:757`, `game.battleye` at `:724` and `game.eac` at `:731`; the first wraps the command with `gamemoderun`, the other two set `PROTON_BATTLEYE_RUNTIME` and `PROTON_EAC_RUNTIME`. Four named tests pin the effects (`gamemode_wraps_only_when_gamemoderun_is_installed`, `an_enabled_anticheat_runtime_uses_what_the_host_found`, `a_disabled_anticheat_runtime_is_an_empty_value_not_a_missing_key`, `the_anticheat_lookup_is_skipped_entirely_without_proton_features`) and all pass. The row's cited lines (`:738-742`, `:705-718`) hold `virtual_desktop` and `nvapi`/`fsr` at this revision. What is true, and is recorded here rather than as a finding: when the prerequisite is absent the toggle is a silent no-op — no `gamemoderun` on `PATH` and no anticheat runtime found are both ignored without a word, where `gamescope` with no binary raises `RunnerError::GamescopeMissing`. Python behaves the same way (`runners.py:1240-1243`, `:1219-1224`), so the silence is the reference's and a divergence here would be a behaviour change, not a fix. | WITHDRAWN — **not a defect.** the recorded behaviour does not occur |
 
 ## Cross-referenced pairs
 
