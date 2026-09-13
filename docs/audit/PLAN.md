@@ -63,7 +63,7 @@ those rows contain `Status:`:
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
 | `BUGS.md` | 48 | 31 | 29 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
-| `ARCHITECTURE.md` | 26 | 16 | 15 `FIXED`, 1 `WITHDRAWN` |
+| `ARCHITECTURE.md` | 26 | 17 | 16 `FIXED`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 15 | 13 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 7 | 7 `FIXED` |
 | `PACKAGING.md` | 10 | 8 | 6 `FIXED`, 2 `PARTIAL` |
@@ -131,19 +131,19 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 51 | 38 | 0 | 13 |
+| P2 | 51 | 39 | 0 | 12 |
 | P3 | 49 | 9 | 0 | 40 |
-| **Total** | **129** | **76** | **0** | **53** |
+| **Total** | **129** | **77** | **0** | **52** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 15 | 0 | 10 |
+| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 16 | 0 | 9 |
 | `BUG-xx` | `BUGS.md` | 46 | 29 | 0 | 17 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 6 | 0 | 4 |
 | `SEC-xx` | `SECURITY.md` | 11 | 7 | 0 | 4 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 13 | 0 | 16 |
-| **Total** | | **129** | **76** | **0** | **53** |
+| **Total** | | **129** | **77** | **0** | **52** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -243,7 +243,7 @@ across families, not within them.
 | `ARCH-10` | The error taxonomy is strong inside core and collapses at two boundaries | S5 | — | A test per boundary asserting the `core` error enum survives to the UI message rather than being flattened to `String`. **Status: FIXED `937ef5b`.** `json::PersistenceError` with a variant per failing step (create / write temporary / replace / serialize) plus `WouldDiscardUnreadable`, returned by `models` and `settings`, so `ARCH-01`'s two kinds of failure are distinguishable by type rather than by an `io::ErrorKind` no caller read. The app boundary is closed with it: `view::plugins::InstallRunError` replaces `Result<bool, String>` and `plugins::InstallError` survives as its own variant. Six regression tests, from `every_write_step_that_can_fail_maps_to_its_own_variant` to `a_core_install_error_reaches_the_message_as_its_own_variant`. | FIXED |
 | `ARCH-11` | Module organisation: the four large files are large because of their test modules, and the production halves have concrete seams that no one has cut | S5 | — | Structural: verify with `cargo test` green plus the seam actually used by both callers. No behavioural test can see a moved definition. | OPEN |
 | `ARCH-12` | Two god-objects: a 968-line dispatcher and a 33-field state struct | S5 | — | Structural: verify with `cargo test` green plus a per-page count of `Shell::update` arms after the split. No behavioural test can see it. | OPEN |
-| `ARCH-13` | A hand-rolled Python lexer used as a test oracle is duplicated byte-for-byte between the two crates | S5 | — | Delete one copy and have both crates call the survivor; verify with a grep for the second body and `cargo test` green in both crates. | OPEN |
+| `ARCH-13` | A hand-rolled Python lexer used as a test oracle is duplicated byte-for-byte between the two crates | S5 | — | `91cdfa6` — one lexer in `core::oracle_support` behind a `test-support` feature; four tests, and `cargo tree --no-dev-dependencies` is what keeps it out of a release binary.| FIXED |
 | `ARCH-14` | A comment says a shared helper becomes warranted when a third copy appears; the third copy already exists | S5 | — | Extract the third copy into the shared helper its own comment asks for; verify with a grep that no local copy remains. | OPEN |
 | `ARCH-15` | The repo-root test helper is copied four times with three different derivations, and one copy's doc cites a precedent that does not use its derivation | S5 | — | One helper in one place; verify with a grep for the four derivations and `cargo test` green. | OPEN |
 | `ARCH-16` | A comment embeds a grep transcript as its own proof, and the transcript's line numbers no longer land | S5 | — | Re-derive the transcript against the current tree, or replace it with a citation that does not age; verify the cited lines contain what the paragraph says. | FIXED `0c92f9e` |
