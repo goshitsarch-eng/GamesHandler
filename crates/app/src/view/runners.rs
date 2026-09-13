@@ -2383,6 +2383,31 @@ mod tests {
         );
     }
 
+    /// An origin refusal reaches the user as the sentence the installer path
+    /// already uses for the same condition (`SEC-05`).
+    ///
+    /// This is the variant's **whole outbound path**: `install_runner_task`
+    /// maps the error through `rendered_message` and the toast is
+    /// `Failed to install {tag}: {message}`. The variant was added by this port
+    /// with no counterpart in the reference, so there is no Python string to
+    /// port and nothing else in the tree pins one — a later edit to
+    /// `RunnerError`'s `Display` would change what the user reads with every
+    /// test still green.
+    #[test]
+    fn an_origin_refusal_is_reported_with_the_url_it_refused() {
+        let error = RunnerError::UntrustedOrigin {
+            url: "http://example.invalid/x.tar.gz".to_string(),
+        };
+        assert_eq!(
+            rendered_message(&error),
+            "Runner download has an untrusted origin: http://example.invalid/x.tar.gz"
+        );
+        // The premise of the assertion above: this variant is *not* one of the
+        // four that can render empty, so the class-name fallback must not be
+        // what produced the sentence.
+        assert_ne!(rendered_message(&error), error.class_name());
+    }
+
     // ---- update -----------------------------------------------------------
 
     /// A fetch request clears the previous family's list *and* marks the fetch

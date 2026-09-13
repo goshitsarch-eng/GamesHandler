@@ -35,7 +35,7 @@
 //!
 //! # Deliberate divergences
 //!
-//! Five, and each is pinned by a test rather than left to a reader:
+//! Six, and each is pinned by a test rather than left to a reader:
 //!
 //! 1. **`int()` accepts ASCII digits only.** Python's `int()` accepts any
 //!    Unicode `Nd` decimal digit — measured, `int("٣")` is `3` and
@@ -74,6 +74,15 @@
 //!    collision advances to the next name rather than clearing the occupied one:
 //!    the parent directory holds the user's installed runners, and an
 //!    unexpectedly-occupied name may not be ours to delete.
+//! 6. **The download URL must be `https`.** The reference fetches whatever
+//!    `browser_download_url` says, with no scheme and no origin check, on a
+//!    path that ends in an extracted tree the app later *executes*; the
+//!    installer path in the same reference does check both. See
+//!    [`validate_runner_download_url`], which is where the argument for what
+//!    this check can and cannot be lives. This is the only divergence of the
+//!    six that the port adds for its own security rather than for Rust's type
+//!    system, and it is the only one that can refuse a download the reference
+//!    would have completed.
 
 use std::fs;
 use std::io::Write;
@@ -978,6 +987,64 @@ pub fn resolve_staged(extraction_root: &Path) -> Result<PathBuf, RunnerError> {
     }
 }
 
+/// Refuse a runner archive whose URL is not one this app will fetch.
+///
+/// This is a **deliberate divergence from the reference**, added for `SEC-05`.
+/// `runners.py:889` builds `Request(release.download_url)` and opens it with no
+/// scheme and no origin check at all, while the installer path
+/// (`installers.py:551-558`) applies both. The URL is read verbatim out of a
+/// field of the GitHub releases JSON ([`parse_releases`], `:501`), so a
+/// compromised family repository — or anything that can answer for
+/// `api.github.com` — chooses where this app connects and what it later
+/// extracts and *executes* as a runner.
+///
+/// # Why `https` is the whole check the *URL* can carry
+///
+/// An allowlist of hosts is not available in the shape the installer path uses
+/// it. `Installer::allowed_hosts` is per installer because the reference has
+/// that table; `RunnerFamily` has no equivalent field, and inventing one here
+/// would be a second place the family data lives. The reference offers nothing
+/// to port either — this check has no counterpart there.
+///
+/// A host allowlist of `github.com` would also be **wrong**, measured rather
+/// than assumed: `browser_download_url` for `GloriousEggroll/proton-ge-custom`
+/// is `https://github.com/.../releases/download/...`, which redirects once
+/// (302) to `https://release-assets.githubusercontent.com/github-production-…`
+/// with a signed query. A check applied to the URL taken out of the JSON could
+/// name `github.com`; a check applied to the final URL could not, without
+/// pinning GitHub's rotating asset host.
+///
+/// # What this does not cover
+///
+/// Only the URL **the JSON names**. The redirect it leads to is judged by
+/// nothing, and that is not an oversight — it is the measured reason the
+/// allowlist that would be tempting here cannot be written. A scheme check on
+/// the final URL would be possible and would add one thing: a *redirect* from
+/// an `https` asset to a plaintext `http` host. That needs an
+/// attacker-controlled or compromised `https` origin to set up, so it is a
+/// narrower gap than the one this closes, and closing it would mean plumbing a
+/// second `validate_…` call into [`install_with`]'s head callback. Recorded on
+/// `SEC-05` rather than silently left.
+///
+/// # What is *not* relied on
+///
+/// Not the fact that the first URL is `https`. `url_parts` lowercases the
+/// scheme only when the text before the first `:` is a scheme at all
+/// (`1http://x` has none), so `HTTPS://…` and `https://…` both pass, and
+/// `http://…`, `file:///…` and a scheme-less `cdn.example/x.tar.gz` all fail.
+/// The host is deliberately not required to be non-empty: `https:/x.tar.gz`
+/// has no netloc and passes, because the transport — not this predicate —
+/// decides whether such a URL is fetchable, and a false refusal of an odd but
+/// legitimate URL is a worse failure here than the odd URL is.
+pub fn validate_runner_download_url(url: &str) -> Result<(), RunnerError> {
+    if crate::installers::url_parts(url).scheme != "https" {
+        return Err(RunnerError::UntrustedOrigin {
+            url: url.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Download, stage, validate and atomically install a runner build.
 /// `ProtonManager.install` (`runners.py:864`).
 ///
@@ -1052,6 +1119,25 @@ pub fn install_with(
     if release.size < 0 || release.size as u64 > download_cap {
         return Err(RunnerError::ArchiveTooLarge);
     }
+    // Last of the refusals and the one added by this port (`SEC-05`), so it
+    // joins the other two in the class `Serve::calls` exists to measure: it
+    // runs before the request.
+    //
+    // It does **not** run before everything is written, which is what the first
+    // draft of this comment said. `install_with`'s first statement is
+    // `create_dir_all(runners_directory)` — Python's own first line
+    // (`runners.py:875`) — and this check sits after it, so a refusal still
+    // creates the runners directory when it did not exist. That is deliberate
+    // and it is not worth moving: the directory is where the user's builds
+    // live, the reference creates it on this path too, and relocating the check
+    // above it would couple this function's ordering to a statement that has no
+    // security content. What the position between that line and the request
+    // buys is that nothing is *staged* and no connection is opened.
+    //
+    // Order among the three refusals matters for the message: a release that is
+    // already installed *and* hostile is reported as already installed, which
+    // is the reference's own ordering with one check appended.
+    validate_runner_download_url(&release.download_url)?;
 
     let staging = StagingDirectory::create(runners_directory)?;
     // The archive's remote name is irrelevant once it is inside the private
@@ -2401,6 +2487,12 @@ mod tests {
         /// and without this counter such a test passes for a guard that fires
         /// after the download — which is the whole property under test.
         calls: std::cell::Cell<usize>,
+        /// The last URL `get` was handed. `Serve` ignored its `_url` until
+        /// `SEC-05`, and the origin check is the reason that is no longer
+        /// enough: "the refusal precedes the request" and "the request goes to
+        /// the URL the caller was given" are two different claims, and only the
+        /// second one can catch a URL rewritten between the check and the call.
+        url: std::cell::RefCell<String>,
     }
 
     impl Serve {
@@ -2410,6 +2502,7 @@ mod tests {
                 declared: None,
                 chunks: 1,
                 calls: std::cell::Cell::new(0),
+                url: std::cell::RefCell::new(String::new()),
             }
         }
         fn declaring(mut self, value: &str) -> Self {
@@ -2423,18 +2516,22 @@ mod tests {
         fn calls(&self) -> usize {
             self.calls.get()
         }
+        fn url(&self) -> String {
+            self.url.borrow().clone()
+        }
     }
 
     impl HttpClient for Serve {
         fn get(
             &self,
-            _url: &str,
+            url: &str,
             _headers: &[(&str, &str)],
             _timeout: Duration,
             on_head: &mut dyn FnMut(&ResponseHead) -> Result<(), RunnerError>,
             sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
         ) -> Result<(), RunnerError> {
             self.calls.set(self.calls.get() + 1);
+            *self.url.borrow_mut() = url.to_string();
             on_head(&ResponseHead {
                 content_length: self.declared.clone(),
                 final_url: String::new(),
@@ -2487,6 +2584,133 @@ mod tests {
             let reports = seen.into_inner();
             assert_eq!(reports.last().copied(), Some(1.0));
             assert!(reports.iter().all(|value| (0.0..=1.0).contains(value)));
+        });
+    }
+
+    /// The `https` predicate, over the shapes that decide it (`SEC-05`).
+    ///
+    /// `url_parts` is shared with the installer allowlist and has its own
+    /// vector battery in `installers.rs`, so this does **not** re-test the
+    /// parser. What it pins is the caller's *reading* of it: which side of the
+    /// line each shape lands on. That distinction is the whole content of the
+    /// check, and it is the half a future change to `url_parts` would move
+    /// without touching a single line of `proton.rs`.
+    #[test]
+    fn only_an_https_url_is_an_acceptable_runner_download_origin() {
+        for url in [
+            "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/x/y.tar.gz",
+            // The scheme is lowercased by the parser, so this is `https`.
+            "HTTPS://github.com/x/y.tar.gz",
+            // No netloc. Deliberately accepted: the transport decides whether
+            // such a URL is fetchable, not this predicate, and `url_parts` is
+            // not an origin allowlist — see the function's own note.
+            "https:/x.tar.gz",
+        ] {
+            assert!(
+                validate_runner_download_url(url).is_ok(),
+                "refused a URL this port must still fetch: {url:?}"
+            );
+        }
+
+        for url in [
+            // The finding itself: plaintext, so a hostile network can both
+            // choose and rewrite the archive that becomes an executed runner.
+            "http://example.invalid/x.tar.gz",
+            "ftp://example.invalid/x.tar.gz",
+            // A local read: `file://` would make the "download" something the
+            // attacker has no control over — and would let the JSON name any
+            // path on the machine to be extracted and executed.
+            "file:///tmp/x.tar.gz",
+            // A scheme-less URL is what an empty or relative
+            // `browser_download_url` produces. Python's `urlopen` rejects it
+            // with a `ValueError`; nothing here may reach the client at all.
+            "cdn.example.invalid/x.tar.gz",
+            "",
+            // Not a scheme: CPython requires the first character to be an
+            // ASCII letter, so `1http` is a relative path, not a scheme.
+            "1http://example.invalid/x.tar.gz",
+        ] {
+            let error = validate_runner_download_url(url).unwrap_err();
+            assert_eq!(url, error_url(&error), "the refusal must name the URL");
+            assert_eq!(error.class_name(), "UntrustedOrigin");
+        }
+    }
+
+    /// `RunnerError::UntrustedOrigin { url }`, destructured — so a test that
+    /// wants the URL has to say which variant it is reading it from, rather
+    /// than matching a `Display` string it might have got from anywhere.
+    fn error_url(error: &RunnerError) -> &str {
+        match error {
+            RunnerError::UntrustedOrigin { url } => url,
+            other => panic!("expected an origin refusal, got {}", other.class_name()),
+        }
+    }
+
+    /// A hostile `download_url` is refused **before the network is touched**
+    /// (`SEC-05`).
+    ///
+    /// `calls() == 0` is the assertion `Serve`'s counter exists for: a check
+    /// placed inside `on_head` — after the request, before the body — would
+    /// still refuse the archive, and would still have handed the attacker a
+    /// connection and a `User-Agent`.
+    ///
+    /// **The first version of this test also claimed "before anything is
+    /// written"**, and asserted that the runners directory was still empty
+    /// after the refusal. That assertion measured nothing in both directions.
+    /// It is vacuous as stated, because `StagingDirectory`'s `Drop` removes the
+    /// directory however the function returns — but it is not merely vacuous:
+    /// it is *unachievable*, and it was written without checking. Moving the
+    /// check below `StagingDirectory::create` left it green, so the claim was
+    /// tested by putting a regular file at the runners path — `create_dir_all`
+    /// is `install_with`'s first statement, so a check placed after it returns
+    /// [`RunnerError::Io`] there. It returned `Io`. The check therefore runs
+    /// after `create_dir_all` and *dirties* it (it creates the runners
+    /// directory, and creating that directory is a useful thing for a failed
+    /// install to have done), and only the position between that and the
+    /// request has any security content. This test asserts what is true; the
+    /// row says the rest.
+    #[test]
+    fn a_non_https_runner_url_is_refused_before_the_network_is_touched() {
+        in_scratch("proton-origin-refusal", |root| {
+            let runners = root.join("runners");
+            let client = Serve::new(runner_tar("GE-Proton9-5", b"#!/bin/sh\n"));
+            let mut subject = a_release("GE-Proton9-5");
+            subject.download_url = "http://example.invalid/GE-Proton9-5.tar.gz".to_string();
+
+            let error =
+                install(&client, &runners, &subject, &|_| {}, Duration::from_secs(5)).unwrap_err();
+
+            assert_eq!(
+                error.to_string(),
+                "Runner download has an untrusted origin: \
+                 http://example.invalid/GE-Proton9-5.tar.gz"
+            );
+            assert_eq!(client.calls(), 0, "the refusal must precede the request");
+        });
+    }
+
+    /// The check is not a blanket refusal: the URL the release actually carries
+    /// reaches the client unchanged.
+    ///
+    /// `Serve` ignored its `_url` until this test existed, so a check that
+    /// refuse-nothing-but also *rewrote* the URL — or an `install` that passed
+    /// the wrong variable — would have passed every test above. This is the
+    /// positive control for the pair.
+    #[test]
+    fn an_https_runner_url_is_handed_to_the_client_unmodified() {
+        in_scratch("proton-origin-passthrough", |root| {
+            let runners = root.join("runners");
+            let client = Serve::new(runner_tar("GE-Proton9-5", b"#!/bin/sh\n"));
+            install(
+                &client,
+                &runners,
+                &a_release("GE-Proton9-5"),
+                &|_| {},
+                Duration::from_secs(5),
+            )
+            .unwrap();
+            assert_eq!(client.calls(), 1);
+            assert_eq!(client.url(), "https://example.invalid/x.tar.gz");
         });
     }
 

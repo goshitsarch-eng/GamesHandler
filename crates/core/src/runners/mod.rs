@@ -128,6 +128,28 @@ pub enum RunnerError {
     UnknownTool { tool: String },
     /// A runner directory already exists for this release.
     AlreadyInstalled { id: String },
+    /// `Runner download has an untrusted origin: {url}`.
+    ///
+    /// The archive's URL is not one this app will fetch — see
+    /// [`crate::runners::proton::validate_runner_download_url`], which is the
+    /// only producer. It sits beside [`AlreadyInstalled`] because it is the
+    /// other refusal that costs nothing: no connection is opened and nothing is
+    /// staged. It is *not* free of side effects, unlike [`AlreadyInstalled`] —
+    /// it runs after `install_with`'s `create_dir_all`, so a refusal on a
+    /// machine with no runners directory creates one. The function that raises
+    /// it carries the argument for leaving that where it is.
+    ///
+    /// The variant carries the offending URL rather than a fixed sentence: the
+    /// URL is the diagnosis, exactly as it is for
+    /// [`InstallerError::UntrustedOrigin`], whose message names the host it
+    /// refused. Carrying a *string* rather than composing a sentence is also
+    /// why it does **not** join the four variants that can render empty — every
+    /// value here is non-empty by construction, since a refusal implies there
+    /// was a URL to refuse.
+    ///
+    /// [`AlreadyInstalled`]: RunnerError::AlreadyInstalled
+    /// [`InstallerError::UntrustedOrigin`]: crate::installers::InstallerError::UntrustedOrigin
+    UntrustedOrigin { url: String },
     /// `System Wine cannot be uninstalled`.
     SystemWineCannotBeUninstalled,
     /// `Runner archive exceeds the download size limit`.
@@ -209,6 +231,7 @@ impl RunnerError {
             RunnerError::WinetricksMissing => "WinetricksMissing",
             RunnerError::UnknownTool { .. } => "UnknownTool",
             RunnerError::AlreadyInstalled { .. } => "AlreadyInstalled",
+            RunnerError::UntrustedOrigin { .. } => "UntrustedOrigin",
             RunnerError::SystemWineCannotBeUninstalled => "SystemWineCannotBeUninstalled",
             RunnerError::ArchiveTooLarge => "ArchiveTooLarge",
             RunnerError::StagedTopLevelLink => "StagedTopLevelLink",
@@ -250,6 +273,13 @@ impl fmt::Display for RunnerError {
             RunnerError::UnknownTool { tool } => write!(f, "Unknown tool: {tool}"),
             RunnerError::AlreadyInstalled { id } => {
                 write!(f, "Runner '{id}' is already installed")
+            }
+            // Not Python's text: this refusal does not exist in the reference,
+            // which downloads whatever `browser_download_url` says. The shape
+            // is `installers.py`'s `_validate_download_origin` message, which
+            // names the installer and the URL it refused.
+            RunnerError::UntrustedOrigin { url } => {
+                write!(f, "Runner download has an untrusted origin: {url}")
             }
             RunnerError::SystemWineCannotBeUninstalled => {
                 f.write_str("System Wine cannot be uninstalled")
