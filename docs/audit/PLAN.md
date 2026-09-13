@@ -63,18 +63,18 @@ those rows contain `Status:`:
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
 | `BUGS.md` | 48 | 27 | 24 `FIXED`, 2 `PARTIAL`, 1 `CLOSED` |
-| `ARCHITECTURE.md` | 25 | 8 | 8 `FIXED` |
+| `ARCHITECTURE.md` | 25 | 10 | 10 `FIXED` |
 | `COSMIC-UX.md` | 30 | 5 | 5 `FIXED` |
 | `SECURITY.md` | 10 | 4 | 4 `FIXED` |
-| `PACKAGING.md` | 10 | 5 | 5 `FIXED` |
-| `PERFORMANCE.md` | 8 | 3 | 3 `FIXED` |
+| `PACKAGING.md` | 10 | 6 | 5 `FIXED`, 1 `PARTIAL` |
+| `PERFORMANCE.md` | 8 | 4 | 4 `FIXED` |
 
 `BUGS.md`'s 21 tail-less rows are its twenty open `P3` rows plus the withdrawn
 `BUG-11`, which carries no severity because it is not a defect. Each of the
 other five documents gained tails in the commits that fixed the rows they
 describe (`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`, `41d4b34`,
-`8f7269e`, `6069056`, and `SEC-09`'s own), so the pair rule was kept where it
-applies.
+`8f7269e`, `6069056`, `d855015` and `SEC-09`'s own), so the pair rule was kept
+where it applies.
 
 **Both numbers in the `BUGS.md` row were wrong until this revision, and the
 sentence above them was wrong in the same direction.** The row read `46` and the
@@ -252,7 +252,7 @@ across families, not within them.
 | `PERF-05` | search() re-sorts and re-filters the entire library, and categories() rebuilds and re-sorts the category list, on every frame — and both allocate Strings inside sort comparators | S3 | — | Cache the filtered/sorted result against the inputs it depends on, and drop the comparator allocations; verify the per-frame allocation count on a 500-game fixture. | OPEN |
 | `PERF-06` | RunnerManager::label is uncached, walks the filesystem, and is called once per shown game per frame — and it reads and JSON-parses each runner's metadata only to discard the parsed value | S3 | — | Cache the label against the runner directory's mtime, or read the id without parsing metadata; verify the per-frame file opens on a 5-runner fixture. | OPEN |
 | `PKG-02` | Nothing in the repository runs the verification chain automatically | S6 | — | Add CI (or a hook, or a `just`/`make` entry) that runs `scripts/verify.sh`; verify by breaking a test and watching the wiring fail. | FIXED `372b86e` |
-| `PKG-03` | Both the Flatpak build and the cargo-sources freshness check depend on things a clean checkout does not contain, and one of them needs the network by default | S6 | — | Make the Flatpak build and the cargo-sources check either self-provisioning or an explicit, reported skip with the reason; verify on a clean checkout. | OPEN |
+| `PKG-03` | Both the Flatpak build and the cargo-sources freshness check depend on things a clean checkout does not contain, and one of them needs the network by default | S6 | — | Make the Flatpak build and the cargo-sources check either self-provisioning or an explicit, reported skip with the reason; verify on a clean checkout. | OPEN **Half fixed; the generator half is `PARTIAL` for a stated reason.** The row's second half was the more damaging one and is now closed: the coverage check — the only part that needs no external tool — sat *after* the generator lookup inside the same function, so a missing generator returned 99 (SKIP) and the tool-free half never ran at all. The stage is split in two: `cargo-sources` (coverage, always runs) and `cargo-sources-fresh` (regeneration, may SKIP), and `find_cargo_generator` now prefers a vendored `build-aux/flatpak/flatpak-cargo-generator.py` before the host-wide paths. **The vendoring itself was not done**, and the reason is not effort: the only copy on this host is `/tmp/gh-gen/flatpak-cargo-generator.py` — a non-durable path the row itself flags — and it carries no version string, no upstream commit and no provenance metadata, so vendoring it would put a file in the tree whose origin nobody can name or update. A 511-line MIT file with an unnameable upstream is a worse artefact than a documented skip. `--install-deps-from=flathub` remains unconditional. | PARTIAL |
 | `PKG-04` | flatpak-contents verifies placement and bytes but never runs the binary, and its one binary check is a text search inside the ELF rather than an execution | S6 | — | Execute the installed binary in `flatpak-contents` (a `--version` is enough); verify by planting a binary that cannot run and watching the stage fail. | FIXED `ead99e7`, re-fixed `f278b7d` |
 | `PKG-05` | The application ships a single 128×128 SVG and no PNG icon at any size | S6 | — | Ship PNGs at the sizes the specification names; verify with the AppStream validator and `flatpak-contents`. | FIXED `9e10566` |
 | `PKG-10` | The checked-in `Cargo.lock` does not match the manifest at `d56782d`: it lists `iced_accessibility` as a dependency of `gamehandler` and `crates/app/Cargo.toml` does not declare it, so `cargo metadata --locked` fails on a clean checkout | S6 | — | A `cargo-lock` stage running `cargo metadata --offline --locked`; verify by dropping a line from the lock and watching the stage fail. | FIXED |

@@ -196,7 +196,8 @@ STAGES=(
     "python-tests|stage_python|the Python suite stays green (D-17)"
     "cargo-lock|stage_cargo_lock|Cargo.lock agrees with the manifests it was generated from (PKG-10)"
     "plan-counts|stage_plan_counts|docs/audit/PLAN.md's summary tables equal the rows they summarise"
-    "cargo-sources|stage_cargo_sources|cargo-sources.json is fresh against Cargo.lock and covers every git source"
+    "cargo-sources|stage_cargo_sources|cargo-sources.json covers every git source in Cargo.lock (no generator needed)"
+    "cargo-sources-fresh|stage_cargo_sources_fresh|cargo-sources.json equals a regenerated one (needs the external generator; may SKIP)"
     "flatpak-build|stage_flatpak|flatpak-builder builds the manifest"
     "smoke-test|stage_smoke|scripts/smoke-test.sh — CLI + headless GUI"
     "desktop-metainfo|stage_desktop_metainfo|desktop-file-validate + appstreamcli validate"
@@ -1312,12 +1313,18 @@ stage_plan_counts() {
 }
 
 # ---------------------------------------------------------------------------
-# Stage: cargo-sources — cargo-sources.json freshness + git coverage
+# Locating the cargo-sources generator (used by the cargo-sources-fresh stage).
 #
 # The generator is not part of this repository (it is flatpak/flatpak-builder-
 # tools' cargo/flatpak-cargo-generator.py). Look for it where it is normally
-# kept; if it is nowhere, SKIP loudly — this is the one stage that needs
-# something a clean checkout does not contain.
+# kept; if it is nowhere, that stage SKIPs loudly — it is the one stage that
+# needs something a clean checkout does not contain.
+#
+# This block is deliberately NOT headed `# Stage:` — `banner_check` collects
+# every line matching that prefix and requires the sequence to equal `STAGES`,
+# so a comment carrying the marker above a non-stage function is a hard error at
+# source time. It said `# Stage: cargo-sources` while the stage of that name was
+# the *other* function, which is exactly the drift the banners exist to catch.
 # ---------------------------------------------------------------------------
 find_cargo_generator() {
     if [ -n "${FLATPAK_CARGO_GENERATOR:-}" ] && [ -f "${FLATPAK_CARGO_GENERATOR}" ]; then
@@ -1328,8 +1335,8 @@ find_cargo_generator() {
     fi
     local candidate
     for candidate in \
+        "$ROOT/build-aux/flatpak/flatpak-cargo-generator.py" \
         "$HOME/.cache/flatpak-builder-tools/cargo/flatpak-cargo-generator.py" \
-        /tmp/gh-gen/flatpak-cargo-generator.py \
         /usr/share/flatpak-builder-tools/cargo/flatpak-cargo-generator.py
     do
         [ -f "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
@@ -1389,42 +1396,25 @@ for e in entries:
 sys.exit(1)
 '
 
+# ---------------------------------------------------------------------------
+# Stage: cargo-sources — every git source the lock needs is covered
+#
+# This is the half of the old single stage that needs **no external tool**, and
+# it is why the two are now separate stages (PKG-03). It used to sit *after* the
+# generator lookup in the same function, so when the generator was absent the
+# function returned 99 — SKIP — and this check was never reached. The effect was
+# that the one half a clean checkout can actually run was reported as "did not
+# run", which is this audit's most common defect shape: a check whose green
+# light says nothing about whether it inspected anything.
+#
+# A libcosmic rev bump can add a git source silently, and the failure it causes
+# (an offline fetch error deep inside flatpak-builder) is otherwise hard to
+# attribute. See packaging.md §2.1 and PLAN.md risk R-2.
+# ---------------------------------------------------------------------------
 stage_cargo_sources() {
     local committed="$ROOT/build-aux/flatpak/cargo-sources.json"
     [ -f "$committed" ] || { echo "no such file: build-aux/flatpak/cargo-sources.json"; return 1; }
     [ -f "$ROOT/Cargo.lock" ] || { echo "no such file: Cargo.lock"; return 1; }
-
-    local gen
-    if ! gen="$(find_cargo_generator)"; then
-        echo "flatpak-cargo-generator.py not found, so cargo-sources.json cannot be checked."
-        echo "Install it from flatpak/flatpak-builder-tools (cargo/), then put it on PATH"
-        echo "or set FLATPAK_CARGO_GENERATOR=/path/to/flatpak-cargo-generator.py."
-        return 99   # 99 => SKIP
-    fi
-    echo "generator:   $gen"
-
-    local py
-    if ! py="$(find_generator_python "$gen")"; then
-        echo "no python interpreter with the 'aiohttp' module is available to run it."
-        echo "e.g. 'python3 -m venv venv && venv/bin/pip install aiohttp' beside the script."
-        return 99   # 99 => SKIP
-    fi
-    echo "interpreter: $py"
-
-    local tmp
-    tmp="$(mktemp -d "${TMPDIR:-/tmp}/gh-cargsrc-XXXXXX")" || return 1
-    local rc=0
-    "$py" "$gen" "$ROOT/Cargo.lock" -o "$tmp/cargo-sources.json" || rc=$?
-    if [ "$rc" -ne 0 ]; then
-        echo "the generator failed with status $rc (see its output above)"
-        rm -rf "$tmp"
-        return 1
-    fi
-
-    rc=0
-    python3 -c "$COMPARE_PY" "$committed" "$tmp/cargo-sources.json" || rc=$?
-    rm -rf "$tmp"
-    [ "$rc" -eq 0 ] || return 1
 
     # Every git source the lock file needs must be present. A libcosmic rev bump
     # can add one silently, and the failure it causes (an offline fetch error
@@ -1467,6 +1457,64 @@ stage_cargo_sources() {
         return 1
     fi
     [ "$missing" -eq 0 ] || return 1
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Stage: cargo-sources-fresh — the committed file equals a regenerated one
+#
+# The generator is not part of this repository (it is flatpak/flatpak-builder-
+# tools' cargo/flatpak-cargo-generator.py), and it needs `aiohttp`, so this is
+# the one stage that legitimately SKIPs on a clean checkout. Keeping it separate
+# from the coverage check above means that skip costs only this stage rather
+# than silencing both (PKG-03).
+#
+# A vendor-able copy is checked FIRST, before the host-wide locations. If
+# `build-aux/flatpak/flatpak-cargo-generator.py` is present it is used, which is
+# what makes this stage meaningful on a clean checkout once the file is added —
+# it is not added here, because vendoring a 511-line MIT file is a packaging
+# decision with a maintenance cost, and PKG-03 records it as the open half
+# rather than something to land inside a verification-script fix.
+# ---------------------------------------------------------------------------
+stage_cargo_sources_fresh() {
+    local committed="$ROOT/build-aux/flatpak/cargo-sources.json"
+    [ -f "$committed" ] || { echo "no such file: build-aux/flatpak/cargo-sources.json"; return 1; }
+    [ -f "$ROOT/Cargo.lock" ] || { echo "no such file: Cargo.lock"; return 1; }
+
+    local gen
+    if ! gen="$(find_cargo_generator)"; then
+        echo "flatpak-cargo-generator.py not found, so cargo-sources.json cannot be"
+        echo "checked for freshness. **The coverage half of this check DID run** — it"
+        echo "is the previous stage and it needs no generator."
+        echo "Install it from flatpak/flatpak-builder-tools (cargo/), then put it on PATH,"
+        echo "set FLATPAK_CARGO_GENERATOR=/path/to/flatpak-cargo-generator.py, or drop a"
+        echo "copy at build-aux/flatpak/flatpak-cargo-generator.py."
+        return 99   # 99 => SKIP
+    fi
+    echo "generator:   $gen"
+
+    local py
+    if ! py="$(find_generator_python "$gen")"; then
+        echo "no python interpreter with the 'aiohttp' module is available to run it."
+        echo "e.g. 'python3 -m venv venv && venv/bin/pip install aiohttp' beside the script."
+        return 99   # 99 => SKIP
+    fi
+    echo "interpreter: $py"
+
+    local tmp
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/gh-cargsrc-XXXXXX")" || return 1
+    local rc=0
+    "$py" "$gen" "$ROOT/Cargo.lock" -o "$tmp/cargo-sources.json" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "the generator failed with status $rc (see its output above)"
+        rm -rf "$tmp"
+        return 1
+    fi
+
+    rc=0
+    python3 -c "$COMPARE_PY" "$committed" "$tmp/cargo-sources.json" || rc=$?
+    rm -rf "$tmp"
+    [ "$rc" -eq 0 ] || return 1
     return 0
 }
 
@@ -2260,6 +2308,7 @@ run_stage python-tests
 run_stage cargo-lock
 run_stage plan-counts
 run_stage cargo-sources
+run_stage cargo-sources-fresh
 # Everything from here to `release_flatpak_lock` is one critical section over
 # build-flatpak/ — the four locked stages, whether they build, run or merely
 # read it. The
