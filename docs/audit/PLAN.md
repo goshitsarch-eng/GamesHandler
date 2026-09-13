@@ -64,7 +64,7 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 39 | 37 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 20 | 18 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 22 | 18 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
+| `COSMIC-UX.md` | 30 | 23 | 18 `FIXED`, 3 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 10 | 9 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
@@ -341,7 +341,7 @@ across families, not within them.
 | `UX-21` | Grid cells are fixed at 200×300 with a fixed column count, so at narrow widths the library grid runs off the right edge and the cards there cannot be reached | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-22` | Two heading levels do the same job | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: OPEN** — located precisely, not changed. Section headings are `title4` on Settings/Plugins/Credits/form (via the pinned `settings_section` helper) and `title3` on Runners (4) and Installers (1). Not changed: on those two pages `title3` is the top rung of a three-level hierarchy (`title3` section → `title4` item → 14 px list heading), so reconciling upward collapses two rungs — and the change is purely visual, verifiable only by looking at the pages, which this environment has no display for. The row now carries the decision and its cost instead of a call-site count. | OPEN |
 | `UX-23` | Page padding is a hardcoded 18 and the theme's spacing tokens are never consulted | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `UX-24` | The app's only widget id is the library search box, so only that one field can ever be focused programmatically, and no dialog sets an initial focus | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `UX-24` | The app's only widget id is the library search box, so only that one field can ever be focused programmatically, and no dialog sets an initial focus | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | PARTIAL |
 | `UX-25` | No page bounds its content width, so at 2560 px and above the settings rows become "label … far-away control" pairs and the credits prose runs to an unreadably long measure | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-26` | Long names and subtitles are hard-cut mid-glyph with no ellipsis marker, where the reference elides | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `UX-27` | There is no indeterminate or loading indicator, and a running install cannot be cancelled from the UI | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |

@@ -1136,7 +1136,15 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             // One modal layer: opening this dialog closes a pending game
             // removal, as `ConfirmDeleteGame` closes this one.
             state.confirm_delete = None;
-            Some(Task::none())
+            // **UX-24**: the prompt opens with the keyboard on its Cancel and
+            // not on its destructive Remove. The pending state written above is
+            // what puts the button in the tree for this operation to land on —
+            // the two are one task for `Shell::focus_library_search`'s reason,
+            // and the id is the view layer's, so the focus cannot name a
+            // control nothing draws.
+            Some(cosmic::iced::widget::operation::focus(
+                crate::view::REMOVE_RUNNER_CANCEL_ID,
+            ))
         }
         // The dialog's Remove (`RunnersPage.qml:267-271`): the pending removal
         // is cleared first so the dialog closes whether or not the removal
@@ -2921,6 +2929,38 @@ mod tests {
             state.confirm_remove_runner.as_ref().unwrap().title(),
             "Remove GE-Proton9-5?",
             "the dialog titles the row the button was pressed on"
+        );
+    }
+
+    /// **The ask opens the prompt focused (UX-24).**
+    ///
+    /// `asking_sets_the_pending_removal_the_dialog_draws` asserts the field the
+    /// dialog draws from, which an arm that returned `Task::none()` would set
+    /// just as well — the dialog would open with the keyboard still on the
+    /// Delete button that raised it, because the page stays in the tree under
+    /// the layer and its focusables stay registered. This is the half that
+    /// looks at the task.
+    ///
+    /// What a `Task` can be asked is its unit count and nothing else
+    /// (`iced/runtime/src/task.rs:282`), so this says *that* a focus was asked
+    /// for and not which control; `crate::view::REMOVE_RUNNER_CANCEL_ID`'s
+    /// header has the choice and `main`'s
+    /// `the_runner_removal_prompt_opens_with_the_keyboard_on_cancel` reads the
+    /// target off the laid-out tree.
+    #[test]
+    fn the_ask_opens_the_prompt_focused() {
+        let mut state = state();
+        let task = update(
+            &mut state,
+            &Message::ConfirmRemoveRunner {
+                runner_id: "GE-Proton9-5".to_string(),
+                name: "GE-Proton9-5".to_string(),
+            },
+        );
+
+        assert!(
+            task.expect("the ask is this page's to handle").units() > 0,
+            "opening the prompt must ask the runtime to move the focus into it"
         );
     }
 

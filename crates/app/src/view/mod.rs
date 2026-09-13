@@ -94,6 +94,48 @@
 /// users and is a property of the layer, not of a screen.
 pub const GUTTER: u16 = 18;
 
+/// The `Id` the game-removal prompt's **Cancel** button carries, and the control
+/// the arm that opens it moves the keyboard to — UX-24.
+///
+/// # Why the port has to name this control at all
+///
+/// The reference's prompt distinguishes its two actions by *kind*: Cancel is a
+/// `standardButton` and the destructive Remove is a `customFooterAction`
+/// (`gamehandler/qml/LibraryPage.qml:349` and `:350-359`, identically at
+/// `RunnersPage.qml:260` and `:261-270`). libcosmic's `dialog()` keeps that
+/// distinction — `secondary_action` and `primary_action` — but gives neither
+/// one focus. Measured on the pinned revision: `src/widget/dialog.rs` mentions
+/// `focus` nowhere, and the two buttons it is handed are built with the default
+/// `Id::unique()` (`a401af8 src/widget/button/widget.rs:63`, `:88`). So nothing
+/// in the toolkit decides which of the two the keyboard lands on.
+///
+/// In this port that leaves the keyboard where it was: the page stays in the
+/// tree under the layer, so the Delete control that raised the prompt is *still
+/// a registered focusable* and keeps the focus it had. The user's next Tab then
+/// walks the rest of the page before reaching the two buttons they are being
+/// asked about, and the destructive one is indistinguishable from the safe one
+/// at the moment of decision. `Message::OpenGameMenu` answers exactly this for
+/// the actions layer (**UX-16**, `crates/app/src/main.rs:2196-2207`); the two
+/// destructive prompts are the same problem with a worse failure mode, so the
+/// control named here is the **secondary** action and never the destructive
+/// one.
+///
+/// # Why there are two of these and not one
+///
+/// A single shared id would read better — only one prompt is normally open —
+/// but it cannot be shown not to collide: `view_with_overlays`'s own ordering
+/// backstop names the state in which `confirm_delete` and
+/// `confirm_remove_runner` are both pending as reachable, and in that tree one
+/// shared id would name two widgets. One constant per prompt costs a line and
+/// cannot be made to collide.
+pub const REMOVE_GAME_CANCEL_ID: &str = "gamehandler.dialog.remove-game.cancel";
+
+/// [`REMOVE_GAME_CANCEL_ID`]'s counterpart on the runner-removal prompt.
+///
+/// The same argument, the same failure mode, a different dialog — see that
+/// constant's header rather than a second copy of it.
+pub const REMOVE_RUNNER_CANCEL_ID: &str = "gamehandler.dialog.remove-runner.cancel";
+
 /// The label-and-control row the Settings page and the game form both draw
 /// (`UX-20`).
 ///
