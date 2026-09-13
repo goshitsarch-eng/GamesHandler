@@ -62,17 +62,31 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 46 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `CLOSED` |
+| `BUGS.md` | 47 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `CLOSED` |
 | `ARCHITECTURE.md` | 25 | 8 | 8 `FIXED` |
 | `COSMIC-UX.md` | 30 | 5 | 5 `FIXED` |
-| `SECURITY.md` | 10 | 3 | 3 `FIXED` |
+| `SECURITY.md` | 10 | 4 | 4 `FIXED` |
 | `PACKAGING.md` | 10 | 5 | 5 `FIXED` |
 | `PERFORMANCE.md` | 8 | 3 | 3 `FIXED` |
 
-`BUGS.md`'s 20 tail-less rows are its open `P3` rows. Each of the other five
-documents gained tails in the commits that fixed the rows they describe
-(`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`, `41d4b34`, `8f7269e`,
-`6069056`, and `SEC-09`'s own), so the pair rule was kept where it applies.
+`BUGS.md`'s 21 tail-less rows are its twenty open `P3` rows plus the withdrawn
+`BUG-11`, which carries no severity because it is not a defect. Each of the
+other five documents gained tails in the commits that fixed the rows they
+describe (`9e10566`, `be31a7b`, `372b86e`, `8abac0b`, `e2c6476`, `41d4b34`,
+`8f7269e`, `6069056`, and `SEC-09`'s own), so the pair rule was kept where it
+applies.
+
+**Both numbers in the `BUGS.md` row were wrong until this revision, and the
+sentence above them was wrong in the same direction.** The row read `46` and the
+sentence said "20 tail-less rows are its open `P3` rows"; the document holds
+**47** id-bearing rows, 26 with tails and 21 without. The cause was the row
+pattern this script matches with: it accepted `| **BUG-nn**` and not
+`| ~~**BUG-11**~~ **WITHDRAWN**`, so the one struck-through row was invisible to
+the count — and because `46 − 26 = 20` also happens to be the number of open
+`P3` rows, the wrong count and the wrong sentence agreed with each other. This
+is `REPORT.md`'s *the audit found it in itself, one level up* for the fourth
+time, and it is why the widened pattern above is written to accept the markers
+in either order rather than in the one order the file currently uses.
 
 **This table has now been wrong twice, in the same way, and it is derived for
 that reason.** The first revision was computed from the documents as they stood
@@ -111,9 +125,9 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
 | P1 | 23 | 23 | 0 | 0 |
-| P2 | 52 | 19 | 0 | 33 |
+| P2 | 52 | 20 | 0 | 32 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **128** | **47** | **0** | **81** |
+| **Total** | **128** | **48** | **0** | **80** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -121,9 +135,9 @@ advocate reviews every row before it is called done and owns no row.
 | `BUG-xx` | `BUGS.md` | 45 | 23 | 0 | 22 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 3 | 0 | 5 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
-| `SEC-xx` | `SECURITY.md` | 10 | 3 | 0 | 7 |
+| `SEC-xx` | `SECURITY.md` | 10 | 4 | 0 | 6 |
 | `UX-xx` | `COSMIC-UX.md` | 30 | 5 | 0 | 25 |
-| **Total** | | **128** | **47** | **0** | **81** |
+| **Total** | | **128** | **48** | **0** | **80** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -241,7 +255,7 @@ across families, not within them.
 | `PKG-04` | flatpak-contents verifies placement and bytes but never runs the binary, and its one binary check is a text search inside the ELF rather than an execution | S6 | — | Execute the installed binary in `flatpak-contents` (a `--version` is enough); verify by planting a binary that cannot run and watching the stage fail. | FIXED `ead99e7`, re-fixed `f278b7d` |
 | `PKG-05` | The application ships a single 128×128 SVG and no PNG icon at any size | S6 | — | Ship PNGs at the sizes the specification names; verify with the AppStream validator and `flatpak-contents`. | FIXED `9e10566` |
 | `PKG-10` | The checked-in `Cargo.lock` does not match the manifest at `d56782d`: it lists `iced_accessibility` as a dependency of `gamehandler` and `crates/app/Cargo.toml` does not declare it, so `cargo metadata --locked` fails on a clean checkout | S6 | — | A `cargo-lock` stage running `cargo metadata --offline --locked`; verify by dropping a line from the lock and watching the stage fail. | FIXED |
-| `SEC-02` | --filesystem=home grants read-write to the entire home directory, which is broader than the directories the code touches | S4 | — | Narrow to the XDG roots the code actually touches plus the seven fixed search roots; verify by running the app in the narrowed sandbox and exercising every path-touching flow. | OPEN |
+| `SEC-02` | --filesystem=home grants read-write to the entire home directory, which is broader than the directories the code touches | S4 | — | Narrow to the XDG roots the code actually touches plus the seven fixed search roots; verify by running the app in the narrowed sandbox and exercising every path-touching flow. **Fixed as `home:ro` plus one `:create` carve-out, by measurement; the suggested `xdg-data`/`xdg-config`/`xdg-cache` form was measured wrong for this manifest and not applied.** The three XDG shares are absent from the grant as written and present as `~/.var/app/<id>/{data,config,cache}`, so granting them would have moved the app's own files into the sandbox; `xdg-cache` has no reader in `crates/` at all. What the sandbox probe settled: `touch ~/.config/gh-sec02-w2` and `touch ~/.local/share/gh-sec02-w3` both succeeded before and are refused now, the three home-side anti-cheat roots stay readable, and a planted executable still runs — which is the claim `packaging.md` §3 had asserted and never demonstrated. The carve-out is `~/.local/share/applications:create` for `shortcut_directory_in`, measured to override the broader read-only grant both ways. `tests/test_packaging.py` pins the narrowed pair, the **absence** of the bare `--filesystem=home` (which `home:ro` would otherwise satisfy), and the set of writable grants; three mutations fail three distinct named assertions. | FIXED |
 | `SEC-03` | The Authenticode authenticity decision is weaker than it reads | S4 | — | Compare the publisher against the verifier's structured field rather than a case-folded substring of merged output; verify with a fixture whose output contains a matching substring in an unrelated field. | OPEN |
 | `SEC-04` | game_id is interpolated into a destination filename with no sanitisation at three sites in covers.rs, while the same class of bug was deliberately fixed in desktop.rs | S4 | — | A game id containing `/` or `\` is refused by all three writes with `UnsafeId`, asserted on the *absolute path the write would have created* and on the transfer not being made; plus the accepted cases (`..`, ``, a real 32-hex id) in the same test, so a refusal-everything implementation fails it | FIXED `88578db` |
 | `UX-06` | The confirmation dialogs are not modal — the page behind them stays live | S2 | — | Make the dialogs modal (an overlay, or an interaction gate on the page); verify that a click behind the dialog reaches nothing. | OPEN |

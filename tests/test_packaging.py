@@ -10,7 +10,38 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ID_EXPECTED = "com.goshapps.GameHandler"
 
 
+def grant_mode(argument):
+    """The access mode a `--filesystem=` argument grants.
+
+    Flatpak's three modes are `ro`, `rw` and `create`, and the absence of a
+    suffix means `rw` -- the widest of the three, which is the one direction a
+    mistake here must not go: a helper that misread a bare path as read-only
+    would let a second writable grant into the manifest while the check above it
+    stayed green. That is why this has its own test rather than being inlined
+    into the comprehension that uses it.
+    """
+    value = argument.split("=", 1)[1]
+    head, separator, tail = value.rpartition(":")
+    if separator and head and tail in ("ro", "rw", "create"):
+        return tail
+    return "rw"
+
+
 class PackagingTests(unittest.TestCase):
+    def test_grant_mode_reads_every_spelling_flatpak_accepts(self):
+        # The three modes, and the bare form that means rw.
+        self.assertEqual(grant_mode("--filesystem=home"), "rw")
+        self.assertEqual(grant_mode("--filesystem=home:ro"), "ro")
+        self.assertEqual(grant_mode("--filesystem=home:rw"), "rw")
+        self.assertEqual(grant_mode("--filesystem=~/.local/share/applications:create"), "create")
+        # A host path containing a colon that is not a mode is a path, not a
+        # mode -- and it is still writable, so the answer must be rw.
+        self.assertEqual(grant_mode("--filesystem=/odd:path"), "rw")
+        self.assertEqual(grant_mode("--filesystem=/odd:path:ro"), "ro")
+        # The directory named `home` is not a keyword here; the argument is.
+        self.assertEqual(grant_mode("--filesystem=xdg-config/gtk-3.0:ro"), "ro")
+
+
     def test_permanent_identity_is_consistent(self):
         self.assertEqual(APP_ID, APP_ID_EXPECTED)
         desktop = (ROOT / "data" / f"{APP_ID_EXPECTED}.desktop").read_text()
@@ -51,8 +82,35 @@ class PackagingTests(unittest.TestCase):
         # Reviewed sandbox exceptions. Each of these is a deliberate decision
         # recorded in docs/migration/packaging.md section 3, not a default:
         # network for runner downloads, multiarch for 32-bit Windows games and
-        # downloaded Wine/Proton builds, home for libraries in arbitrary
-        # locations, gvfs for network-share games.
+        # downloaded Wine/Proton builds, gvfs for network-share games.
+        #
+        # `home` is read-only since SEC-02, with one writable carve-out. The
+        # reasoning is in packaging.md section 3; what matters here is that the
+        # two halves are tested together, because the wide form is satisfied by
+        # a manifest carrying the narrow one -- `--filesystem=home` implies
+        # `--filesystem=home:ro`, so a list that only checks for the read-only
+        # spelling would pass on a manifest that still grants write-everywhere.
+        # That is the same shape as the --device=all check below, and it is the
+        # reason both are written as a pair rather than as one membership test.
+        #
+        # Measured in the sandbox before and after, not argued: with the write
+        # grant, `touch ~/.config/gh-sec02-w2` and `touch ~/.local/share/
+        # gh-sec02-w3` both succeeded; under home:ro both are refused, while the
+        # three roots the anti-cheat search reads (~/.local/share/umu,
+        # ~/.local/share/lutris/runtime, ~/.local/share/Steam/steamapps/common)
+        # stay readable, as does execution from an arbitrary home path -- which
+        # is the claim packaging.md section 3 makes and had not demonstrated.
+        #
+        # The exception is the user's application menu. `shortcut_directory_in`
+        # (crates/core/src/runners/desktop.rs:96-98) writes shortcuts to
+        # `~/.local/share/applications` deliberately rather than to this
+        # application's own data directory, so that the session's menu finds
+        # them; without a grant the create-secret-shortcut flow stops working.
+        # `:create` is the narrowest mode that supports it -- it permits adding
+        # and replacing files under that directory and nothing else, and it is
+        # measured to override the broader home:ro (create, re-write and remove
+        # all succeed, while a sibling directory and a traversal back out of it
+        # are both refused).
         #
         # Devices are the narrow form, not --device=all (SEC-01). The three
         # classes are what a launched game needs and nothing else: dri for the
@@ -74,23 +132,69 @@ class PackagingTests(unittest.TestCase):
             "--device=dri",
             "--device=input",
             "--device=usb",
-            "--filesystem=home",
+            "--filesystem=home:ro",
+            "--filesystem=~/.local/share/applications:create",
             "--filesystem=xdg-run/gvfs",
             "--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro",
         ):
             with self.subTest(argument=argument):
                 self.assertIn(argument, finish_args)
 
-        # And the wide grant must not come back by habit. This is the check
-        # that would have caught it: the list above is satisfied by a manifest
-        # that also carries --device=all, because --device=all subsumes all
-        # three of the narrow entries.
+        # And the two wide grants must not come back by habit. Each check is the
+        # half the membership list above cannot make, because each wide form
+        # subsumes the narrow entries that replaced it: --device=all covers all
+        # three --device= entries, and --filesystem=home covers home:ro. A list
+        # alone is a guard that cannot fail on the regression it exists for.
         self.assertNotIn(
             "--device=all",
             finish_args,
             "--device=all exposes raw disks, /dev/mem and every input device to "
             "launched games; the narrow device classes are justified in "
             "docs/migration/packaging.md section 3 (SEC-01)",
+        )
+        self.assertNotIn(
+            "--filesystem=home",
+            finish_args,
+            "--filesystem=home grants write access to the whole home directory, "
+            "which turns any write-path bug into an arbitrary write and exposes "
+            "every other application's private data; the read-only form plus the "
+            "applications-directory carve-out are justified in "
+            "docs/migration/packaging.md section 3 (SEC-02)",
+        )
+        # The enumerable set of writable filesystem grants, as a set. Anything
+        # else that grants write -- a second :create, a bare path, an :rw -- is
+        # a permission that arrived without the review these two had, and it is
+        # otherwise invisible here: the list above says what must be present and
+        # nothing about what else may be.
+        #
+        # `xdg-run/gvfs` is writable and deliberately not narrowed, for the same
+        # reason the three device classes are wide: it is the child's need, not
+        # the launcher's. `netpaths.rs:196-214` resolves a `gvfs` mount to the
+        # path a game is launched from, and a game launched from a network share
+        # writes its own saves there. The launcher's own reads of that tree are
+        # reads (`netpaths.rs:126`), so narrowing it to `:ro` would break
+        # launching from a share rather than tighten anything the launcher does.
+        # That is a child-process argument, the distinction SEC-08 records.
+        # Compared as sets. The grants are an unordered set, and sorting the
+        # arguments would order them by `~` (0x7E) against `x`, which is an
+        # accident of the path spelling rather than a property of the grant --
+        # the first version of this check sorted both sides and failed on its
+        # own expectation for exactly that reason.
+        writable = {
+            argument
+            for argument in finish_args
+            if argument.startswith("--filesystem=") and grant_mode(argument) != "ro"
+        }
+        self.assertEqual(
+            writable,
+            {
+                "--filesystem=~/.local/share/applications:create",
+                "--filesystem=xdg-run/gvfs",
+            },
+            "the writable filesystem grants are the reviewed set in "
+            "docs/migration/packaging.md section 3 -- the menu carve-out for "
+            "the launcher, gvfs for the launched game; a third is a permission "
+            "nobody argued for",
         )
 
         # 32-bit GL and the i386 compat layer are Wine needs, not Qt needs.

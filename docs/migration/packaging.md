@@ -270,8 +270,9 @@ Disposition for the Rust build:
 | `--socket=pulseaudio` | **KEEP** | Game audio (Wine/PulseAudio socket passthrough). Unrelated to toolkit. |
 | `--allow=multiarch` | **KEEP** | 32-bit Windows games and downloaded Wine/Proton builds (README.md:127-128). Non-negotiable for a Wine launcher. |
 | `--device=dri` + `--device=input` + `--device=usb` | **NARROWED (SEC-01)** | The three classes a launched game needs and nothing else: `dri` for the GPU, `input` for controllers and the event devices SDL reads, `usb` so `/dev/bus/usb` exists for enumeration. This closes PLAN.md Q-2 by measurement rather than by the gamepad test Q-2 asked for. `--device=all` was **not** required for gamepads: `--device=input` is what exposes `/dev/input`, and opening an event node needs its own unix permissions either way. **Measured in the sandbox** (`flatpak run --command=/bin/sh … -c 'ls /dev'`, before and after): the narrow grant removes `/dev/mem`, `/dev/kvm`, `/dev/nvme0n1` and its partitions, `/dev/vfio`, `/dev/vhost-net`, `/dev/watchdog`, `/dev/watchdog0`, `/dev/nvram`, `/dev/ttyS0-3`, `/dev/ppp`, `/dev/rfkill`, `/dev/hwrng`, `/dev/mtd*`, `/dev/gpiochip0` and `/dev/udmabuf` — every one of which `all` had put inside the sandbox that third-party game binaries run in, and none of which any code in `crates/` opens. `flatpak-metadata(5)` is explicit that a device grant exposes the nodes and grants nothing the user does not already have, so this is about the sandbox's blast radius rather than a privilege boundary. `tests/test_packaging.py` asserts the narrow set **and** asserts `--device=all` is absent, because the positive list alone is satisfied by a manifest that carries both. |
-| `--filesystem=home` | **KEEP** | Reviewed exception (README.md:141-145): libraries live in arbitrary user locations. Portal file *choosers* (section 4) do not replace this — the app must *execute* games from those locations afterwards. |
-| `--filesystem=xdg-run/gvfs` | **KEEP** | Network-share games resolve via mounted GVFS paths (README.md:129-130, `gamehandler/netpaths.py`). Unrelated to toolkit. |
+| `--filesystem=home:ro` | **NARROWED (SEC-02)** | Read-only, with one writable carve-out. The KEEP this replaces was right that libraries live in arbitrary user locations, and right that a portal chooser does not replace it — the app must *execute* games from those locations afterwards. It did not follow that the sandbox needs to *write* there. **Measured in the sandbox** (`flatpak run --command=sh`, before and after): under the old bare `home` grant, `touch ~/.config/gh-sec02-w2` and `touch ~/.local/share/gh-sec02-w3` both succeeded; under `home:ro` both are refused. What the read-only form keeps is everything the code reads — `~/.local/share/umu`, `~/.local/share/lutris/runtime` and `~/.local/share/Steam/steamapps/common` stay readable — and, the half that was asserted here and never demonstrated, **execution from an arbitrary home path still works**: a planted executable at `~/.gh-sec02-exec-probe` ran with exit 0 under the narrowed grant. The exposure that closes is the other direction, which `SEC-04` was an instance of: a write-path bug reached `~/.config/autostart` because the grant let it. |
+| `--filesystem=~/.local/share/applications:create` | **ADDED (SEC-02)** | The one writable carve-out. `shortcut_directory_in` (`crates/core/src/runners/desktop.rs:96-98`) writes shortcuts to the user's application menu deliberately rather than to this application's own data directory — a shortcut has to land where the session's menu reads it. `:create` is the narrowest mode that supports it: it permits adding and replacing files under that directory and nothing else. **Measured to override the broader `home:ro`**, which is the property the pairing depends on: creating, re-writing and removing a `.desktop` file all succeed, while a sibling directory (`~/.local/share/gh-sec02-other`) and a traversal back out of it are both refused. Without this grant the create-shortcut flow stops working under the narrowed home grant. |
+| `--filesystem=xdg-run/gvfs` | **KEEP (writable, child's need)** | Network-share games resolve via mounted GVFS paths (README.md:129-130, `netpaths.rs:196-214`). Left writable on purpose: the launcher only *reads* that tree (`netpaths.rs:126`), and the write is the launched game's — a game running from a share saves to the share. This is a child-process justification, the distinction `SEC-08` records; narrowing it to `:ro` would break launching from a share rather than tighten anything the launcher does. |
 | `--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro` | **KEEP** | Read-only Steam library/artwork access. Unrelated to toolkit. |
 | `--env=PATH=…gamescope…` | **KEEP, conditionally** | Only while Gamescope integration is retained. Path prefix must be re-checked against the Freedesktop runtime layout (current value targets the KDE-runtime gamescope extension path; the Freedesktop gamescope Vulkan-layer extension is `org.freedesktop.Platform.VulkanLayer.gamescope//25.08`, README.md:46-50). Drop if Gamescope support is deferred. |
 | `--env=PYTHONPATH=…` | **DELETE** | Python is gone. |
@@ -300,10 +301,45 @@ filesystem dialog. Consequences:
 
 - The sandbox keeps no new filesystem permissions for choosing files; the
   portal grants per-file access to what the user picks.
-- `--filesystem=home` stays regardless (section 3): picking a game and
-  *running* it later are different operations.
+- `--filesystem=home:ro` stays regardless (section 3): picking a game and
+  *running* it later are different operations, and the second one is why the
+  read grant cannot be dropped in favour of the chooser alone.
 - Test hook: settings persistence round-trips (section 5) must cover
   portal-granted paths being remembered and re-opened.
+
+**What the chooser is actually used for, measured.** The claim above — that a
+portal chooser does not replace the grant because the app must execute what it
+picks — is correct, and it was an assertion here until `SEC-02`. Two halves are
+now demonstrated rather than argued:
+
+1. The chooser *is* the portal. `locate_exe_task`
+   (`crates/app/src/main.rs:3433-3450`) opens through
+   `cosmic::dialog::file_chooser::open::Dialog`, and the chosen file arrives as
+   a FUSE path under `/run/user/<uid>/doc/<id>/…` — the document portal, not a
+   raw filesystem dialog. The port does not need adding here; it needs
+   *widening*: `locate_exe_task` is the only chooser, so the paths the
+   application learns at runtime are the ones the two default locations below
+   cover.
+2. Executing from a home path still works under the narrowed grant, which is
+   the half that decides whether §3's read grant can shrink too. It cannot, and
+   the reason is not the chooser.
+
+**The two write destinations that argue for more than `home:ro`.** Both are
+reached *without* a chooser, which is the gap a portal cannot close: a portal
+grant exists only for a path the user picked in a dialog.
+
+- `~/.local/share/applications` — `shortcut_directory_in`
+  (`crates/core/src/runners/desktop.rs:96-98`). Covered by the `:create`
+  carve-out in section 3.
+- A game's launcher target when it is typed rather than picked. `exe_path` is a
+  free-text field in the add/edit form (`crates/app/src/state.rs:349`, `:448`,
+  `as_local_path` applied to whatever was typed), and `shortcut_for` executes
+  it. A typed path has no portal grant behind it, so the read grant is the only
+  thing that makes it reachable. The Easy Installer's own `.exe` is *not* this
+  case — it comes from the chooser (`complete_easy_install`,
+  `crates/app/src/main.rs:3643-3663`, whose only `path` producer is
+  `locate_message`) — and the point of listing it here is that the two look
+  alike and are not.
 
 ### 4.2 Desktop file (`data/com.goshapps.GameHandler.desktop`)
 

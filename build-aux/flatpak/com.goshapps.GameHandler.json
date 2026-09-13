@@ -20,7 +20,8 @@
     "--device=dri",
     "--device=input",
     "--device=usb",
-    "--filesystem=home",
+    "--filesystem=home:ro",
+    "--filesystem=~/.local/share/applications:create",
     "--filesystem=xdg-run/gvfs",
     "--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro",
     "--env=PATH=/usr/lib/extensions/vulkan/gamescope/bin:/app/bin:/usr/bin"

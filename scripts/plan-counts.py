@@ -239,11 +239,19 @@ def tail_lines() -> list[str]:
     actually use. The revision this replaces wrote the kind list by hand as
     well, which is how it could say `2 FIXED` about a document with three.
 
-    `BUGS.md` reports 46 tailed rows rather than 47 because `BUG-11` is struck
-    through as withdrawn and its status is in the `Kind` cell; both the row
-    count and the tail count here match the document's own table.
+    The row pattern accepts the emphasis and strike-through markers in **either
+    order and either count**, because a withdrawn row is written
+    ``| ~~**BUG-11**~~ **WITHDRAWN** | … |`` and the first version of this
+    pattern only accepted ``| **BUG-nn**``. That version reported `BUGS.md` as
+    46 rows where the document holds 47, and the prose below the table was
+    written to agree with the wrong number — "`BUGS.md`'s 20 tail-less rows are
+    its open `P3` rows", where the twentieth is `BUG-11`'s and the row is
+    withdrawn rather than open. A count that cannot see a whole row is the same
+    defect as a table maintained by hand, one level down: the number and the
+    sentence explaining it were both wrong, and both agreed with each other.
     """
-    pattern = re.compile(r"^\|\s*\*{0,2}(?:~~)?`?(BUG|ARCH|UX|PERF|SEC|PKG)-\d+")
+    pattern = re.compile(
+        r"^\|\s*(?:~~)?\*{0,2}(?:~~)?`?(BUG|ARCH|UX|PERF|SEC|PKG)-\d+")
     kind = re.compile(r"Status:\s*([A-Z][A-Z ]{2,20})")
     # The table's own order, which is not the alphabetical `FAMILIES` order the
     # two summary tables use. Kept as written so the generated lines can be

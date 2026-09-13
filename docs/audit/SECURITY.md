@@ -32,7 +32,7 @@ origin check the installer path applies.
 | ID | Severity | Finding | Evidence (`file:line`) | Impact | Suggested fix |
 |---|---|---|---|---|---|
 | SEC-01 | P1 | `--device=all` has no justification in launcher code. It is the widest device grant the sandbox offers, and the only device node any code in `crates/` opens is `/dev/urandom`, which Flatpak's default `/dev` supplies with no `--device` flag at all. There is no occurrence of `/dev/dri`, `/dev/input`, `/dev/hidraw` or `/dev/uinput` anywhere in `crates/`. The grant's real purpose is the *launched game* (GPU, controllers), which is an argument about a child process rather than a `file:line` — and `docs/migration/packaging.md` §3 already forbids keeping it silently: "Do not silently keep `all` without that test." | `build-aux/flatpak/com.goshapps.GameHandler.json:20`; `crates/core/src/models.rs:459` (the only device open in the tree, `/dev/urandom`); `docs/migration/packaging.md` §3 (`--device=all` "KEEP, flagged… Do not silently keep `all` without that test") | `--device=all` exposes every device node the host has granted the user, not just the GPU: raw disk (`/dev/sd*`, `/dev/nvme*`), `/dev/mem` where present, USB and input devices. For a launcher that runs third-party game binaries and Wine, that is the difference between "a compromised game can corrupt the user's files" and "a compromised game can read the raw disk and every keystroke on the machine". | Narrow to `--device=dri`, which is what the Wine child actually needs for the GPU. If controller support genuinely requires more, run the hotplug test `packaging.md` Q-2 asks for and record the test as the justification for the narrowest grant that passes it. Do not keep `all` on the strength of "gamepads classically need it". **Status: FIXED.** Narrowed to the three classes a launched game actually needs — `--device=dri`, `--device=input`, `--device=usb` — at `build-aux/flatpak/com.goshapps.GameHandler.json`. **The before-and-after was measured in the sandbox** rather than argued: under `--device=all` the narrowed-away nodes present in `/dev` were `mem`, `kvm`, `nvme0n1` and its three partitions, `vfio`, `vhost-net`, `vhost-vsock`, `watchdog`, `watchdog0`, `nvram`, `ttyS0-3`, `ppp`, `rfkill`, `hwrng`, `mtd`/`mtd0`/`mtd0ro`, `gpiochip0`, `udmabuf`, `acpi_thermal_rel`, `cpu_dma_latency`, `hpet`, `port`, `snapshot`, `kmsg`, `btrfs-control`, `autofs`, `cuse` and `userio`; under the narrow grant every one of them is gone, while `/dev/dri` and `/dev/input` remain. The three narrow classes cover the controller path because `--device=input` is what exposes `/dev/input` — the question Q-2 wanted a gamepad test for has a documented answer in `flatpak-metadata(5)`, and `--device=all` was never what made gamepads work. `tests/test_packaging.py` now asserts both the narrow set and the **absence** of `--device=all`: the subset check is satisfied by a manifest carrying both grants, so the positive list alone is a guard that cannot fail on the regression it exists for — demonstrated by re-adding `--device=all` and watching the run fail. The application was re-run under the narrowed grant (`--version`, `--list`) before the change was committed. |
-| SEC-02 | P2 | `--filesystem=home` grants read-write to the entire home directory, which is broader than the directories the code touches. Every path the launcher reads or writes is enumerable: the covers, prefixes and runners directories under XDG data (`crates/core/src/paths.rs`), `games.json` and `settings.json`, and seven fixed search roots for anti-cheat runtimes. Nothing in the tree reads `~/.ssh`, `~/.gnupg`, a browser profile, another application's `~/.config/<app>`, or another Flatpak's `~/.var/app/<app>` — with the single deliberate exception of the Steam path at `env.rs:221`, which has its own narrower `:ro` grant. | `build-aux/flatpak/com.goshapps.GameHandler.json:21`; `crates/core/src/runners/env.rs:216-224` (the seven roots: `~/.local/share/umu`, `~/.local/share/lutris/runtime`, `~/.local/share/Steam/…`, `~/.var/app/com.valvesoftware.Steam/…`, `/usr/share/umu`, `/usr/share/steam/compatibilitytools.d`, `paths::runners_dir_in`); manifest `:23` for the one path that already has a narrower grant | The grant turns any write-path bug into an arbitrary write anywhere in home — SEC-04 below is exactly such a bug — and lets the app read every other application's private data, including credentials stored by other tools. It is the single largest permission in the manifest and the one whose removal a portal is normally expected to enable. | Replace with `--filesystem=xdg-data`, `--filesystem=xdg-config`, `--filesystem=xdg-cache` plus the fixed roots that fall outside them, and use the document portal for executable selection. If `docs/migration/packaging.md`'s claim that portal choosers cannot substitute is the blocker, test it — see *Not verified* item 4. |
+| SEC-02 | P2 | `--filesystem=home` grants read-write to the entire home directory, which is broader than the directories the code touches. Every path the launcher reads or writes is enumerable: the covers, prefixes and runners directories under XDG data (`crates/core/src/paths.rs`), `games.json` and `settings.json`, and seven fixed search roots for anti-cheat runtimes. Nothing in the tree reads `~/.ssh`, `~/.gnupg`, a browser profile, another application's `~/.config/<app>`, or another Flatpak's `~/.var/app/<app>` — with the single deliberate exception of the Steam path at `env.rs:221`, which has its own narrower `:ro` grant. | `build-aux/flatpak/com.goshapps.GameHandler.json:21`; `crates/core/src/runners/env.rs:216-224` (the seven roots: `~/.local/share/umu`, `~/.local/share/lutris/runtime`, `~/.local/share/Steam/…`, `~/.var/app/com.valvesoftware.Steam/…`, `/usr/share/umu`, `/usr/share/steam/compatibilitytools.d`, `paths::runners_dir_in`); manifest `:23` for the one path that already has a narrower grant | The grant turns any write-path bug into an arbitrary write anywhere in home — SEC-04 below is exactly such a bug — and lets the app read every other application's private data, including credentials stored by other tools. It is the single largest permission in the manifest and the one whose removal a portal is normally expected to enable. | Replace with `--filesystem=xdg-data`, `--filesystem=xdg-config`, `--filesystem=xdg-cache` plus the fixed roots that fall outside them, and use the document portal for executable selection. If `docs/migration/packaging.md`'s claim that portal choosers cannot substitute is the blocker, test it — see *Not verified* item 4. **Status: FIXED — narrowed to `home:ro` plus one `:create` carve-out, by measurement.** The suggestion above was **not** followed, and the reason is the measurement. `xdg-data`, `xdg-config` and `xdg-cache` are absent from `flatpak info --show-permissions` as the input and present as `XDG_DATA_HOME=~/.var/app/<id>/data` (measured with `flatpak run --command=printenv`), so granting them would have moved the app's *own* files into the sandbox and cut it off from the user's game libraries — the opposite of the finding. `xdg-cache` was dropped entirely: no path in `crates/` reads `XDG_CACHE_HOME` or `.cache`. The portal half is already how the app works (`locate_exe_task`), and *Not verified* item 4 is now settled against the suggestion: the portal **cannot** substitute for the grant, because a portal grant exists only for a path the user picked in a dialog, and the flows that reach a path without one are real (a typed `exe_path`; a shortcut written to the menu). What was done instead: `--filesystem=home` → `--filesystem=home:ro`, adding `--filesystem=~/.local/share/applications:create` for the one write the code genuinely needs there (`shortcut_directory_in`, which targets the user's menu on purpose). **Measured before and after in the sandbox**, not argued: `touch ~/.config/gh-sec02-w2` and `touch ~/.local/share/gh-sec02-w3` both succeeded under the old grant and are both refused under the new one, while the three home-side anti-cheat roots (`~/.local/share/umu`, `~/.local/share/lutris/runtime`, `~/.local/share/Steam/steamapps/common`) stay readable and **a planted executable at `~/.gh-sec02-exec-probe` still runs, exit 0** — which is the one claim `packaging.md` §3 made and had never demonstrated. The carve-out was measured to override the broader read-only grant both ways: create, re-write and remove a `.desktop` file all succeed, while a sibling directory and a traversal back out of it are both refused. `tests/test_packaging.py` asserts the narrowed pair **and** the absence of the bare `--filesystem=home`, because Flatpak's `home` implies `home:ro` and so a positive list alone would pass on the wide grant — demonstrated by re-adding it and watching two tests fail. A third check pins the **set of writable grants**, so a second unreviewed one cannot arrive invisibly; proved by three mutations (`home` re-added, a `~/Games:rw` added, a bare `~/Games` added), each failing a distinct named assertion. |
 | SEC-03 | P2 | The Authenticode authenticity decision is weaker than it reads. The publisher test is a case-folded **substring** search over the verifier's whole merged stdout+stderr, not a comparison against a parsed `Subject:` field; and the pinned Microsoft root is passed as `-CAfile`/`-TSA-CAfile` for exactly one of the ten recipes. For the other nine, `microsoft_trust_root` is `false`, no trust anchor is passed, and the decision reduces to "`osslsigncode` exited 0 and printed `Signature verification: ok`" plus "the literal publisher string appears somewhere in the output". | `crates/core/src/installers.rs:1520-1524` (substring over `text.to_lowercase()`); `:1486-1497` (`-CAfile`/`-TSA-CAfile` only under `if installer.microsoft_trust_root`); `:325` (the only recipe with `true`); `:1445` (`AUTHENTICODE_ROOT_NAME`). There is no test counting the recipes that set the flag — only `assert!(ubisoft.microsoft_trust_root)` at `:3580` and the prose claim at `:3571` — so nothing would notice a tenth recipe silently gaining or losing it | If `osslsigncode verify` without `-CAfile` accepts a self-signed certificate, then the check is defeated by a self-signed certificate whose Subject carries the expected publisher string — the signature verifies cryptographically, the exit code is 0, the success line prints, and the substring appears. The download-origin check (`:1347-1371`) still stands in front of it, so exploitability requires control of an allowed host or of the releases JSON; the point is that the publisher test then provides no additional assurance. **The consequence is unverified**: `osslsigncode` is not installed in this environment (`which osslsigncode` → not found), so it was not executed. | Require the pinned root for every recipe — the `.pem` is already installed by the manifest — or parse the `Subject:` line and compare the whole field in order, rather than testing for a substring of the whole output. Settle the unverified half with one run of `osslsigncode verify -in <self-signed PE, Subject CN=Valve Corp.>` and record the exit code. |
 | SEC-04 | P2 | `game_id` is interpolated into a destination filename with no sanitisation at three sites in `covers.rs`, while the same class of bug was deliberately fixed in `desktop.rs`. The input is the `id` field of a `games.json` entry, which the app loads verbatim. | `crates/core/src/covers.rs:607` (`covers_dir.join(format!("{game_id}.ico"))`); `:908` (`format!("{game_id}.jpg")`); `:944-948` (`format!("{game_id}.{extension}")` / `format!("{game_id}.jpg")` then `covers_dir.join(file_name)`). Contrast `crates/core/src/runners/desktop.rs:138` (`id_prefix`, which maps every non-`[0-9A-Za-z]` to `-`) and the module note at `:62` recording that the reference's raw `game.id[:8]` interpolation was sanitised in this port precisely because a hand-edited id `"a/../../b"` would otherwise write outside the target directory. | A `games.json` whose entry has `"id": "../../../.config/autostart/x"` makes `save_exe_icon`, `save_cover_from_urls` and `copy_custom_cover` write `~/.config/autostart/x.ico`, `x.jpg` or `x.{png,jpg,jpeg,webp}` — outside `covers_dir`. `save_exe_icon_to` also writes the `.ico.tmp` sibling at the traversed location (`:611-614`), so an interrupted write leaves a stray file there. The content is an icon or an image, so this is an arbitrary-file write rather than direct code execution; combined with SEC-02's `--filesystem=home` the target is anywhere in the home directory. Every caller of these three functions is reachable from the ordinary add-a-game and set-a-cover flows. | Apply `desktop::id_prefix` — or `archive::safe_install_id`, which already exists for exactly this and is applied on the runner side — to `game_id` at all three sites, or refuse an id containing `/`, `\` or a `..` component at load time in `models.rs`. The fix belongs in `covers.rs`, because the same value is validated elsewhere and this is the one module that trusts it. |
 **Status: FIXED.** A `cover_stem` helper refuses any id containing `/` or `\`, and
@@ -182,34 +182,68 @@ findings above depend on.
 Each item below is something this audit could not settle from the tree, with the
 test that would settle it.
 
-1. **The permissions the built bundle actually carries.** No bundle was built and
-   `flatpak info --show-permissions` was not run in this environment. Every
-   statement in the findings above about `finish-args` is a statement about the
-   manifest at `build-aux/flatpak/com.goshapps.GameHandler.json:13-25`, which is
-   the *input*, not the grant. This distinction is not academic here:
-   `docs/migration/T19-PARITY-WALK.md:1096-1107` records that
-   `tests/test_packaging.py` "can see the flag and not the granted permission" —
-   a test that greps the manifest text is not evidence about the sandbox.
+1. **The permissions the built bundle actually carries — SETTLED, and the
+   answer was not the manifest.** `flatpak info --show-permissions
+   com.goshapps.GameHandler` was run against the installed 0.8.0 build. The
+   input, `build-aux/flatpak/com.goshapps.GameHandler.json:13-26`, and the
+   grant differ in **three** ways, only one of which is this repository's:
+   `filesystems=home;…` on the *old* build matched the manifest as it then
+   stood, but the grant also carries `xdg-config/gtk-3.0:ro`,
+   `xdg-config/gtk-4.0:ro`, `xdg-config/kdeglobals:ro` and
+   `xdg-data/color-schemes:ro` — injected by the **BaseApp**
+   (`org.winehq.Wine`, whom the same command shows carrying exactly those
+   four) — and an `[Environment] QT_QPA_PLATFORMTHEME=kde` entry that is in no
+   manifest here. The third difference was this environment's own:
+   `flatpak override --user --show` reported a stale
+   `devices=!all;dri;input;usb;` override from an earlier phase. So the
+   distinction the item draws is real and it cuts further than the item
+   expected: **the grant is not a function of this repository's manifest
+   alone.** A manifest-only reading would have got `home` right by luck and the
+   four BaseApp additions wrong, and a test that greps the manifest — which is
+   what `tests/test_packaging.py` does, necessarily, since there is no bundle
+   at test time — cannot see any of it. The four additions are read-only and
+   theme-related, so none is a finding; the *method* is what this item was for.
 2. **Whether `osslsigncode verify` without `-CAfile` already rejects a self-signed
    certificate.** This is the half of SEC-03 that determines its impact.
    `osslsigncode` is not installed in this environment (`which osslsigncode` →
    not found), so the chain behaviour was not executed. The settling test is one
    run of `osslsigncode verify -in <self-signed PE whose Subject carries a
    recipe's publisher string>`, recording the exit code.
-3. **Whether `--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro`
-   (`manifest:23`) is redundant given `--filesystem=home` (`manifest:21`).** The
-   code that reads that path is real, so the grant is tied to code and is not a
-   finding; the open question is only whether Flatpak's `home` grant already
-   covers `~/.var/app` (which would make the `:ro` subpath either redundant or the
-   thing that prevents a read-write grant from reaching another app's data). Not
-   tested against a running sandbox.
-4. **Whether a portal could replace `--filesystem=home`.** This is the crux of
-   SEC-02's fix, and `docs/migration/packaging.md` §3 answers it by assertion:
-   portal file *choosers* "do not replace this — the app must *execute* games from
-   those locations afterwards". Whether an executable reached through the document
-   portal's FUSE path can be executed is precisely what that assertion claims and
-   does not demonstrate. Neither `main.rs:2823`'s use of `xdg-open` nor the
-   disabled ashpd path noted at `main.rs:3182` resolves it.
+3. **Whether the Steam `:ro` grant is redundant given `home` — SETTLED, and the
+   answer is *neither* of the two the item offers.** The item supposed Flatpak's
+   `home` grant covers `~/.var/app` or does not. It does **not**: measured in
+   the sandbox with the *old, wide* grant in place, `ls
+   ~/.var/app/com.valvesoftware.Steam/data/Steam` returned `No such file or
+   directory` while `~/.local/share/Steam/steamapps/common` was readable. The
+   Steam Flatpak data directory is another application's private subtree and
+   Flatpak masks it even under `home`. So `manifest:25`'s `:ro` grant is the
+   *only* reason that path is reachable, it is load-bearing rather than
+   redundant, and it is **unaffected by SEC-02's narrowing** — the two grants
+   are independent, which is why the narrowed manifest keeps both. The evidence
+   is the parent listing rather than the missing target: `~/.var/app` is a real
+   directory holding fifty-odd entries on this host, and inside the sandbox —
+   under the *wide* grant, before SEC-02 narrowed anything — `ls ~/.var/app`
+   returned exactly one entry, `com.goshapps.GameHandler`. The Steam Flatpak is
+   not installed here, so probing the target path alone could not have told
+   masking apart from absence; the parent listing can, and does.
+4. **Whether a portal could replace the home grant — SETTLED: no, and the reason
+   is narrower than §3's.** The assertion was that choosers "do not replace this
+   — the app must *execute* games from those locations afterwards". Executing a
+   chosen file is in fact not the obstacle: a planted executable on a home path
+   ran with exit 0 under the narrowed grant, and the chooser already *is* the
+   document portal (`locate_exe_task`, `crates/app/src/main.rs:3433-3450`, whose
+   answers arrive as `/run/user/<uid>/doc/<id>/…` FUSE paths). The obstacle is
+   the other half of §4.1: a portal grant exists only for a path the user picked
+   in a dialog, and paths reach the launcher without one. Two do, and both are
+   from the tree rather than from imagination: `exe_path` is free text in the
+   add/edit form and is executed as typed (`crates/app/src/state.rs:349`, `:448`,
+   `as_local_path`; `shortcut_for`), and `shortcut_directory_in`
+   (`crates/core/src/runners/desktop.rs:96-98`) *writes* to the user's menu.
+   Every other path the launcher touches — prefixes, covers, runners, downloads
+   — is under its own data directory, so it needs no grant at all. That is the
+   correct form of the claim, and §4.1 now carries it. (The chooser flows that
+   *are* picker-driven, covers among them at `main.rs:1900`/`:1919`, are the
+   ones §4.1's original sentence was about and are unaffected.)
 5. **The provenance of the gamescope `PATH` entry** in
    `--env=PATH=/usr/lib/extensions/vulkan/gamescope/bin:…` (`manifest:24`).
    `launch_opts.rs:745` requires *a* `gamescope` on `PATH`, and

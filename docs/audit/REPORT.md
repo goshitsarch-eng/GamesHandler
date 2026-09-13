@@ -27,7 +27,7 @@ level up — and the fourth move is the proof of it: `88578db` marked `SEC-04`
 tables, so this file inherited a count that was three rows stale. That is now a
 `plan-counts` stage in `scripts/verify.sh` rather than an intention.
 
-**This is not a final report.** 81 of 128 defects are still open, most of them
+**This is not a final report.** 80 of 128 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -39,9 +39,9 @@ and the section *What remains, honestly* says which is which.
 | `ARCH-xx` | Architecture, code quality | 25 | 8 | 0 | 17 |
 | `UX-xx` | libcosmic / COSMIC UX | 30 | 5 | 0 | 25 |
 | `PERF-xx` | Performance, resource | 8 | 3 | 0 | 5 |
-| `SEC-xx` | Security, robustness | 10 | 3 | 0 | 7 |
+| `SEC-xx` | Security, robustness | 10 | 4 | 0 | 6 |
 | `PKG-xx` | Packaging, platform, QA | 10 | 5 | 0 | 5 |
-| **Total** | | **128** | **47** | **2** | **81** |
+| **Total** | | **128** | **48** | **2** | **80** |
 
 The `Found` column is defects; the two refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 46 id-bearing rows plus the
@@ -54,9 +54,9 @@ By severity:
 |---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 |
 | P1 | 23 | 23 | 0 | 0 |
-| P2 | 52 | 19 | 0 | 33 |
+| P2 | 52 | 20 | 0 | 32 |
 | P3 | 49 | 1 | 0 | 48 |
-| **Total** | **128** | **47** | **0** | **81** |
+| **Total** | **128** | **48** | **0** | **80** |
 
 `Not a defect` is not a euphemism for "wontfix": both rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`,
