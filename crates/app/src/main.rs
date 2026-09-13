@@ -950,6 +950,13 @@ pub enum Message {
         token: u64,
         installed: Vec<crate::view::runners::InstalledRow>,
         release_rows: Vec<crate::view::runners::ReleaseRow>,
+        /// What the scan could not look at, carried with the rows it did
+        /// produce (`BUG-44`). `None` for the ordinary case; `Some` is
+        /// reported as a notice by the arm that receives it, because the
+        /// alternative — a runners folder that could not be read rendering as
+        /// "no builds installed" — is indistinguishable from the empty library
+        /// a user would go and reinstall against.
+        problem: Option<String>,
     },
 
     // ---- Easy installers --------------------------------------------------
@@ -3443,6 +3450,30 @@ fn open_url_command(url: &str) -> std::process::Command {
     command
 }
 
+/// Whether `url` may be handed to the desktop's URL dispatcher (SEC-07).
+///
+/// **`xdg-open` dispatches on the scheme**, so the sink is where the invariant
+/// has to hold. Every producer reachable today is a compile-time `https://`
+/// constant — `Credit::url` in the credit catalogue, `releases_url()` and
+/// `homepage()` in the runner family catalogue — and that is checked by tests.
+/// But the payload is a `Message::OpenUrl(String)`, and a `String` is a
+/// `String`: the day a URL that came out of `games.json`, `settings.json`, a
+/// manifest or a network response reaches this arm, `file://` and whatever
+/// handler claims it become reachable with no other change anywhere. The
+/// argument list above already stops `;`, `&` and backticks from being anything
+/// but characters — this stops the *scheme* from choosing the program.
+///
+/// Strict and case-sensitive on purpose: RFC 3986 makes schemes
+/// case-insensitive, so `HTTPS://…` is a URL this refuses. Every producer is a
+/// lowercase constant, and refusing something a producer cannot currently
+/// write is the direction a gate should fail in. If a future caller needs a
+/// scheme this refuses, that is a deliberate edit here rather than an accident
+/// at a call site.
+fn is_openable_url(url: &str) -> bool {
+    url.strip_prefix("https://")
+        .is_some_and(|rest| !rest.is_empty())
+}
+
 /// Open `url` in the desktop's browser. P-65.
 ///
 /// `xdg-open` for the same reason [`open_prefix_folder`] uses it, and with the
@@ -3456,7 +3487,18 @@ fn open_url_command(url: &str) -> std::process::Command {
 /// container's. `spawn_detached` is where the failure is turned into a sentence;
 /// `a_detached_spawn_that_cannot_start_says_so` drives it with a program that
 /// does not exist instead of asserting a string the test invented.
+///
+/// The gate is first, before the command is even built (SEC-07): a URL that is
+/// not `https://` never reaches `open_url_command`, so there is no ordering in
+/// which a refused scheme is still spawned. The refusal names the scheme it
+/// refused rather than the URL, because the URL is the untrusted half.
 fn open_url(url: &str) -> Result<(), String> {
+    if !is_openable_url(url) {
+        return Err(format!(
+            "Refused to open a link that is not https: {}",
+            url.split(':').next().unwrap_or("no scheme")
+        ));
+    }
     spawn_detached(&mut open_url_command(url), url)
 }
 
@@ -5906,6 +5948,12 @@ mod tests {
                                 detail: "Proton-GE · v1.0.tar.gz · 1 MB".to_string(),
                                 installed: false,
                             }],
+                            // `None`, not a message: the sample exists to make
+                            // the arm *write* something observable, and a notice
+                            // is a side effect rather than a field this arm
+                            // writes. The reporting half is covered by
+                            // `a_runners_folder_that_cannot_be_read_is_reported`.
+                            problem: None,
                         }),
         Message::SetInstallerSearch(_) => ("SetInstallerSearch", Message::SetInstallerSearch("steam".to_string())),
         Message::SetInstallerCategory(_) => ("SetInstallerCategory", Message::SetInstallerCategory("launchers".to_string())),
@@ -11760,6 +11808,106 @@ mod tests {
         assert_eq!(
             error,
             "Could not open the prefix folder: No such file or directory (os error 2)"
+        );
+    }
+
+    /// **SEC-07: the gate refuses every scheme but `https`, and the app's own
+    /// links are all `https`.**
+    ///
+    /// Both halves matter. The refusals are what makes the sink local — a
+    /// `file://` URL reaching this point must not reach `xdg-open`, whatever
+    /// produced it. The acceptances are the control: a predicate that refused
+    /// *everything* would satisfy every refusal here while breaking every link
+    /// in the application, so the last block drives the real catalogues.
+    #[test]
+    fn only_an_https_url_may_be_handed_to_the_desktop() {
+        for refused in [
+            // The scheme the row names, and the one that would open a local
+            // file or directory in whatever handler claims it.
+            "file:///etc/passwd",
+            "file:///home",
+            // Plaintext, and no scheme at all.
+            "http://example.invalid/",
+            "example.invalid/x",
+            // A scheme that has no business being dispatched, and the
+            // empty-string edge a naive `starts_with` would let through.
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "",
+            // Uppercase: RFC 3986 makes schemes case-insensitive, so this is a
+            // real URL this gate refuses. Deliberate — every producer is a
+            // lowercase constant, and the doc says so.
+            "HTTPS://example.invalid/",
+            // The scheme with nothing after it, which is not a URL.
+            "https://",
+        ] {
+            assert!(
+                !is_openable_url(refused),
+                "{refused:?} must not be handed to xdg-open: it dispatches on \
+                 the scheme, so this is what chooses the program"
+            );
+        }
+
+        // The control. Every URL the application can actually produce, read
+        // from the catalogues rather than written here, so this fails if a
+        // future constant introduces a scheme the gate refuses.
+        let mut seen = 0usize;
+        for section in crate::view::credits::credit_sections() {
+            for credit in section.entries {
+                assert!(
+                    is_openable_url(credit.url),
+                    "the credit catalogue's {credit_url:?} would be refused by \
+                     this gate, so its link is dead",
+                    credit_url = credit.url
+                );
+                seen += 1;
+            }
+        }
+        for family in gamehandler_core::runners::families::RUNNER_FAMILIES {
+            for url in [family.releases_url(), family.homepage()] {
+                assert!(
+                    is_openable_url(&url),
+                    "the {family_id} family's {url:?} would be refused by this \
+                     gate, so its link is dead",
+                    family_id = family.id
+                );
+                seen += 1;
+            }
+        }
+        assert!(
+            seen > 0,
+            "no URL was checked, so the acceptances above proved nothing — the \
+             catalogues this reads must not be empty"
+        );
+    }
+
+    /// The gate runs **before** the command exists, which is the ordering the
+    /// row is about.
+    ///
+    /// A refusal that happened after `spawn` would be a report about something
+    /// that already ran. The two outcomes are distinguishable from outside
+    /// without inspecting internals: a spawn of `xdg-open` either succeeds
+    /// (`Ok(())`) or fails with the OS's reason, and neither of those starts
+    /// with the refusal's own sentence. So `Err` carrying that sentence is only
+    /// reachable when `open_url_command` was never called.
+    #[test]
+    fn a_refused_scheme_never_reaches_the_spawn() {
+        let error =
+            open_url("file:///etc/passwd").expect_err("a file:// URL must be refused, not opened");
+        assert!(
+            error.starts_with("Refused to open a link that is not https: "),
+            "the failure must be the gate's refusal and not a spawn failure, \
+             which is what proves nothing was spawned: {error:?}"
+        );
+        // It names the scheme rather than echoing the URL, which is the
+        // untrusted half. `file` here, not the path.
+        assert!(
+            error.ends_with("file"),
+            "the refusal names the scheme it refused: {error:?}"
+        );
+        assert!(
+            !error.contains("passwd"),
+            "the refusal must not echo the URL it refused: {error:?}"
         );
     }
 }

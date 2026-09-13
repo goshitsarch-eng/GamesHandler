@@ -1014,6 +1014,69 @@ pub enum MetadataRead {
     Damaged { reason: String },
 }
 
+/// What [`RunnerManager::scan_installed`] found, including what it could not
+/// look at.
+///
+/// This exists because of `BUG-44`, and its shape is the fix. The scan used to
+/// answer `Vec::new()` to every failure — a `filter_map(Result::ok)` for
+/// entries and a `let Ok(..) else { return Vec::new() }` for the directory —
+/// so "no builds are installed" and "I could not read the directory" were the
+/// same value. The reference does not collapse them: `sorted(iterdir())`
+/// raises `OSError` and it reaches the user.
+///
+/// A three-way answer rather than a `Result`, because there is a real middle
+/// case and it is the common one for a failure. An unreadable *directory* has
+/// no list at all, so it is [`Unreadable`](Self::Unreadable); an unreadable
+/// *entry* leaves the rest of the list intact, and answering `Err` there would
+/// throw away builds that are on disk and readable, which is a worse failure
+/// than the one being reported. `NotFound` is not among the three: a runners
+/// directory that is not there yet is [`Complete`](Self::Complete) with an
+/// empty list, which is true.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InstalledScan {
+    /// Every entry was read. `runners` may be empty — most installs have
+    /// nothing yet.
+    Complete(Vec<ProtonRunner>),
+    /// The directory was read but `refused` entries could not be. `runners`
+    /// holds the ones that could, so a caller renders them and reports the
+    /// rest rather than choosing between the two.
+    Partial {
+        runners: Vec<ProtonRunner>,
+        refused: Vec<String>,
+    },
+    /// The directory itself could not be read, so there is no list to show and
+    /// no way to tell "none" from "unknown". The string is the OS error, for
+    /// the message the user sees.
+    Unreadable(String),
+}
+
+impl InstalledScan {
+    /// The builds that were read, whatever else happened.
+    pub fn runners(&self) -> &[ProtonRunner] {
+        match self {
+            InstalledScan::Complete(runners) => runners,
+            InstalledScan::Partial { runners, .. } => runners,
+            InstalledScan::Unreadable(_) => &[],
+        }
+    }
+
+    /// What went wrong, if anything did — worded for a notice.
+    pub fn problem(&self) -> Option<String> {
+        match self {
+            InstalledScan::Complete(_) => None,
+            InstalledScan::Partial { refused, .. } => Some(format!(
+                "{} entr{} in the runners folder could not be read: {}",
+                refused.len(),
+                if refused.len() == 1 { "y" } else { "ies" },
+                refused.join("; ")
+            )),
+            InstalledScan::Unreadable(error) => {
+                Some(format!("Could not read the runners folder: {error}"))
+            }
+        }
+    }
+}
+
 // Metadata file reads performed by `read_metadata`, counted for the PERF-06
 // test.
 //
@@ -1219,32 +1282,84 @@ impl RunnerManager {
     /// whose name is not valid UTF-8 is unrepresentable there; on Unix the
     /// byte ordering this uses agrees with code-point ordering for anything
     /// Python could have produced.
-    pub fn installed_protons(&self) -> Vec<ProtonRunner> {
+    ///
+    /// **`BUG-44`.** This used to answer `Vec::new()` to *both* ways the
+    /// listing can fail: a directory that is there but unreadable, and a
+    /// per-entry error, which `filter_map(Result::ok)` dropped. Python's
+    /// `for child in sorted(self.runners_directory.iterdir())` raises `OSError`
+    /// from either, and `sorted()` propagates it, so a mode-`000` `runners/`
+    /// rendered in the reference as an error and in this port as a normal,
+    /// empty, system-Wine-only list — a state the user cannot tell from "no
+    /// builds installed", which is what they would go and reinstall against.
+    ///
+    /// Only `NotFound` is an empty list now, and the rest is reported. The
+    /// signature says which is which rather than leaving a caller to guess:
+    /// an unreadable directory is [`InstalledScan::Unreadable`], and a single
+    /// unreadable *entry* is [`InstalledScan::Partial`] — the builds that did
+    /// read are still real, and dropping the whole list because one dentry
+    /// failed would be a worse answer than either.
+    pub fn scan_installed(&self) -> InstalledScan {
+        // `exists()` is checked first because it is the cheap answer for the
+        // common case, but it is *not* what distinguishes the two failures:
+        // `exists()` is false both for a missing directory and for one whose
+        // parent is unsearchable, and the answer differs. What distinguishes
+        // them is the `read_dir` error's kind, below.
         if !self.runners_directory.exists() {
-            return Vec::new();
+            // The same question `read_dir` would answer, asked once more so
+            // that "there is nothing here" and "I cannot look" stay apart.
+            match std::fs::read_dir(&self.runners_directory) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return InstalledScan::Complete(Vec::new());
+                }
+                Err(error) => {
+                    return InstalledScan::Unreadable(error.to_string());
+                }
+            }
         }
-        let Ok(entries) = std::fs::read_dir(&self.runners_directory) else {
-            return Vec::new();
+        let entries = match std::fs::read_dir(&self.runners_directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return InstalledScan::Complete(Vec::new());
+            }
+            Err(error) => return InstalledScan::Unreadable(error.to_string()),
         };
-        let mut children: Vec<PathBuf> = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .collect();
+        let mut children: Vec<PathBuf> = Vec::new();
+        let mut refused: Vec<String> = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(entry) => children.push(entry.path()),
+                Err(error) => refused.push(error.to_string()),
+            }
+        }
         children.sort();
-        children
+        let runners: Vec<ProtonRunner> = children
             .into_iter()
             .filter(|child| child.is_dir())
             .map(ProtonRunner::discovered)
             .filter(|runner| runner.is_available())
-            .collect()
+            .collect();
+        if refused.is_empty() {
+            return InstalledScan::Complete(runners);
+        }
+        InstalledScan::Partial { runners, refused }
     }
 
     /// System Wine first, then every installed build.
+    ///
+    /// Ignores [`InstalledScan::problem`] deliberately: this is a *launch*
+    /// path, and refusing to offer System Wine because the runners folder could
+    /// not be listed would turn a reporting problem into a game that cannot be
+    /// started. The reporting is the listings' job, where the user is looking
+    /// at the folder's contents — [`scan_installed`](Self::scan_installed)'s
+    /// callers in the Runners page surface it there.
     pub fn all_runners(&self, env: &dyn LaunchEnv) -> Vec<Box<dyn Runner>> {
         let mut runners: Vec<Box<dyn Runner>> = vec![Box::new(self.system_wine(env))];
         runners.extend(
-            self.installed_protons()
-                .into_iter()
+            self.scan_installed()
+                .runners()
+                .iter()
+                .cloned()
                 .map(|runner| Box::new(runner) as Box<dyn Runner>),
         );
         runners
@@ -1349,7 +1464,7 @@ impl RunnerManager {
     /// `(id, label)` pairs suitable for a dropdown, System Wine first.
     pub fn choices(&self) -> Vec<(String, String)> {
         let mut items = vec![(SYSTEM_WINE.to_string(), "System Wine".to_string())];
-        for runner in self.installed_protons() {
+        for runner in self.scan_installed().runners() {
             items.push((runner.id().to_string(), runner.name().to_string()));
         }
         items
@@ -1549,7 +1664,8 @@ mod tests {
         let manager = RunnerManager::at(&root);
 
         let ids: Vec<String> = manager
-            .installed_protons()
+            .scan_installed()
+            .runners()
             .iter()
             .map(|runner| runner.id().to_string())
             .collect();
@@ -1560,13 +1676,120 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// `BUG-44`, and the test that has teeth: a runners directory that exists
+    /// and **cannot be read**.
+    ///
+    /// The row's whole point is that this was indistinguishable from an empty
+    /// one, so the test has to reach a genuine `EACCES` rather than mock one —
+    /// a mock would assert that the code calls the function the test says it
+    /// calls, which is the defect shape this audit is about. `chmod 000` is the
+    /// real thing: the process owns the directory, so it can stat it (hence
+    /// `exists()` is true) and cannot list it.
+    ///
+    /// The test is skipped for a privileged uid, where `chmod 000` does not
+    /// close the directory. It says so rather than passing vacuously.
+    #[test]
+    fn a_runners_directory_that_cannot_be_read_is_unreadable_not_empty() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("manager-unreadable");
+        let runners = root.join("runners");
+        make_proton(&runners.join("GE-Proton9-5"), false);
+        let manager = RunnerManager::at(&runners);
+        std::fs::set_permissions(&runners, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // One privileged uid (0) can still list a mode-000 directory, so the
+        // finding is untestable there — as root, this is not a test of the
+        // port but of the kernel's capability check.
+        let readable = std::fs::read_dir(&runners).is_ok();
+        let scan = manager.scan_installed();
+        // Restore before asserting, so a failure does not leave an unreadable
+        // directory behind for the next run to trip over.
+        std::fs::set_permissions(&runners, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if readable {
+            eprintln!("skipped: this uid can read a mode-000 directory (running privileged)");
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        assert!(
+            matches!(scan, InstalledScan::Unreadable(_)),
+            "an unreadable runners directory must not read as an empty one; got {scan:?}"
+        );
+        // The message is what the user is shown, so it names the failure rather
+        // than the symptom.
+        let problem = scan
+            .problem()
+            .expect("an unreadable scan reports something");
+        assert!(
+            problem.contains("runners folder"),
+            "the notice must say which folder it could not read; got {problem:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The `Partial` arm's semantics, tested directly and labelled as such.
+    ///
+    /// **The production path that builds a `Partial` has no test, and this is
+    /// the note saying so rather than a test pretending otherwise.** The only
+    /// way to make `read_dir` yield a failing `DirEntry` is for the directory
+    /// to change underneath the iterator — a `getdents` error mid-scan — and
+    /// there is no portable way to provoke it from a test. A mock would assert
+    /// that the code calls the function the test says it calls, which is the
+    /// defect shape this audit is about.
+    ///
+    /// What *is* testable is what the arm means once it exists, and that is
+    /// worth pinning because it is the half most likely to be "simplified": a
+    /// caller that reads `Partial` as a failure throws away builds that are on
+    /// disk and readable, and one that reads it as a success says nothing about
+    /// the entries it never saw.
+    #[test]
+    fn a_partial_scan_keeps_the_builds_it_read_and_reports_the_ones_it_did_not() {
+        let root = scratch("manager-partial");
+        make_proton(&root.join("GE-Proton9-5"), false);
+        let manager = RunnerManager::at(&root);
+        let readable = manager.scan_installed().runners().to_vec();
+        assert_eq!(readable.len(), 1, "the fixture has one build");
+        let scan = InstalledScan::Partial {
+            runners: readable,
+            refused: vec!["Stale file handle (os error 116)".to_string()],
+        };
+        assert_eq!(
+            scan.runners().len(),
+            1,
+            "the builds that read must survive an entry that did not"
+        );
+        let problem = scan.problem().expect("a partial scan reports something");
+        assert!(
+            problem.contains('1') && problem.contains("entry"),
+            "the notice must say how many entries were skipped, and say \"entry\" \
+             for one rather than \"entries\"; got {problem:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The other half of `BUG-44`: a directory that is *not there* is still an
+    /// empty list, not a problem. Without this, the fix above could have been
+    /// written as "report every failure" and a fresh install — where the
+    /// runners folder does not exist yet — would greet the user with an error.
+    #[test]
+    fn a_missing_runners_directory_is_empty_rather_than_a_problem() {
+        let root = scratch("manager-missing");
+        let manager = RunnerManager::at(root.join("runners"));
+        let scan = manager.scan_installed();
+        assert_eq!(
+            scan,
+            InstalledScan::Complete(Vec::new()),
+            "a runners folder that has not been created yet is an empty list"
+        );
+        assert_eq!(scan.problem(), None, "and it is not something to report");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_directory_without_a_usable_runner_is_not_offered() {
         let root = scratch("manager-unusable");
         std::fs::create_dir_all(root.join("empty")).unwrap();
         write_executable(&root.join("a-file-proton"));
         let manager = RunnerManager::at(&root);
-        assert!(manager.installed_protons().is_empty());
+        assert!(manager.scan_installed().runners().is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1682,7 +1905,8 @@ mod tests {
         value.runner = "wine-vanilla-11.15".to_string();
 
         let ids: Vec<String> = manager
-            .installed_protons()
+            .scan_installed()
+            .runners()
             .iter()
             .map(|runner| runner.id().to_string())
             .collect();

@@ -391,7 +391,16 @@ pub struct RunnersView<'a> {
 pub fn refresh(state: &mut State) -> Task<Message> {
     // Read on the calling thread. See the note above on which half is which.
     let system = state.runners.system_wine(&SystemLaunchEnv);
-    let protons = state.runners.installed_protons();
+    // The scan carries its own failure, and it is carried *through* the reply
+    // rather than reported here (`BUG-44`). Reporting it at this point would
+    // mean pushing a toast from a function whose callers include the render
+    // path's neighbours, and it would name the failure at the moment the page
+    // was opened rather than at the moment the list it describes appears. The
+    // token check in the arm below applies to it too: a stale scan's problem is
+    // as stale as its rows.
+    let scan = state.runners.scan_installed();
+    let protons = scan.runners().to_vec();
+    let scan_problem = scan.problem();
     let releases = state.releases.clone();
     let runners_directory = state.runners.runners_directory().to_path_buf();
 
@@ -410,6 +419,7 @@ pub fn refresh(state: &mut State) -> Task<Message> {
                 token,
                 installed,
                 release_rows,
+                problem: scan_problem,
             })
         },
     )
@@ -1149,13 +1159,22 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             token,
             installed,
             release_rows,
+            problem,
         } => {
             if *token != state.runner_rows_token {
                 return Some(Task::none());
             }
             state.installed = installed.clone();
             state.release_rows = release_rows.clone();
-            Some(Task::none())
+            // `BUG-44`. The scan's failure rides with its rows, so a stale reply
+            // cannot report a problem about a directory listing the page is no
+            // longer showing — the token check above covers both.
+            match problem {
+                Some(problem) => Some(Task::done(cosmic::Action::App(Message::Notify(
+                    problem.clone(),
+                )))),
+                None => Some(Task::none()),
+            }
         }
         _ => None,
     }
@@ -2519,6 +2538,7 @@ mod tests {
                 token: 7,
                 installed: Vec::new(),
                 release_rows: rows("current"),
+                problem: None,
             },
         );
         assert_eq!(
@@ -2534,12 +2554,101 @@ mod tests {
                 token: 6,
                 installed: Vec::new(),
                 release_rows: rows("stale"),
+                problem: None,
             },
         );
         assert_eq!(
             state.release_rows.first().map(|row| row.tag.as_str()),
             Some("current"),
             "the superseded reply overwrote the live rows"
+        );
+    }
+
+    /// `BUG-44`: a runners folder that could not be read is **reported**, and
+    /// the report rides with the rows it belongs to.
+    ///
+    /// This is the app half of the finding, and it is the half the user
+    /// actually sees. The core half distinguishes "empty" from "unreadable";
+    /// without this arm the distinction would be made and then dropped on the
+    /// floor at the boundary, which is how the two swallows survived in the
+    /// first place.
+    ///
+    /// The assertion is on the effect rather than on the return value: the
+    /// notice is what the user reads, and `Task::none()` against a `Task` that
+    /// pushes a toast is exactly the difference this is testing. A test that
+    /// read the task back would be asserting that the handler returns the
+    /// constructor the test names, which is this audit's named defect shape.
+    #[test]
+    fn a_runners_folder_that_cannot_be_read_is_reported() {
+        let mut state = state();
+        let token = state.runner_rows_token;
+        let effect = update(
+            &mut state,
+            &Message::RunnersRefreshed {
+                token,
+                installed: Vec::new(),
+                release_rows: Vec::new(),
+                problem: Some("Could not read the runners folder: Permission denied".to_string()),
+            },
+        );
+        // `units()` is what distinguishes the two shapes the arm can return:
+        // `Task::done` carries one action — the toast — and `Task::none` carries
+        // none. Asserting `effect.is_some()` would not, because the *dropped*
+        // arm also returns `Some(Task::none())`.
+        let units = effect.expect("the reply is consumed").units();
+        assert_eq!(
+            units, 1,
+            "an unreadable runners folder must reach the user as a toast, not \
+             be dropped at the boundary the way the scan used to drop it"
+        );
+
+        // The control: a scan with nothing wrong is silent. Without this, an
+        // arm that notified unconditionally would pass the assertion above.
+        let token = state.runner_rows_token;
+        let effect = update(
+            &mut state,
+            &Message::RunnersRefreshed {
+                token,
+                installed: Vec::new(),
+                release_rows: Vec::new(),
+                problem: None,
+            },
+        );
+        let units = effect.expect("the reply is consumed").units();
+        assert_eq!(
+            units, 0,
+            "a scan with nothing wrong must say nothing: a notice here would \
+             greet every user whose runners folder is simply empty"
+        );
+    }
+
+    /// A superseded reply's problem is dropped with its rows, for the reason
+    /// its rows are: it describes a directory listing the page is no longer
+    /// showing. The token check is one check, not two.
+    #[test]
+    fn a_superseded_reply_does_not_report_its_problem() {
+        let mut state = state();
+        state.runner_rows_token = 7;
+        let effect = update(
+            &mut state,
+            &Message::RunnersRefreshed {
+                token: 6,
+                installed: Vec::new(),
+                release_rows: Vec::new(),
+                problem: Some("Could not read the runners folder: Permission denied".to_string()),
+            },
+        );
+        // `Some(Task::none())` is the dropped shape — the reply is consumed and
+        // nothing is done with it. The distinguishing observable is that the
+        // *rows* did not land either, which is the same check.
+        assert!(
+            effect.is_some(),
+            "a dropped reply still consumes the message"
+        );
+        assert!(
+            state.installed.is_empty() && state.release_rows.is_empty(),
+            "the stale reply wrote its rows, so the guard is not applied to the \
+             problem either"
         );
     }
 

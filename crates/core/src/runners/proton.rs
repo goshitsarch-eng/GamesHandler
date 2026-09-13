@@ -3362,7 +3362,8 @@ mod tests {
             // screen in the first place. Without this the test could pass on a
             // build that was never visible.
             let before: Vec<String> = manager
-                .installed_protons()
+                .scan_installed()
+                .runners()
                 .iter()
                 .map(|runner| runner.id.clone())
                 .collect();
@@ -3374,7 +3375,8 @@ mod tests {
             uninstall(&runners, "GE-Proton9-9").unwrap();
 
             let after: Vec<String> = manager
-                .installed_protons()
+                .scan_installed()
+                .runners()
                 .iter()
                 .map(|runner| runner.id.clone())
                 .collect();
