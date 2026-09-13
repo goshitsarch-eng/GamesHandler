@@ -646,6 +646,9 @@ pub fn fetch_available(
 pub fn is_installed(runners_directory: &Path, tag: &str, family_id: Option<&str>) -> bool {
     let target = match family_id {
         Some(family_id) => {
+            // The join goes through `install_directory` rather than
+            // `runners_directory.join(..)` so that the id is validated by
+            // whichever function can actually see whether it was (`BUG-25`).
             let Ok(install_id) = super::families::install_id_for(tag, family_id) else {
                 // Python builds a `ReleaseInfo` and reads `.install_id`, which
                 // raises the same error the caller would have hit at install
@@ -653,12 +656,25 @@ pub fn is_installed(runners_directory: &Path, tag: &str, family_id: Option<&str>
                 // installed under it, so it is not installed.
                 return false;
             };
-            runners_directory.join(safe_install_id(&install_id).unwrap_or(install_id))
+            let Some(target) = install_directory(runners_directory, &install_id) else {
+                return false;
+            };
+            target
         }
-        None => match sanitise_release_tag(tag) {
-            Ok(name) => runners_directory.join(name),
-            Err(_) => return false,
-        },
+        // The same join, and the same validation for the same reason: every
+        // path out of `sanitise_release_tag` ends in `safe_install_id`, so this
+        // is redundant today too — and leaving one of the two joins in this
+        // function unvalidated while fixing the other is how the original
+        // divergence happened.
+        None => {
+            let Ok(name) = sanitise_release_tag(tag) else {
+                return false;
+            };
+            match install_directory(runners_directory, &name) {
+                Some(target) => target,
+                None => return false,
+            }
+        }
     };
 
     if proton_entry_exists(&target) {
@@ -716,6 +732,36 @@ pub fn is_installed(runners_directory: &Path, tag: &str, family_id: Option<&str>
         }
     }
     false
+}
+
+/// Where a build with this id lives under `runners_directory`, or `None` if the
+/// id is not one [`safe_install_id`] would accept.
+///
+/// This exists because of `BUG-25`, and the finding's shape is worth keeping
+/// next to the fix. `proton.rs` held two call sites of `safe_install_id` with
+/// **opposite** policies: `uninstall` propagated its refusal, and
+/// `is_installed` joined the raw value on refusal —
+/// `safe_install_id(&install_id).unwrap_or(install_id)` — which is the precise
+/// thing the helper exists to prevent, written as a fallback. The join was
+/// inert only because its input had already been through the helper *inside*
+/// `install_id_for`, one module away: a guarantee the caller cannot see is not
+/// a guard, and this call site was one edit to that other function from
+/// joining an unchecked id onto the runners directory.
+///
+/// It was not a path traversal as written — `is_installed` only stats the
+/// result — which is why the row is a `P3` and why the fix is a validation
+/// rather than a narrowing. The visible behaviour is unchanged: `None` here
+/// means "no directory name", and every caller's answer for that is already
+/// "not installed".
+///
+/// The second `safe_install_id` cannot fire today. It is kept because the
+/// property that makes it redundant — every path out of `install_id_for` ends
+/// in the helper — is now a test rather than a reading:
+/// `every_install_id_it_produces_is_one_it_would_accept`.
+pub fn install_directory(runners_directory: &Path, install_id: &str) -> Option<PathBuf> {
+    safe_install_id(install_id)
+        .ok()
+        .map(|safe| runners_directory.join(safe))
 }
 
 /// [`is_installed`] for a release, which is the form every caller has.
@@ -2365,6 +2411,46 @@ mod tests {
                 "{tag:?} must not resolve"
             );
             assert!(!is_installed(root, tag, None), "{tag:?} must not resolve");
+        }
+    }
+
+    /// The teeth of `BUG-25`, and the reason it is here rather than at the call
+    /// sites: **no call site can fail this test.**
+    ///
+    /// Both of `is_installed`'s joins now go through `install_directory`, and
+    /// both hand it an id that has already been through `safe_install_id`
+    /// inside `install_id_for` / `sanitise_release_tag`. So the guard cannot
+    /// fire from production today, and a test written against
+    /// `is_installed(root, tag, Some(family))` would pass just as happily
+    /// against the old `unwrap_or(install_id)` fallback — a check that passes
+    /// without inspecting what it claims, which is this audit's named defect
+    /// class and would be a poor way to close a finding about an unchecked
+    /// path join.
+    ///
+    /// What *can* discriminate is the function the join now goes through,
+    /// called directly with what it is documented to refuse. The mutation this
+    /// is written against is `Some(runners_directory.join(install_id))` in
+    /// place of the `safe_install_id` call, and it fails on all six inputs
+    /// below.
+    #[test]
+    fn an_install_directory_is_refused_rather_than_joined_unchecked() {
+        let root = Path::new("/runners");
+        assert_eq!(
+            install_directory(root, "GE-Proton9-5"),
+            Some(root.join("GE-Proton9-5")),
+            "an id the helper accepts is joined as before"
+        );
+        assert_eq!(
+            install_directory(root, "  GE-Proton9-5  "),
+            Some(root.join("GE-Proton9-5")),
+            "the trim is the helper's, not the caller's — the joined path is the trimmed one"
+        );
+        for bad in ["", ".", "..", "../../home", "a/b", ".hidden", "a\\b"] {
+            assert_eq!(
+                install_directory(root, bad),
+                None,
+                "{bad:?} must become no path at all, not a path under the runners directory"
+            );
         }
     }
 

@@ -1085,6 +1085,55 @@ mod tests {
         assert_eq!(unknown.install_id().unwrap(), "not-a-family~fv1.0");
     }
 
+    /// The postcondition `is_installed` relies on, made a test rather than a
+    /// reading (`BUG-25`).
+    ///
+    /// `proton.rs`'s `install_directory` validates the id it is handed even
+    /// though every current caller hands it one that has already been through
+    /// `safe_install_id` — the property that makes that redundant lives *here*,
+    /// one module away, and a guard whose soundness is an unstated fact about
+    /// another file is not a guard. This is the statement of the fact: whatever
+    /// `install_id_for` returns, `safe_install_id` accepts.
+    ///
+    /// The inputs include the ones that make each branch of `install_id_for`
+    /// interesting rather than a handful of ordinary tags: a tag that needs
+    /// sanitising, a family id that does, a `proton-ge` short-circuit, an
+    /// id long enough to take the 166-character truncation arm, and one long
+    /// enough that `sanitise_release_tag` takes its own truncation arm first.
+    /// The truncation arms are the reason this is worth testing at all — a
+    /// `chars().take(166)` that cut in the middle of a multi-byte character
+    /// would hand `safe_install_id` something it never refused, and the two
+    /// functions would agree on every input anyone thought to try.
+    #[test]
+    fn every_install_id_it_produces_is_one_it_would_accept() {
+        use crate::runners::archive::safe_install_id;
+        let long_tag = "v".repeat(400);
+        let long_family = "f".repeat(300);
+        let cases: &[(&str, &str)] = &[
+            ("GE-Proton9-5", "proton-ge"),
+            ("v1.0", "proton-cachyos"),
+            ("release/v1", "proton-cachyos"),
+            ("../../relocated", "proton-cachyos"),
+            ("  9-5  ", "proton-ge"),
+            ("v1.0", "not-a-family"),
+            (&long_tag, "proton-cachyos"),
+            ("v1.0", &long_family),
+            (&long_tag, &long_family),
+        ];
+        for (tag, family_id) in cases {
+            let Ok(install_id) = install_id_for(tag, family_id) else {
+                panic!("{tag:?}/{family_id:.20?} unexpectedly formed no id");
+            };
+            let accepted = safe_install_id(&install_id);
+            assert!(
+                matches!(accepted.as_deref(), Ok(safe) if safe == install_id),
+                "install_id_for produced {install_id:.40?} for {tag:.20?}/{family_id:.20?}, \
+                 but safe_install_id answers {accepted:?} — `install_directory` would then \
+                 join nothing and the build would read as not-installed"
+            );
+        }
+    }
+
     #[test]
     fn size_is_reported_in_mebibytes() {
         let release = ReleaseInfo::new("v1.0", "n", "https://x/y", 1024 * 1024);
