@@ -218,27 +218,98 @@ STAGES=(
 # so it is not a stage result and must not be reported as one.
 #
 # What it does NOT check, so nobody over-trusts it: this compares the *sequence*
-# of banners with the *sequence* of stages, not which function each banner sits
-# above. Move a banner to another function without changing its position in the
-# file and this stays green. Attachment is not expressible in a comment stream,
-# and a comment is not a thing a language can be made to check — which is the
-# same limit that let a stale claim sit three lines above the `cli` stage while
-# every structural check here passed. Treat a green banner_check as "the names
-# and their order agree", which is what it says, and nothing more.
+# of banners with the *sequence* of stages. A comment is not a thing a language
+# can be made to check — which is the same limit that let a stale claim sit three
+# lines above the `cli` stage while every structural check here passed. Treat a
+# green banner_check as "the names and their order agree", which is what it says,
+# and nothing more.
+#
+# **The paragraph above used to end "...and neither is which function each banner
+# sits above", and that limit was the old check's rather than the format's**
+# (BUG-31c). Attachment is not expressible in a *sequence* of banner names; it is
+# expressible the moment the file is read as text with line numbers, and two
+# checks below do exactly that. Neither is a claim that this tree had a
+# misplaced banner today — it did not, and `banner_check` passed before these
+# were added. They are here because the old text told a reader the case was
+# undetectable, which is the kind of sentence that stops the next person
+# looking:
+#
+#   `functions_in_file_order` — the `stage_*` definitions, in the order they
+#   appear in this file, must equal STAGES' function column in table order.
+#   This is what catches a *permutation*: swapping two entries' functions
+#   (`cli -> stage_test` and `test -> stage_cli` together) preserves the
+#   bijection `check_stage_table` verifies and leaves the banner names alone, so
+#   before this check the run executed the wrong functions under the right names
+#   and exited 0. The definitions do not move when the table does, so the two
+#   sequences disagree and it is a hard error.
+#
+#   `banner i < function i < banner i+1` — pairing the two lists by index, each
+#   stage's function must be defined *after* its own banner and *before* the
+#   next stage's. A banner moved onto another function's section without
+#   changing its position among the banners fails this, which is the case the
+#   old comment said was undetectable.
+#
+# Both are needed: the order check sees a permuted table, the interval check
+# sees a moved banner. Neither is a proof that the *description* in a banner
+# still describes what its function does — that remains prose, and remains the
+# part no check here reaches.
 banner_check() {
-    local -a declared=() banners=()
-    local entry
+    local -a declared=() declared_fns=() banner_names=() banner_lines=()
+    local -a fn_names=() fn_lines=()
+    local entry i
+
     for entry in "${STAGES[@]}"; do
         declared+=("${entry%%|*}")
+        # `${entry#*|}` then strip from the second `|` — the function column.
+        local fn="${entry#*|}"; declared_fns+=("${fn%%|*}")
     done
-    mapfile -t banners < <(sed -n 's/^# Stage: \([^ ]*\).*/\1/p' "${BASH_SOURCE[0]}")
-    if [ "${declared[*]}" != "${banners[*]}" ]; then
+
+    # Line numbers, because order alone cannot express attachment.
+    mapfile -t banner_lines < <(
+        grep -n '^# Stage: ' "${BASH_SOURCE[0]}" | cut -d: -f1)
+    mapfile -t banner_names < <(
+        sed -n 's/^# Stage: \([^ ]*\).*/\1/p' "${BASH_SOURCE[0]}")
+    mapfile -t fn_lines < <(
+        grep -n '^stage_[A-Za-z0-9_]*()' "${BASH_SOURCE[0]}" | cut -d: -f1)
+    mapfile -t fn_names < <(
+        sed -n 's/^\(stage_[A-Za-z0-9_]*\)().*/\1/p' "${BASH_SOURCE[0]}")
+
+    if [ "${declared[*]}" != "${banner_names[*]}" ]; then
         printf 'verify.sh: the "# Stage:" banners disagree with STAGES\n' >&2
         printf '  STAGES:  %s\n' "${declared[*]}" >&2
-        printf '  banners: %s\n' "${banners[*]}" >&2
+        printf '  banners: %s\n' "${banner_names[*]}" >&2
         printf '  both are in %s, in the order they must appear\n' "${BASH_SOURCE[0]}" >&2
         exit 2
     fi
+
+    # The permutation case. Both lists are read from the file or from the table
+    # by the same rule, so an edit that touches one and not the other shows up
+    # here as a disagreement about *which* function a stage runs.
+    if [ "${declared_fns[*]}" != "${fn_names[*]}" ]; then
+        printf 'verify.sh: STAGES'"'"' functions are not in the order this file defines them\n' >&2
+        printf '  STAGES names:    %s\n' "${declared_fns[*]}" >&2
+        printf '  file defines:    %s\n' "${fn_names[*]}" >&2
+        printf '  a table whose function column is permuted still passes the bijection\n' >&2
+        printf '  check, and then runs the wrong function under the right stage name.\n' >&2
+        printf '  see the note on `banner_check` above.\n' >&2
+        exit 2
+    fi
+
+    # Attachment: banner i heads the section its own function is defined in.
+    for ((i = 0; i < ${#declared[@]}; i++)); do
+        local banner_line="${banner_lines[i]}" fn_line="${fn_lines[i]}"
+        local next_banner="${banner_lines[i + 1]:-$((fn_line + 1))}"
+        if [ "$fn_line" -le "$banner_line" ] || [ "$fn_line" -ge "$next_banner" ]; then
+            printf 'verify.sh: the "# Stage: %s" banner does not head %s\n' \
+                "${declared[i]}" "${declared_fns[i]}" >&2
+            printf '  banner at line %s, %s defined at line %s, next banner at %s\n' \
+                "$banner_line" "${declared_fns[i]}" "$fn_line" "$next_banner" >&2
+            printf '  each banner must precede its own stage function and follow the\n' >&2
+            printf '  previous one — that is the only way a comment can be attached to\n' >&2
+            printf '  the code it describes, and it is checkable as text.\n' >&2
+            exit 2
+        fi
+    done
 }
 banner_check
 
@@ -630,22 +701,38 @@ finish_fail() {
 # ---------------------------------------------------------------------------
 FLATPAK_LOCK="$ROOT/target/verify-flatpak.lock"
 FLATPAK_LOCK_FD=""
+# Set to 0 further down when `flock` is absent, which refuses the four stages
+# that touch build-flatpak/. Default 1 so the refusal is the only way it moves.
+RUN_FLATPAK_STAGES=1
 
 acquire_flatpak_lock() {
     mkdir -p "$(dirname "$FLATPAK_LOCK")" || return 1
     if ! command -v flock >/dev/null 2>&1; then
-        # Reported rather than fatal, and reported rather than silent: the run
-        # can still do its work, but its result now depends on who else is
-        # running, and a reader has to be told that to interpret it. Failing
-        # hard here would take the earlier stages down with it on a box without
-        # util-linux, which would be a worse trade — those stages are unaffected
-        # by this hazard.
-        echo "flock is not installed, so the build-flatpak/ stages are NOT serialised"
-        echo "  against another verify.sh in this checkout. If none is running, the"
-        echo "  result"
-        echo "  is sound; if one is, build-flatpak/ may have been swapped underneath"
-        echo "  this run. Install util-linux (flock) to remove the caveat."
-        return 0
+        # 99 is the caller's "prerequisite missing" code, and it is *refused*
+        # rather than run unserialised (BUG-31a). The previous version returned
+        # 0 with a banner here, on the argument that failing would "take the
+        # earlier stages down with it" — which is not what the alternative does.
+        # Every earlier stage has already run and been reported by this point;
+        # the caller below records a *skip* for the four locked stages, and
+        # `finish_skip` takes nothing down. So the trade the old comment
+        # described was never the trade on offer, and what it actually bought
+        # was the one outcome this whole lock exists to prevent: four stages
+        # reporting `ok` from a tree another run may have swapped underneath
+        # them, with a caveat in the scrollback as the only trace.
+        #
+        # This is the convention the file already uses for a missing tool —
+        # `require_tool flatpak-builder` below does exactly this, and the
+        # unrequested SKIP it produces is exit 3 ("the run was incomplete")
+        # rather than exit 0. A box without util-linux gets the same answer
+        # here, and it is the true one: those four stages did not verify
+        # anything.
+        echo "flock is not installed, so build-flatpak/ cannot be serialised"
+        echo "  against another verify.sh in this checkout. Two runs would corrupt"
+        echo "  each other's build tree while every line of output said ok, which is"
+        echo "  a result that depends on who else is running — not a gate. The four"
+        echo "  stages that touch build-flatpak/ are skipped rather than run."
+        echo "  Install util-linux (flock) to run them."
+        return 99
     fi
     # The `|| return 1` here is load-bearing and stays, and that is measured
     # rather than defensive: redirections are performed before the command runs,
@@ -2094,7 +2181,34 @@ stage_flatpak_contents() {
 # ---------------------------------------------------------------------------
 
 # Recorded so the script can assert it did not dirty the tree (see below).
-STATUS_BEFORE="$(git status --porcelain 2>/dev/null)"
+#
+# Read through a helper that distinguishes "the tree is clean" from "`git` did
+# not answer", because `2>/dev/null` collapsed both into the empty string
+# (BUG-31b). A box without `git`, or a checkout whose `.git` is unreadable,
+# therefore reported a clean tree having observed nothing — and the comparison
+# below, `"" != ""`, agreed: the run said the tree was unchanged and the two
+# readings it compared were both failures. The count is what tells them apart:
+# an empty *answer* prints nothing and exits 0, an empty *result* comes from a
+# non-zero exit. `git status --porcelain` in a healthy repository exits 0, so a
+# command substitution is safe here — this is not `$(… | grep …)`, whose status
+# is the last pipe element's.
+status_probe() {
+    local out
+    if ! out="$(git status --porcelain 2>&1)"; then
+        printf 'verify.sh: `git status --porcelain` failed, so the state of the tree\n' >&2
+        printf '  is unknown and the read-only check below (T-17) cannot be made.\n' >&2
+        printf '  %s\n' "$out" >&2
+        return 2
+    fi
+    printf '%s\n' "$out"
+}
+STATUS_BEFORE="$(status_probe)" || {
+    printf '  this is a missing prerequisite, not a failing stage: git is required,\n' >&2
+    printf '  and nothing can be verified about the tree without it.\n' >&2
+    STOPPED="the tree's state could not be read"
+    summary
+    exit 3
+}
 
 # Every `stage_*` function the script defines is named by exactly one STAGES
 # entry, and every entry names a defined function.
@@ -2316,7 +2430,22 @@ run_stage cargo-sources-fresh
 # exits when --keep-going is off); the explicit release afterwards hands the
 # lock back before the summary so a waiter is not held while we print.
 trap release_flatpak_lock EXIT
-if ! acquire_flatpak_lock; then
+LOCK_RC=0
+acquire_flatpak_lock || LOCK_RC=$?
+if [ "$LOCK_RC" -eq 99 ]; then
+    # `flock` is absent, so the four stages below are refused rather than run
+    # unserialised (BUG-31a).
+    #
+    # **`--skip-flatpak` does not excuse them, and an earlier version of this
+    # block assumed it did.** That version ran the two *reading* stages anyway
+    # on the reading that the flag had already taken the group out of the run;
+    # measured, it reached `ok desktop-metainfo` and `ok flatpak-contents` with
+    # the tree unlocked, which is the precise hazard the lock exists to close —
+    # and those two are the ones whose output a reader would quote. The flag
+    # covers `flatpak-build` and `smoke-test`, which it names; it says nothing
+    # about the two that read `build-flatpak/`, and neither does `--skip-smoke`.
+    RUN_FLATPAK_STAGES=0
+elif [ "$LOCK_RC" -ne 0 ]; then
     printf 'FAIL %s\n' "flatpak-lock"
     printf '     could not take %s — the build-flatpak/ stages were not run\n' "${FLATPAK_LOCK#"$ROOT"/}"
     FAILED+=("flatpak-lock")
@@ -2325,6 +2454,41 @@ if ! acquire_flatpak_lock; then
     summary
     exit 1
 fi
+
+if [ "$RUN_FLATPAK_STAGES" -eq 0 ]; then
+    # Named here rather than folded into the branches below, because each of
+    # those would otherwise report its own reason for a stage that did not run
+    # for this one. Order is the STAGES order.
+    #
+    # The *requested* flag is passed through rather than defaulted, because the
+    # two are genuinely different outcomes for the exit code: `--skip-flatpak`
+    # asking for `flatpak-build` is legitimate and costs nothing, while
+    # `desktop-metainfo` never being able to run is an incomplete verification
+    # whatever flags were given. Marking all four requested would let a run
+    # without util-linux exit 0 having skipped the installed-copy check, which is
+    # the outcome this whole branch exists to prevent.
+    skip_requested=0
+    for stage in flatpak-build smoke-test desktop-metainfo flatpak-contents; do
+        begin "$stage"
+        # `if`, not `[ … ] && …`: the latter is the arm's last command, so a false
+        # test leaves the loop body's status at 1. Nothing here runs under `set
+        # -e`, so that is invisible today — which is exactly why it would be
+        # invisible on the day someone adds it.
+        case "$stage" in
+            flatpak-build)
+                if [ "$SKIP_FLATPAK" -eq 1 ]; then skip_requested=1; else skip_requested=0; fi ;;
+            smoke-test)
+                if [ "$SKIP_FLATPAK" -eq 1 ] || [ "$SKIP_SMOKE" -eq 1 ]; then
+                    skip_requested=1
+                else
+                    skip_requested=0
+                fi ;;
+            *)
+                skip_requested=0 ;;
+        esac
+        finish_skip "flock is not installed — build-flatpak/ cannot be serialised against another verify.sh" "$skip_requested"
+    done
+else
 
 if [ "$SKIP_FLATPAK" -eq 1 ]; then
     begin flatpak-build; finish_skip "--skip-flatpak" 1
@@ -2354,13 +2518,29 @@ fi
 # is precisely the half that catches a deleted install line. It reports SKIP on
 # its own when there is no tree to inspect.
 run_stage flatpak-contents
+
+fi
 # End of the build-flatpak/ critical section (see the lock note above).
 release_flatpak_lock
 
 # The repository must be as clean after a run as before it (T-17 constraint).
-STATUS_AFTER="$(git status --porcelain 2>/dev/null)"
+#
+# A failure to read here is reported rather than folded into the comparison, for
+# the reason `status_probe`'s own note gives: `"" != ""` is false, so a second
+# unreadable read would have agreed with the first and printed nothing. The
+# `STATUS_AFTER_UNREAD` flag carries that third state into the verdict below.
+STATUS_AFTER_UNREAD=0
+if ! STATUS_AFTER="$(status_probe)"; then
+    STATUS_AFTER_UNREAD=1
+    STATUS_AFTER="$STATUS_BEFORE"
+fi
 summary
-if [ "$STATUS_BEFORE" != "$STATUS_AFTER" ]; then
+if [ "$STATUS_AFTER_UNREAD" -eq 1 ]; then
+    printf '\nNOTE: the tree could not be re-read after this run, so T-17 is unverified.\n'
+    printf 'The run may be attributable to a still tree; this script cannot say. It is\n'
+    printf 'not reported as a failure of the code under test, and it is not a 0 either —\n'
+    printf 're-run it on a readable checkout before quoting the result.\n'
+elif [ "$STATUS_BEFORE" != "$STATUS_AFTER" ]; then
     printf '\nNOTE: the working tree changed during this run.\n'
     printf 'The likely cause is another agent editing this shared checkout while the run\n'
     printf 'was in flight — four agents work in this one tree (D-49), so this fires on\n'
@@ -2402,12 +2582,21 @@ fi
 # own line that already says a SKIP is not a pass; this is that sentence
 # finally affecting the outcome.
 #
-# Note the lock's interaction: an unacquirable lock is a FAIL (1), not a skip,
-# and the flock-absent branch in acquire_flatpak_lock is deliberately neither.
-# Every stage still runs there, so the run is *complete* and stays a 0 — it is
-# only un-serialised, and it says so in the output. Turning that into a 2 would
-# report a missing util-linux as an incomplete verification, which is a false
-# statement about stages that genuinely ran.
+# Note the lock's interaction: an unacquirable lock is a FAIL (1) — the stages
+# could not be run and something is wrong with the checkout — while an absent
+# `flock` is an unrequested SKIP and lands here as a 3 (BUG-31a). The earlier
+# revision put both on the FAIL side of this line by arguing the opposite:
+# that recording the four stages as skips would "report a missing util-linux as
+# an incomplete verification, which is a false statement about stages that
+# genuinely ran". It is a true statement about stages that did not: the old
+# branch returned 0 before any of them began. The distinction this exit code
+# already draws — a toolchain to install versus a defect to fix — is exactly the
+# one that applies, and `require_tool flatpak-builder` below has always drawn it
+# that way for a missing tool.
+#
+# A STATUS read that failed lands here too, as a 3, for the same shape of
+# reason: T-17's read-only check is one of the things this script claims to
+# verify, and a run that could not make the check did not verify it (BUG-31b).
 # Unrun stages are the same defect as an unrequested skip, and reaching them is
 # easier: adding a stage means editing STAGES, adding a banner and writing the
 # function — and forgetting the `run_stage` line. That is a stage that never
@@ -2432,7 +2621,8 @@ fi
 # It is the sentence below, applied to the other way a run can be partial. That
 # one is about a *skip*; this is about never getting there at all, and a reader
 # of "passed: build ... flatpak-contents" cannot tell the two apart.
-if [ "${#SKIPPED_UNREQUESTED[@]}" -gt 0 ] || [ "${#UNRUN[@]}" -gt 0 ]; then
+if [ "${#SKIPPED_UNREQUESTED[@]}" -gt 0 ] || [ "${#UNRUN[@]}" -gt 0 ] \
+   || [ "$STATUS_AFTER_UNREAD" -eq 1 ]; then
     if [ "${#UNRUN[@]}" -gt 0 ] && [ -z "$STOPPED" ]; then
         printf '\nNOTE: %s never ran, and nothing stopped the run reaching them.\n' "${UNRUN[*]}"
         printf 'The stage list and the runner disagree — an unrun stage is not a pass.\n'

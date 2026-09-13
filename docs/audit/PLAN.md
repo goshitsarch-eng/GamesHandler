@@ -62,7 +62,7 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 27 | 24 `FIXED`, 2 `PARTIAL`, 1 `CLOSED` |
+| `BUGS.md` | 48 | 28 | 25 `FIXED`, 2 `PARTIAL`, 1 `CLOSED` |
 | `ARCHITECTURE.md` | 25 | 10 | 10 `FIXED` |
 | `COSMIC-UX.md` | 30 | 6 | 6 `FIXED` |
 | `SECURITY.md` | 10 | 4 | 4 `FIXED` |
@@ -126,18 +126,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 23 | 23 | 0 | 0 |
 | P2 | 52 | 24 | 0 | 28 |
-| P3 | 49 | 1 | 0 | 48 |
-| **Total** | **129** | **53** | **0** | **76** |
+| P3 | 49 | 2 | 0 | 47 |
+| **Total** | **129** | **54** | **0** | **75** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 10 | 0 | 15 |
-| `BUG-xx` | `BUGS.md` | 46 | 24 | 0 | 22 |
+| `BUG-xx` | `BUGS.md` | 46 | 25 | 0 | 21 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 4 | 0 | 4 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
 | `SEC-xx` | `SECURITY.md` | 10 | 4 | 0 | 6 |
 | `UX-xx` | `COSMIC-UX.md` | 30 | 6 | 0 | 24 |
-| **Total** | | **129** | **53** | **0** | **76** |
+| **Total** | | **129** | **54** | **0** | **75** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -297,7 +297,7 @@ across families, not within them.
 | `BUG-28` | Six worker-to-UI sends discard their message with let _ =, including the two that carry *why* a launch failed | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-29` | One production expect on a value a future page addition invalidates: activate_page runs on every nav-bar click and panics if a Page variant is absent from Page::ALL | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-30` | Two tests in the suite are tautologies — they compare a value against the expression that defines it, so they can only fail if the delegation they are made of is edited | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
-| `BUG-31` | Three scripts/verify.sh hygiene defects, all of which make a run look cleaner than it was | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-31` | Three scripts/verify.sh hygiene defects, all of which make a run look cleaner than it was | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **All three done, and the regression evidence is probes rather than Rust tests** — the subject is the gate script itself, so what is measured is the script's behaviour, which is the strongest evidence available for it. **(a)** the `flock`-absent branch returns 99 instead of 0, so the four `build-flatpak/` stages become *unrequested* skips and the run exits 3, rather than the old path that reported them `ok` from a tree it could not lock. `--skip-flatpak` and `--skip-smoke` mark only the stages they name as requested, so `desktop-metainfo` and `flatpak-contents` — which read `build-flatpak/` and which neither flag covers — stay unrequested skips under every flag combination. Probed in six configurations with a `PATH` directory symlinking every binary but `flock`: no flags → `req=[] unreq=[cargo-sources-fresh flatpak-build smoke-test desktop-metainfo flatpak-contents]`, exit 3; `--skip-flatpak` → `req=[flatpak-build smoke-test]`; `--skip-smoke` → `req=[smoke-test]`; both → `req=[flatpak-build smoke-test]`. **The first version of this fix failed its own probe** — it let `--skip-flatpak` bypass the refusal, and the probe then measured `ok desktop-metainfo` and `ok flatpak-contents` running with no lock held, which is the precise hazard the lock exists to prevent. **(b)** `git status` reads through `status_probe`, which tests the command's exit status instead of discarding stderr into an empty string; a failed first read exits 3 (probed outside any repository: `fatal: not a git repository`, `did not run (the tree's state could not be read)`, all sixteen stages listed), and a failed second read is a third state reported as "T-17 is unverified" rather than as `"" != ""` agreeing with the first. **(c)** `banner_check` gained two line-number comparisons: the file order of the `stage_*` definitions must equal STAGES' function column — mutation-proved by `cli -> stage_test` with `test -> stage_cli`, which exits 2 naming both lists — and each stage's function must be defined after its own banner and before the next, mutation-proved by moving a banner down one function. The old code's comment declared this case undetectable; it is undetectable by a sequence of *names*, which is all that version compared. **Checked rather than assumed:** no banner was misplaced in this tree, so (c) closes a hole rather than a live defect, and that is stated because this row's first draft claimed the code already checked it. | FIXED |
 | `BUG-32` | Two smaller unbounded checks | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-33` | The EasyInstall toast's Play action launches the game but does not dismiss the toast, so a stale "Installed … ▶ Play" toast (duration Long, 15 s) sits over the Library the user was just navigated to | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-34` | The Library card's and row's "More actions" button and tooltip have no port equivalent | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
