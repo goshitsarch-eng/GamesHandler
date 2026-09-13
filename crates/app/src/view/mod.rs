@@ -66,6 +66,23 @@
 //! [`plugins::install_command`]: gamehandler_core::plugins::install_command
 //! [`plugins::privileged_command`]: gamehandler_core::plugins::privileged_command
 
+/// The gutter every top-level view pads its body by — UX-10.
+///
+/// Five of the seven views ended in `container(scrollable(body)).padding(18)`
+/// and two — [`installers`] and [`runners`] — ended in a bare
+/// `scrollable(body)`, so their text ran flush against the window edge and,
+/// with the nav bar condensed (every window under
+/// `Core::is_condensed_update`'s 648 px), flush against the hamburger.
+///
+/// The value is the five existing sites' own, which is why it is `18` and not a
+/// number this port chose: `view::installers`'s
+/// `the_page_pads_its_body_by_the_same_gutter_as_the_other_views` and
+/// `view::runners`'s test of the same name both assert their whole page is drawn
+/// inside it, so the five that had it are the control the two that did not are
+/// measured against. It lives here rather than in either page because it has two
+/// users and is a property of the layer, not of a screen.
+pub const GUTTER: u16 = 18;
+
 pub mod a11y;
 pub mod badge;
 pub mod cover;

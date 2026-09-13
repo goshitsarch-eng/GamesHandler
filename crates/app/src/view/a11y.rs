@@ -1008,6 +1008,42 @@ pub(crate) mod harness {
             .collect()
     }
 
+    /// The nodes a built element publishes **at a stated window size**.
+    ///
+    /// [`published`] is this walk under `Limits::MAX`, which is right for every
+    /// question it was written for — a node's role, its name, whether the ring
+    /// carries its id — and wrong for a layout one. `Limits::MAX` is an infinite
+    /// window: a control that overflows a 420 px one is laid out with all the
+    /// room it wants and measures as fitting, so an assertion that something
+    /// "fits" made through [`published`] cannot fail and is the repository's own
+    /// defect class rather than a check. A layout claim has to name the window it
+    /// is a claim about, and the caller names it here.
+    ///
+    /// The bounds this returns are the rectangles the framework really computed
+    /// — the same `layout.bounds()` [`Accessible::a11y_nodes`] records
+    /// (`a11y.rs`, the `Rect::new` on its node), read off a layout this function
+    /// ran rather than one the caller hoped for.
+    pub(crate) fn laid_out<M: Clone + 'static>(
+        el: &mut Element<'_, M>,
+        window: Size,
+    ) -> Vec<NodeFacts> {
+        let renderer = renderer();
+        let mut tree = Tree::new(el.as_widget());
+        let node = el.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, window),
+        );
+        let a11y = el
+            .as_widget()
+            .a11y_nodes(Layout::new(&node), &tree, mouse::Cursor::Unavailable);
+        a11y.root()
+            .iter()
+            .chain(a11y.children().iter())
+            .map(facts)
+            .collect()
+    }
+
     /// The id a built control is addressed by: the one its **node** carries.
     ///
     /// # Why this reads the node and not `Widget::id()`

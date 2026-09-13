@@ -92,6 +92,7 @@ use gamehandler_core::models::UNCATEGORIZED;
 use crate::Message;
 use crate::state::State;
 
+use super::GUTTER;
 use super::a11y;
 use super::badge::badge;
 
@@ -509,10 +510,31 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
     let category_step_choices = category_options.clone();
     body = body.push(
         Row::new()
+            // `fillWidth: true`, not `maximumWidth` — the reference sets both
+            // (`InstallersPage.qml:15-16`: `Layout.fillWidth: true`,
+            // `Layout.maximumWidth: Kirigami.Units.gridUnit * 22`) and this was
+            // the maximum written as a width. `Length::Fixed(396)` is not a
+            // ceiling in iced: it resolves as `amount.min(limits.max.width)`
+            // (`iced/core/src/layout/limits.rs:168`), so in a 384 px row it is a
+            // 384 px field, and it takes that width from everything beside it.
+            // This is the same length `view/library.rs:665-672` gives its own
+            // search box, in the same kind of row. UX-09.
+            //
+            // The reference's `maximumWidth` half is **not** written here, and
+            // that is a measurement rather than an omission: `.max_width(396.0)`
+            // on a `Length::Fill` child of a `Row` does nothing. The flex pass
+            // hands a fill child `min == max == its share`
+            // (`iced/core/src/layout/flex.rs:206-236`) and `Limits::max_width`
+            // re-inflates to `min` (`iced/core/src/layout/limits.rs:101-105`),
+            // so a probe of this exact row at a 1200 px window measured the
+            // field at 600 px both with and without the cap. The ceiling the
+            // reference has and this port loses on a very wide window is UX-25's
+            // subject — no page bounds its content width — and it is fixed
+            // there, at the page, rather than here where it cannot be expressed.
             .push(a11y::input(
                 cosmic::widget::text_input(SEARCH_PLACEHOLDER, page.search.to_string())
                     .on_input(Message::SetInstallerSearch)
-                    .width(Length::Fixed(22.0 * 18.0)),
+                    .width(Length::Fill),
                 SEARCH_PLACEHOLDER,
                 page.search.to_string(),
             ))
@@ -595,7 +617,15 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
         body = body.push(installer_card(row, page.busy, page.runner_id));
     }
 
-    cosmic::widget::scrollable(body).into()
+    // The gutter the other five views already carry (UX-10): without it this
+    // page's text starts at x=0, flush against the window edge and — when the
+    // nav bar is condensed, which is every window narrower than
+    // `Core::is_condensed_update`'s 648 px — flush against the hamburger.
+    // Measured before the change, at a 420 px window: this page's leftmost drawn
+    // string sat at x=0 while the Library's sat at x=18.
+    container(cosmic::widget::scrollable(body))
+        .padding(GUTTER)
+        .into()
 }
 
 /// One installer card: name and category badge, the subtitle, and Install.
@@ -1987,5 +2017,204 @@ mod tests {
             .as_widget_mut()
             .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
         texts.0
+    }
+
+    /// **The search field leaves the category selector the width it has when
+    /// nothing is competing with it** — UX-09, measured in the row itself.
+    ///
+    /// # Why the two widths are compared and not written down
+    ///
+    /// The defect was a `Length::Fixed(396)` field, and 396 is `gridUnit * 22`
+    /// — the reference's `Layout.maximumWidth` (`InstallersPage.qml:16`) read as
+    /// a width. A test that asserted `width == 396` would have passed against
+    /// the defect, and a test that asserted some other number would be asserting
+    /// this test's own arithmetic. What the field *must not* do is take its row
+    /// from the control beside it, and the honest measure of that is a
+    /// comparison: the combo is the same widget with the same intrinsic width in
+    /// a 420 px window as it is in an unbounded one, and any implementation that
+    /// starves it shows up as the difference.
+    ///
+    /// **Measured, at `MIN_WINDOW`'s 420 px:** before the fix the combo was
+    /// **16.0 px** wide against its own **36.0 px** unbounded width — 44% of it,
+    /// because the field took 396 px of a 384 px row. After, both are 36.0. The
+    /// mutation proof is that revert: putting `Length::Fixed(22.0 * 18.0)` back
+    /// fails the first comparison with `left: 16.0, right: 36.0`.
+    ///
+    /// # Why the window is 420 and not `f32::INFINITY`
+    ///
+    /// An unbounded window cannot fail this: every control fits in it, so a
+    /// "fits" assertion made there is the defect class this repository is named
+    /// for. 420 is the floor the app configures (`crate::MIN_WINDOW`), which is
+    /// the narrowest window a user can be in, and it is *below* the 396 px the
+    /// field used to demand — which is the whole reason the defect existed.
+    #[test]
+    fn the_search_field_leaves_the_category_selector_its_own_width() {
+        use super::a11y::harness;
+
+        let catalog = vec![row("steam", "Steam"), row("battlenet", "Battle.net")];
+        let runners = a11y_runners();
+        let categories = installer_categories();
+
+        // The combo's width with nothing competing for the row: the same page in
+        // a window wide enough that neither control is under pressure. A wide
+        // window and not `harness::published`, which lays out under
+        // `Limits::MAX`: at that width this row's `Fill` children are handed
+        // `f32::MAX`'s halves, the combo sits at x ≈ 1.7e38 and measures **NaN**
+        // px against it — the instrument returns nothing rather than a number,
+        // which is the same reason `laid_out` exists.
+        let mut wide = a11y_page(&catalog, &runners, &categories);
+        let want = combo_width(&harness::laid_out(
+            &mut wide,
+            cosmic::iced::Size::new(2000.0, 700.0),
+        ));
+        assert!(
+            want > 10.0,
+            "the category selector measures {want} px in a window with room to \
+             spare, so the comparison below would be comparing nothing"
+        );
+
+        let mut element = a11y_page(&catalog, &runners, &categories);
+        let nodes = harness::laid_out(&mut element, cosmic::iced::Size::new(420.0, 700.0));
+        assert!(
+            nodes.len() > 10,
+            "the walk found {} nodes on a page this size; it is not walking the \
+             tree and every comparison below would be vacuous",
+            nodes.len()
+        );
+        let combo = combo_width(&nodes);
+        let field = field_width(&nodes);
+
+        assert!(
+            (combo - want).abs() < 0.5,
+            "the category selector must be the width it is when nothing competes \
+             with it: {combo} px in a 420 px window against {want} px in a wide \
+             one. UX-09 is the search field taking the row from it, so a \
+             difference here is that defect back."
+        );
+        // And the field is what must give way. Both halves are floors as well as
+        // ceilings: a field of 0 px would satisfy the comparison above and is not
+        // a fix, and a field wider than the window is the defect stated the other
+        // way round. The ceiling here is the window rather than the row: the row
+        // is the page's, and its own gutter is `view::GUTTER`'s subject, measured
+        // by the page test below.
+        assert!(
+            field > 100.0,
+            "the search field must still be a usable field at the window floor, \
+             not a sliver: {field} px"
+        );
+        assert!(
+            field <= 420.0,
+            "the search field must fit the window it is in at the window floor, \
+             not overflow it: {field} px in a 420 px window"
+        );
+    }
+
+    /// **The page pads its body by the gutter the other five views use** —
+    /// UX-10, measured as the leftmost edge anything on the page is drawn at.
+    ///
+    /// Five of the seven top-level views ended in
+    /// `container(scrollable(body)).padding(18)`; this one and `view::runners`
+    /// ended in a bare `scrollable(body)`, so their content ran flush against
+    /// the window edge and, with the nav bar condensed (every window under
+    /// `Core::is_condensed_update`'s 648 px), flush against the hamburger.
+    ///
+    /// **Measured, at a 420 px window:** before the fix the leftmost published
+    /// node sat at **x = 0.0** on this page while the Library's sat at **x =
+    /// 18.0**; after, both are 18.0. The mutation proof is that revert: dropping
+    /// the `container` fails with `left: 0.0, right: 18.0`.
+    ///
+    /// The measure is the *nodes*, not a padding value read out of the builder:
+    /// a `padding(18)` on a container the page does not end in would leave every
+    /// string where it was, and this is the same instrument that showed the
+    /// difference in the first place.
+    #[test]
+    fn the_page_pads_its_body_by_the_same_gutter_as_the_other_views() {
+        use super::a11y::harness;
+
+        let catalog = vec![row("steam", "Steam"), row("battlenet", "Battle.net")];
+        let runners = a11y_runners();
+        let categories = installer_categories();
+        let mut element = a11y_page(&catalog, &runners, &categories);
+
+        let nodes = harness::laid_out(&mut element, cosmic::iced::Size::new(420.0, 700.0));
+        assert!(
+            nodes.len() > 10,
+            "the walk found {} nodes on a page this size; it is not walking the \
+             tree and the edges below would be `INFINITY` and `NEG_INFINITY`, \
+             which is the vacuous version of this assertion",
+            nodes.len()
+        );
+        let left = nodes
+            .iter()
+            .filter_map(|node| node.bounds.map(|rect| rect.x0))
+            .fold(f64::INFINITY, f64::min);
+        let right = nodes
+            .iter()
+            .filter_map(|node| node.bounds.map(|rect| rect.x1))
+            .fold(f64::NEG_INFINITY, f64::max);
+        let gutter = f64::from(crate::view::GUTTER);
+
+        assert!(
+            (left - gutter).abs() < 0.5,
+            "the page's content must start at the gutter, not at the window \
+             edge: leftmost node at x = {left}, expected {gutter}"
+        );
+        assert!(
+            (right - (420.0 - gutter)).abs() < 0.5,
+            "and stop at it on the other side: rightmost node at x = {right}, \
+             expected {}",
+            420.0 - gutter
+        );
+    }
+
+    /// The width of the page's category selector, from a node listing.
+    fn combo_width(nodes: &[super::a11y::harness::NodeFacts]) -> f32 {
+        use iced_accessibility::accesskit::Role;
+
+        let node = nodes
+            .iter()
+            .find(|node| {
+                node.role == Role::ComboBox && node.label.as_deref() == Some(CATEGORY_FILTER_LABEL)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "the category selector publishes no ComboBox node named \
+                     {CATEGORY_FILTER_LABEL:?}, so there is nothing to measure. \
+                     Nodes: {:?}",
+                    nodes
+                        .iter()
+                        .map(|node| (&node.role, node.label.as_deref()))
+                        .collect::<Vec<_>>()
+                )
+            });
+        let rect = node
+            .bounds
+            .unwrap_or_else(|| panic!("the category selector's node carries no bounds"));
+        (rect.x1 - rect.x0) as f32
+    }
+
+    /// The width of the page's search field, from a node listing.
+    fn field_width(nodes: &[super::a11y::harness::NodeFacts]) -> f32 {
+        use iced_accessibility::accesskit::Role;
+
+        let node = nodes
+            .iter()
+            .find(|node| {
+                node.role == Role::TextInput && node.label.as_deref() == Some(SEARCH_PLACEHOLDER)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "the search field publishes no TextInput node named \
+                     {SEARCH_PLACEHOLDER:?}. Nodes: {:?}",
+                    nodes
+                        .iter()
+                        .map(|node| (&node.role, node.label.as_deref()))
+                        .collect::<Vec<_>>()
+                )
+            });
+        let rect = node
+            .bounds
+            .unwrap_or_else(|| panic!("the search field's node carries no bounds"));
+        (rect.x1 - rect.x0) as f32
     }
 }
