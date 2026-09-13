@@ -1161,3 +1161,119 @@ enable Gamescope with the extension absent and confirm the toast names
 restored from a backup, and verified with
 `for f in $(find crates -name '*.rs'); do git show 9bcacf9:$f | cmp -s - $f || echo "DIFFERS: $f"; done`
 → `(sweep clean)`. No tracked file in the working tree was modified by me.
+
+---
+
+## 5. The live Flatpak walk (2026-09-12; `a6166b8`, harness uncommitted)
+
+§4's first bullet is now spent: the (B) procedures that can run on this
+machine have been run, against the installed `com.goshapps.GameHandler`
+Flatpak, by hand. Harness: `scripts/parity-walk.sh` (new in the working
+tree, uncommitted at walk time) driving headless sway at 1280x800
+(pixman, `WLR_LIBINPUT_NO_DEVICES=1`); pointer via `swaymsg seat cursor`,
+keys via `wtype -k`, wheel via a raw-Wayland axis script; `vptr-hold`
+keeps the seat's pointer capability advertised. Shots below are
+`/tmp/gh-walk/shots/*.png` (harness workdir, not committed). Fixtures
+were hand-edited `games.json`/`settings.json` under
+`~/.var/app/com.goshapps.GameHandler/config/gamehandler/`, restored to
+the pristine three-game library afterwards.
+
+**B-01 — VERIFIED.** `{"name": 123}` entry renders as a "123" tile with
+"12" initials (`B01-open`); Name / Recently played / Recently added all
+cycle without error (`B01-sortmenu`, `B01-recent`, `B01-added`).
+Cosmetic, carried not filed: a long grid title overflows into the
+neighbour tile's text (`B01-recent`: the TC title runs under SU's).
+
+**B-02 — VERIFIED.** `added: null` renders as "Null Added" and survives
+all three sorts (`B02-open`, `B02-name`, `B02-recent`). No crash anywhere.
+
+**B-03 — VERIFIED.** `settings.json` with a `0xff` byte: the app opens
+on defaults — grid, Name sort — with the library intact (`B03-open`).
+The sort reset from the previous session's "Recently played" proves the
+defaults were loaded rather than persisted state re-read.
+
+**B-04 — VERIFIED, via a GUI save.** BOM'd file loads all three games
+(`B04-open`). The save half went through Remove-with-confirm (the form
+path is unwalkable — see F-ADD below): after confirming, the file holds
+the two survivors and the BOM is gone — a clean rewrite, verified by
+bytes, with `Removed "Hades"` toasted (`B04-confirm`, `B04-deleted`).
+
+**B-05 — VERIFIED (CLI).** A save rewrote only the intended
+`last_played` mark; every other `added`/`last_played` float was
+byte-identical after, including the fractional `1700000000.123456`.
+
+**B-06 — VERIFIED (CLI).** 20,000-deep `[` nesting: `GameHandler: the
+library is empty`, exit 0 — a parse error at worst, never SIGABRT.
+Residual, same family as B-01's silent coercion: the error is hidden;
+the user is told the library is empty.
+
+**B-07 — VERIFIED (CLI, 6/6).** A runner printing to stderr and exiting
+3 reports `B05 Saver stopped right away: B07-RUNNER-ERROR-MARKER` on
+all six attempts — the runner's text every time, never the generic
+status line. The F-O race is gone from this path.
+
+Two extras that are not PLAN items, for the record: a symlinked
+`games.json` loads as an empty library without complaint, and the
+Flatpak shortcut command round-trips through the CLI parser (unit test
+`a_flatpak_shortcut_parses_back_into_the_launch_verb_and_the_games_id`,
+plus the live `DESKTOP_VALID` shortcut from the earlier session).
+
+**P-46 — walked; three results and one correction.**
+Fast fail: Play on a game whose runner exits 3 with a stderr line shows
+`"B05 Saver" stopped right away: B07-RUNNER-ERROR-MARKER` beside the
+`Launching …` toast at T+3 s (`P46-p3`).
+Timing: the toast appears promptly on early exit, and that is correct —
+the reference's `failure()` is `process.wait(timeout=6.0)`
+(`gamehandler/runners.py:1368`), which returns at child exit, so §2.4's
+own procedure ("must not appear before ~6 s") was wrong, not the port.
+Positive case: a 12 s sleeper shows no failure toast at all
+(`P46-slowtoast`) — alive at the deadline means success, exactly as the
+reference's `TimeoutExpired → None`.
+Hide: with close-on-launch set, the app emits
+`xdg_toplevel#33.set_minimized()` on Play (traced with `WAYLAND_DEBUG=1`
+in `app-debug.log`), but sway ignores minimise requests, so the visual
+hide/restore is unobservable in this harness — a compositor limit, with
+the restore half (`minimize(false)` is a documented Wayland no-op +
+`gain_focus`) still unwitnessed anywhere. `mark_played` and the
+`Launching …` toast in the same shots are P-47's live half.
+
+**P-71 — the Exec is right.** Shortcuts written in the sandbox read
+`Exec=flatpak run com.goshapps.GameHandler --launch <id>`
+(`DESKTOP_VALID`, earlier session).
+
+**P-09 — bonus, live.** `ZZZ` in Search shows "No matching games" with
+a working Clear filters button (`P46-kb`, `P46-clear`).
+
+**P-11/P-12/P-13/P-14/P-15 — the (C) table is stale here.** The context
+menu exists at HEAD (eight items: Play, Edit, Find cover art, Winecfg,
+Winetricks, Open prefix folder, Create desktop shortcut, Remove from
+library — `B04-menu2`), so "not implemented" no longer holds. Proven
+this walk: the card menu opens (row menu untested — P-11 stays split),
+Edit opens the form (`B04-editform`), and P-15 is now fully (A): confirm
+dialog with the prefix-left-on-disk sentence, removal, toast, and save
+(`B04-confirm`, `B04-deleted`). Menu Play, Find cover, the prefix tools
+and shortcut creation from the menu are sighted but unwalked.
+
+**F-ADD — new finding (P0 for the view owner): the form's Add/Save
+button closes the form without saving.** Five GUI trials (four Add, one
+Edit-save), all with a filled, enabled (blue) button: the form closes,
+no toast appears, `games.json` is byte-untouched (mtime and BOM prove
+it), no crash. Harness error is excluded three ways: the pointer
+calibrates to ±1 px by screenshot diff, `WAYLAND_DEBUG=1` shows the app
+receiving `motion(370, 720)` + press/release on the button's own
+pixels, and a press right of the button is correctly inert. The port's
+own code reads correctly end to end — `form.rs:832-833` wires the
+messages, the `SaveGameForm` arm always toasts, and the arm is
+unit-tested — which is precisely why no test sees this: the suite pins
+message→effect, and the defect is between pixels and message. Until it
+is fixed, P-18's Add half and everything downstream of a GUI form save
+(P-31 included) cannot be walked.
+
+**Harness notes for the next walker.** `vptr-hold` binds its display at
+start: after `parity-walk.sh down/up` it spins against a dead socket
+and all input silently stops — restart it. The script's `key` verb
+types its argument as text (`wtype` without `-k`); bare keys need raw
+`wtype -k`. Wheel is the only working scroll (scrollbar track click and
+thumb drag are inert). Never `pkill -f` a pattern matching your own
+command line; the pidfile plus explicit PIDs is safe (killing only the
+outer `bwrap` orphans the inner sandbox and twins the window).

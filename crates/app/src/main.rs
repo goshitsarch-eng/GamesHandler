@@ -2931,7 +2931,7 @@ fn launcher_command_with(env: &dyn PluginEnv) -> String {
 /// CPython's three cases: the empty string becomes `''`, a string made only of
 /// `[A-Za-z0-9_]`, `@%+=:,./-` is returned unchanged, and anything else is
 /// single-quoted with each `'` rewritten as `'"'"'`. Only the last case is
-/// reachable from [`launcher_command`] — it calls this only for a value
+/// reachable from [`launcher_command_with`] — it calls this only for a value
 /// containing a space, and a space is not in the safe set — so the other two are
 /// here because they are what the function *is*, not because a caller needs
 /// them.
@@ -4082,7 +4082,7 @@ mod tests {
     /// red here rather than six months later on a user's desktop.
     ///
     /// `argv[0]` is dropped and replaced, and that is deliberate rather than
-    /// sloppy: [`launcher_command`] may return a `shlex.quote`d path containing
+    /// sloppy: [`launcher_command_with`] may return a `shlex.quote`d path containing
     /// a space, which no whitespace split can recover — a defect the reference
     /// has too, recorded on that function. The launcher is asserted separately,
     /// as a prefix, so nothing is left unchecked; what is parsed here is the

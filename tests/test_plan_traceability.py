@@ -386,6 +386,16 @@ UNROUTED = {
         "because an id the plan hands work to and never defines is work with no "
         "owner. Delete this entry when the row is written."
     ),
+    "T-07c": (
+        "Commit `b54fe70` cites this id for the in-sandbox shortcut fix "
+        "(P-71's (c) from #90: the Flatpak Exec naming a mount-namespace path), "
+        "and no `| T-07c |` row defines it anywhere — the id appears in that one "
+        "commit subject and nowhere else in the tree. Same shape as T-63 above: "
+        "a worked-and-landed id with no row, deferred rather than fixed because "
+        "PLAN.md is the Lead's file (D-05). Delete this entry when the row is "
+        "written (or the commit is understood as T-07's and the subject's "
+        "suffix is retired by convention)."
+    ),
 }
 
 

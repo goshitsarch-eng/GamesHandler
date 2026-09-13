@@ -92,6 +92,12 @@
 #                    fail-fast; this is the flag for a full diagnostic sweep)
 #   --offline        pass --disable-download to flatpak-builder
 #   --hold SECONDS   forward the GUI hold interval to the smoke test
+#   --stage-timeout SECONDS
+#                    ceiling on a single stage; 0 disables the deadline. The
+#                    default is 900, with per-stage overrides in STAGE_TIMEOUTS
+#                    (`flatpak-build` gets an hour). A stage that overruns is
+#                    killed, reported as a FAIL naming the stage, and — like any
+#                    other failure — stops the run unless --keep-going (#103).
 #
 # Exit codes (DECISIONS D-31):
 #
@@ -243,6 +249,11 @@ usage: scripts/verify.sh [options]
                    stopping at the first failure
   --offline        pass --disable-download to flatpak-builder
   --hold SECONDS   forward the GUI hold interval to the smoke test
+  --stage-timeout SECONDS
+                   ceiling on a single stage; 0 disables it. Default 900,
+                   with per-stage overrides for the stages that go long
+                   (flatpak-build: 3600). A stage that overruns is killed
+                   and reported as a FAIL naming the stage.
 
 Stages, in order:
 EOF
@@ -261,6 +272,7 @@ while [ $# -gt 0 ]; do
         --keep-going)   KEEP_GOING=1; shift ;;
         --offline)      OFFLINE=1; shift ;;
         --hold)         SMOKE_HOLD="${2:?--hold needs a value}"; shift 2 ;;
+        --stage-timeout) STAGE_TIMEOUT="${2:?--stage-timeout needs a value}"; shift 2 ;;
         -h|--help)      usage; exit 0 ;;
         *)              echo "verify.sh: unknown option: $1" >&2; exit 2 ;;
     esac
@@ -278,6 +290,119 @@ STAGE_START=0
 # returned 0" from "someone announced this stage and then claimed a result" —
 # see the note in `finish_ok` for what it is there to catch.
 STAGE_RAN=""
+# Non-empty while the stage being reported was killed by its own ceiling, so
+# `finish_fail` says "timed out" rather than leaving the reader to guess from an
+# empty log whether the stage hung or failed. Cleared by `begin`.
+STAGE_TIMED_OUT=""
+
+# --- the stage deadline (#103) --------------------------------------------
+#
+# `grep -n timeout scripts/verify.sh` returned nothing, so every stage ran with
+# no deadline at all: a stage that never returned wedged the run, and a wedged
+# run emits no output to misread — only a command that never comes back. The
+# case that filed this was real and was observed: two orphaned
+# `netpaths::tests::unquote_matches_cpython` binaries spun at 99.1% CPU for six
+# hours, and the stage waiting on them would have waited forever.
+#
+# The ceiling is generous on purpose — a deadline that a real stage can hit is
+# worse than none, because it turns a slow build into a red run and teaches the
+# reader to distrust the gate. `flatpak-build` is the longest real stage at
+# ~146s, so 900s is minutes of headroom above anything a working run does; the
+# per-stage table exists for the stages that legitimately go long rather than to
+# tune the ordinary ones.
+# `${STAGE_TIMEOUT:-...}`, not `${VERIFY_STAGE_TIMEOUT:-...}`: this block is
+# *below* the option loop, so a plain `STAGE_TIMEOUT=900` would overwrite what
+# `--stage-timeout` just parsed. Measured before the fix: `--stage-timeout abc`
+# was replaced by 900 and the run proceeded, which is the check-that-never-
+# inspects-its-input shape this file exists to avoid.
+STAGE_TIMEOUT="${STAGE_TIMEOUT:-900}"
+# Per-stage overrides, keyed by stage name. Validated against STAGES below, so a
+# typo here is a usage error rather than an entry that silently never applies —
+# the `MALFORMED_ROWS`-style check this file applies to every other table.
+#
+# `flatpak-build` gets an hour because it is the one stage whose honest runtime
+# is unbounded by this repository: a cold build downloads the runtime, the
+# Wine base and the crate vendor tree, and 900s would fail a first run on a slow
+# link. It is still a ceiling — the point is that a *hang* there is caught too.
+declare -A STAGE_TIMEOUTS=(
+    [flatpak-build]=3600
+)
+# Seconds between the TERM and the KILL. The TERM is what a well-behaved
+# process needs to unwind (the GUI in `smoke-test` handles it and exits); the
+# KILL is the backstop for one that ignores it.
+STAGE_TIMEOUT_GRACE="${VERIFY_STAGE_TIMEOUT_GRACE:-10}"
+
+# Both the option and the table are checked here, before any stage runs. A
+# non-numeric ceiling is not a bad deadline, it is arithmetic on garbage: the
+# `[ "$ceiling" -gt 0 ]` in `run_stage` would print "integer expression expected"
+# and take the else branch, so the stage would run with the deadline *off* while
+# the run reported nothing about it — the failure mode being "no deadline, and
+# no word said", which is the state #103 is about. A key that names no stage is
+# the same shape of silence the comment above the table warns about: the entry
+# never applies, and the stage it was written for runs unbounded while the file
+# reads as if it were covered. Both are usage errors (2), reported before any
+# stage runs.
+check_timeout_config() {
+    local problem="" key
+    # `run_with_deadline` waits on two specific pids with `wait -n`, which only
+    # takes pid operands from bash 5.1. Older bash answers the path it does
+    # understand — nothing — with 127, and 127 would be reported as the *stage*
+    # failing. Say so here instead of letting every stage go red on a bash this
+    # script cannot actually use.
+    if [ "${BASH_VERSINFO[0]}" -lt 5 ] ||
+       { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -lt 1 ]; }; then
+        problem+="  bash ${BASH_VERSION} cannot express the stage deadline: \`wait -n\` needs 5.1\n"
+    fi
+    case "$STAGE_TIMEOUT" in
+        ''|*[!0-9]*)
+            problem+="  --stage-timeout ${STAGE_TIMEOUT} is not a whole number of seconds\n" ;;
+    esac
+    case "$STAGE_TIMEOUT_GRACE" in
+        ''|*[!0-9]*)
+            problem+="  VERIFY_STAGE_TIMEOUT_GRACE ${STAGE_TIMEOUT_GRACE} is not a whole number of seconds\n" ;;
+    esac
+    for key in "${!STAGE_TIMEOUTS[@]}"; do
+        if ! printf '%s\n' "${STAGES[@]%%|*}" | grep -qx -- "$key"; then
+            problem+="  STAGE_TIMEOUTS names ${key}, which is not a stage in STAGES\n"
+        fi
+        case "${STAGE_TIMEOUTS[$key]}" in
+            ''|*[!0-9]*)
+                problem+="  STAGE_TIMEOUTS[${key}]=${STAGE_TIMEOUTS[$key]} is not a whole number of seconds\n" ;;
+        esac
+    done
+    if [ -n "$problem" ]; then
+        printf 'verify.sh: the stage deadline is misconfigured\n' >&2
+        printf '%b' "$problem" >&2
+        printf '  a ceiling is whole seconds, and 0 disables it; the STAGE_TIMEOUTS\n' >&2
+        printf '  keys must be stage names from STAGES, or the entry never applies.\n' >&2
+        exit 2
+    fi
+}
+
+check_timeout_config
+
+# The process group of the stage currently running in `run_with_deadline`. Empty
+# at every other moment, which is also when no INT/TERM trap is installed, so
+# `kill_stage_group` is reachable only from the two handlers below.
+STAGE_PGID=""
+
+# A stage runs in its own process group (see `run_with_deadline`), which is what
+# lets the deadline kill the *grandchildren* that actually hang. The same
+# separation means the terminal's SIGINT — which goes to the foreground group —
+# no longer reaches the stage, so `run_with_deadline` installs a handler that
+# forwards it. That handler is installed *only* for the duration of a stage,
+# deliberately: bash runs a trap after the foreground command returns, so a
+# script-wide trap would turn every Ctrl-C during a long foreground wait into a
+# deferred one. That is not theoretical — measured on this file, a SIGTERM sent
+# while the script sat in the `flock` build-lock wait did not stop it, because
+# the trap could not run until `flock` returned. Outside a stage the default
+# disposition is the right one, and it is what the script had before #103.
+kill_stage_group() {
+    [ -n "$STAGE_PGID" ] || return 0
+    kill -TERM -- "-$STAGE_PGID" 2>/dev/null
+    kill -KILL -- "-$STAGE_PGID" 2>/dev/null
+    STAGE_PGID=""
+}
 
 # Announce a stage. Every stage goes through here — the `run_stage` calls and the
 # direct `begin <stage>; finish_skip ...` ones alike — which is what makes this
@@ -304,6 +429,10 @@ begin() {
     # Cleared here and set only by `run_stage`, so the marker always describes
     # *this* stage and never survives into the next one.
     STAGE_RAN=""
+    # Same discipline for the timeout marker: `run_stage` sets it from the exit
+    # status, and clearing it here is what stops a stage that timed out from
+    # making the *next* stage's failure read as "timed out" too.
+    STAGE_TIMED_OUT=""
     # Truncated here, so the log holds *this* stage's output and nothing else.
     # Without this, a stage that is skipped still finds the log a previous run
     # left behind, and `finish_skip`'s `echo_subchecks` prints it: a run with
@@ -436,6 +565,26 @@ summary() {
 
 finish_fail() {
     printf 'FAIL %-18s (%ds)\n' "$STAGE" "$((SECONDS - STAGE_START))"
+    # Named separately from the generic FAIL, and printed *before* the log tail,
+    # because the two failure modes need opposite responses: a stage that failed
+    # has a defect in the code under test, a stage that timed out may have none
+    # at all — it hung, or the ceiling is too tight for this machine. Without
+    # this line the log tail is a truncated transcript of a process that was cut
+    # off mid-sentence, and "it printed the last thing it was doing" reads as
+    # "it failed there".
+    if [ -n "$STAGE_TIMED_OUT" ]; then
+        printf '     timed out: %s ran %ds with no result and was killed (ceiling %ss)\n' \
+            "$STAGE" "$((SECONDS - STAGE_START))" "$STAGE_TIMED_OUT"
+        # The elapsed time above can exceed the ceiling by up to the grace, since
+        # the TERM-to-KILL wait is counted in whole seconds; saying so here stops
+        # the reader concluding from "ran 3s (ceiling 2s)" that the deadline did
+        # not take effect, which is the opposite of what happened.
+        printf '     (the ceiling is when the killing starts, not when it finishes: the\n'
+        printf '     TERM-to-KILL grace is up to %ss, so the elapsed time can exceed it)\n' \
+            "$STAGE_TIMEOUT_GRACE"
+        printf '     this is not a verdict about the code under test: the stage did not\n'
+        printf '     finish. Re-run it alone, or raise the ceiling with --stage-timeout.\n'
+    fi
     if [ -s "$STAGE_LOG" ]; then
         printf '     --- last 30 lines of %s ---\n' "${STAGE_LOG#"$ROOT"/}"
         tail -n 30 "$STAGE_LOG" | sed 's/^/     | /'
@@ -1700,6 +1849,84 @@ check_stage_table() {
 
 check_stage_table
 
+# Run a stage function under its deadline and return its exit status, or 124 if
+# the deadline expired and the stage had to be killed (#103).
+#
+# `timeout` is the obvious tool here and cannot be used: it execs a program, and
+# a stage is a shell function. Measured — `timeout 5 stage_build` fails with
+# "failed to run command 'stage_build': No such file or directory", rc 127, which
+# `run_stage` would have reported as the *stage* failing. That was this code's
+# first version, and the probe caught it.
+#
+# But `timeout` has a second property this genuinely needs, and it is not
+# cosmetic: it puts the child in its own process group and signals the whole
+# group. Killing only the stage's own shell leaves the processes that actually
+# hang. The case that filed #103 was two orphaned
+# `netpaths::tests::unquote_matches_cpython` binaries spinning at 99.1% CPU for
+# six hours — those are *grandchildren* of the stage, children of `cargo test`,
+# and only a group signal reaches them. So the stage is forked under job control
+# (`set -m`), which makes the job its own process-group leader, and the group is
+# what gets signalled.
+#
+# Two consequences, both deliberate:
+#   * the stage is no longer in the script's process group, so a terminal Ctrl-C
+#     does not reach it — the INT/TERM traps above forward it, which is what
+#     keeps Ctrl-C meaning what it meant before;
+#   * the stage runs in a subshell, so a global it assigns does not survive.
+#     No stage assigns one: they report through their exit status and their log.
+#     `trap - EXIT` clears the inherited flatpak-lock release, which a subshell
+#     would otherwise run on its own exit and hand the lock back mid-stage.
+run_with_deadline() {
+    local fn="$1" ceiling="$2"
+    local rc=0
+
+    # Forward Ctrl-C and SIGTERM into the stage's group for exactly as long as
+    # the stage is running — see `kill_stage_group` for why these are installed
+    # here rather than at the top of the file. 130/143 are the conventional
+    # 128+signal codes; the EXIT trap that releases the flatpak lock still runs.
+    trap 'kill_stage_group; exit 130' INT
+    trap 'kill_stage_group; exit 143' TERM
+
+    set -m
+    ( trap - EXIT; "$fn" ) >"$STAGE_LOG" 2>&1 &
+    STAGE_PGID=$!
+    set +m
+
+    # `exec`, so this subshell *is* the sleep: one process, no `sleep` child left
+    # orphaned when the stage finishes first and the watchdog is killed.
+    ( exec sleep "$ceiling" ) &
+    local napper=$!
+
+    # Whichever finishes first. If it is the sleep, the stage has overrun.
+    wait -n "$STAGE_PGID" "$napper"; rc=$?
+
+    if kill -0 "$STAGE_PGID" 2>/dev/null; then
+        kill -TERM -- "-$STAGE_PGID" 2>/dev/null
+        local waited=0
+        while kill -0 "$STAGE_PGID" 2>/dev/null && [ "$waited" -lt "$STAGE_TIMEOUT_GRACE" ]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        # The backstop, for the stage that ignores TERM — which is not
+        # hypothetical: a `trap '' TERM` child is the obvious way a Wine or
+        # flatpak-builder helper ends up unkillable, and it is what the probe
+        # for this used.
+        kill -KILL -- "-$STAGE_PGID" 2>/dev/null
+        wait "$STAGE_PGID" 2>/dev/null
+        STAGE_TIMED_OUT="$ceiling"
+        rc=124
+    fi
+
+    kill "$napper" 2>/dev/null
+    wait "$napper" 2>/dev/null
+    STAGE_PGID=""
+    # Back to the default disposition for everything between stages. Without
+    # this a Ctrl-C during the build-lock wait, a `git status` in a stage's
+    # epilogue, or the summary would be deferred until that command returned.
+    trap - INT TERM
+    return "$rc"
+}
+
 run_stage() {
     # One argument, because the function comes from STAGES. See the note above
     # the array: the pairing used to be written here as well, and a copy-paste
@@ -1729,7 +1956,19 @@ run_stage() {
     # window in which `finish_ok` accepts a stage is exactly the window in which
     # its function has run.
     STAGE_RAN="$fn"
-    "$fn" >"$STAGE_LOG" 2>&1 || rc=$?
+    # The ceiling for *this* stage: the per-stage override if the table has one,
+    # the option default otherwise (#103).
+    local ceiling="${STAGE_TIMEOUTS[$name]:-$STAGE_TIMEOUT}"
+    if [ "$ceiling" -gt 0 ]; then
+        run_with_deadline "$fn" "$ceiling" || rc=$?
+    else
+        # 0 disables the deadline, and what disabling it has to buy is the
+        # *unmodified* call — same process group, same Ctrl-C behaviour, no
+        # wrapper — so this is the only path that still runs the stage in the
+        # foreground. It is the escape hatch for debugging a hanging stage by
+        # hand, which is exactly when a deadline is in the way.
+        "$fn" >"$STAGE_LOG" 2>&1 || rc=$?
+    fi
     case "$rc" in
         0)  finish_ok ;;
         # 99 and 77 are the stage saying "this did not run", and the run is
