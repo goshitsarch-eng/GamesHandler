@@ -92,6 +92,7 @@ use gamehandler_core::models::UNCATEGORIZED;
 use crate::Message;
 use crate::state::State;
 
+use super::GUTTER;
 use super::a11y;
 use super::badge::badge;
 
@@ -616,7 +617,15 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
         body = body.push(installer_card(row, page.busy, page.runner_id));
     }
 
-    cosmic::widget::scrollable(body).into()
+    // The gutter the other five views already carry (UX-10): without it this
+    // page's text starts at x=0, flush against the window edge and — when the
+    // nav bar is condensed, which is every window narrower than
+    // `Core::is_condensed_update`'s 648 px — flush against the hamburger.
+    // Measured before the change, at a 420 px window: this page's leftmost drawn
+    // string sat at x=0 while the Library's sat at x=18.
+    container(cosmic::widget::scrollable(body))
+        .padding(GUTTER)
+        .into()
 }
 
 /// One installer card: name and category badge, the subtitle, and Install.
@@ -2097,6 +2106,64 @@ mod tests {
             field <= 420.0,
             "the search field must fit the window it is in at the window floor, \
              not overflow it: {field} px in a 420 px window"
+        );
+    }
+
+    /// **The page pads its body by the gutter the other five views use** —
+    /// UX-10, measured as the leftmost edge anything on the page is drawn at.
+    ///
+    /// Five of the seven top-level views ended in
+    /// `container(scrollable(body)).padding(18)`; this one and `view::runners`
+    /// ended in a bare `scrollable(body)`, so their content ran flush against
+    /// the window edge and, with the nav bar condensed (every window under
+    /// `Core::is_condensed_update`'s 648 px), flush against the hamburger.
+    ///
+    /// **Measured, at a 420 px window:** before the fix the leftmost published
+    /// node sat at **x = 0.0** on this page while the Library's sat at **x =
+    /// 18.0**; after, both are 18.0. The mutation proof is that revert: dropping
+    /// the `container` fails with `left: 0.0, right: 18.0`.
+    ///
+    /// The measure is the *nodes*, not a padding value read out of the builder:
+    /// a `padding(18)` on a container the page does not end in would leave every
+    /// string where it was, and this is the same instrument that showed the
+    /// difference in the first place.
+    #[test]
+    fn the_page_pads_its_body_by_the_same_gutter_as_the_other_views() {
+        use super::a11y::harness;
+
+        let catalog = vec![row("steam", "Steam"), row("battlenet", "Battle.net")];
+        let runners = a11y_runners();
+        let categories = installer_categories();
+        let mut element = a11y_page(&catalog, &runners, &categories);
+
+        let nodes = harness::laid_out(&mut element, cosmic::iced::Size::new(420.0, 700.0));
+        assert!(
+            nodes.len() > 10,
+            "the walk found {} nodes on a page this size; it is not walking the \
+             tree and the edges below would be `INFINITY` and `NEG_INFINITY`, \
+             which is the vacuous version of this assertion",
+            nodes.len()
+        );
+        let left = nodes
+            .iter()
+            .filter_map(|node| node.bounds.map(|rect| rect.x0))
+            .fold(f64::INFINITY, f64::min);
+        let right = nodes
+            .iter()
+            .filter_map(|node| node.bounds.map(|rect| rect.x1))
+            .fold(f64::NEG_INFINITY, f64::max);
+        let gutter = f64::from(crate::view::GUTTER);
+
+        assert!(
+            (left - gutter).abs() < 0.5,
+            "the page's content must start at the gutter, not at the window \
+             edge: leftmost node at x = {left}, expected {gutter}"
+        );
+        assert!(
+            (right - (420.0 - gutter)).abs() < 0.5,
+            "and stop at it on the other side: rightmost node at x = {right}, \
+             expected {}",
+            420.0 - gutter
         );
     }
 
