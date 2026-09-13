@@ -5,29 +5,52 @@ what was fixed, and what is still open, in one table. `PLAN.md` is the schedule
 — every finding with its owner, dependencies and verification method. This file
 is the accounting. The six specialist documents hold the arguments.
 
-**State at this writing.** Branch `audit-hardening`, commit `d855015`. The
-numbers below are generated from `PLAN.md`'s rows and were recomputed rather
-than carried over; where an earlier revision of a document disagreed with them,
-the disagreement is recorded in `DECISIONS.md` D-59 rather than smoothed away.
-The `Fixed` column counts `FIXED` only; the two `PARTIAL` rows are counted in
+**State at this writing.** Branch `audit-hardening`. The numbers below are
+generated from `PLAN.md`'s rows and were recomputed rather than carried over;
+where an earlier revision of a document disagreed with them, the disagreement is
+recorded in `DECISIONS.md` D-59 rather than smoothed away.
+
+**This paragraph used to pin a commit hash, and the hash had gone stale.** It
+read `d855015` while the branch stood 36 commits further on, so a reader
+following it to "state at this writing" would have read a tree that did not
+contain the findings the sentence introduced. A pin is the right instrument for
+a document that answers *what did the audit find*; it is the wrong one for
+tables that are regenerated whenever a row moves, and this file is the second
+kind. The generator is named instead — `scripts/plan-counts.py`, whose `--check`
+mode fails if any table line drifts from the rows — because it cannot go stale.
+The pin's removal is recorded rather than done quietly, since the whole point of
+the exercise is that numbers a reader cannot re-derive are numbers a reader
+cannot check. Note what that check does **not** cover: the tables only. Every
+prose count beside them in this file and in `PLAN.md` was re-derived by counting
+the rows, and three were wrong when this paragraph was written (see the
+`PARTIAL` paragraph below and `PLAN.md`'s note on the `BUGS.md` row).
+The `Fixed` column counts `FIXED` only; the five `PARTIAL` rows are counted in
 `Remaining`, because a half-fixed finding is not closed.
 
-**This report tracks a moving tree, and it has already moved five times.** It
-was first written at `6187ff2` with 28 fixed. Three ARCH findings were then
+**This report tracks a moving tree, and the count is recomputed on every move.**
+It was first written at `6187ff2` with 28 fixed. Three ARCH findings were then
 closed (`ARCH-05`, `ARCH-16`, `ARCH-18`), and `PKG-01`, `PKG-02`, `PKG-04` and
-`PKG-05` followed. `PERF-01`, `PERF-02` and `PERF-03` are the most recent, in
+`PKG-05` followed. `PERF-01`, `PERF-02` and `PERF-03` were the next, in
 `be31a7b` — and that commit's own documentation pass is the reason to distrust
 this file's arithmetic on principle: `PLAN.md`'s summary tables read 28 fixed
 where its rows said 32, and this file's `Found` column counted the two refuted
 rows twice. Both are now computed from the rows by the same reading, and both
 mistakes are recorded rather than quietly overwritten. A report whose figures
 lag the rows it claims to summarise is the defect this audit exists to find, one
-level up — and the fourth move is the proof of it: `88578db` marked `SEC-04`
-`FIXED` and `48e036e` marked `SEC-09` `FIXED`, and neither regenerated `PLAN.md`'s
-tables, so this file inherited a count that was three rows stale. That is now a
-`plan-counts` stage in `scripts/verify.sh` rather than an intention.
+level up — and `88578db`/`48e036e` are the proof of it: they marked `SEC-04` and
+`SEC-09` `FIXED` without regenerating `PLAN.md`'s tables, so this file inherited
+a count that was three rows stale. That is now a `plan-counts` stage in
+`scripts/verify.sh` rather than an intention.
 
-**This is not a final report.** 59 of 130 defects are still open, most of them
+**The sentence that opened this paragraph read "it has already moved five
+times", while the list beneath it numbered its moves only as far as "the fourth
+move".** One of the two was wrong and neither could be re-derived from the file,
+so the count is gone rather than adjusted: an ordinal tally of how often a moving
+target has moved is a present-tense count of a moving target, which is the shape
+of error `PLAN.md` records against its own `BUGS.md` row. What is true at every
+revision is what the paragraph now says.
+
+**This is not a final report.** 57 of 130 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -36,12 +59,12 @@ and the section *What remains, honestly* says which is which.
 | Category | Role | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 46 | 26 | 2 | 20 |
-| `ARCH-xx` | Architecture, code quality | 26 | 14 | 0 | 12 |
-| `UX-xx` | libcosmic / COSMIC UX | 29 | 12 | 1 | 17 |
+| `ARCH-xx` | Architecture, code quality | 26 | 15 | 0 | 11 |
+| `UX-xx` | libcosmic / COSMIC UX | 29 | 13 | 1 | 16 |
 | `PERF-xx` | Performance, resource | 8 | 6 | 0 | 2 |
 | `SEC-xx` | Security, robustness | 11 | 7 | 0 | 4 |
 | `PKG-xx` | Packaging, platform, QA | 10 | 6 | 0 | 4 |
-| **Total** | | **130** | **71** | **3** | **59** |
+| **Total** | | **130** | **73** | **3** | **57** |
 
 The `Found` column is defects; the three refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
@@ -54,17 +77,29 @@ By severity:
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 51 | 36 | 0 | 15 |
+| P2 | 51 | 38 | 0 | 13 |
 | P3 | 50 | 6 | 0 | 44 |
-| **Total** | **130** | **71** | **0** | **59** |
+| **Total** | **130** | **73** | **0** | **57** |
 
 `Not a defect` is not a euphemism for "wontfix": both rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`,
-`BUG-15`). Two of the rows counted as `Remaining` above are `PARTIAL` rather
-than untouched — `BUG-12` and `BUG-47` — and each row names the half that is
-still missing. `SEC-05` is a third, and it is `PARTIAL` for a measured reason
-rather than an unfinished one: the host half of its suggested fix is not
-writable, because every Proton-GE asset redirects off `github.com`.
+`BUG-15`). Five of the rows counted as `Remaining` above are `PARTIAL` rather
+than untouched, and each names the half that is still missing: `BUG-47` (the
+ellipsis is commented but cannot be asserted — iced offers no downcast and
+`Text::format` is private), `PKG-03` (the freshness check is split and always
+runs; the generator half is unvendored because the only copy to hand has no
+nameable upstream), `PKG-06` (keywords added, screenshots still absent),
+`UX-06` (the scrim blocks the pointer, not Tab) and `SEC-05` (the request is
+now scheme- and origin-checked, but the redirect target is judged by nothing,
+because every Proton-GE asset redirects off `github.com` and no host allowlist
+is writable).
+
+**This paragraph read "two… `BUG-12` and `BUG-47`" and named `SEC-05` as "a
+third", which was wrong twice over.** `BUG-12` had been fixed outright since it
+was written, and the count had grown to five. It was found by counting the
+`PARTIAL` status cells in `PLAN.md` against this sentence rather than by
+re-reading it — the same method failure this audit keeps recording, here in the
+document that reports on the failures.
 
 ## What this audit found that matters
 
@@ -118,13 +153,13 @@ is **met for P0 and P1** and **not met for P2**, where the reason is that the
 work is unfinished rather than impossible. Stating that plainly is the point of
 this section.
 
-Where the 59 rows are:
+Where the 57 rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All five fixed and each verified by restoring the pre-fix body and watching the new test fail. |
 | P1 | 0 | **Closed.** `SEC-11` — the approved-publisher gate reading signer-chosen text as a certificate subject — was the last row here and is fixed; the recipe this report first sketched for it was measured wrong and corrected in the fix. `UX-01`–`UX-03` were the four upstream-widget accessibility gaps plus `ARCH-02`, all fixed, and the three widget rows each record the residue that is upstream's rather than this port's. |
-| P2 | 15 | Actionable. The largest concentration is `UX` (7) and `ARCH` (6); the rest are 1 `BUG` and 1 `PKG`. |
+| P2 | 13 | Actionable. The largest concentration is `UX` (6) and `ARCH` (5); the rest are 1 `BUG` and 1 `PKG`. |
 | P3 | 44 | Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. The 19 open `BUG` rows are all here, along with 10 `UX`, 6 `ARCH`, 4 `SEC`, 3 `PKG` and 2 `PERF`. |
 
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
