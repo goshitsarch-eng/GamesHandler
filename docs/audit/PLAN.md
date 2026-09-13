@@ -64,8 +64,8 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 28 | 25 `FIXED`, 2 `PARTIAL`, 1 `CLOSED` |
 | `ARCHITECTURE.md` | 26 | 13 | 13 `FIXED` |
-| `COSMIC-UX.md` | 30 | 11 | 10 `FIXED`, 1 `WITHDRAWN` |
-| `SECURITY.md` | 10 | 5 | 5 `FIXED` |
+| `COSMIC-UX.md` | 30 | 11 | 9 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
+| `SECURITY.md` | 11 | 6 | 5 `FIXED`, 1 `OPEN` |
 | `PACKAGING.md` | 10 | 6 | 5 `FIXED`, 1 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
 
@@ -124,10 +124,10 @@ advocate reviews every row before it is called done and owns no row.
 | Severity | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
-| P1 | 23 | 23 | 0 | 0 |
-| P2 | 51 | 33 | 0 | 18 |
+| P1 | 24 | 23 | 0 | 1 |
+| P2 | 51 | 32 | 0 | 19 |
 | P3 | 50 | 3 | 0 | 47 |
-| **Total** | **129** | **64** | **0** | **65** |
+| **Total** | **130** | **63** | **0** | **67** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -135,9 +135,9 @@ advocate reviews every row before it is called done and owns no row.
 | `BUG-xx` | `BUGS.md` | 46 | 25 | 0 | 21 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 10 | 5 | 0 | 5 |
-| `SEC-xx` | `SECURITY.md` | 10 | 5 | 0 | 5 |
-| `UX-xx` | `COSMIC-UX.md` | 29 | 10 | 0 | 19 |
-| **Total** | | **129** | **64** | **0** | **65** |
+| `SEC-xx` | `SECURITY.md` | 11 | 5 | 0 | 6 |
+| `UX-xx` | `COSMIC-UX.md` | 29 | 9 | 0 | 20 |
+| **Total** | | **130** | **63** | **0** | **67** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -191,7 +191,7 @@ across families, not within them.
 | `BUG-35` | Every runner install of a real Proton build is refused after the archive has been downloaded and extracted, because the symlink check computes each link's parent directory relative to the *current scan directory* instead of the candidate root. walk_links(root) recurses as walk_links(&path), so root is always the directory being scanned and path is always its direct child — path.strip_prefix(root) yields the bare file name and .parent() is always "". The escape test is then normpath("" + "/" + target), i.e. normpath(target), so any target whose first component is .. is judged to escape, however far inside the tree it lands. Wine builds are full of exactly those. *Sub-audit (agents a4a7776ae5fb4959f); claimed figure re-measured by me.* | S1 | — | Pre-fix: a real Proton tree is refused wholesale (measured: 1,818 of 2,068 symlinks rejected; Python refuses 0). Post-fix: the archive symlink tests plus that tree re-run. | FIXED `0622f93` |
 | `BUG-48` | The GUI died on its second frame with `Downcast on stateless state`: the accessibility wrapper reported a `Custom` id through `Widget::id`, and the wrapper and its own inner input wore the same one, so iced's named-state branch consumed the single entry and left the input stateless with a tag that still claimed state | S1 | — | `a_named_wrapper_survives_the_runtimes_named_state_handoff` replays the runtime's take/diff/clear sequence; verified by restoring the pre-fix `id()` and watching it fail with the original panic, and end to end by running the release binary under `weston`. | FIXED |
 
-### P1 — 23
+### P1 — 24
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
@@ -213,6 +213,7 @@ across families, not within them.
 | `PERF-03` | Nothing is virtualized: every game in the filtered library gets a built Element every frame | S3 | — | Virtualize the grid and row lists; verify the built-element count per frame against a 500-game fixture. | FIXED `be31a7b` |
 | `PKG-01` | The only check that executes the built artefact can execute a stale, previously installed build instead | S6 | — | Resolve which artefact `scripts/smoke-test.sh` executes after the build, or refuse to fall back when a tree build exists; verify by planting a stale installed build and observing the runner name it. | FIXED `8abac0b` |
 | `SEC-01` | --device=all has no justification in launcher code | S4 | — | Narrow to `--device=dri`, then run the controller hotplug test `docs/migration/packaging.md` Q-2 asks for and record that test as the grant's justification. | FIXED `e2c6476` |
+| `SEC-11` | The approved-publisher gate reads signer-chosen text as a certificate subject, so an unapproved publisher passes | S4 | — | Take the subject from the certificate (`osslsigncode extract-signature` + `openssl pkcs7 -print_certs`) instead of the verifier's report; regression test with a multi-line `-n`. **Status: OPEN** | OPEN |
 | `UX-01` | Dropdowns are in no keyboard focus ring and contribute no accessibility node | S2 | — | A test asserting the `Operation` from a built dropdown contains a focusable node. Upstream `Dropdown` has its `operate` hook commented out, so this needs a wrapper or a carried patch. | FIXED (app half) — `view/a11y.rs::dropdown`, all 11 sites; the toolkit's popup stays unopenable from the keyboard and that residue is recorded in the module docs and `COSMIC-UX.md` |
 | `UX-02` | Togglers are mouse-only | S2 | — | A test asserting a focused toggler responds to space/enter. Upstream `toggler` has **no** `operate` at all, so this needs a local widget or an upstream patch. | FIXED — `view/a11y.rs::toggler`. The audit row's premise was also wrong: libcosmic does not use iced's toggler at all (`src/widget/toggler.rs:15` re-exports the *style* types), so the widget publishes no node whatever — see `COSMIC-UX.md` |
 | `UX-03` | Text inputs emit no accessibility node at all, so the entire add/edit-game form is invisible to a screen reader | S2 | — | A test asserting `a11y_nodes` is non-empty for a built `text_input`. Neither implementation defines it. | FIXED — `view/a11y.rs::input` / `input_with_id`, all 4 sites; the input was already focusable and already handled typing (`src/widget/text_input/input.rs:843-855`) |
@@ -260,7 +261,7 @@ across families, not within them.
 | `SEC-02` | --filesystem=home grants read-write to the entire home directory, which is broader than the directories the code touches | S4 | — | Narrow to the XDG roots the code actually touches plus the seven fixed search roots; verify by running the app in the narrowed sandbox and exercising every path-touching flow. **Fixed as `home:ro` plus one `:create` carve-out, by measurement; the suggested `xdg-data`/`xdg-config`/`xdg-cache` form was measured wrong for this manifest and not applied.** The three XDG shares are absent from the grant as written and present as `~/.var/app/<id>/{data,config,cache}`, so granting them would have moved the app's own files into the sandbox; `xdg-cache` has no reader in `crates/` at all. What the sandbox probe settled: `touch ~/.config/gh-sec02-w2` and `touch ~/.local/share/gh-sec02-w3` both succeeded before and are refused now, the three home-side anti-cheat roots stay readable, and a planted executable still runs — which is the claim `packaging.md` §3 had asserted and never demonstrated. The carve-out is `~/.local/share/applications:create` for `shortcut_directory_in`, measured to override the broader read-only grant both ways. `tests/test_packaging.py` pins the narrowed pair, the **absence** of the bare `--filesystem=home` (which `home:ro` would otherwise satisfy), and the set of writable grants; three mutations fail three distinct named assertions. | FIXED |
 | `SEC-03` | The Authenticode authenticity decision is weaker than it reads | S4 | — | Compare the publisher against the verifier's structured field rather than a case-folded substring of merged output; verify with a fixture whose output contains a matching substring in an unrelated field. **Status: FIXED `937ef5b`**, and the half `SECURITY.md` listed as unsettleable is **settled**: the tool is absent from the host but present inside the Flatpak (2.14), and without `-CAfile` a self-signed certificate exits 1, while **with** it a certificate whose `Subject` is `O=Evil Example Ltd,CN=Totally Unrelated Signer` signed `-n "Valve Corp."` verifies exit 0 carrying `Text description: Valve Corp.` — so the old substring predicate over merged output accepted it. The fix parses `Subject:` lines only. A deliberate divergence from `installers.py:594-595`, recorded as one. | FIXED |
 | `SEC-04` | game_id is interpolated into a destination filename with no sanitisation at three sites in covers.rs, while the same class of bug was deliberately fixed in desktop.rs | S4 | — | A game id containing `/` or `\` is refused by all three writes with `UnsafeId`, asserted on the *absolute path the write would have created* and on the transfer not being made; plus the accepted cases (`..`, ``, a real 32-hex id) in the same test, so a refusal-everything implementation fails it | FIXED `88578db` |
-| `UX-06` | The confirmation dialogs are not modal — the page behind them stays live | S2 | — | Make the dialogs modal (an overlay, or an interaction gate on the page); verify that a click behind the dialog reaches nothing. **Status: FIXED `d4601d8`.** `Stack(page, scrim, dialog)` — the recommended shape could not be written as a `Column`, because a third child is a third band and not a layer. The `drawn_strings` rationale the row asks to keep is kept, and `Stack::operate` is what keeps it (libcosmic's `Popover::operate` returns early when `modal && popup.is_some()`). Measured with a real press at 420 px: `OpenNewGameForm` before, nothing after. The test asserts the message rather than `captured`, because the scrim captures in both compositions. | FIXED |
+| `UX-06` | The confirmation dialogs are not modal — the page behind them stays live | S2 | — | Make the dialogs modal (an overlay, or an interaction gate on the page); verify that a click behind the dialog reaches nothing. **Status: FIXED `d4601d8`.** `Stack(page, scrim, dialog)` — the recommended shape could not be written as a `Column`, because a third child is a third band and not a layer. The `drawn_strings` rationale the row asks to keep is kept, and `Stack::operate` is what keeps it (libcosmic's `Popover::operate` returns early when `modal && popup.is_some()`). Measured with a real press at 420 px: `OpenNewGameForm` before, nothing after. The test asserts the message rather than `captured`, because the scrim captures in both compositions. | PARTIAL |
 | `UX-07` | Escape does not close either dialog | S2 | — | Implement `on_escape` to close the open dialog; verify by opening each dialog and pressing Escape. **Status: FIXED `109a88e`.** `App::on_escape` → `Shell::dismiss_dialogs`, on `Shell` for the same reason `focus_library_search` is (an `App` cannot be built off a display). It clears the two confirmation dialogs and deliberately not the form, which `CloseDialog` also clears — the reference's own split, `PromptDialog`'s default `CloseOnEscape` against a pushed `Page` with no Escape binding. Two tests: one reads the state back, the other reads `on_escape`'s body with comments stripped and says in its own doc that it is the weaker instrument. | FIXED |
 | `UX-09` | The Installers search field is a hard 396 px, the only Length::Fixed used for a *field* anywhere in the views, so it overflows the page below about 430 px of content width | S2 | — | Let the search field fill its row; verify at 400 px content width. **Status: FIXED `4831eb5`** — `Length::Fill`, matching `view/library.rs`'s search box. Measured at 420 px: the field took 396 px of a 384 px row and squeezed the category selector to 16 px of its 36; now 166 px and 36 px. `container(input).max_width(396.0)` was tried first and is inert on a `Fill` child of a `Row` (a 1200 px probe measured 600 px with and without it), so the reference's ceiling is not expressible here and the comment points at `UX-25`. The test compares the selector against its width with room to spare rather than asserting 396, because a test written against the number would have passed against the defect. **UX-10 depends on this row.** | FIXED |
 | `UX-10` | Installers and Runners have no outer gutter | S2 | — | Give both views the same outer padding the other five have; verify by comparing the five view tails. **Status: FIXED `e4a3eac`** — both pages end in `container(scrollable(body)).padding(view::GUTTER)`, `GUTTER = 18`, the value the five other views already used, shared so the two cannot drift. Measured at 420 px: leftmost strings 0.0 → 18.0 on both, Runners' rightmost 420.0 → 402.0. The tests measure nodes at a stated window size via `harness::laid_out`, not the padding read back out of the builder. **UX-09 had to land first**, proved: with the gutter and the old 396 px field the Installers row's rightmost node is 410 rather than 402. | FIXED |

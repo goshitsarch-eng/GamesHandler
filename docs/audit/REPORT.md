@@ -37,11 +37,11 @@ and the section *What remains, honestly* says which is which.
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 46 | 25 | 2 | 21 |
 | `ARCH-xx` | Architecture, code quality | 26 | 13 | 0 | 13 |
-| `UX-xx` | libcosmic / COSMIC UX | 29 | 10 | 1 | 19 |
+| `UX-xx` | libcosmic / COSMIC UX | 29 | 9 | 1 | 20 |
 | `PERF-xx` | Performance, resource | 8 | 6 | 0 | 2 |
-| `SEC-xx` | Security, robustness | 10 | 5 | 0 | 5 |
+| `SEC-xx` | Security, robustness | 11 | 5 | 0 | 6 |
 | `PKG-xx` | Packaging, platform, QA | 10 | 5 | 0 | 5 |
-| **Total** | | **129** | **64** | **3** | **65** |
+| **Total** | | **130** | **63** | **3** | **67** |
 
 The `Found` column is defects; the three refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
@@ -53,10 +53,10 @@ By severity:
 | Severity | Found | Fixed | Not a defect | Remaining |
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
-| P1 | 23 | 23 | 0 | 0 |
-| P2 | 51 | 33 | 0 | 18 |
+| P1 | 24 | 23 | 0 | 1 |
+| P2 | 51 | 32 | 0 | 19 |
 | P3 | 50 | 3 | 0 | 47 |
-| **Total** | **129** | **64** | **0** | **65** |
+| **Total** | **130** | **63** | **0** | **67** |
 
 `Not a defect` is not a euphemism for "wontfix": both rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`,
@@ -152,11 +152,17 @@ them for a backlog item:
   binary, all transitive pins owned by libcosmic. There is no fix available at
   this layer, and the brief forbids upgrading for version numbers alone. The
   actionable part is two version comparisons at the next libcosmic bump.
-* **`SEC-03` cannot be *settled* in this environment, and no re-run will change
-  that.** The claim it rests on is whether a system `osslsigncode` without a CA
-  file accepts a self-signed certificate, and `osslsigncode` is not installed
-  here. The row says its conclusion is an unverified half rather than a finding,
-  which is the honest form: a reader with the tool can settle it in one command.
+* **`SEC-03` was settled, and settling it found a second defect.** The row's
+  unverified half was whether `osslsigncode` without a CA file accepts a
+  self-signed certificate. The tool is absent from the host but present inside
+  the Flatpak (2.14), so the question was answerable here after all: without
+  `-CAfile` a self-signed certificate exits 1 and prints no success line, so the
+  flag is load-bearing and the nine recipes that omit it are weaker but not
+  broken. Re-running the probe then showed the `Subject:`-scoped predicate that
+  replaced the substring test does **not** exclude the fields the signer chooses
+  — `-n` is printed verbatim and may contain newlines, so a continuation line
+  shaped like a `Subject:` is accepted as a certificate subject. That is
+  `SEC-11`, a P1, tracked and fixed in this audit.
 
 ## How a finding is called fixed
 
@@ -183,10 +189,10 @@ flagging — and both now have those controls pinned in tests.
 | `BUGS.md` | 48 ids on correctness, reliability and completeness — 46 defects, 2 refuted |
 | `COSMIC-UX.md` | 30 findings on libcosmic and COSMIC conformance |
 | `PERFORMANCE.md` | 8 findings on CPU, memory and frame cost |
-| `SECURITY.md` | 10 findings on the sandbox, process launching and the dependency graph |
-| `ARCHITECTURE.md` | 25 findings on structure, contracts and code quality |
+| `SECURITY.md` | 11 findings on the sandbox, process launching and the dependency graph |
+| `ARCHITECTURE.md` | 26 findings on structure, contracts and code quality |
 | `PACKAGING.md` | 10 findings on the Flatpak, the desktop entry and the gate |
-| `PLAN.md` | All 132 rows: owner, dependencies, verification, status — 129 defects and the 3 refuted ones |
+| `PLAN.md` | All 133 rows: owner, dependencies, verification, status — 130 defects and the 3 re
 | `DECISIONS.md` | The seven decisions this audit made (`D-57`–`D-63`) |
 
 Each document's scope section states whether it is still read-only. That
