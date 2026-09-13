@@ -46,6 +46,29 @@ use crate::Message;
 /// The heading above the list (`PluginsPage.qml:17`).
 pub const SECTION_HOST_PLUGINS: &str = "Host plugins";
 
+/// The two lines the page draws when it has no rows to list (`UX-28`).
+///
+/// # These two strings are this port's, and the reason is a measurement
+///
+/// Every other list page's placeholder is a transcription: `view::installers`'
+/// pair is `InstallersPage.qml:80-84`'s `Kirigami.PlaceholderMessage`, and
+/// `view::library`'s two are `LibraryPage.qml:82-88` and `:112-118`. This page
+/// has none to transcribe. `PluginsPage.qml:29-31` is a bare `Repeater` over
+/// `backend.plugins` with no `visible:`-gated placeholder anywhere in the file,
+/// so an empty catalogue draws the heading and the intro over nothing — which is
+/// the gap `UX-28` records, and the reason a replacement has to be written
+/// rather than copied.
+///
+/// The *shape* is `view::installers`': a [`cosmic::widget::text::title4`] over a
+/// [`cosmic::widget::text::body`], drawn inside the body under the page's own
+/// heading rather than returned in place of the page. What the words say is
+/// bounded by what is true here — the catalogue is `plugins::PLUGINS`, a fixed
+/// array in another crate, so a page with no rows is a build with no catalogue
+/// and not a host with no helpers: the sentence names the build, not the machine.
+pub const EMPTY_TEXT: &str = "No plugins to show";
+pub const EMPTY_EXPLANATION: &str =
+    "This build of GameHandler found no optional launch helpers to offer.";
+
 /// `install_plugin`'s own default (`plugins.py:172`), which `installPlugin`
 /// does not override — so this is the reference's effective ceiling rather than
 /// a number chosen here.
@@ -373,6 +396,17 @@ pub fn view<'a>(page: PluginsPage<'a>) -> Element<'a, Message> {
         .push(text::title4(SECTION_HOST_PLUGINS))
         .push(text::caption(page.intro));
 
+    // The branch the other three list pages have and this one did not (`UX-28`).
+    // It is a branch *inside* the body and not an early return: the heading and
+    // the intro above are the page, and an empty catalogue makes them no less
+    // true. `an_empty_catalogue_renders_the_placeholder_rather_than_nothing`
+    // asserts both halves for that reason.
+    if page.rows.is_empty() {
+        body = body
+            .push(text::title4(EMPTY_TEXT))
+            .push(text::body(EMPTY_EXPLANATION));
+    }
+
     for row in page.rows {
         body = body.push(card(row));
     }
@@ -383,6 +417,7 @@ pub fn view<'a>(page: PluginsPage<'a>) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::testkit;
     use std::path::PathBuf;
 
     #[test]
@@ -810,6 +845,87 @@ mod tests {
                 plugins::InstallError::Flatpak
             ),
             "the page must render the core error unchanged"
+        );
+    }
+
+    /// **An empty catalogue draws the placeholder rather than a heading over
+    /// nothing (`UX-28`).**
+    ///
+    /// The page could not be reached empty before the fix and cannot be reached
+    /// empty through `State` today: `plugins::PLUGINS` is a `&[Plugin; 5]`, so
+    /// `plugin_rows` returns five rows for every environment. That is exactly
+    /// why the assertions below are made against a page built here — the row's
+    /// point is that the invariant lives in another crate, so the *view* has to
+    /// say what it does when the invariant is not the caller's.
+    ///
+    /// # Both directions, because one of them is vacuous on its own
+    ///
+    /// The placeholder's two strings being present says nothing about whether
+    /// they are the empty branch or a constant the page always draws. So the
+    /// same page is built again with a row in it and the two strings are
+    /// required to be **absent** there. Without that second half, moving the two
+    /// pushes out of the `if` — a page that announces "No plugins to show" over
+    /// a full list — passes unchanged.
+    #[test]
+    fn an_empty_catalogue_renders_the_placeholder_rather_than_nothing() {
+        // The intro is the shell's own source for it, not a string written here:
+        // what the test asserts is that the page draws the sentence it was
+        // handed, so a fixture of its own would only be a second copy to keep.
+        let intro = plugins::plugins_intro(&SystemPluginEnv);
+        let empty = PluginsPage {
+            intro: &intro,
+            rows: &[],
+        };
+        let drawn = testkit::drawn_strings(view(empty));
+
+        assert!(
+            drawn.iter().any(|text| text == EMPTY_TEXT),
+            "an empty catalogue must draw the placeholder's heading; drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == EMPTY_EXPLANATION),
+            "and its explanation, which is the half that says what to do about \
+             it; drawn: {drawn:?}"
+        );
+
+        // The branch is *inside* the body, not an early return that replaces the
+        // page: `PluginsPage.qml`'s heading and intro are the page, and they are
+        // no less true of a build with no helpers in it.
+        assert!(
+            drawn.iter().any(|text| text == SECTION_HOST_PLUGINS),
+            "the page's heading is drawn even with nothing to list; drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == intro.as_str()),
+            "and its intro, which is the sentence that explains what these \
+             helpers are for; drawn: {drawn:?}"
+        );
+
+        // The control. One row, the same page, the same two strings required to
+        // be gone.
+        let rows = [plugins::plugin_rows(&SystemPluginEnv)
+            .into_iter()
+            .next()
+            .expect("the catalogue is a fixed array, so it always yields a row")];
+        let full = PluginsPage {
+            intro: &intro,
+            rows: &rows,
+        };
+        let drawn = testkit::drawn_strings(view(full));
+
+        assert!(
+            drawn.iter().any(|text| text == rows[0].name),
+            "the control must draw the row, or its half of this test is about \
+             an empty page too; drawn: {drawn:?}"
+        );
+        assert!(
+            !drawn.iter().any(|text| text == EMPTY_TEXT),
+            "a catalogue with a row in it must not name the empty state; \
+             drawn: {drawn:?}"
+        );
+        assert!(
+            !drawn.iter().any(|text| text == EMPTY_EXPLANATION),
+            "nor draw its explanation; drawn: {drawn:?}"
         );
     }
 }
