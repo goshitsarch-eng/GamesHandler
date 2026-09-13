@@ -62,7 +62,7 @@ those rows contain `Status:`:
 
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
-| `BUGS.md` | 48 | 35 | 33 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
+| `BUGS.md` | 48 | 39 | 37 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 20 | 18 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 21 | 17 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 10 | 9 `FIXED`, 1 `PARTIAL` |
@@ -136,18 +136,18 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 16 | 0 | 33 |
-| **Total** | **130** | **91** | **0** | **39** |
+| P3 | 49 | 20 | 0 | 29 |
+| **Total** | **130** | **95** | **0** | **35** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 18 | 0 | 7 |
-| `BUG-xx` | `BUGS.md` | 46 | 33 | 0 | 13 |
+| `BUG-xx` | `BUGS.md` | 46 | 37 | 0 | 9 |
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 9 | 0 | 2 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 17 | 0 | 12 |
-| **Total** | | **130** | **91** | **0** | **39** |
+| **Total** | | **130** | **95** | **0** | **35** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -307,15 +307,15 @@ across families, not within them.
 
 | `ARCH-25` | A module-level #[allow(dead_code)] covers the whole view layer, suppressing fifteen never-used items, including an entire dead widget stack | S5 | — | Narrow the allow to the items that need it and delete the dead widget stack; verify the crate still builds with `-D warnings`. | OPEN |
 | `ARCH-26` | Four comments cite `RunnerManager::choices` at line numbers that hold `system_wine` instead, and they had drifted before this session's merges rather than because of them | S5 | — | Point all four at `runners/mod.rs:1322` and check each against the tree. **Status: FIXED.** `settings.rs:275` and `form.rs:2087`, `:2710`, `:2772` now name `:1322`/`:1322-1327`, where `choices` is; `widgets.rs:708` also names `:1119` and is **correct as written**, because it is a historical note about where the number was at the time of an earlier correction. | FIXED |
-| `BUG-19` | sanitize accepts a bare - as the number null, so [-], [-]-style malformed numbers and {"last_played":-} parse where Python raises JSONDecodeError | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-20` | Library::all("recent") / all("added") do not treat -0.0 and 0.0 as equal, so two games whose timestamps tie present in a different order than the reference | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-19` | sanitize accepts a bare - as the number null, so [-], [-]-style malformed numbers and {"last_played":-} parse where Python raises JSONDecodeError | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** `number_end` returns a zero-width span when no digit follows the sign and `sanitize` steps over the character rather than normalising `text[i..i]`; the guard and the zero-width return are one fix, because the `null` was synthesised by the *caller* passing an empty token to `normalize_number`. `sanitize_leaves_a_sign_with_no_digits_alone` fails on the pre-fix body with `left: "[null]"`, `right: "[-]"`. | FIXED |
+| `BUG-20` | Library::all("recent") / all("added") do not treat -0.0 and 0.0 as equal, so two games whose timestamps tie present in a different order than the reference | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** A new `zero_normalised` fuses `-0.0` into `0.0` before both `total_cmp` arms, so equal timestamps reach the name tie-break; the regression asserts the sign survives the load, so it cannot pass vacuously, and fails on the pre-fix arms with `left: ["ZZZ", "AAA"]`, `right: ["AAA", "ZZZ"]`. | FIXED |
 | `BUG-21` | Four .trim()-where-Python-has-a-truthiness-test divergences on paths and identifiers, each of which shifts a value in the permissive direction | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-22` | merge_dll_overrides trims ; from both ends where Python rstrips only, so a leading ; survives the reference and is removed here | S1 | — | `b3ad80b` — `python_rstrip_char` where the reference `rstrip`s; a seventh merge case covers the leading `;` and fails under the old helper.| FIXED |
 | `BUG-23` | Three ways a launch failure is turned into a non-failure | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
 | `BUG-24` | The rolling stderr buffer trims to exactly limit bytes where Python keeps the trailing chunk, and the port's chunks.len() > 1 clause is dead code: Python compares *chunk counts* and keeps the last chunk even when it overshoots, while the Rust buffer is one flat Vec<u8> where the same expression is a byte count, subsumed by chunks.len() > limit. The test pins the port's behaviour and its docstring describes Python's guard | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-25` | Two functions apply opposite policies to the same input | S1 | — | `08da989` — both joins validate through `install_directory`; two tests, and the mutation that matters is on `install_directory` itself, because no production input reaches the guard.| FIXED |
 | `BUG-26` | The archive's containment root falls back to an unresolved path: if canonicalize(destination) fails, the root stays unresolved while the member path goes through resolve_missing, which resolves as far as it can — so a resolved member is starts_with-compared against an unresolved root. Members are lexically stripped of .. first, so the reachable outcome is a *false rejection* rather than an accepted escape; I could not construct the accepting case and am not claiming one | S1 | — | `b3ad80b` — `containment_root` refuses (`DestinationUnresolvable`) instead of comparing against an unresolved root; both call sites use it. Mutation-checked both ways.| FIXED |
-| `BUG-27` | A typo in the Steam AppID field is silent: "abc" or "12 34" parses to 0, i.e | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-27` | A typo in the Steam AppID field is silent: "abc" or "12 34" parses to 0, i.e | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** `apply` reports an unreadable appid through the `Err` arm it already had, reading it with `python_int` so `int()`'s own tolerance comes along; a deliberate divergence from `saveGame`'s silent `0`, recorded as one. The old `an_unparseable_appid_is_zero` **asserted the defect**; the replacement fails on the pre-fix body with `left: Ok(0)`, `right: Err("refused")` for `"half"`. | FIXED |
 | `BUG-28` | Six worker-to-UI sends discard their message with let _ =, including the two that carry *why* a launch failed | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-29` | One production expect on a value a future page addition invalidates: activate_page runs on every nav-bar click and panics if a Page variant is absent from Page::ALL | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
 | `BUG-30` | Two tests in the suite are tautologies — they compare a value against the expression that defines it, so they can only fail if the delegation they are made of is edited | S1 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | OPEN |
@@ -323,7 +323,7 @@ across families, not within them.
 | `BUG-32` | Two smaller unbounded checks | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-33` | The EasyInstall toast's Play action launches the game but does not dismiss the toast, so a stale "Installed … ▶ Play" toast (duration Long, 15 s) sits over the Library the user was just navigated to | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
 | `BUG-34` | The Library card's and row's "More actions" button and tooltip have no port equivalent | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
-| `BUG-42` | Three path/identifier conversions that do not do what the code around them says | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `BUG-42` | Three path/identifier conversions that do not do what the code around them says | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED**, all three. (a) `join_all` drops `.`/empty components, so a trailing `/.` resolves; mutation gives `left: "sftp://server/pub/game.exe/."` — the URL `resolve_game_paths` reports as unmounted. (b) the lossy return is replaced by `local_path_if_it_exists` (exists **and** valid UTF-8, else the URL), which turns the invented path into a recorded false negative — the signature is a `String`; mutation gives the `j\u{fffd}rg` path. (c) `version` uses `pure_posix_name`; mutation gives `left: ""`, `right: ".."`. | FIXED |
 | `BUG-43` | Two more "the doc says the two agree" pairs, both verified sound-but-for-the-claim | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
 | `BUG-44` | An unreadable runners directory renders as a normal, empty, system-Wine-only list | S1 | — | `c7d4299` — `scan_installed` answers `Complete`/`Partial`/`Unreadable`; a real `chmod 000` directory, and the entry-level half is recorded as untestable rather than mocked.| FIXED |
 | `BUG-45` | python_repr's string branch is not repr() and duplicates — incorrectly — the python_str_repr twelve lines above it | S1 | — | `1143aed` — the string arm delegates to `python_str_repr`; a regression test compares the two functions and fails on the old body.| FIXED |

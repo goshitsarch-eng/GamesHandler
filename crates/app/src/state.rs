@@ -33,6 +33,7 @@ use gamehandler_core::netpaths::as_local_path;
 use gamehandler_core::plugins::{self, PluginEnv, PluginRow};
 use gamehandler_core::runners::RunnerManager;
 use gamehandler_core::runners::families::ReleaseInfo;
+use gamehandler_core::runners::proton::python_int;
 use gamehandler_core::settings::Settings;
 
 use crate::Message;
@@ -222,7 +223,9 @@ pub fn remove_runner_subtitle() -> &'static str {
 /// than as a map lookup that cannot fail to typecheck. Every field is a
 /// string because that is what the text inputs hold — including
 /// `steam_appid`, which `saveGame` parses with a `try`/`except` and defaults to
-/// zero.
+/// zero. That default is the one part of the map this port does not reproduce:
+/// a value that is not a number is refused rather than stored as `0`
+/// ([`STEAM_APPID_NOT_A_NUMBER`], `BUG-27`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GameForm {
     /// The game being edited. `None` on the add form; the id is generated when
@@ -254,8 +257,10 @@ pub struct GameForm {
     pub category: String,
     pub virtual_desktop_size: String,
     pub cover_path: String,
-    /// Kept as text, because the input is a text field and `saveGame` treats an
-    /// unparseable value as zero rather than as an error.
+    /// Kept as text, because the input is a text field. An unreadable value is
+    /// refused rather than stored as zero, which is where this parts company
+    /// with `saveGame` (`bridge.py:430-432`) — see
+    /// [`STEAM_APPID_NOT_A_NUMBER`].
     pub steam_appid: String,
     /// The fifteen toggles of `bridge.py:74-78`, in that order.
     pub toggles: BTreeMap<String, bool>,
@@ -439,9 +444,12 @@ impl GameForm {
     /// own `existing is None` test — so the add/update branch is not duplicated
     /// here.
     ///
-    /// `Err` is the one thing the reference refuses on: an empty name, whose
+    /// `Err` is the one thing the reference refuses on — an empty name, whose
     /// message is [`NAME_REQUIRED`] verbatim, because it is user-visible and the
-    /// reference's wording is the specification.
+    /// reference's wording is the specification — plus one the reference does
+    /// not refuse on at all: a Steam AppID that is not a number, which
+    /// `saveGame` silently stores as `0` and this reports. See
+    /// [`STEAM_APPID_NOT_A_NUMBER`] for why, and for what it still accepts.
     ///
     /// `exePath` and `workingDirectory` go through [`as_local_path`], as the
     /// reference does (`bridge.py:413-417`) — P-21's save half. This used to
@@ -511,10 +519,23 @@ impl GameForm {
         // Not trimmed. `bridge.py:429-432` reads this one with `str(...)` and no
         // `.strip()`, unlike the ten above it.
         game.cover_path = self.cover_path.clone();
-        // An unparseable appid is zero, not an error: the reference wraps this in
-        // `try`/`except (TypeError, ValueError)` and a text field is what feeds
-        // it.
-        game.steam_appid = self.steam_appid.trim().parse().unwrap_or(0);
+        // An appid that cannot be read as a number is reported rather than
+        // silently stored as zero (`BUG-27`) — see [`STEAM_APPID_NOT_A_NUMBER`]
+        // for why the port is stricter than `saveGame` here, and for what it
+        // still accepts.
+        //
+        // `int(values.get("steamAppid") or 0)` is the reference's expression and
+        // both halves of it are here: the `or 0` is the empty arm, and `int()`
+        // is [`python_int`], which is why `+42` and `1_0` are read as they are
+        // there rather than as `str::parse::<i64>` would read them.
+        game.steam_appid = {
+            let typed = self.steam_appid.trim();
+            if typed.is_empty() {
+                0
+            } else {
+                python_int(typed).ok_or_else(|| STEAM_APPID_NOT_A_NUMBER.to_string())?
+            }
+        };
 
         for toggle in Self::TOGGLE_NAMES {
             if let Some(value) = self.toggle(toggle) {
@@ -529,6 +550,33 @@ impl GameForm {
 /// The user-visible message `saveGame` refuses an empty name with
 /// (`bridge.py:407-409`).
 pub const NAME_REQUIRED: &str = "A game needs a name";
+
+/// The message [`GameForm::apply`] refuses an unreadable Steam AppID with.
+///
+/// **This sentence is the port's, not the reference's.** `saveGame` wraps the
+/// conversion in `try`/`except (TypeError, ValueError)` and stores `0`
+/// (`bridge.py:430-432`), so `"half"` and `"12 34"` become "no appid" and
+/// nothing says so — the game then never matches its Steam artwork and the user
+/// has no thread to pull (`BUG-27`). The divergence toward refusal is
+/// deliberate and is the only place [`GameForm::apply`] is stricter than the
+/// reference: a value that is not a number has no meaning to store, and `0`
+/// is not a *rendering* of it but a different value the user did not type.
+///
+/// What the reference accepts, this still accepts. An empty field is `0`, which
+/// is what `values.get("steamAppid") or 0` gives, and the conversion itself is
+/// [`python_int`] rather than `str::parse::<i64>`, so `int()`'s own tolerance
+/// comes with it: `" 620 "` is `620`, `"+42"` is `42`, and `"1_0"` is `10`
+/// (PEP 515). A negative value is kept, as it is there — `int()` has no sign
+/// rule and Steam's own never come up.
+///
+/// The one case the two answer differently *in kind* is a whole number too
+/// large for an `i64`: Python keeps it exactly, `python_int` saturates it to
+/// [`i64::MAX`]. That is the helper's documented policy for this same field
+/// elsewhere rather than a new decision here, and it is recorded because the
+/// load path (`models::integer`) refuses such a value outright — the two
+/// disagree about it, and neither is worth changing for an appid that cannot
+/// exist.
+pub const STEAM_APPID_NOT_A_NUMBER: &str = "Steam AppID must be a whole number, or left blank";
 
 /// The desktop-size fallback `saveGame` and `newGameTemplate` both use
 /// (`bridge.py:394`, `:426`). See [`GameForm::apply`] for why this is not
@@ -1611,19 +1659,80 @@ mod tests {
         assert_eq!(form.apply(None).expect("named").cover_path, " /tmp/a.png ");
     }
 
-    /// An appid that is not a number is zero, not a refusal.
+    /// A typed appid that is not a number is reported, not stored as zero.
+    ///
+    /// `BUG-27`. This test used to pin the opposite — it was
+    /// `an_unparseable_appid_is_zero`, with `("half", 0)` in its table — and it
+    /// passed against the defect because it asserted the behaviour the defect
+    /// named. Its table is kept, with the second column now the *answer*
+    /// rather than the stored value, so the cases the reference accepts and the
+    /// cases it silently swallows are separated on purpose: the refused block
+    /// runs first (it is the finding) and the stored block second.
+    ///
+    /// **The field is not one the form draws** (neither does the reference —
+    /// `GameFormPage.qml` has no `steamAppid` control, and
+    /// `view::form`'s `absent` test pins that), so the only producers are the
+    /// cover-fetch reply and `from_game`, both of which write a valid decimal
+    /// string. This is therefore a seam closed rather than a live typo: the
+    /// value that reaches it today cannot be non-numeric, and a control added
+    /// later would have to go through here.
     #[test]
-    fn an_unparseable_appid_is_zero() {
+    fn an_unreadable_appid_is_reported_rather_than_stored_as_zero() {
         let mut form = GameForm::new_template(&Settings::default(), "id".to_string());
         form.set_field(FormField::Name, "Portal 2".to_string());
-        for (typed, expected) in [("", 0), ("  620  ", 620), ("half", 0), ("-1", -1)] {
+
+        // Read as a two-arm answer rather than as the `Result<Game, String>`
+        // itself, so a failure names the value and the two arms instead of
+        // printing a whole `Game`.
+        let outcome = |form: &GameForm| {
+            form.apply(None)
+                .map(|game| game.steam_appid)
+                .map_err(|_| "refused")
+        };
+
+        // Refused, with the port's own sentence and the form still holding what
+        // was typed, so a retry does not have to retype it.
+        for typed in ["half", "12 34", "62O", "0x10", ".5", "1e3"] {
             form.set_field(FormField::SteamAppid, typed.to_string());
             assert_eq!(
-                form.apply(None).expect("named").steam_appid,
-                expected,
-                "typed {typed:?}"
+                outcome(&form),
+                Err("refused"),
+                "typed {typed:?} must be reported, not stored as 0"
             );
+            assert_eq!(form.steam_appid, typed, "and the field keeps the text");
         }
+
+        // Still stored, and stored the way Python's `int()` reads them — which
+        // is why the conversion is `python_int` rather than
+        // `str::parse::<i64>`: the last three are `int()`'s tolerance, not
+        // `parse`'s.
+        for (typed, expected) in [
+            ("", 0),
+            ("   ", 0),
+            ("  620  ", 620),
+            ("+42", 42),
+            ("1_0", 10),
+            ("-1", -1),
+        ] {
+            form.set_field(FormField::SteamAppid, typed.to_string());
+            assert_eq!(outcome(&form), Ok(expected), "typed {typed:?}");
+        }
+
+        // The reference's expression, read rather than remembered: the empty
+        // arm is `or 0` and the conversion is `int(...)` inside a
+        // `try`/`except`, which is the default this port declines.
+        let bridge = gamehandler_core::oracle_support::repo_file("gamehandler/bridge.py");
+        let save = python_method(&bridge, "saveGame");
+        assert!(
+            save.contains("int(values.get(\"steamAppid\") or 0)"),
+            "`saveGame` no longer converts the appid with `int(... or 0)`, so \
+             the arms above are no longer the reference's"
+        );
+        assert!(
+            save.contains("except (TypeError, ValueError):"),
+            "`saveGame` no longer swallows the conversion failure, so the \
+             divergence this test documents has gone"
+        );
     }
 
     /// An edit keeps the identity; a new game gets one, and it is the form's.

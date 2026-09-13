@@ -722,10 +722,20 @@ impl Runner for ProtonRunner {
     fn version(&self) -> String {
         // Python returns the directory name — the build's tag, which is more
         // informative than a version probe and needs no subprocess.
-        self.path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
+        //
+        // [`pure_posix_name`], not `Path::file_name` (`BUG-42c`). Python's
+        // `self.path.name` is `PurePath.name`, which keeps a `..` as its own
+        // last component; `Path::file_name` answers `None` for exactly that
+        // path, so a runner directory whose id ends in `..` reported an empty
+        // version where Python reports `".."`. `id()` and `name()` already go
+        // through this helper — the field is built from it at construction —
+        // so this was the one of the three that used a different rule.
+        //
+        // Reachable through the id rather than through the filesystem:
+        // `RunnerManager::get` joins a `runner` id read straight out of
+        // `games.json` and tests only `.exists()`, and `/runners/x/..` exists as
+        // soon as `/runners/x` does.
+        pure_posix_name(&self.path.to_string_lossy())
     }
 
     fn wine_binary(&self) -> Option<PathBuf> {
@@ -2354,6 +2364,51 @@ mod tests {
         // Unknown ids are not errors here — the label is generic and the build
         // is still usable, which is what matters.
         assert_eq!(runner.family_label(), "Downloaded runner");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A `..` as the last component is a name, not an absence.
+    ///
+    /// `BUG-42c`. `PurePosixPath("a/..").name` is `".."`, so Python's
+    /// `self.path.name` reports `..` as the version; `Path::file_name` answers
+    /// `None` for that path, and `version()` reported `""`.
+    ///
+    /// The path is built the way it becomes reachable — a `runner` id from
+    /// `games.json` joined onto the runners root — rather than by handing
+    /// `ProtonRunner::new` a string that ends in `..` and calling it a day: the
+    /// id is the input and it is user-editable. `/runners/x/..` is the runners
+    /// root, which exists as soon as `/runners/x` does, so `.exists()` — the
+    /// only test `RunnerManager::get` makes — passes.
+    ///
+    /// The sibling assertions are what make this a fix rather than a change:
+    /// `id()` and `name()` already went through `pure_posix_name`, and
+    /// `version()` now agrees with them on this path as it did on the others.
+    #[test]
+    fn a_trailing_dot_dot_is_a_name_not_an_absence() {
+        let root = scratch("version-dot-dot");
+        let install = root.join("runners").join("build");
+        std::fs::create_dir_all(&install).unwrap();
+        // The id `RunnerManager::get` would join, verbatim: a real directory
+        // followed by `..`. It exists because its parent does, which is the
+        // whole reachability argument.
+        let joined = root.join("runners").join("build").join("..");
+        assert!(
+            joined.exists(),
+            "the joined path must exist to be reachable"
+        );
+
+        let runner = ProtonRunner::new(joined, "", "");
+        assert_eq!(runner.id(), "..");
+        assert_eq!(runner.name(), "..");
+        assert_eq!(
+            runner.version(),
+            "..",
+            "`PurePosixPath(\"a/..\").name` is \"..\", so nothing here is empty"
+        );
+        // The control arm: an ordinary directory still reports its own name, so
+        // the assertion above is about `..` and not about `version()` having
+        // stopped working.
+        assert_eq!(ProtonRunner::new(&install, "", "").version(), "build");
         let _ = std::fs::remove_dir_all(&root);
     }
 

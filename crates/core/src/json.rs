@@ -266,6 +266,17 @@ pub fn sanitize(text: &str) -> Cow<'_, str> {
             b'-' if bytes[i + 1..].starts_with(b"Infinity") => (i, i + 9, Cow::Borrowed("null")),
             b'-' | b'0'..=b'9' => {
                 let end = number_end(bytes, i);
+                if end == i {
+                    // A sign with no digit after it is not a number (`BUG-19`).
+                    // `number_end` returns a zero-width span for exactly this
+                    // case, and the only thing to do with it is step over the
+                    // character and leave it in place: `serde_json` reports the
+                    // syntax error, which is what Python does. Normalising it
+                    // instead would *invent* a well-formed `null` from a
+                    // malformed token and the document would parse.
+                    i += 1;
+                    continue;
+                }
                 match normalize_number(&text[i..end]) {
                     Some(replacement) => (i, end, Cow::Owned(replacement)),
                     None => {
@@ -402,13 +413,27 @@ fn next_hex4(bytes: &[u8], start: usize) -> Option<u32> {
 }
 
 /// Index just past the number literal that starts at `start`.
+///
+/// A sign with no digit after it is not a number literal in either language —
+/// JSON's grammar is `-? int frac? exp?` and `int` requires a digit — so a
+/// token that starts `-` and is not followed by one returns `start` itself, a
+/// zero-width span (`BUG-19`). The caller reads that as "nothing consumed" and
+/// leaves the character for `serde_json` to reject. The alternative, returning
+/// `start + 1` as this did, hands [`normalize_number`] the token `"-"`, whose
+/// `f64` parse fails and whose `_` arm answers `Some("null")` — a malformed
+/// number silently promoted to a well-formed `null`, which the document then
+/// parses.
 fn number_end(bytes: &[u8], start: usize) -> usize {
     let mut i = start;
     if i < bytes.len() && bytes[i] == b'-' {
         i += 1;
     }
+    let digits = i;
     while i < bytes.len() && bytes[i].is_ascii_digit() {
         i += 1;
+    }
+    if i == digits {
+        return start;
     }
     if i < bytes.len() && bytes[i] == b'.' {
         i += 1;
@@ -931,6 +956,30 @@ mod tests {
         assert_eq!(sanitize("[Infinity]"), "[null]");
         assert_eq!(sanitize("[-Infinity]"), "[null]");
         assert_eq!(sanitize("[1, NaN, 2]"), "[1, null, 2]");
+    }
+
+    #[test]
+    fn sanitize_leaves_a_sign_with_no_digits_alone() {
+        // `BUG-19`. A bare `-` is not a number. Before the fix `number_end`
+        // consumed the sign and returned a one-character token, which
+        // `normalize_number` could not parse as an `f64` and therefore answered
+        // `Some("null")` — so a malformed timestamp arrived as a well-formed
+        // `null` and the document parsed.
+        assert_eq!(sanitize("[-]"), "[-]");
+        assert_eq!(sanitize(r#"[{"last_played":-}]"#), r#"[{"last_played":-}]"#);
+        // The same shape with the sign followed by a non-digit: `-.5` and `-e5`
+        // are invalid JSON in both languages, and neither may be rewritten.
+        assert_eq!(sanitize("[-.5]"), "[-.5]");
+        assert_eq!(sanitize("[-e5]"), "[-e5]");
+
+        // ...and the point of the rewrite existing at all: `serde_json` now
+        // reports the syntax error, as CPython's `json.loads` does
+        // (`Expecting value: line 1 column 17` for the object above).
+        assert!(parse_lenient(r#"[{"last_played":-}]"#).is_err());
+        // A sign that *is* followed by a digit still normalises as before, so
+        // the guard did not disable the number path.
+        assert_eq!(sanitize("[-1e400]"), "[null]");
+        assert_eq!(sanitize("[-1]"), "[-1]");
     }
 
     #[test]
