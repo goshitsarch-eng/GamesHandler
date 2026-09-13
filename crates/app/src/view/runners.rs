@@ -3154,7 +3154,8 @@ mod tests {
             .filter(|node| node.role == Role::Button && node.label.as_deref() == Some(&hint))
             .count();
         assert_eq!(
-            found, 1,
+            found,
+            1,
             "the delete button must publish exactly one Button node named \
              {hint:?}. Nodes: {:?}",
             nodes

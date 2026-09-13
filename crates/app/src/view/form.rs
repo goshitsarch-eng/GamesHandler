@@ -1753,7 +1753,8 @@ mod tests {
                 .filter(|node| node.role == Role::Button && node.label.as_deref() == Some(hint))
                 .count();
             assert_eq!(
-                found, 1,
+                found,
+                1,
                 "the browse button hinting {hint:?} must publish exactly one \
                  Button node carrying that name. Zero means nothing announces \
                  it — a bare `button::icon` names itself `\"\"`, and one wrapped \

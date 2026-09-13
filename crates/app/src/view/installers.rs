@@ -641,8 +641,8 @@ fn installer_card<'a>(row: &'a InstallerRow, busy: bool, runner_id: &str) -> Ele
         // button names itself from this string when nothing takes the name away,
         // and the wrapper below is what publishes it now that a tooltip does.
         let label = "Install";
-        let button = button::standard(label)
-            .leading_icon(crate::icons::handle(crate::icons::Icon::Install));
+        let button =
+            button::standard(label).leading_icon(crate::icons::handle(crate::icons::Icon::Install));
         // `enabled: !backend.busy` — a disabled button rather than a refused
         // press, which is what P-59's "second refused" looks like in the
         // reference. `on_press_maybe(None)` is how libcosmic spells it, and
@@ -1240,7 +1240,9 @@ mod tests {
             let nodes = harness::published(&mut element);
             let install: Vec<&_> = nodes
                 .iter()
-                .filter(|node| node.role == Role::Button && node.label.as_deref() == Some("Install"))
+                .filter(|node| {
+                    node.role == Role::Button && node.label.as_deref() == Some("Install")
+                })
                 .collect();
             assert_eq!(
                 install.len(),
