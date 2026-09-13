@@ -61,3 +61,12 @@ install_data(
   'icons/hicolor/scalable/apps' / app_id + '.svg',
   install_dir: get_option('datadir') / 'icons/hicolor/scalable/apps',
 )
+# Raster sizes for the consumers that cannot read SVG (PKG-05). The master
+# artwork is an SVG and the PNGs beside it are rendered from it, so the two
+# directories must be installed together or a size goes missing.
+foreach size : ['64x64', '128x128', '256x256', '512x512']
+  install_data(
+    'icons/hicolor' / size / 'apps' / app_id + '.png',
+    install_dir: get_option('datadir') / 'icons/hicolor' / size / 'apps',
+  )
+endforeach

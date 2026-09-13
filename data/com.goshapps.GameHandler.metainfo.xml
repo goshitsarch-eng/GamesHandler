@@ -35,6 +35,10 @@
       <li>Credits page listing every upstream project, with links and licenses</li>
     </ul>
   </description>
+  <icon type="stock">com.goshapps.GameHandler</icon>
+  <categories>
+    <category>Game</category>
+  </categories>
   <launchable type="desktop-id">com.goshapps.GameHandler.desktop</launchable>
   <provides>
     <binary>gamehandler</binary>

@@ -1635,6 +1635,10 @@ FLATPAK_CONTENTS=(
     "data/$APP_ID.desktop|share/applications/$APP_ID.desktop"
     "data/$APP_ID.metainfo.xml|share/metainfo/$APP_ID.metainfo.xml"
     "data/icons/hicolor/scalable/apps/$APP_ID.svg|share/icons/hicolor/scalable/apps/$APP_ID.svg"
+    "data/icons/hicolor/64x64/apps/$APP_ID.png|share/icons/hicolor/64x64/apps/$APP_ID.png"
+    "data/icons/hicolor/128x128/apps/$APP_ID.png|share/icons/hicolor/128x128/apps/$APP_ID.png"
+    "data/icons/hicolor/256x256/apps/$APP_ID.png|share/icons/hicolor/256x256/apps/$APP_ID.png"
+    "data/icons/hicolor/512x512/apps/$APP_ID.png|share/icons/hicolor/512x512/apps/$APP_ID.png"
 )
 
 stage_flatpak_contents() {
