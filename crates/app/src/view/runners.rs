@@ -333,6 +333,14 @@ pub struct RunnersView<'a> {
     pub status: &'a ReleasesStatus,
     /// From [`release_rows`].
     pub releases: &'a [ReleaseRow],
+    /// [`State::busy`] — either long job, as the reference's
+    /// `enabled: !backend.busy` couples them (`RunnersPage.qml:200`). Drives
+    /// the indeterminate bar when no fraction exists and the per-row Install
+    /// guard.
+    pub busy: bool,
+    /// [`State::runner_install`]'s tag — the one row whose Install becomes
+    /// Cancel (UX-27). `None` while nothing is downloading.
+    pub installing: Option<&'a str>,
     /// From [`progress_fraction`].
     pub progress: Option<f32>,
 }
@@ -429,8 +437,22 @@ pub fn refresh(state: &mut State) -> Task<Message> {
 pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
     let mut body = Column::new().spacing(12).width(Length::Fill);
 
-    if let Some(fraction) = page.progress {
-        body = body.push(progress_bar::determinate_linear(fraction).width(Length::Fill));
+    // `progress_cue` decides between the three shapes the job can be in: a
+    // measured transfer, work with no fraction to show (`-1.0` filtered to
+    // `None` by `progress_fraction`), or nothing. The releases fetch counts as
+    // working for this — the finding was "text and no indicator" while the
+    // list loaded, and the status line keeps its place under the heading.
+    match super::progress_cue(
+        page.progress,
+        page.busy || page.status == &ReleasesStatus::Loading,
+    ) {
+        super::ProgressCue::Determinate(fraction) => {
+            body = body.push(progress_bar::determinate_linear(fraction).width(Length::Fill));
+        }
+        super::ProgressCue::Indeterminate => {
+            body = body.push(progress_bar::indeterminate_linear().width(Length::Fill));
+        }
+        super::ProgressCue::Hidden => {}
     }
 
     // ---- Installed ---------------------------------------------------------
@@ -522,7 +544,7 @@ pub fn view<'a>(page: RunnersView<'a>) -> Element<'a, Message> {
     }
 
     for release in page.releases {
-        body = body.push(release_card(release));
+        body = body.push(release_card(release, page.busy, page.installing));
     }
 
     body = body.push(divider::horizontal::default());
@@ -613,8 +635,20 @@ fn installed_card(row: &InstalledRow) -> Element<'_, Message> {
     card(line.into())
 }
 
-/// A release row: tag, detail, and either the badge or the Install button.
-fn release_card(row: &ReleaseRow) -> Element<'_, Message> {
+/// A release row: tag, detail, and the badge, Install, or Cancel.
+///
+/// The button is the reference's `enabled: !backend.busy`
+/// (`RunnersPage.qml:200`) — disabled while either long job runs, where the
+/// arm's `runner_busy` early return is the second half. The running row's own
+/// button is the port's Cancel (UX-27), which the reference has no spelling of
+/// at all: `button::destructive` because it undoes work in flight, and
+/// [`Message::AbortRunnerInstall`] because the tag is already implied — at
+/// most one download runs.
+fn release_card<'a>(
+    row: &'a ReleaseRow,
+    busy: bool,
+    installing: Option<&str>,
+) -> Element<'a, Message> {
     let mut line = Row::new()
         .push(
             Column::new()
@@ -629,13 +663,18 @@ fn release_card(row: &ReleaseRow) -> Element<'_, Message> {
 
     if row.installed {
         line = line.push(badge("Installed"));
+    } else if installing == Some(row.tag.as_str()) {
+        line = line.push(button::destructive("Cancel").on_press(Message::AbortRunnerInstall));
     } else {
         line = line.push(
             button::standard("Install")
                 .leading_icon(crate::icons::handle(crate::icons::Icon::Download))
-                .on_press(Message::InstallRunner {
+                // `on_press_maybe(None)` is a disabled button — the same
+                // spelling `installers.rs`'s `install_press` uses for the
+                // same `enabled:`.
+                .on_press_maybe((!busy).then(|| Message::InstallRunner {
                     tag: row.tag.clone(),
-                }),
+                })),
         );
     }
 
@@ -964,7 +1003,12 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// this port rather than a network condition — and converting it into a toast
 /// would hide it. A `catch_unwind` would inherit [`Task::perform`]'s lack of one
 /// in the fetch handler, so the two would be asymmetric for no gain.
-fn install_runner_task(release: ReleaseInfo, runners_directory: PathBuf) -> Task<Message> {
+fn install_runner_task(
+    release: ReleaseInfo,
+    runners_directory: PathBuf,
+    job: u64,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Task<Message> {
     // `unbounded` because the callback is synchronous and cannot await: a bounded
     // send from inside it would have to drop reports, and a dropped report is a
     // progress bar that stalls. The volume is one message per archive chunk.
@@ -972,7 +1016,19 @@ fn install_runner_task(release: ReleaseInfo, runners_directory: PathBuf) -> Task
 
     std::thread::spawn(move || {
         let tag = release.tag.clone();
+        let cancelled = || cancel.load(std::sync::atomic::Ordering::SeqCst);
         let progress = |fraction: f32| {
+            // A cancelled job stops reporting here, so its ticks cannot land on
+            // a successor's bar — including the `-1.0` marker `install` sends
+            // before its own post-transfer check, which reaches this closure
+            // with the flag already set. What the check cannot stop is a tick
+            // sent before the flag was set and delivered after: one transient
+            // overwrite, self-corrected by the next message. `RunnerProgress`
+            // carries no `id` because the tick is ephemeral state, unlike the
+            // terminal reply which mutates it.
+            if cancelled() {
+                return;
+            }
             // A send fails only when the receiver is gone, i.e. the page was
             // navigated away from and the task dropped. Nothing to report to.
             let _ = sender.unbounded_send(Message::RunnerProgress(fraction));
@@ -983,15 +1039,32 @@ fn install_runner_task(release: ReleaseInfo, runners_directory: PathBuf) -> Task
             &release,
             &progress,
             INSTALL_TIMEOUT,
-        )
-        .map(|_installed_to| ())
-        .map_err(|error| rendered_message(&error));
+            &cancelled,
+        );
+        // An error raised *by* the cancel — or coincident with it — is the
+        // abort's own doing: the Cancel toast has already spoken, so a "Failed
+        // to install" behind it would be noise. A success still reports: the
+        // build is on disk and the page's refresh wants to know, and the `id`
+        // gate keeps this reply from clearing a successor's guard.
+        if result.is_err() && cancelled() {
+            return;
+        }
+        let result = result
+            .map(|_installed_to| ())
+            .map_err(|error| rendered_message(&error));
         // The tag travels with both arms: `fail` names the release it could not
         // install (`bridge.py:760`), so it cannot be recovered from a `Err`.
         // `report`, not a bare `let _ =`: this send carries the outcome —
         // including the failure text — and a dropped one is a failure with no
         // record (BUG-28).
-        crate::report(&sender, Message::RunnerInstallFinished { tag, result });
+        crate::report(
+            &sender,
+            Message::RunnerInstallFinished {
+                id: job,
+                tag,
+                result,
+            },
+        );
     });
 
     // Each report becomes `Action::App(message)` because a task built in a page
@@ -1062,6 +1135,18 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
             };
             state.runner_busy = true;
             state.progress = Some(0.0);
+            // The cancel record the card's button reads (UX-27): `id` tells
+            // this job's `RunnerInstallFinished` from a cancelled
+            // predecessor's, and `cancel` is the flag `install`'s `cancelled`
+            // predicate polls.
+            state.runner_install_seq += 1;
+            let id = state.runner_install_seq;
+            let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            state.runner_install = Some(crate::state::RunnerInstall {
+                id,
+                tag: tag.clone(),
+                cancel: cancel.clone(),
+            });
             // No `refresh` here, deliberately: nothing has changed on disk yet,
             // and the progress messages that follow arrive many times a second.
             // The two arms that end a download do refresh.
@@ -1073,8 +1158,31 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
                 install_runner_task(
                     release.clone(),
                     state.runners.runners_directory().to_path_buf(),
+                    id,
+                    cancel,
                 ),
             ]))
+        }
+        // The running row's Cancel (UX-27) — the reference has no abort for a
+        // download in flight, so this is a port addition: set the flag the
+        // worker polls, clear the guard on the press rather than at the next
+        // chunk boundary, and say what happened. No `refresh` is needed:
+        // `release_card`'s Install/Cancel swap reads `busy`/`installing`, not
+        // row data, and a cancelled download put nothing on disk.
+        Message::AbortRunnerInstall => {
+            let Some(job) = state.runner_install.take() else {
+                // No job to abort — the press raced the download's own end.
+                // `None` rather than an empty `Some`: nothing happened, so
+                // nothing is reported.
+                return None;
+            };
+            job.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            state.runner_busy = false;
+            state.progress = None;
+            Some(push_toast(
+                state,
+                format!("Cancelled the {} download.", job.tag),
+            ))
         }
         // `_progress_cb` (`bridge.py:733-735`).
         Message::RunnerProgress(fraction) => {
@@ -1084,9 +1192,22 @@ pub fn update(state: &mut State, message: &Message) -> Option<Task<Message>> {
         // `done` and `fail` both clear the guard and the bar before they
         // differ, so they are written once and the message is the only
         // difference (`bridge.py:753-767`).
-        Message::RunnerInstallFinished { tag, result } => {
-            state.runner_busy = false;
-            state.progress = None;
+        Message::RunnerInstallFinished { id, tag, result } => {
+            // The `id` gate (UX-27): the job this reply belongs to is cleared
+            // only when it is still the live one. A cancelled job whose
+            // download completed anyway — or failed after the abort — reports
+            // here too, and its reply must not clear the guard a successor
+            // install is already holding. The toast and the refresh still run:
+            // the result is real either way.
+            if state
+                .runner_install
+                .as_ref()
+                .is_some_and(|job| job.id == *id)
+            {
+                state.runner_install = None;
+                state.runner_busy = false;
+                state.progress = None;
+            }
             // A build may now be on disk, so both the Installed list and every
             // release row's badge are stale until this runs — and it runs on the
             // failure path too, where nothing changed. Python's `fail` path
@@ -1290,6 +1411,8 @@ mod tests {
             status: &ReleasesStatus::Idle,
             releases: &[],
             progress: None,
+            busy: false,
+            installing: None,
         });
 
         let nodes = harness::published(&mut element);
@@ -1374,6 +1497,8 @@ mod tests {
             status: &ReleasesStatus::Idle,
             releases: &[],
             progress: None,
+            busy: false,
+            installing: None,
         });
         let (mut tree, node) = harness::built(&mut element);
         harness::tab_to(&mut element, &mut tree, &node);
@@ -1416,6 +1541,8 @@ mod tests {
             status,
             releases,
             progress: None,
+            busy: false,
+            installing: None,
         }))
     }
 
@@ -2806,27 +2933,161 @@ mod tests {
     /// (`bridge.py:753-755` and `:764-766`), so a port that only cleared them on
     /// success would
     /// leave the page permanently busy after one failure.
+    ///
+    /// The fixture holds the *job*, not just the bool: since UX-27 the reply's
+    /// `id` must match `runner_install`'s or the arm reads it as a cancelled
+    /// predecessor's late report and leaves the running job's guard alone —
+    /// `a_late_reply_cannot_clear_a_newer_install` below covers that direction.
     #[test]
     fn an_install_finishing_clears_the_guard_on_success_and_on_failure() {
         for result in [Ok(()), Err("checksum mismatch".to_string())] {
             let mut state = state();
             state.runner_busy = true;
             state.progress = Some(0.5);
+            state.runner_install = Some(crate::state::RunnerInstall {
+                id: 1,
+                tag: "GE-Proton9-5".to_string(),
+                cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            });
 
             let task = update(
                 &mut state,
                 &Message::RunnerInstallFinished {
+                    id: 1,
                     tag: "GE-Proton9-5".to_string(),
                     result,
                 },
             );
             assert!(!state.runner_busy, "the guard must clear either way");
+            assert!(
+                state.runner_install.is_none(),
+                "the job must clear either way"
+            );
             assert_eq!(state.progress, None, "the bar must clear either way");
             assert!(
                 task.is_some(),
                 "the toast is the observable, and it is a task"
             );
         }
+    }
+
+    /// UX-27: a `RunnerInstallFinished` whose `id` is not the running job's is
+    /// a cancelled predecessor's late report — the install raced its own abort
+    /// and finished anyway. It must not clear the *newer* job's guard, which
+    /// is the whole reason the id exists. The result is still reported: a real
+    /// runner really did land, and silence would be a directory the user is
+    /// never told about.
+    #[test]
+    fn a_late_reply_cannot_clear_a_newer_install() {
+        let mut state = state();
+        state.runner_busy = true;
+        state.progress = Some(0.5);
+        state.runner_install = Some(crate::state::RunnerInstall {
+            id: 2,
+            tag: "GE-Proton9-6".to_string(),
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
+
+        let task = update(
+            &mut state,
+            &Message::RunnerInstallFinished {
+                id: 1,
+                tag: "GE-Proton9-5".to_string(),
+                result: Ok(()),
+            },
+        );
+
+        assert!(
+            state.runner_busy,
+            "job 1's late reply cleared job 2's guard"
+        );
+        assert_eq!(
+            state.runner_install.as_ref().map(|job| job.id),
+            Some(2),
+            "the running job was replaced by a stale reply"
+        );
+        assert!(
+            task.is_some(),
+            "the install that did land still tells the user"
+        );
+    }
+
+    /// UX-27: the Cancel press sets the flag the worker polls *and* clears the
+    /// page's guards at once — the abort is not left waiting on the next
+    /// transfer boundary for the UI to admit it happened.
+    #[test]
+    fn an_abort_sets_the_flag_and_frees_the_page_at_once() {
+        let mut state = state();
+        state.runner_busy = true;
+        state.progress = Some(0.5);
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        state.runner_install = Some(crate::state::RunnerInstall {
+            id: 1,
+            tag: "GE-Proton9-5".to_string(),
+            cancel: flag.clone(),
+        });
+
+        let task = update(&mut state, &Message::AbortRunnerInstall);
+
+        assert!(
+            flag.load(std::sync::atomic::Ordering::SeqCst),
+            "the worker's flag was never set"
+        );
+        assert!(!state.runner_busy, "the page is still guarding");
+        assert_eq!(state.progress, None);
+        assert!(state.runner_install.is_none());
+        assert!(task.is_some(), "the cancel toast is a task");
+    }
+
+    /// UX-27: a Cancel with no job to cancel is a no-op — the press raced the
+    /// install's own end and there is no flag to set and nothing to say.
+    #[test]
+    fn an_abort_with_no_job_running_is_inert() {
+        let mut state = state();
+        let task = update(&mut state, &Message::AbortRunnerInstall);
+        assert!(task.is_none(), "a nothing-to-cancel press spoke anyway");
+    }
+
+    /// UX-27: the running row's Install becomes a Cancel, and only that
+    /// row's — a neighbour that is not installing keeps its (disabled)
+    /// Install label.
+    ///
+    /// Asserted on the drawn strings because a `Button`'s `on_press` cannot be
+    /// read back out of a built element — the same wall `install_press`'s doc
+    /// names — so "the label changed" is what the widget tree can vouch for.
+    /// The message each button sends is checked one level down, in the arm
+    /// tests above.
+    #[test]
+    fn the_running_row_draws_cancel_and_the_neighbour_keeps_install() {
+        let rows = [
+            ReleaseRow {
+                tag: "GE-Proton9-5".to_string(),
+                detail: "Proton-GE · v1.0.tar.gz · 1 MB".to_string(),
+                installed: false,
+            },
+            ReleaseRow {
+                tag: "GE-Proton9-4".to_string(),
+                detail: "Proton-GE · v0.9.tar.gz · 1 MB".to_string(),
+                installed: false,
+            },
+        ];
+        let drawn = testkit::drawn_strings(view(RunnersView {
+            installed: &[],
+            selected_family: default_family(),
+            status: &ReleasesStatus::Idle,
+            releases: &rows,
+            progress: Some(0.4),
+            busy: true,
+            installing: Some("GE-Proton9-5"),
+        }));
+        assert!(
+            drawn.iter().any(|text| text == "Cancel"),
+            "the running row's button did not become Cancel: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == "Install"),
+            "the idle row's Install disappeared: {drawn:?}"
+        );
     }
 
     /// Progress is stored as given, and the bar's own rule decides what to do
@@ -3335,6 +3596,8 @@ mod tests {
             status: &ReleasesStatus::Idle,
             releases: &[],
             progress: None,
+            busy: false,
+            installing: None,
         });
 
         let nodes = harness::laid_out(&mut element, cosmic::iced::Size::new(420.0, 700.0));

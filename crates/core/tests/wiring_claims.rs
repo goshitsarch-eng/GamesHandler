@@ -312,7 +312,11 @@ fn every_function_the_installers_header_claims_is_wired_has_a_call_in_live_code(
     // Asserted by name so that dropping a row fails here instead of shrinking
     // the table silently.
     for expected in [
-        "download_installer",
+        // `download_installer_with` is the spelling the worker calls — UX-27
+        // gave the download a `cancelled` predicate, and the `_with` variant
+        // is the signature that carries it (`download_installer` remains as
+        // the predicate-free delegate, with no production caller of its own).
+        "download_installer_with",
         "wait_for_installer",
         "wait_for_prefix_idle",
         "verify_installer_authenticity",

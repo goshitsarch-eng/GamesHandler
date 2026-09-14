@@ -173,6 +173,15 @@ pub enum RunnerError {
     /// directory that is a runner, which is a property of the release rather
     /// than of the download.
     NoUsableRunner,
+    /// `The download was cancelled`.
+    ///
+    /// The reference has no cancel, so there is no sentence to port: this is
+    /// the variant `proton::install`'s `cancelled` predicate produces, and it
+    /// exists so an abort reads as an abort rather than as a network failure.
+    /// The app's worker suppresses it — the Cancel button's toast has already
+    /// spoken — so the rendered sentence is for the CLI and for a future caller
+    /// that propagates rather than interprets it.
+    Cancelled,
     /// A library entry lives on a network share that has no local mount.
     ///
     /// The message is `netpaths.unreachable_share_message`, which is built from
@@ -243,6 +252,7 @@ impl RunnerError {
             RunnerError::ArchiveTooLarge => "ArchiveTooLarge",
             RunnerError::StagedTopLevelLink => "StagedTopLevelLink",
             RunnerError::NoUsableRunner => "NoUsableRunner",
+            RunnerError::Cancelled => "Cancelled",
             RunnerError::UnreachableShare { .. } => "UnreachableShare",
             RunnerError::Http { .. } => "Http",
             RunnerError::Archive(_) => "Archive",
@@ -300,6 +310,7 @@ impl fmt::Display for RunnerError {
             RunnerError::NoUsableRunner => {
                 f.write_str("Could not locate one usable runner in the staged archive")
             }
+            RunnerError::Cancelled => f.write_str("The download was cancelled"),
             RunnerError::UnreachableShare { message } => f.write_str(message),
             RunnerError::Http { message } => f.write_str(message),
             // The wrapped errors already carry Python's message.

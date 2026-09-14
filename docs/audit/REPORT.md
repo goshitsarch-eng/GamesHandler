@@ -25,7 +25,7 @@ prose count beside them in this file and in `PLAN.md` was re-derived by counting
 the rows, and three were wrong when this paragraph was written (see the
 `PARTIAL` paragraph below and `PLAN.md`'s note on the `BUGS.md` row).
 
-The `Fixed` column counts `FIXED` only; the nine `PARTIAL` rows are counted in
+The `Fixed` column counts `FIXED` only; the ten `PARTIAL` rows are counted in
 `Remaining`, because a half-fixed finding is not closed.
 
 **This report tracks a moving tree, and the count is recomputed on every move.**
@@ -51,7 +51,7 @@ target has moved is a present-tense count of a moving target, which is the shape
 of error `PLAN.md` records against its own `BUGS.md` row. What is true at every
 revision is what the paragraph now says.
 
-**This is not a final report.** 15 of 130 defects are still open, most of them
+**This is not a final report.** 14 of 130 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -61,11 +61,11 @@ and the section *What remains, honestly* says which is which.
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 46 | 45 | 2 | 1 |
 | `ARCH-xx` | Architecture, code quality | 25 | 23 | 1 | 2 |
-| `UX-xx` | libcosmic / COSMIC UX | 29 | 23 | 1 | 6 |
+| `UX-xx` | libcosmic / COSMIC UX | 29 | 24 | 1 | 5 |
 | `PERF-xx` | Performance, resource | 8 | 6 | 0 | 2 |
 | `SEC-xx` | Security, robustness | 11 | 10 | 0 | 1 |
 | `PKG-xx` | Packaging, platform, QA | 11 | 8 | 0 | 3 |
-| **Total** | | **130** | **115** | **4** | **15** |
+| **Total** | | **130** | **116** | **4** | **14** |
 
 The `Found` column is defects; the four refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
@@ -79,14 +79,16 @@ By severity:
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 40 | 0 | 9 |
-| **Total** | **130** | **115** | **0** | **15** |
+| P3 | 49 | 41 | 0 | 8 |
+| **Total** | **130** | **116** | **0** | **14** |
 
 `Not a defect` is not a euphemism for "wontfix": all four rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`, `BUG-15`,
-`UX-08`, `ARCH-24`). Nine of the rows counted as `Remaining` above are `PARTIAL` rather
-than untouched — the nine `PARTIAL` rows, which `scripts/plan-counts.py` prints
-by name on every run — and each names the half that is still missing: `ARCH-12`
+`UX-08`, `ARCH-24`). Ten of the rows counted as `Remaining` above are `PARTIAL`
+rather than untouched — `scripts/plan-counts.py` prints them by name on every
+run — and each names the half that is still missing: `ARCH-11` (the `cli.rs`
+seam is cut; the `installers/{prefix,download,wizard}.rs` and `easy_install.rs`
+splits are not), `ARCH-12`
 (the four dispatcher extractions landed in `3b6ee5a`, and the grouping half did
 not: re-measured, `Shell::update` is 965 lines over 59 arms, `State` carries 38
 `pub` fields with 367 `.state.<field>` sites in `main.rs`, and the row's own
@@ -96,7 +98,12 @@ ellipsis is commented but cannot be asserted — iced offers no downcast and
 `Text::format` is private), `PKG-03` (the freshness check is split and always
 runs; the generator half is unvendored because the only copy to hand has no
 nameable upstream), `PKG-06` (keywords added, screenshots still absent),
-`UX-06` (the scrim blocks the pointer, not Tab), `SEC-05` (the request is
+`UX-06` (the scrim blocks the pointer, not Tab), `UX-24` (both destructive
+prompts now open with the keyboard on Cancel; the game-form and installer-search
+halves of the recommendation were measured and declined — nothing *opens* the
+filter, and the reference sets no focus on its form), `UX-26` (the same
+defect as `BUG-47`, filed from the reference side — its unassertable half is
+the same private `Text::format`), `SEC-05` (the request is
 now scheme- and origin-checked, but the redirect target is judged by nothing,
 because every Proton-GE asset redirects off `github.com` and no host allowlist
 is writable) and `UX-14` (the notice is published as an assertive alert and every
@@ -163,14 +170,14 @@ is **met for P0 and P1** and **not met for P2**, where the reason is that the
 work is unfinished rather than impossible. Stating that plainly is the point of
 this section.
 
-Where the 15 open rows are:
+Where the 14 open rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All five fixed and each verified by restoring the pre-fix body and watching the new test fail. |
 | P1 | 0 | **Closed.** `SEC-11` — the approved-publisher gate reading signer-chosen text as a certificate subject — was the last row here and is fixed; the recipe this report first sketched for it was measured wrong and corrected in the fix. `UX-01`–`UX-03` were the four upstream-widget accessibility gaps plus `ARCH-02`, all fixed, and the three widget rows each record the residue that is upstream's rather than this port's. |
 | P2 | 6 | 2 `ARCH`, 2 `UX`, 1 `BUG`, 1 `PKG`. Actionable. |
-| P3 | 9 | 4 `UX`, 2 `PERF`, 2 `PKG`, 1 `SEC`. Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. |
+| P3 | 8 | 3 `UX`, 2 `PERF`, 2 `PKG`, 1 `SEC`. Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. |
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
 them for a backlog item:
 

@@ -378,6 +378,75 @@ pub fn install_press(row: &InstallerRow, runner_id: &str, busy: bool) -> Option<
     })
 }
 
+/// The install a card's button would act on, in whichever phase it is in.
+///
+/// UX-27 — the reference has no such thing: `cancelEasyInstall` there answers
+/// only the locate dialog's reject, and nothing stops the worker itself. The
+/// port splits the two phases because they cancel through different messages:
+/// a still-running worker is aborted by flag ([`Message::AbortEasyInstall`]),
+/// and a finished one waiting on the exe picker is dismissed the reference's
+/// own way ([`Message::CancelEasyInstall`], which is also what the portal
+/// dialog's own Cancel sends).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunningInstall {
+    /// The worker is downloading, running the wizard, or in the settle poll.
+    Active {
+        /// The card whose Install becomes Cancel.
+        installer_id: String,
+    },
+    /// The wizard ended without a found executable; the install waits on the
+    /// locate chooser, holding `easy_pending[token]`.
+    Pending {
+        /// The card whose Install becomes Cancel.
+        installer_id: String,
+        /// `easy_pending`'s key — `CancelEasyInstall`'s payload.
+        token: String,
+    },
+}
+
+/// Which install is running or pending, for the card that draws its Cancel.
+///
+/// `running_install` first and `easy_pending` second: the busy guard keeps
+/// them mutually exclusive (a new install cannot start while one pends), so
+/// the order documents the lifecycle rather than arbitrating a real overlap.
+pub fn running_install(state: &State) -> Option<RunningInstall> {
+    if let Some(record) = &state.running_install {
+        return Some(RunningInstall::Active {
+            installer_id: record.installer_id.clone(),
+        });
+    }
+    state
+        .easy_pending
+        .iter()
+        .next()
+        .map(|(token, record)| RunningInstall::Pending {
+            installer_id: record.installer_id.clone(),
+            token: token.clone(),
+        })
+}
+
+/// The message the running or pending card's Cancel sends.
+///
+/// A function rather than a match inside [`installer_card`] for the reason
+/// [`install_press`] is one: a `Button`'s `on_press` cannot be read back out
+/// of a built tree, so the decision lives where a test can hold it. The two
+/// arms are not interchangeable — `AbortEasyInstall` on a pending install
+/// would no-op on the absent flag, and `CancelEasyInstall` on a running one
+/// would leave the worker alive while the page unlocked.
+pub fn cancel_press(job: &RunningInstall) -> Message {
+    match job {
+        RunningInstall::Active { .. } => Message::AbortEasyInstall,
+        RunningInstall::Pending { token, .. } => Message::CancelEasyInstall(token.clone()),
+    }
+}
+
+/// The Cancel button's tooltip. No QML source — the control is this port's
+/// (UX-27); the sentence says the two things a user needs before pressing:
+/// what stops, and what is kept.
+pub fn cancel_tooltip(name: &str) -> String {
+    format!("Stop the {name} install — the prefix is kept")
+}
+
 /// The progress bar's fraction, or `None` when it is not drawn.
 ///
 /// `InstallersPage.qml:40` is the same rule as the Runners page's, and it is
@@ -474,6 +543,9 @@ pub struct InstallersView<'a> {
     pub busy: bool,
     /// [`progress_fraction`].
     pub progress: Option<f32>,
+    /// [`running_install`]'s result — the install whose card draws Cancel
+    /// instead of a disabled Install (UX-27). `None` while nothing runs.
+    pub running: Option<RunningInstall>,
 }
 
 /// The page.
@@ -572,8 +644,17 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
     // ---- The explainer and the bar ----------------------------------------
     body = body.push(text::body(INTRO));
 
-    if let Some(fraction) = page.progress {
-        body = body.push(progress_bar::determinate_linear(fraction).width(Length::Fill));
+    // The three shapes a job can be in (UX-27): a measured download, work
+    // with no fraction to show — the wizard and the settle poll send `-1.0`,
+    // which `progress_fraction` filters to `None` — or nothing running at all.
+    match super::progress_cue(page.progress, page.busy) {
+        super::ProgressCue::Determinate(fraction) => {
+            body = body.push(progress_bar::determinate_linear(fraction).width(Length::Fill));
+        }
+        super::ProgressCue::Indeterminate => {
+            body = body.push(progress_bar::indeterminate_linear().width(Length::Fill));
+        }
+        super::ProgressCue::Hidden => {}
     }
 
     // ---- The runner a new install will use ---------------------------------
@@ -615,7 +696,12 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
     }
 
     for row in page.catalog {
-        body = body.push(installer_card(row, page.busy, page.runner_id));
+        body = body.push(installer_card(
+            row,
+            page.busy,
+            page.runner_id,
+            page.running.as_ref(),
+        ));
     }
 
     // The gutter the other five views already carry (UX-10): without it this
@@ -629,13 +715,62 @@ pub fn view<'a>(page: InstallersView<'a>) -> Element<'a, Message> {
         .into()
 }
 
-/// One installer card: name and category badge, the subtitle, and Install.
-fn installer_card<'a>(row: &'a InstallerRow, busy: bool, runner_id: &str) -> Element<'a, Message> {
+/// One installer card: name and category badge, the subtitle, and the button.
+///
+/// The button is Install — disabled while `busy`, as `enabled: !backend.busy`
+/// (`InstallersPage.qml:125`) has it — except on the card whose install is
+/// running or pending, where it is the port's Cancel (UX-27). `button::destructive`
+/// is the toolkit's spelling for a control that undoes work in flight.
+fn installer_card<'a>(
+    row: &'a InstallerRow,
+    busy: bool,
+    runner_id: &str,
+    running: Option<&RunningInstall>,
+) -> Element<'a, Message> {
     let heading = Row::new()
         .push(text::title4(row.name.clone()))
         .push(badge(card_category(&row.category)))
         .spacing(8)
         .align_y(Alignment::Center);
+
+    // The running card's Cancel — same wrapper story as the Install button
+    // below: the tooltip would take the accessible name with it, so
+    // `tooltipped_button` publishes it back, with `cancel_press`'s message as
+    // the activation an assistive technology sends.
+    let this_row = running.filter(|job| match job {
+        RunningInstall::Active { installer_id } => installer_id == &row.installer_id,
+        RunningInstall::Pending { installer_id, .. } => installer_id == &row.installer_id,
+    });
+    if let Some(job) = this_row {
+        let label = "Cancel";
+        let press = cancel_press(job);
+        return container(
+            Row::new()
+                .push(
+                    Column::new()
+                        .push(heading)
+                        .push(text::caption(row.subtitle.clone()))
+                        .spacing(2)
+                        .width(Length::Fill),
+                )
+                .push(a11y::tooltipped_button(
+                    cosmic::widget::tooltip(
+                        button::destructive(label).on_press(press.clone()),
+                        text::caption(cancel_tooltip(&row.name)),
+                        cosmic::widget::tooltip::Position::Bottom,
+                    ),
+                    label,
+                    Some(press),
+                ))
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .padding(12)
+        .style(card_style)
+        .into();
+    }
 
     let install = {
         // One binding for the label and the accessible name: the toolkit's text
@@ -825,6 +960,7 @@ mod tests {
             runner_id: "ge-proton",
             busy: false,
             progress: None,
+            running: None,
         })
     }
 
@@ -1219,7 +1355,7 @@ mod tests {
         let row = row("steam", "Steam");
 
         for (busy, clickable) in [(false, true), (true, false)] {
-            let mut element = installer_card(&row, busy, "");
+            let mut element = installer_card(&row, busy, "", None);
             let nodes = harness::published(&mut element);
             let install: Vec<&_> = nodes
                 .iter()
@@ -1304,6 +1440,116 @@ mod tests {
              `Button` with no `on_press` renders disabled, which is the \
              reference's `enabled: !backend.busy`"
         );
+    }
+
+    // ---- running_install / cancel_press (UX-27) ----------------------------
+
+    /// A `PendingInstall` fixture — the fields are the five the struct holds,
+    /// and only `installer_id` and the map key vary between the tests below.
+    fn pending(installer_id: &str, game_id: &str) -> crate::state::PendingInstall {
+        crate::state::PendingInstall {
+            installer_id: installer_id.to_string(),
+            installer_name: installer_id.to_string(),
+            prefix: std::path::PathBuf::from("/tmp/prefix"),
+            runner_id: "proton-ge".to_string(),
+            game_id: game_id.to_string(),
+        }
+    }
+
+    /// The running install reads as `Active`, the pending-exe install as
+    /// `Pending`, and an idle state as `None` — the three shapes the card's
+    /// button can be in.
+    #[test]
+    fn the_running_install_is_active_pending_or_none() {
+        let mut state = state();
+        assert_eq!(running_install(&state), None);
+
+        state.running_install = Some(pending("steam", "g-1"));
+        assert_eq!(
+            running_install(&state),
+            Some(RunningInstall::Active {
+                installer_id: "steam".to_string()
+            })
+        );
+
+        // The not-found handoff: the record moves from `running_install` into
+        // `easy_pending`, keyed by the game id (`bridge.py:888-889`).
+        state.running_install = None;
+        state
+            .easy_pending
+            .insert("g-1".to_string(), pending("steam", "g-1"));
+        assert_eq!(
+            running_install(&state),
+            Some(RunningInstall::Pending {
+                installer_id: "steam".to_string(),
+                token: "g-1".to_string(),
+            })
+        );
+    }
+
+    /// The two phases cancel through different messages and cannot be
+    /// swapped: `AbortEasyInstall` on a pending install would find no flag to
+    /// set, and `CancelEasyInstall` on a running one would leave the worker
+    /// alive while the page unlocked.
+    #[test]
+    fn the_cancel_press_names_the_message_its_phase_cancels_through() {
+        let active = RunningInstall::Active {
+            installer_id: "steam".to_string(),
+        };
+        assert!(
+            matches!(cancel_press(&active), Message::AbortEasyInstall),
+            "a running install's Cancel must abort the worker, got {:?}",
+            cancel_press(&active)
+        );
+
+        let pending = RunningInstall::Pending {
+            installer_id: "steam".to_string(),
+            token: "g-1".to_string(),
+        };
+        match cancel_press(&pending) {
+            Message::CancelEasyInstall(token) => {
+                assert_eq!(token, "g-1", "the pending record's key")
+            }
+            other => panic!("a pending install's Cancel is CancelEasyInstall, got {other:?}"),
+        }
+    }
+
+    /// The running card draws **Cancel** where its Install was, and a
+    /// neighbour's card still says Install (disabled — the press is checked
+    /// above, the label is what the tree can vouch for here).
+    #[test]
+    fn the_running_card_draws_cancel() {
+        let rows = [row("steam", "Steam"), row("epic", "Epic Games")];
+        let drawn = testkit::drawn_strings(view(InstallersView {
+            catalog: &rows,
+            search: "",
+            category: ALL_CATEGORIES,
+            categories: &installer_categories(),
+            runners: &[],
+            runner_id: "ge-proton",
+            busy: true,
+            progress: None,
+            running: Some(RunningInstall::Active {
+                installer_id: "steam".to_string(),
+            }),
+        }));
+        assert!(
+            drawn.iter().any(|text| text == "Cancel"),
+            "the running card's button did not become Cancel: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text == "Install"),
+            "the idle card's Install disappeared: {drawn:?}"
+        );
+    }
+
+    /// The Cancel tooltip's sentence names the installer and says the prefix
+    /// is kept — the two facts a user needs before pressing.
+    #[test]
+    fn the_cancel_tooltip_says_what_stops_and_what_is_kept() {
+        let tip = cancel_tooltip("Steam");
+        assert!(tip.contains("Steam"), "{tip:?}");
+        assert!(tip.contains("kept"), "{tip:?}");
     }
 
     // The half no test in this file can reach, stated rather than left implied:
@@ -1666,7 +1912,9 @@ mod tests {
             Message::EasyInstallWizardFinished {
                 found: None,
                 returncode: 0,
+                game_id: "g".to_string(),
             },
+            Message::AbortEasyInstall,
             Message::CompleteEasyInstall {
                 token: "t".to_string(),
                 path: None,
@@ -1973,6 +2221,7 @@ mod tests {
             runner_id: "system",
             busy: false,
             progress: None,
+            running: None,
         };
         // The identity claim is checked on the rows the page hands the view, and
         // *before* the view is built: `view` takes its argument by value now, so
@@ -2007,6 +2256,7 @@ mod tests {
             runner_id: "",
             busy: false,
             progress: None,
+            running: None,
         };
         let drawn = testkit::drawn_strings(view(page));
 
@@ -2052,6 +2302,7 @@ mod tests {
             runner_id: "",
             busy: false,
             progress: None,
+            running: None,
         });
         let mut expected: Element<'_, ()> = text::title3(EMPTY_TEXT).into();
         assert_eq!(

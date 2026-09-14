@@ -64,7 +64,7 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 47 | 45 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 27 | 21 `FIXED`, 3 `PARTIAL`, 2 `WITHDRAWN`, 1 `OPEN` |
+| `COSMIC-UX.md` | 30 | 29 | 22 `FIXED`, 4 `PARTIAL`, 2 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
@@ -136,8 +136,8 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 40 | 0 | 9 |
-| **Total** | **130** | **115** | **0** | **15** |
+| P3 | 49 | 41 | 0 | 8 |
+| **Total** | **130** | **116** | **0** | **14** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -146,8 +146,8 @@ advocate reviews every row before it is called done and owns no row.
 | `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 8 | 0 | 3 |
 | `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
-| `UX-xx` | `COSMIC-UX.md` | 29 | 23 | 0 | 6 |
-| **Total** | | **130** | **115** | **0** | **15** |
+| `UX-xx` | `COSMIC-UX.md` | 29 | 24 | 0 | 5 |
+| **Total** | | **130** | **116** | **0** | **14** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -344,7 +344,7 @@ across families, not within them.
 | `UX-24` | The app's only widget id is the library search box, so only that one field can ever be focused programmatically, and no dialog sets an initial focus | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | PARTIAL |
 | `UX-25` | No page bounds its content width, so at 2560 px and above the settings rows become "label … far-away control" pairs and the credits prose runs to an unreadably long measure | S2 | — | **Status: FIXED.** `view::MAX_CONTENT_WIDTH = 1100.0` + `view::bounded_body` (inner `max_width`, outer `center_x(Fill)` — the bound and the centring are two jobs) wrap the six content pages' bodies inside their scrollable. Library deliberately excluded — its grid's column count *is* the window width; bounding diverges from the reference's filling GridView. `the_content_pages_bound_and_centre_their_body_and_the_grid_does_not`: measured (Credits at 2560 — bound + centring each asserted) + scanned (six pages call it, library must not). Mutation: unwrapping Credits → 2512 px span, fails. | FIXED |
 | `UX-26` | Long names and subtitles are hard-cut mid-glyph with no ellipsis marker, where the reference elides | S2 | — | Same defect as `BUG-47`, filed in both documents; fix landed under `ff26a50`. `name_and_subtitle` applies `.wrapping(Wrapping::None).ellipsize(name_ellipsize())` (`End(Lines(1))` — a line count, the reference's `ElideRight` unit) to both lines; the width assertion exists with an anti-vacuity floor; `the_card_and_row_names_are_ellipsized_at_the_end` pins the strategy. The rendered `…` is unassertable — `Text::format` is private and `Operation::text` reports the pre-shaping fragment — recorded rather than papered over, as BUG-47's tail states. | PARTIAL |
-| `UX-27` | There is no indeterminate or loading indicator, and a running install cannot be cancelled from the UI | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `UX-27` | There is no indeterminate or loading indicator, and a running install cannot be cancelled from the UI | S2 | Cancel flags polled at transfer/phase boundaries, wizard killed via spawn+try_wait, `-1.0` sentinel mapped to `indeterminate_linear` through `view::progress_cue`, job-id/game_id stale-reply gates, Cancel on the running card and row — a port-only addition the reference does not have | Twelve new tests across core and app; three mutation checks (sink check, `game_id` gate, cue arm) each verified failing pre-fix | FIXED |
 | `UX-28` | The Plugins page has no empty-state branch, unlike the other three list pages | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
 | `UX-29` | A dead Option<()> field and a stale comment about theme inertness | S2 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | FIXED |
 | `UX-30` | A page body's scrollable does not put the page's own primary action within reach, and the page reports this as a layout failure twice | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |

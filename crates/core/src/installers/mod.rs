@@ -8,7 +8,8 @@
 //! * **The command half** — [`installer_argv`], [`build_installer_command`],
 //!   [`safe_download_name`], [`resolve_case_insensitive`], [`find_prefix_exe`],
 //!   the bounded fallback scan, [`prepare_prefix`], [`game_from_install`].
-//! * **The download and wizard halves** — [`download_installer`],
+//! * **The download and wizard halves** — [`download_installer`] (and its
+//!   [`download_installer_with`] cancellation spelling),
 //!   [`verify_installer_authenticity`], [`wineserver_binary`],
 //!   [`wait_for_prefix_idle`], [`wait_for_installer`].
 //!
@@ -23,7 +24,7 @@
 //!
 //! | Function | Production call site |
 //! |---|---|
-//! | [`download_installer`] | `crates/app/src/easy_install.rs`, in `easy_install_worker` |
+//! | [`download_installer_with`] | `crates/app/src/easy_install.rs`, in `easy_install_worker` |
 //! | [`wait_for_installer`] | `crates/app/src/easy_install.rs`, in `easy_install_worker` |
 //! | [`wait_for_prefix_idle`] | `crates/app/src/easy_install.rs`, in `easy_install_worker` |
 //! | [`verify_installer_authenticity`] | `crates/core/src/installers/download.rs`, in `download_into` |
@@ -632,6 +633,17 @@ pub enum InstallerError {
     /// that would have launched the installer, and folding the two together
     /// would put the wrong subsystem in the error.
     Io(std::io::Error),
+    /// `The download was cancelled`.
+    ///
+    /// The reference has no cancel — `cancelEasyInstall` answers only the
+    /// locate dialog's reject — so there is no sentence to port. This is what
+    /// [`download_installer_with`]'s `cancelled` predicate produces, and it
+    /// exists so an abort reads as an abort rather than as a network failure;
+    /// the app's worker suppresses it because the Cancel button's toast has
+    /// already spoken.
+    ///
+    /// [`download_installer_with`]: crate::installers::download::download_installer_with
+    Cancelled,
 }
 
 impl From<RunnerError> for InstallerError {
@@ -697,6 +709,7 @@ impl fmt::Display for InstallerError {
                     "{name}'s Authenticode signature could not be read\n{tail}"
                 )
             }
+            InstallerError::Cancelled => formatter.write_str("The download was cancelled"),
             InstallerError::CertificateReaderMissing => write!(
                 formatter,
                 "openssl is required to read a downloaded installer's signing certificates"

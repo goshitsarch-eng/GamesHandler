@@ -169,6 +169,43 @@ pub fn bounded_body<'a, M: 'static>(
         .into()
 }
 
+/// Which progress indicator a page draws — the UX-27 decision, shared so the
+/// two pages that carry a bar cannot disagree about it.
+///
+/// The reference's bar is `visible: busy && progress >= 0`, which leaves the
+/// phases with no byte fraction — extracting, the vendor wizard, the settle
+/// poll, the releases fetch — showing nothing at all, or a bar frozen at its
+/// last tick. The port's workers now send `-1.0` at those boundaries (the
+/// reference's own "nothing to show" sentinel), which
+/// `view::runners::progress_fraction` already filters to `None`: so `None`
+/// *while a job is running* is exactly "working, unmeasurable", and it draws
+/// [`cosmic::widget::progress_bar::indeterminate_linear`] rather than nothing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProgressCue {
+    /// No bar. Idle, or a job that has nothing to report yet and is not
+    /// expected to be long — the fetch path's callers pass `working` for it.
+    Hidden,
+    /// `determinate_linear(fraction)` — a byte-measurable phase is running.
+    Determinate(f32),
+    /// `indeterminate_linear()` — work is in flight with no fraction to show.
+    Indeterminate,
+}
+
+/// [`ProgressCue`] from the two inputs every caller already holds.
+///
+/// `fraction` is `progress_fraction`'s filtered answer — `Some` means a real
+/// measurement — and `working` is whatever the page's in-flight state is:
+/// `state.busy()` on the Installers page, `busy || releases_status == Loading`
+/// on Runners. A fraction wins over the indeterminate cue unconditionally:
+/// `Some` already implies `busy`, so the case split has no third truth.
+pub fn progress_cue(fraction: Option<f32>, working: bool) -> ProgressCue {
+    match fraction {
+        Some(fraction) => ProgressCue::Determinate(fraction),
+        None if working => ProgressCue::Indeterminate,
+        None => ProgressCue::Hidden,
+    }
+}
+
 /// The `Id` the game-removal prompt's **Cancel** button carries, and the control
 /// the arm that opens it moves the keyboard to — UX-24.
 ///
@@ -837,5 +874,35 @@ mod tests {
              takes columns away on a wide display, which the reference's \
              GridView does not do"
         );
+    }
+
+    /// UX-27: the three shapes a progress report can take, decided in one
+    /// place so the two pages that draw a bar cannot disagree.
+    ///
+    /// The cases that matter are the ambiguous ones: `None` while a job runs
+    /// is *work with no fraction* — the worker's `-1.0` marker, filtered by
+    /// `progress_fraction` — and must draw the indeterminate bar rather than
+    /// nothing (the finding) or a frozen bar (a last-tick replay). And a
+    /// fraction wins unconditionally, because `Some` already implies busy.
+    #[test]
+    fn the_cue_is_determinate_indeterminate_or_hidden() {
+        assert_eq!(
+            super::progress_cue(Some(0.4), true),
+            super::ProgressCue::Determinate(0.4)
+        );
+        // A stray fraction with no job still draws — the callers' `fraction`
+        // input is `progress_fraction`'s, which already returns `None` when
+        // nothing runs, so `Some` here is the worker's word and it is taken.
+        assert_eq!(
+            super::progress_cue(Some(0.4), false),
+            super::ProgressCue::Determinate(0.4)
+        );
+        assert_eq!(
+            super::progress_cue(None, true),
+            super::ProgressCue::Indeterminate,
+            "busy with no fraction must not render as *nothing* — that is the \
+             bug UX-27 exists to fix"
+        );
+        assert_eq!(super::progress_cue(None, false), super::ProgressCue::Hidden);
     }
 }

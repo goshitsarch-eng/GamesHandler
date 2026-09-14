@@ -1136,12 +1136,26 @@ pub fn validate_runner_download_url(url: &str) -> Result<(), RunnerError> {
 /// read that as "no progress reports yet", not as "zero percent". The final
 /// `1.0` is reported unconditionally, so a caller must tolerate a repeat of the
 /// value it just saw.
+///
+/// Two reports sit outside `0.0..=1.0`, both by the reference's own `-1.0`
+/// "nothing measurable" sentinel (`_set_progress(-1)`, `bridge.py`):
+///
+/// * `progress(-1.0)` fires **once**, when the transfer ends and the work that
+///   remains — extraction, validation, rename — has no byte count to report.
+///   Without it the bar sits at its last fraction for the whole extraction,
+///   which reads as stalled rather than working (UX-27).
+/// * `cancelled` is polled inside the transfer callbacks and between the
+///   phases after them; when it answers `true` the install returns
+///   [`RunnerError::Cancelled`] and the staging directory's `Drop` removes
+///   everything it staged. The predicate exists because the reference's own
+///   `progress_cb` cannot say "stop": it returns `()`.
 pub fn install(
     client: &dyn HttpClient,
     runners_directory: &Path,
     release: &ReleaseInfo,
     progress: &dyn Fn(f32),
     timeout: Duration,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<PathBuf, RunnerError> {
     install_with(
         client,
@@ -1150,6 +1164,7 @@ pub fn install(
         progress,
         timeout,
         MAX_RUNNER_ARCHIVE_BYTES,
+        cancelled,
     )
 }
 
@@ -1171,6 +1186,7 @@ pub fn install_with(
     progress: &dyn Fn(f32),
     timeout: Duration,
     download_cap: u64,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<PathBuf, RunnerError> {
     fs::create_dir_all(runners_directory)?;
 
@@ -1242,6 +1258,9 @@ pub fn install_with(
         &headers,
         timeout,
         &mut |head| {
+            if cancelled() {
+                return Err(RunnerError::Cancelled);
+            }
             let declared = parse_content_length(head.content_length.as_deref())?;
             if declared < 0 || declared as u64 > download_cap {
                 return Err(RunnerError::ArchiveTooLarge);
@@ -1254,6 +1273,12 @@ pub fn install_with(
             Ok(())
         },
         &mut |chunk| {
+            // Checked before the write so a cancel lands between chunks rather
+            // than after the whole body: the callback's `Err` is the only
+            // channel back into `client.get`, whose contract propagates it.
+            if cancelled() {
+                return Err(RunnerError::Cancelled);
+            }
             let seen = downloaded.get() + chunk.len() as u64;
             downloaded.set(seen);
             if seen > download_cap {
@@ -1269,10 +1294,24 @@ pub fn install_with(
         },
     )?;
 
+    // The byte-measurable phase ends here. What remains has no denominator,
+    // so the bar is told to stop claiming one — `-1.0` is the reference's own
+    // "nothing to show" sentinel (`_set_progress(-1)`, `bridge.py`), sent
+    // through the callback so a caller drawing a bar can switch to
+    // indeterminate rather than leaving the last fraction frozen (UX-27).
+    progress(-1.0);
+    if cancelled() {
+        return Err(RunnerError::Cancelled);
+    }
     crate::runners::archive::extract_archive(&archive, &extraction_root)?;
     let extracted = resolve_staged(&extraction_root)?;
     crate::runners::archive::validate_staged_runner(&extracted, &extraction_root)?;
     write_metadata(&extracted, release)?;
+    // The last point where an abort still publishes nothing: after this check
+    // the only step left is the rename that makes the build visible.
+    if cancelled() {
+        return Err(RunnerError::Cancelled);
+    }
     progress(1.0);
     rename_noreplace(&extracted, &target)?;
     Ok(target)
@@ -2740,6 +2779,7 @@ mod tests {
                 &a_release("GE-Proton9-5"),
                 &|fraction| seen.borrow_mut().push(fraction),
                 Duration::from_secs(5),
+                &|| false,
             )
             .unwrap();
 
@@ -2758,10 +2798,25 @@ mod tests {
                 .collect();
             assert!(leftovers.is_empty(), "staging left behind: {leftovers:?}");
 
-            // Progress ends at exactly 1.0, and every report is in range.
+            // Progress ends at exactly 1.0, and every report is in range —
+            // where "range" includes the `-1.0` phase marker the download's
+            // end sends (UX-27), the reference's own "nothing to show"
+            // sentinel and the only out-of-band value a report may carry.
             let reports = seen.into_inner();
             assert_eq!(reports.last().copied(), Some(1.0));
-            assert!(reports.iter().all(|value| (0.0..=1.0).contains(value)));
+            assert!(
+                reports
+                    .iter()
+                    .all(|value| (0.0..=1.0).contains(value) || *value == -1.0),
+                "a report that is neither a fraction nor the marker: {reports:?}"
+            );
+            // And the marker is *sent* — an install that left the last
+            // fraction frozen through extraction would pass the range check
+            // while never telling the bar to go indeterminate.
+            assert!(
+                reports.contains(&-1.0),
+                "the fractionless phase was never marked: {reports:?}"
+            );
         });
     }
 
@@ -2855,8 +2910,15 @@ mod tests {
             let mut subject = a_release("GE-Proton9-5");
             subject.download_url = "http://example.invalid/GE-Proton9-5.tar.gz".to_string();
 
-            let error =
-                install(&client, &runners, &subject, &|_| {}, Duration::from_secs(5)).unwrap_err();
+            let error = install(
+                &client,
+                &runners,
+                &subject,
+                &|_| {},
+                Duration::from_secs(5),
+                &|| false,
+            )
+            .unwrap_err();
 
             assert_eq!(
                 error.to_string(),
@@ -2885,6 +2947,7 @@ mod tests {
                 &a_release("GE-Proton9-5"),
                 &|_| {},
                 Duration::from_secs(5),
+                &|| false,
             )
             .unwrap();
             assert_eq!(client.calls(), 1);
@@ -2907,6 +2970,7 @@ mod tests {
                 &subject,
                 &|_| {},
                 Duration::from_secs(5),
+                &|| false,
             )
             .unwrap();
             let text =
@@ -2941,6 +3005,7 @@ mod tests {
                 &a_release("GE-Proton9-5"),
                 &|_| {},
                 Duration::from_secs(5),
+                &|| false,
             )
             .unwrap_err();
             assert_eq!(
@@ -2967,6 +3032,7 @@ mod tests {
                 &a_release("GE-Proton9-5"),
                 &|_| {},
                 Duration::from_secs(5),
+                &|| false,
             )
             .unwrap_err();
             assert!(matches!(error, RunnerError::AlreadyInstalled { .. }));
@@ -3007,6 +3073,7 @@ mod tests {
                 &|_| {},
                 Duration::from_secs(5),
                 100_000,
+                &|| false,
             )
             .unwrap_err();
             assert_eq!(
@@ -3049,12 +3116,109 @@ mod tests {
                 &|_| {},
                 Duration::from_secs(5),
                 100,
+                &|| false,
             )
             .unwrap_err();
             assert_eq!(
                 error.to_string(),
                 "Runner archive exceeds the download size limit"
             );
+            assert!(!runners.join("GE-Proton9-5").exists());
+        });
+    }
+
+    /// UX-27: a cancel that lands mid-stream stops the transfer at the next
+    /// chunk boundary, reports [`RunnerError::Cancelled`], and leaves nothing —
+    /// no target and no staging directory — behind.
+    ///
+    /// The flag is flipped by the *progress callback*, which `install_with`
+    /// calls only after a chunk is written: that is what makes the abort land
+    /// "between chunks" rather than at a point of the test's choosing. `Serve`
+    /// splits the body so the second `sink` call sees the flag the first
+    /// chunk's report set.
+    #[test]
+    fn a_cancel_mid_stream_stops_the_download_and_stages_nothing() {
+        in_scratch("proton-cancel-mid", |root| {
+            let runners = root.join("runners");
+            let tar = runner_tar("GE-Proton9-5", b"#!/bin/sh\n");
+            let client = Serve::new(tar).in_chunks(4);
+            let flag = std::sync::atomic::AtomicBool::new(false);
+            // Each progress call means a chunk was written — the count is how
+            // the test knows the abort landed *inside* the stream (at the
+            // second chunk's boundary) rather than at the post-transfer check,
+            // which would pass the Cancelled assertion while the whole body
+            // was kept.
+            let reports = std::cell::Cell::new(0usize);
+            let error = install_with(
+                &client,
+                &runners,
+                &a_small_release("GE-Proton9-5", 10),
+                &|fraction| {
+                    if fraction > 0.0 {
+                        reports.set(reports.get() + 1);
+                        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                },
+                Duration::from_secs(5),
+                100_000,
+                &|| flag.load(std::sync::atomic::Ordering::SeqCst),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, RunnerError::Cancelled),
+                "a mid-stream cancel must surface as Cancelled, not {error:?}"
+            );
+            assert_eq!(
+                reports.get(),
+                1,
+                "the transfer was not interrupted at a chunk boundary — the \
+                 whole body was written before the cancel was read"
+            );
+            assert!(!runners.join("GE-Proton9-5").exists());
+            assert!(
+                !is_installed(&runners, "GE-Proton9-5", Some("proton-ge")),
+                "a cancelled install must not read as installed"
+            );
+            // `StagingDirectory`'s `Drop` is the cleanup, so the assertion is
+            // about the directory it would have left — the same check the
+            // happy-path test makes.
+            let leftovers: Vec<String> = fs::read_dir(&runners)
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            assert!(leftovers.is_empty(), "staging left behind: {leftovers:?}");
+        });
+    }
+
+    /// UX-27: a flag that is already set when the request begins is refused at
+    /// `on_head` — before a byte of the body is kept.
+    ///
+    /// `Serve` only reaches its `sink` once `on_head` returns `Ok`, so the body
+    /// never arriving *is* the assertion — there is no `delivered` counter here
+    /// because the head refusal makes one unobservable-by-construction.
+    #[test]
+    fn a_cancel_before_the_first_byte_refuses_at_the_head() {
+        in_scratch("proton-cancel-head", |root| {
+            let runners = root.join("runners");
+            let client = Serve::new(runner_tar("GE-Proton9-5", b"x"));
+            let error = install_with(
+                &client,
+                &runners,
+                &a_small_release("GE-Proton9-5", 10),
+                &|_| {},
+                Duration::from_secs(5),
+                100_000,
+                &|| true,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, RunnerError::Cancelled),
+                "expected Cancelled, got {error:?}"
+            );
+            // The request was entered — the refusal came from the callback,
+            // not from a caller that never asked.
+            assert_eq!(client.calls(), 1);
             assert!(!runners.join("GE-Proton9-5").exists());
         });
     }
@@ -3077,6 +3241,7 @@ mod tests {
                     &|_| {},
                     Duration::from_secs(5),
                     100,
+                    &|| false,
                 )
                 .unwrap_err();
                 assert_eq!(

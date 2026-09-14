@@ -229,6 +229,13 @@ pub type IdleWait<'a> =
 /// `idle` is [`wait_for_prefix_idle`] in production and a stub in the tests —
 /// the parameter exists because the reference's suite monkey-patches that name
 /// (`tests/test_installers.py:462`), and there is no monkey-patching in Rust.
+///
+/// `cancelled` is the same kind of seam for a caller with a Cancel button
+/// (UX-27): it is polled at the top of every pass — so the worst wait after an
+/// abort is one [`INSTALL_POLL_SECONDS`] slice plus the slice's own `idle`
+/// call — and answering `true` returns `None`. A cancel and a timeout share
+/// the `None` deliberately: the caller that set the flag knows which one it
+/// was, and no consumer of this result should treat them differently.
 pub fn wait_for_installer(
     runner: &dyn Runner,
     env: &std::collections::BTreeMap<String, String>,
@@ -236,12 +243,19 @@ pub fn wait_for_installer(
     expected: &[&str],
     clock: &dyn InstallClock,
     idle: IdleWait<'_>,
+    cancelled: &dyn Fn() -> bool,
 ) -> Option<PathBuf> {
+    if cancelled() {
+        return None;
+    }
     clock.sleep(INSTALL_HANDOFF_SECONDS);
     let started = clock.now();
     let mut busy_wait = 0.0f64;
     let mut deadline = started + INSTALL_SETTLE_TIMEOUT_SECONDS;
     loop {
+        if cancelled() {
+            return None;
+        }
         if let Some(found) = find_prefix_exe(prefix, expected) {
             return Some(found);
         }
@@ -355,6 +369,7 @@ mod tests {
             installer_by_id("steam").unwrap().expected_exe,
             &clock,
             &idle,
+            &|| false,
         );
         PollRun {
             found,
@@ -389,6 +404,63 @@ mod tests {
         let run = drive_poll(prefix.path(), 0.0, None);
         assert!(run.found.is_none());
         assert!(run.elapsed < 60.0 * 60.0, "the wizard window is bounded");
+    }
+
+    /// UX-27: a flag already set returns `None` before even the handoff sleep
+    /// runs — the cheapest of the poll's three cancel points.
+    ///
+    /// `unreachable!` on the idle wait is the other half of the assertion:
+    /// a poll that cancelled *and then* waited on wineserver would fail loud,
+    /// not just late.
+    #[test]
+    fn a_cancelled_poll_returns_before_the_handoff() {
+        let prefix = empty_prefix("poll-cancel");
+        let clock = VirtualClock::default();
+        let found = wait_for_installer(
+            &wine(),
+            &std::collections::BTreeMap::new(),
+            prefix.path(),
+            installer_by_id("steam").unwrap().expected_exe,
+            &clock,
+            &|_, _, _| unreachable!("a cancelled poll never waits on wineserver"),
+            &|| true,
+        );
+        assert!(found.is_none());
+        assert_eq!(clock.now.get(), 0.0, "the handoff sleep ran anyway");
+    }
+
+    /// UX-27: a flag that flips while the poll is running ends it at the next
+    /// loop boundary — `None`, the same answer the deadline gives, just early.
+    ///
+    /// The flag is flipped inside the idle stub so the cancel lands at a real
+    /// mid-loop moment rather than at a point of the test's choosing, and the
+    /// elapsed bound is what separates "stopped early" from "ran out".
+    #[test]
+    fn a_cancel_during_the_poll_ends_it_at_the_next_boundary() {
+        let prefix = empty_prefix("poll-cancel-mid");
+        let clock = VirtualClock::default();
+        let flag = std::cell::Cell::new(false);
+        let idle = |_runner: &dyn Runner,
+                    _env: &std::collections::BTreeMap<String, String>,
+                    _timeout: u64| {
+            flag.set(true);
+            false
+        };
+        let found = wait_for_installer(
+            &wine(),
+            &std::collections::BTreeMap::new(),
+            prefix.path(),
+            installer_by_id("steam").unwrap().expected_exe,
+            &clock,
+            &idle,
+            &|| flag.get(),
+        );
+        assert!(found.is_none(), "a cancelled poll reports no executable");
+        assert!(
+            clock.now.get() < INSTALL_SETTLE_TIMEOUT_SECONDS,
+            "the poll ran to the deadline after being cancelled: {}",
+            clock.now.get()
+        );
     }
 
     /// `test_a_wineserver_that_really_waited_shortens_the_window` (`:480-483`)

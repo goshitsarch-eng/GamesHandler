@@ -183,6 +183,27 @@ pub struct PendingInstall {
     pub game_id: GameId,
 }
 
+/// The runner download currently in flight — [`State::runner_install`]'s
+/// record.
+///
+/// `id` is what tells this job's replies from a predecessor's: a download the
+/// user cancelled keeps running until its next chunk boundary and can still
+/// finish — or fail — after [`State::runner_busy`] has been cleared and a new
+/// download started, and its `RunnerInstallFinished` must not clear the newer
+/// job's guard. The tag alone cannot be the key, because nothing stops the
+/// user cancelling a tag and then installing that same tag again.
+#[derive(Clone, Debug)]
+pub struct RunnerInstall {
+    /// The job number, issued from [`State::runner_install_seq`].
+    pub id: u64,
+    /// The release tag being installed — the Cancel button and the abort
+    /// toast both name it.
+    pub tag: String,
+    /// The flag [`crate::Message::AbortRunnerInstall`] sets and the worker's
+    /// `cancelled` predicate polls.
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
 /// A runner removal waiting for the user to confirm it.
 ///
 /// The reference's `page.pendingRemove` (`RunnersPage.qml:15`) is the installed
@@ -1004,11 +1025,33 @@ pub struct State {
     /// dropped. Same shape as [`Self::form_cover_token`], and for the same
     /// reason: a reply describing an older world must not overwrite a newer.
     pub runner_rows_token: u64,
-    /// was `_runner_busy`. A guard, not a cancel handle: the download is not
-    /// interrupted, it is merely not started twice.
+    /// was `_runner_busy`. The guard half: while it is set a second download
+    /// is refused, which is all the reference's flag does. The *cancel* half
+    /// is [`Self::runner_install`] — this port's addition (UX-27), since the
+    /// reference offers no way to stop the download it started.
     pub runner_busy: bool,
+    /// The in-flight runner download, or `None`. Written and cleared beside
+    /// [`Self::runner_busy`]: the bool is the guard the reference has, and this
+    /// is the record the Cancel button needs — the tag to name and the flag to
+    /// set.
+    pub runner_install: Option<RunnerInstall>,
+    /// The id the next [`RunnerInstall`] gets. Bumped once per `InstallRunner`,
+    /// echoed on the matching `RunnerInstallFinished`, so a cancelled job's
+    /// late reply cannot clear a successor's guard.
+    pub runner_install_seq: u64,
     /// was `_easy_busy`. The same guard for the easy-install path.
     pub easy_busy: bool,
+    /// The in-flight easy install's abort switch — this port's addition
+    /// (UX-27); the reference's only cancel answers the locate dialog.
+    ///
+    /// `Some` exactly while [`Self::running_install`] is: the two are written
+    /// together in `start_easy_install` and cleared together everywhere the
+    /// install resolves. The `Arc` is shared with the worker thread, which
+    /// polls it inside the download and between the wizard phases;
+    /// [`crate::Message::AbortEasyInstall`] sets it and clears the guards at
+    /// once, so the page stops waiting on the press rather than on the next
+    /// chunk boundary.
+    pub easy_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// was `_pending_installs`, keyed by the token that identifies the
     /// interrupted install.
     pub easy_pending: BTreeMap<String, PendingInstall>,
@@ -1101,7 +1144,10 @@ impl State {
             release_rows: Vec::new(),
             runner_rows_token: 0,
             runner_busy: false,
+            runner_install: None,
+            runner_install_seq: 0,
             easy_busy: false,
+            easy_cancel: None,
             easy_pending: BTreeMap::new(),
             progress: None,
             toasts: Toasts::new(Message::DismissToast),

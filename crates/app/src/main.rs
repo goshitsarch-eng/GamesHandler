@@ -44,9 +44,9 @@ mod easy_install;
 // caller in this file: an arm of `Shell::update`, or a test that asserts the
 // arm does what it says.
 use easy_install::{
-    cancel_easy_install, complete_easy_install, cover_choice_message, cover_lookup,
-    easy_install_wizard_finished, exe_choice_message, exe_file_filters, image_file_filters,
-    installed_play_message, start_easy_install,
+    abort_easy_install, cancel_easy_install, complete_easy_install, cover_choice_message,
+    cover_lookup, easy_install_wizard_finished, exe_choice_message, exe_file_filters,
+    image_file_filters, installed_play_message, start_easy_install,
 };
 // The CLI and startup path (ARCH-11). `main` below is the only thing this
 // file keeps from that seam, because it is the binary's entry point.
@@ -446,7 +446,18 @@ pub enum Message {
     /// Download and install a release. `installRelease()`; guarded by
     /// `runner_busy`.
     InstallRunner { tag: String },
+    /// Stop the release download that is running. **A port addition** — the
+    /// reference has no cancel for a download in flight (UX-27): this sets the
+    /// flag [`State::runner_install`] holds and clears the guards at once, and
+    /// the worker turns the flag into `RunnerError::Cancelled` at the next
+    /// chunk boundary.
+    AbortRunnerInstall,
     /// A download fraction, in `0.0..=1.0`. `_progress_cb`.
+    ///
+    /// `-1.0` is sent too, once per install, when the transfer ends and the
+    /// unmeasurable phases begin — the reference's own "nothing to show"
+    /// sentinel reaching the page through the same channel (`install`'s
+    /// `progress` contract says why).
     RunnerProgress(f32),
     /// The install finished.
     ///
@@ -456,7 +467,13 @@ pub enum Message {
     /// {release.tag}: {message}" (`:767`). A `Result<String, String>` could
     /// carry it on one arm only, and the failure line would then read "Failed
     /// to install: …" — a sentence the reference never renders.
+    ///
+    /// `id` is [`State::runner_install_seq`]'s issue, echoed back so a
+    /// cancelled job's late reply cannot clear the guard a successor holds —
+    /// the tag cannot be the key because the same tag can be cancelled and
+    /// then installed again (UX-27).
     RunnerInstallFinished {
+        id: u64,
         tag: String,
         result: Result<(), String>,
     },
@@ -517,7 +534,9 @@ pub enum Message {
         installer_id: String,
         runner_id: String,
     },
-    /// The install's progress fraction.
+    /// The install's progress fraction — `0.0..=1.0` while bytes are moving,
+    /// and `-1.0` once, when the download ends and the unmeasurable phases
+    /// begin (UX-27; the reference's own "nothing to show" sentinel).
     EasyInstallProgress(f32),
     /// The installer process ended.
     ///
@@ -525,10 +544,21 @@ pub enum Message {
     /// install can finish. `None` means it was not, so a
     /// [`PendingInstall`] is stored and the file picker opens — the
     /// `easyInstallNeedsExe` signal (`bridge.py:886-895`).
+    ///
+    /// `game_id` is the running install's own id echoed back, so a cancelled
+    /// predecessor's late reply is dropped instead of resolving the install
+    /// that replaced it (UX-27).
     EasyInstallWizardFinished {
         found: Option<PathBuf>,
         returncode: i32,
+        game_id: String,
     },
+    /// Stop the install that is running. **A port addition** (UX-27): the
+    /// reference's `cancelEasyInstall` answers only the locate dialog's
+    /// reject, after the worker has exited — this sets the flag the still-live
+    /// worker polls and clears the guards on the press. The pending-install
+    /// cancel keeps its own variant: [`Message::CancelEasyInstall`].
+    AbortEasyInstall,
     /// The user picked the executable the installer would not reveal.
     ///
     /// `path` of `None` or empty means they cancelled, which takes the
@@ -549,9 +579,11 @@ pub enum Message {
     /// clearing the guard, and a page stuck `busy` forever is the exact failure
     /// `view::installers`' header warns an arm must not have.
     ///
-    /// It carries only the error text: the installer's name is in
-    /// [`State::running_install`], which is the record this message consumes.
-    EasyInstallFailed { message: String },
+    /// It carries the error text and the run's `game_id`: the name is read
+    /// from [`State::running_install`], and the id is the gate that drops a
+    /// cancelled predecessor's late report without clearing the guard a newer
+    /// install holds (UX-27).
+    EasyInstallFailed { game_id: String, message: String },
     /// The install produced a game. The `gameInstalled` signal.
     EasyInstallFinished { game_id: GameId, message: String },
     /// The EasyInstall toast's Play action, which dismisses the toast and then
@@ -1320,6 +1352,9 @@ impl Shell {
                     runner_id: &self.state.installer_runner,
                     busy: view::installers::installing(&self.state),
                     progress: view::installers::progress_fraction(&self.state),
+                    // The running or pending install, for the card whose
+                    // Install becomes Cancel (UX-27).
+                    running: view::installers::running_install(&self.state),
                 };
                 view::installers::view(page)
             }
@@ -1333,7 +1368,16 @@ impl Shell {
                     selected_family: &self.state.releases_family,
                     status: &self.state.releases_status,
                     releases: &self.state.release_rows,
-                    progress: self.state.progress,
+                    // `progress_fraction`, not the raw field: the `-1.0` phase
+                    // marker the download now sends would otherwise reach the
+                    // bar as a literal fraction (UX-27).
+                    busy: self.state.busy(),
+                    installing: self
+                        .state
+                        .runner_install
+                        .as_ref()
+                        .map(|job| job.tag.as_str()),
+                    progress: view::runners::progress_fraction(&self.state),
                 };
                 view::runners::view(page)
             }
@@ -2387,6 +2431,7 @@ impl Shell {
             message @ (Message::FetchReleases { .. }
             | Message::ReleasesFetchFinished { .. }
             | Message::InstallRunner { .. }
+            | Message::AbortRunnerInstall
             | Message::RunnerProgress(_)
             | Message::RunnerInstallFinished { .. }
             | Message::ConfirmRemoveRunner { .. }
@@ -2436,8 +2481,23 @@ impl Shell {
             }
             // `done(result)` (`bridge.py:874-895`): the found branch finishes the
             // install, the other stores it and asks for an executable.
-            Message::EasyInstallWizardFinished { found, returncode } => {
-                return easy_install_wizard_finished(&mut self.state, found.as_deref(), returncode);
+            Message::EasyInstallWizardFinished {
+                found,
+                returncode,
+                game_id,
+            } => {
+                return easy_install_wizard_finished(
+                    &mut self.state,
+                    found.as_deref(),
+                    returncode,
+                    &game_id,
+                );
+            }
+            // The running card's Cancel (UX-27) — `abort_easy_install` has the
+            // two halves of it, and the port-only divergence is documented on
+            // the variant.
+            Message::AbortEasyInstall => {
+                return abort_easy_install(&mut self.state);
             }
             // `completeEasyInstall` (`bridge.py:921-936`): `as_local_path` of
             // nothing is the cancel path, which is why that check comes first.
@@ -2506,7 +2566,19 @@ impl Shell {
             // `fail(message)` (`bridge.py:896-900`): clear the guard, reset the
             // bar, and say why — in that order, because a notice over a page
             // that is still disabled reads as a second install being possible.
-            Message::EasyInstallFailed { message } => {
+            Message::EasyInstallFailed { game_id, message } => {
+                // The `game_id` gate (UX-27): a reply that names no live record
+                // is an aborted run's late report — dropped, because the abort
+                // has already spoken and a newer install's guard must not be
+                // cleared by a predecessor's failure.
+                let matches = self
+                    .state
+                    .running_install
+                    .as_ref()
+                    .is_some_and(|record| record.game_id == game_id);
+                if !matches {
+                    return cosmic::app::Task::none();
+                }
                 let name = self
                     .state
                     .running_install
@@ -2514,11 +2586,13 @@ impl Shell {
                     .map(|record| record.installer_name);
                 self.state.easy_busy = false;
                 self.state.progress = None;
+                self.state.easy_cancel = None;
                 let text = match name {
                     Some(name) => format!("Could not install {name}: {message}"),
                     // Unreachable from the worker, which only runs while a
-                    // record exists. Reported without a name rather than
-                    // dropped, because a failure nobody sees is worse.
+                    // record exists — and the gate above is what proves it.
+                    // Reported without a name rather than dropped, because a
+                    // failure nobody sees is worse.
                     None => message.clone(),
                 };
                 return self.state.toast_task(text);
@@ -4316,9 +4390,11 @@ mod tests {
                         }),
         Message::RunnerProgress(_) => ("RunnerProgress", Message::RunnerProgress(0.5)),
         Message::RunnerInstallFinished { .. } => ("RunnerInstallFinished", Message::RunnerInstallFinished {
+                            id: 1,
                             tag: "v1.0".to_string(),
                             result: Ok(()),
                         }),
+        Message::AbortRunnerInstall => ("AbortRunnerInstall", Message::AbortRunnerInstall),
         Message::ConfirmRemoveRunner { .. } => ("ConfirmRemoveRunner", Message::ConfirmRemoveRunner {
                             runner_id: "v1.0".to_string(),
                             name: "GE-Proton".to_string(),
@@ -4356,7 +4432,9 @@ mod tests {
         Message::EasyInstallWizardFinished { .. } => ("EasyInstallWizardFinished", Message::EasyInstallWizardFinished {
                             found: Some(PathBuf::from("/tmp/g.exe")),
                             returncode: 0,
+                            game_id: "install-fixture".to_string(),
                         }),
+        Message::AbortEasyInstall => ("AbortEasyInstall", Message::AbortEasyInstall),
         Message::CompleteEasyInstall { .. } => ("CompleteEasyInstall", Message::CompleteEasyInstall {
                             token: "t".to_string(),
                             path: Some("/tmp/g.exe".to_string()),
@@ -4372,6 +4450,7 @@ mod tests {
         // named an installer's *own* name would be a second source for a fact
         // that has one. The text here is what `_async`'s `fail` passes through.
         Message::EasyInstallFailed { .. } => ("EasyInstallFailed", Message::EasyInstallFailed {
+                            game_id: "install-fixture".to_string(),
                             message: "the download failed".to_string(),
                         }),
         Message::RefreshPlugins => ("RefreshPlugins", Message::RefreshPlugins),
@@ -4471,12 +4550,27 @@ mod tests {
         // from both the default and the sample for the change to be visible.
         shell.state.search_text = "portal".to_string();
         shell.state.category_filter = "Puzzle".to_string();
-        // The Runners page's two guards need something to accept, or a working
-        // arm is reported here as unwritten: `ReleasesFetchFinished` is dropped
-        // unless the reply's family is the current one, and `InstallRunner`
-        // unless the tag is in the list the page is showing.
+        // The Runners page's fetch guard needs something to accept, or a
+        // working arm is reported here as unwritten: `ReleasesFetchFinished` is
+        // dropped unless the reply's family is the current one.
         shell.state.releases_family = "proton-ge".to_string();
         shell.state.releases = vec![ReleaseInfo::new("v1.0", "GE-Proton", "https://x/y", 1)];
+        // A runner install in flight — the state `AbortRunnerInstall` exists
+        // to clear, so the arm is observed acting rather than excluded as
+        // unobservable. `runner_busy` goes with it because the two are one
+        // job's two halves (`runner.rs`'s `InstallRunner` arm sets them
+        // together), and it costs `InstallRunner` its accepted branch: the
+        // sample is now measured at refusal, the same trade `StartEasyInstall`
+        // makes two paragraphs down — the alternative fixture, no job held,
+        // would measure this arm as inert instead.
+        shell.state.runner_busy = true;
+        shell.state.runner_install = Some(crate::state::RunnerInstall {
+            // `RunnerInstallFinished`'s sample carries this id, so the reply's
+            // stale-check passes and the arm is measured on its real path.
+            id: 1,
+            tag: "v1.0".to_string(),
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
         // The plugin rows are emptied for the same reason and by the same rule:
         // `Shell::new` primes them, so a fixture that left them alone would make
         // `RefreshPlugins` a write of what is already there and hide a working
@@ -4523,6 +4617,15 @@ mod tests {
             runner_id: "proton-ge".to_string(),
             game_id: "install-fixture".to_string(),
         });
+        // The flag `start_easy_install` writes with the record above, and the
+        // thing `AbortEasyInstall` exists to set — held so that arm is observed
+        // acting rather than excluded. The wizard and failure replies' samples
+        // carry `"install-fixture"` for the same reason: the arms now gate on
+        // the reply's `game_id` being this record's, and a sample naming any
+        // other id would measure the stale-reply return, not the arm.
+        shell.state.easy_cancel = Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            false,
+        )));
         // Keyed by the token `CompleteEasyInstall`'s sample uses.
         shell.state.easy_pending.insert(
             "t".to_string(),
@@ -4688,16 +4791,19 @@ mod tests {
             // Remove button — which now asks first, so the dialog's two halves
             // are here too.
             //
-            // `ReleasesFetchFinished` and `InstallRunner` are in the fixture's
-            // reach only because `shell_with_work_to_do` now holds a release
-            // list and a `releases_family` — without them the first is dropped
-            // by the staleness guard and the second by the tag lookup, both
-            // correctly, and both would be reported here as unwritten arms.
+            // `ReleasesFetchFinished` is in the fixture's reach only because
+            // `shell_with_work_to_do` now holds a release list and a
+            // `releases_family` — without them it is dropped by the staleness
+            // guard, correctly, and would be reported here as an unwritten arm.
+            // `InstallRunner` is *absent* for the mirror-image reason: the
+            // fixture holds a running job so `AbortRunnerInstall` is observed,
+            // and the busy guard refuses the sample before it can write
+            // anything — measured at refusal, like `StartEasyInstall`.
             "FetchReleases",
             "ReleasesFetchFinished",
-            "InstallRunner",
             "RunnerProgress",
             "RunnerInstallFinished",
+            "AbortRunnerInstall",
             "ConfirmRemoveRunner",
             "RemoveRunnerConfirmed",
             "UninstallRunner",
@@ -4819,6 +4925,7 @@ mod tests {
             "StartEasyInstall",
             "EasyInstallProgress",
             "EasyInstallWizardFinished",
+            "AbortEasyInstall",
             "CompleteEasyInstall",
             "CancelEasyInstall",
             "EasyInstallFailed",
@@ -5099,7 +5206,14 @@ mod tests {
         shell.state.easy_busy = false;
         shell.state.progress = None;
         shell.state.running_install = None;
+        shell.state.easy_cancel = None;
         shell.state.easy_pending.clear();
+        // The runner job the fixture holds for `AbortRunnerInstall` — a shell
+        // being set to "before the Install press" has no download in flight
+        // either, and `busy()` would otherwise read `runner_busy` for every
+        // test below.
+        shell.state.runner_busy = false;
+        shell.state.runner_install = None;
         shell
     }
 
@@ -5248,6 +5362,7 @@ mod tests {
                 Message::EasyInstallWizardFinished {
                     found: None,
                     returncode,
+                    game_id: "install-1".to_string(),
                 },
             );
 
@@ -5306,6 +5421,7 @@ mod tests {
             Message::EasyInstallWizardFinished {
                 found: None,
                 returncode: 0,
+                game_id: "install-1".to_string(),
             },
         );
 
@@ -5498,6 +5614,7 @@ mod tests {
             Message::EasyInstallWizardFinished {
                 found: Some(exe.clone()),
                 returncode: 0,
+                game_id: "install-3".to_string(),
             },
         );
 
@@ -5762,6 +5879,7 @@ mod tests {
         let effect = observe(
             &mut shell,
             Message::EasyInstallFailed {
+                game_id: "install-7".to_string(),
                 message: "the download failed".to_string(),
             },
         );
@@ -5779,6 +5897,101 @@ mod tests {
             "the guard or the bar outlived the failure, so the page cannot be \
              used to try again"
         );
+    }
+
+    /// UX-27: the card's Cancel sets the flag the worker polls and frees the
+    /// page at once — the abort is not left waiting on the next chunk boundary
+    /// for the UI to admit it happened. The prefix is kept and the toast says
+    /// so, which is the difference between a cancel and a deletion.
+    #[test]
+    fn an_aborted_install_sets_the_flag_and_frees_the_page_at_once() {
+        let prefix = install_prefix("aborted");
+        let mut shell = shell_for_installs();
+        shell.state.easy_busy = true;
+        shell.state.progress = Some(0.3);
+        shell.state.running_install = Some(install_record(&prefix, "install-8"));
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        shell.state.easy_cancel = Some(flag.clone());
+
+        let effect = observe(&mut shell, Message::AbortEasyInstall);
+
+        assert!(
+            flag.load(std::sync::atomic::Ordering::SeqCst),
+            "the worker's flag was never set"
+        );
+        assert!(
+            !shell.state.easy_busy
+                && shell.state.progress.is_none()
+                && shell.state.running_install.is_none()
+                && shell.state.easy_cancel.is_none(),
+            "the install's state outlived the abort"
+        );
+        assert!(
+            effect.task_units > 0,
+            "a cancel that says nothing reads as a cancel that did nothing"
+        );
+        assert!(
+            format!("{:?}", shell.state.toasts).contains("Cancelled the Steam install"),
+            "the kept-prefix notice is the reference's sentence's shape; \
+             toasts: {:?}",
+            shell.state.toasts
+        );
+    }
+
+    /// UX-27: a Cancel pressed with no worker polling is a no-op — the install
+    /// either ended on its own or is waiting on the exe picker, whose Cancel
+    /// is `CancelEasyInstall`, not this one.
+    #[test]
+    fn an_abort_with_no_worker_is_inert() {
+        let mut shell = shell_for_installs();
+        let effect = observe(&mut shell, Message::AbortEasyInstall);
+        assert_eq!(
+            effect.task_units, 0,
+            "a nothing-to-abort press produced work"
+        );
+    }
+
+    /// UX-27: a terminal reply whose `game_id` is not the running install's is
+    /// a cancelled predecessor's late report — it must not clear the guard a
+    /// newer install is holding. Both gates are pinned, because they protect
+    /// different fields: the wizard reply resolves `found` against the record,
+    /// and the failure reply clears the busy guard.
+    #[test]
+    fn a_stale_easy_install_reply_cannot_clear_the_newer_install() {
+        let prefix = install_prefix("stale");
+        for message in [
+            Message::EasyInstallWizardFinished {
+                found: Some(PathBuf::from("/tmp/old.exe")),
+                returncode: 0,
+                game_id: "install-old".to_string(),
+            },
+            Message::EasyInstallFailed {
+                game_id: "install-old".to_string(),
+                message: "predecessor's failure".to_string(),
+            },
+        ] {
+            let mut shell = shell_for_installs();
+            shell.state.easy_busy = true;
+            shell.state.progress = Some(0.3);
+            shell.state.running_install = Some(install_record(&prefix, "install-new"));
+            shell.state.easy_cancel = Some(std::sync::Arc::new(
+                std::sync::atomic::AtomicBool::new(false),
+            ));
+
+            let effect = observe(&mut shell, message.clone());
+
+            assert_eq!(
+                effect.task_units, 0,
+                "a stale reply produced work: {message:?}"
+            );
+            assert!(
+                shell.state.easy_busy
+                    && shell.state.running_install.is_some()
+                    && shell.state.easy_cancel.is_some(),
+                "the predecessor's late reply touched the running install's \
+                 state: {message:?}"
+            );
+        }
     }
 
     /// **The Library page's body is the Library page, and it is not the

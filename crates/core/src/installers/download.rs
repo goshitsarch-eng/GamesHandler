@@ -1058,13 +1058,49 @@ pub fn download_installer(
     client: &dyn HttpClient,
     launch_env: &dyn LaunchEnv,
 ) -> Result<PathBuf, InstallerError> {
+    download_installer_with(
+        installer,
+        dest_dir,
+        progress,
+        timeout,
+        client,
+        launch_env,
+        &|| false,
+    )
+}
+
+/// [`download_installer`] with a cancellation predicate.
+///
+/// `cancelled` is polled inside both transfer callbacks and again after the
+/// body lands but before shape or signature checks run, so an abort stops the
+/// transfer mid-stream and never pays a verifier run for a download the user
+/// already walked away from. A `true` answer returns
+/// [`InstallerError::Cancelled`] through the same refusal cell the origin and
+/// size checks use, and the `.part` file is removed by
+/// [`download_installer`]'s existing error path — the half-written download is
+/// never renamed over the target.
+///
+/// The `_with` split is this codebase's own shape (`install`/`install_with`,
+/// `extract_archive`/`extract_archive_with`): the reference has no cancel, so
+/// the parameter-free spelling stays the port-shaped default and only callers
+/// with a button to answer carry the predicate.
+#[allow(clippy::too_many_arguments)]
+pub fn download_installer_with(
+    installer: &Installer,
+    dest_dir: &Path,
+    progress: Option<&dyn Fn(f64)>,
+    timeout: Duration,
+    client: &dyn HttpClient,
+    launch_env: &dyn LaunchEnv,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<PathBuf, InstallerError> {
     std::fs::create_dir_all(dest_dir)?;
     let filename = safe_download_name(installer.filename, installer.id);
     let target = dest_dir.join(&filename);
     let (file, temporary) = create_partial(dest_dir, &filename)?;
 
     let result = download_into(
-        installer, &temporary, file, progress, timeout, client, launch_env,
+        installer, &temporary, file, progress, timeout, client, launch_env, cancelled,
     );
     if let Err(error) = result {
         let _ = std::fs::remove_file(&temporary);
@@ -1121,6 +1157,7 @@ fn download_into(
     timeout: Duration,
     client: &dyn HttpClient,
     launch_env: &dyn LaunchEnv,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<(), InstallerError> {
     use std::cell::{Cell, RefCell};
     use std::io::Write;
@@ -1135,6 +1172,14 @@ fn download_into(
         &headers,
         timeout,
         &mut |head: &ResponseHead| {
+            // Checked first: a cancel that lands before the first byte is the
+            // cheapest refusal there is, ahead of even the origin check.
+            if cancelled() {
+                let reason = InstallerError::Cancelled;
+                let stopping = abandon(&reason);
+                refusal.replace(Some(reason));
+                return Err(stopping);
+            }
             // Before a byte is kept: a redirect to a host the recipe never
             // approved costs nothing at all rather than the whole body.
             if let Err(reason) = validate_download_origin(installer, &head.final_url) {
@@ -1154,6 +1199,14 @@ fn download_into(
             Ok(())
         },
         &mut |chunk: &[u8]| {
+            // Per chunk rather than at the end: a cancel should stop the
+            // transfer, not acknowledge it once the body has all landed.
+            if cancelled() {
+                let reason = InstallerError::Cancelled;
+                let stopping = abandon(&reason);
+                refusal.replace(Some(reason));
+                return Err(stopping);
+            }
             downloaded.set(downloaded.get() + chunk.len() as u64);
             if downloaded.get() > MAX_INSTALLER_BYTES {
                 let reason = InstallerError::TooLarge {
@@ -1183,6 +1236,11 @@ fn download_into(
     }
     outcome?;
 
+    // The body is all on disk; a cancel that landed with the last chunk still
+    // skips the signature run, which is the expensive part left.
+    if cancelled() {
+        return Err(InstallerError::Cancelled);
+    }
     validate_installer_magic(installer, temporary)?;
     verify_installer_authenticity(installer, temporary, launch_env)?;
     Ok(())
@@ -2486,6 +2544,104 @@ mod tests {
             client.delivered(),
             0,
             "the body was transferred from a host the allowlist never approved"
+        );
+    }
+
+    /// UX-27: a flag already set when the request begins is the cheapest
+    /// refusal there is — ahead of even the origin check — and the `.part`
+    /// file it abandons is removed by `download_installer_with`'s error path.
+    ///
+    /// `delivered == 0` is the load-bearing half: `FakeResponse` only counts a
+    /// body it was allowed to send, so zero says the cancel landed before a
+    /// single byte, not after.
+    #[test]
+    fn a_cancel_before_the_first_byte_leaves_no_partial_and_sends_nothing() {
+        let scratch = Scratch::new("cancel-head");
+        let dest = scratch.path().join("downloads");
+        let record = scratch.path().join("verifier-argv");
+        let env = verifier_env_with_certificates(
+            scratch.path(),
+            &record,
+            "Signature verification: ok",
+            0,
+            &[VALVE_CERTIFICATE],
+        );
+        let steam = installer_by_id("steam").unwrap();
+        let client = FakeResponse::at(steam.download_url, PE_BODY);
+
+        let error = download_installer_with(
+            steam,
+            &dest,
+            None,
+            Duration::from_secs(60),
+            &client,
+            &env,
+            &|| true,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, InstallerError::Cancelled),
+            "expected Cancelled, got {error:?}"
+        );
+        assert_eq!(
+            client.delivered(),
+            0,
+            "the body was sent to a cancelled job"
+        );
+        assert!(!record.exists(), "the signature verifier was run anyway");
+        assert!(!dest.join("SteamSetup.exe").exists());
+        assert!(
+            part_files(&dest).is_empty(),
+            "the .part file was left behind"
+        );
+    }
+
+    /// UX-27: a cancel that lands with the last chunk still skips the
+    /// signature run — the expensive part left — and the `.part` cleanup.
+    ///
+    /// `FakeResponse` delivers its body in one `sink` call, so a mid-stream
+    /// abort is not reachable with it; what *is* reachable is the post-body
+    /// check, driven here by a progress callback that flips the flag — the
+    /// last moment the flag can matter before the verifier would run. The
+    /// verifier's record staying absent is the assertion that distinguishes
+    /// this test from a generic "the download failed".
+    #[test]
+    fn a_cancel_with_the_last_chunk_skips_the_verifier() {
+        let scratch = Scratch::new("cancel-late");
+        let dest = scratch.path().join("downloads");
+        let record = scratch.path().join("verifier-argv");
+        let env = verifier_env_with_certificates(
+            scratch.path(),
+            &record,
+            "Signature verification: ok",
+            0,
+            &[VALVE_CERTIFICATE],
+        );
+        let steam = installer_by_id("steam").unwrap();
+        let client = FakeResponse::at(steam.download_url, PE_BODY);
+        let flag = std::sync::atomic::AtomicBool::new(false);
+
+        let error = download_installer_with(
+            steam,
+            &dest,
+            Some(&|_| flag.store(true, std::sync::atomic::Ordering::SeqCst)),
+            Duration::from_secs(60),
+            &client,
+            &env,
+            &|| flag.load(std::sync::atomic::Ordering::SeqCst),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, InstallerError::Cancelled),
+            "expected Cancelled, got {error:?}"
+        );
+        assert!(!record.exists(), "the signature verifier was run anyway");
+        assert!(!dest.join("SteamSetup.exe").exists());
+        assert!(
+            part_files(&dest).is_empty(),
+            "the .part file was left behind"
         );
     }
 
