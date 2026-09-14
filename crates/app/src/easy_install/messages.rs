@@ -31,7 +31,8 @@ use super::Message;
 /// accepted into [`Message::CompleteEasyInstall`] and rejected into
 /// [`Message::CancelEasyInstall`].
 ///
-/// Opened by [`easy_install_wizard_finished`]'s not-found branch, which is
+/// Opened by [`easy_install_wizard_finished`](crate::easy_install::easy_install_wizard_finished)'s
+/// not-found branch, which is
 /// what makes the busy state it leaves behind escapable: before this task
 /// existed nothing produced either message, so a wizard that closed without
 /// installing wedged the page forever (P-57).
@@ -94,7 +95,9 @@ pub(crate) fn exe_file_filters() -> Vec<cosmic::dialog::file_chooser::FileFilter
 /// The pure half of the locate reply: the chooser's answer as the message the
 /// shell already handles.
 ///
-/// A chosen file becomes the path [`complete_easy_install`] finishes from —
+/// A chosen file becomes the path
+/// [`complete_easy_install`](crate::easy_install::complete_easy_install)
+/// finishes from —
 /// `Url::to_file_path` is the `as_local_path` the reference applies on the
 /// way (`bridge.py:926`), decoding the percent-escapes the portal leaves in.
 /// A URL with no local path becomes the `None` that takes the cancel path,
