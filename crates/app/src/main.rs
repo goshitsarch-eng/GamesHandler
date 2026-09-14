@@ -39,7 +39,7 @@ use gamehandler_core::{APP_ID, APP_NAME};
 
 mod easy_install;
 
-// The flow lives in `easy_install.rs` (ARCH-11); this is the crate root's view
+// The flow lives in `easy_install/` (ARCH-11); this is the crate root's view
 // of it. Everything named here is `pub(crate)` and exists for exactly one
 // caller in this file: an arm of `Shell::update`, or a test that asserts the
 // arm does what it says.

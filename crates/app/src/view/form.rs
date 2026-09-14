@@ -2583,28 +2583,33 @@ mod tests {
     /// defect, and a scanner that read them would report itself.
     fn production_sources() -> Vec<(String, String)> {
         let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        // Discovered, not listed. This used to read `src/view` and then push
-        // `src/main.rs` by hand, which made the haystack an enumeration: the
-        // day ARCH-11 moved a region of `main.rs` into `src/easy_install.rs`,
-        // this scanner quietly stopped reading that region. It found nothing
-        // there, so nothing went red — which is the whole problem. A scanner
-        // that covers less than it claims passes on the defect it exists to
-        // catch, and it does so silently. A directory read cannot go stale that
-        // way: a new top-level module is scanned the moment it is a file.
+        // Discovered, not listed, and *recursively*. This used to read
+        // `src/view` and then push `src/main.rs` by hand, which made the
+        // haystack an enumeration: the day ARCH-11 moved a region of
+        // `main.rs` into `src/easy_install.rs`, this scanner quietly stopped
+        // reading that region. The first fix read two named directories —
+        // which lasted until the same row's second pass moved the flow into
+        // `src/easy_install/` *as a directory*, and a flat `read_dir` skipped
+        // it again, silently, exactly the failure shape above. So the walk
+        // descends: a new module is scanned the moment it exists, file or
+        // directory.
         let mut paths: Vec<std::path::PathBuf> = Vec::new();
-        for dir in ["src", "src/view"] {
-            paths.extend(
-                std::fs::read_dir(crate_dir.join(dir))
-                    .unwrap_or_else(|error| {
-                        panic!("`{dir}` is where this crate keeps its code: {error}")
-                    })
-                    .map(|entry| entry.expect("a readable directory entry").path())
-                    .filter(|path| path.extension().is_some_and(|ext| ext == "rs")),
-            );
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap_or_else(|error| {
+                panic!("{dir:?} is where this crate keeps its code: {error}")
+            }) {
+                let path = entry.expect("a readable directory entry").path();
+                if path.is_dir() {
+                    walk(&path, out);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    out.push(path);
+                }
+            }
         }
+        walk(&crate_dir.join("src"), &mut paths);
         paths.sort();
-        // Anti-vacuity, in the shape the rest of this audit uses: the two
-        // directories this reads are asserted to have been read. Emptying the
+        // Anti-vacuity, in the shape the rest of this audit uses: the tree
+        // this walks is asserted to have been walked. Emptying the
         // list would otherwise report every source clean.
         assert!(
             paths.len() >= 20,
