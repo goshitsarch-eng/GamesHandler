@@ -1021,16 +1021,34 @@ pub fn view<'a>(page: GameFormView<'a>) -> Element<'a, Message> {
     // The two actions. Cancel closes whatever overlay is open, which is the
     // reference's `dismiss()` (`:15`, `:20-23`) and the same message the
     // confirm-delete dialog closes with.
-    body = body.push(divider::horizontal::default()).push(
-        Row::new()
-            .push(button::standard(ACTION_CANCEL).on_press(Message::CloseDialog))
-            .push(button::suggested(action_label(is_new)).on_press_maybe(save_message(form)))
-            .spacing(12),
-    );
+    //
+    // They are **not** part of `body`: as the scrolled column's last push they
+    // sat below the fold on any window shorter than the form, which is the
+    // discoverability defect UX-30 records — the page reports the row as drawn
+    // while it is a scroll away (measured at y = 3140 under a 400-px window).
+    // The footer is fixed under the scrolled area instead, inside the same
+    // `bounded_body` so the row keeps the form's column at any width, and the
+    // scrollable takes `Fill` so the column hands it all the space the footer
+    // does not claim (a `Shrink` scrollable would let the footer ride up under
+    // a short form — acceptable, but the pinned bottom is the shape the
+    // finding prescribes).
+    let actions = Column::new()
+        .push(divider::horizontal::default())
+        .push(
+            Row::new()
+                .push(button::standard(ACTION_CANCEL).on_press(Message::CloseDialog))
+                .push(button::suggested(action_label(is_new)).on_press_maybe(save_message(form)))
+                .spacing(12),
+        )
+        .spacing(12);
 
-    container(scrollable(super::bounded_body(body)))
-        .padding(super::gutter())
-        .into()
+    container(
+        Column::new()
+            .push(scrollable(super::bounded_body(body)).height(Length::Fill))
+            .push(super::bounded_body(actions)),
+    )
+    .padding(super::gutter())
+    .into()
 }
 
 #[cfg(test)]
@@ -3363,6 +3381,56 @@ mod tests {
         let source = qml();
         assert!(source.contains("title: isNew ? \"Add Game\" : \"Edit Game\""));
         assert!(source.contains("text: form.isNew ? \"Add\" : \"Save\""));
+    }
+
+    /// **UX-30: the action row is a fixed footer, so the primary action is
+    /// inside the viewport at a window shorter than the form.**
+    ///
+    /// The actions used to be the scrolled column's last push, so a 400-px
+    /// window put them a scroll away while the page still reported them drawn.
+    /// The footer is a sibling of the scrollable now, which makes the row's
+    /// bounds a viewport property rather than a content-length property.
+    ///
+    /// The second assertion is the anti-vacuity half: a mid-form control
+    /// reports below the same fold, so "inside" above is a property of the
+    /// footer and not of a form that happens to fit. `SECTION_ADVANCED` is
+    /// the pick because it is the scrolled body's own last heading — the node
+    /// nearest the fold that is still inside the scrollable.
+    #[test]
+    fn the_action_row_stays_inside_the_viewport() {
+        let form = form();
+        let library = library("form-footer", &[]);
+        let runners = runners();
+        let covers = CoverCache::new();
+        let mut element = page(&form, &library, &runners, &covers);
+
+        // Shorter than the form on purpose: at 800 the fold claim below could
+        // pass vacuously on a form that fit.
+        let window = cosmic::iced::Size::new(420.0, 400.0);
+        let seen = crate::view::testkit::traversal_at_size(&mut element, window);
+
+        let action = seen
+            .iter()
+            .find(|seen| seen.text.as_deref() == Some(ACTION_ADD))
+            .unwrap_or_else(|| panic!("the Add action is not drawn"));
+        assert!(
+            action.bounds.y + action.bounds.height <= window.height,
+            "the Add action is below the fold: {:?} in {:?}",
+            action.bounds,
+            window
+        );
+
+        let below_fold = seen
+            .iter()
+            .find(|seen| seen.text.as_deref() == Some(SECTION_ADVANCED))
+            .unwrap_or_else(|| panic!("the Advanced section is not drawn"));
+        assert!(
+            below_fold.bounds.y > window.height,
+            "the form fits the window, so the inside-viewport assertion above \
+             is vacuous: {:?} in {:?}",
+            below_fold.bounds,
+            window
+        );
     }
 
     /// **UX-11: the cover row draws the reference's preview, and never the path

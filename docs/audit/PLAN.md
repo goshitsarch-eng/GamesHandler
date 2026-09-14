@@ -64,7 +64,7 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 47 | 45 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 29 | 22 `FIXED`, 4 `PARTIAL`, 2 `WITHDRAWN`, 1 `OPEN` |
+| `COSMIC-UX.md` | 30 | 30 | 23 `FIXED`, 4 `PARTIAL`, 2 `WITHDRAWN`, 1 `OPEN` |
 | `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 10 | 8 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
@@ -347,7 +347,7 @@ across families, not within them.
 | `UX-27` | There is no indeterminate or loading indicator, and a running install cannot be cancelled from the UI | S2 | Cancel flags polled at transfer/phase boundaries, wizard killed via spawn+try_wait, `-1.0` sentinel mapped to `indeterminate_linear` through `view::progress_cue`, job-id/game_id stale-reply gates, Cancel on the running card and row — a port-only addition the reference does not have | Twelve new tests across core and app; three mutation checks (sink check, `game_id` gate, cue arm) each verified failing pre-fix | FIXED |
 | `UX-28` | The Plugins page has no empty-state branch, unlike the other three list pages | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | FIXED |
 | `UX-29` | A dead Option<()> field and a stale comment about theme inertness | S2 | — | Re-read the cited lines after the edit; `scripts/verify.sh` green. No behavioural test applies. | FIXED |
-| `UX-30` | A page body's scrollable does not put the page's own primary action within reach, and the page reports this as a layout failure twice | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. | OPEN |
+| `UX-30` | A page body's scrollable does not put the page's own primary action within reach, and the page reports this as a layout failure twice | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** The action row is a fixed footer under the scrolled body — `Column[scrollable(Fill), bounded_body(actions)]` at `crates/app/src/view/form.rs:1035-1051` — so the row's bounds are a viewport property. Measured: `y = 3140` → inside a 420×400 window; the Advanced heading stays below the fold as the anti-vacuity half; the mutation (actions back inside `body`) fails the test. `testkit::traversal_at_size` added — the fold needed a bounded height. | FIXED |
 | `SEC-10` | Dependency hygiene: five live RustSec advisories against the locked graph, none reachable from the shipped binary, and no unused or duplicated direct dependency | S4 | — | Controls for the advisory matcher (it flags `time 0.1.0` and `openssl 0.10.0`; it clears `time 0.3.44` and `openssl 0.10.99`), plus `strings` over the shipped binary for the renderer reachability claim (44,912 `tiny_skia` matches, 0 `wgpu`) and a `grep` over `xkbcommon`'s source for the six affected `memmap2` functions | FIXED |
 
 ### Not a defect — 4

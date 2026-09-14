@@ -145,6 +145,20 @@ pub(crate) fn traversal_at_width<M: Clone + 'static>(
     traversal_with(el, Size::new(width, f32::INFINITY))
 }
 
+/// [`traversal`] inside a real window — both axes bounded.
+///
+/// Neither public shape above can see the fold: an `INFINITY` height lets a
+/// scrollable's content lay out at full length, so "below the fold" is a
+/// position only a bounded height can produce. UX-30's assertion — the form's
+/// action row inside the viewport while a mid-form control is beyond it —
+/// needs exactly this.
+pub(crate) fn traversal_at_size<M: Clone + 'static>(
+    el: &mut cosmic::Element<'_, M>,
+    max: Size,
+) -> Vec<Seen> {
+    traversal_with(el, max)
+}
+
 /// The ids the traversal reported, in the order it reported them.
 pub(crate) fn ids(seen: &[Seen]) -> Vec<Id> {
     seen.iter().filter_map(|seen| seen.id.clone()).collect()
