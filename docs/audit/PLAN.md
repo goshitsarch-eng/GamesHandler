@@ -64,10 +64,10 @@ those rows contain `Status:`:
 |---|---|---|---|
 | `BUGS.md` | 48 | 47 | 45 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
-| `COSMIC-UX.md` | 30 | 30 | 23 `FIXED`, 4 `PARTIAL`, 2 `WITHDRAWN`, 1 `OPEN` |
+| `COSMIC-UX.md` | 30 | 30 | 24 `FIXED`, 4 `PARTIAL`, 2 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
 | `PACKAGING.md` | 11 | 11 | 9 `FIXED`, 2 `PARTIAL` |
-| `PERFORMANCE.md` | 8 | 6 | 6 `FIXED` |
+| `PERFORMANCE.md` | 8 | 8 | 6 `FIXED`, 2 `CLOSED` |
 
 `BUGS.md`'s 13 tail-less rows are its twelve open `P3` rows plus the withdrawn
 `BUG-11`, which carries no severity because it is not a defect. That sentence read
@@ -136,33 +136,36 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 49 | 43 | 0 | 6 |
-| **Total** | **130** | **118** | **0** | **12** |
+| P3 | 47 | 43 | 0 | 4 |
+| **Total** | **128** | **118** | **0** | **10** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
 | `ARCH-xx` | `ARCHITECTURE.md` | 25 | 23 | 0 | 2 |
 | `BUG-xx` | `BUGS.md` | 46 | 45 | 0 | 1 |
-| `PERF-xx` | `PERFORMANCE.md` | 8 | 6 | 0 | 2 |
+| `PERF-xx` | `PERFORMANCE.md` | 6 | 6 | 0 | 0 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 9 | 0 | 2 |
 | `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 25 | 0 | 4 |
-| **Total** | | **130** | **118** | **0** | **12** |
+| **Total** | | **128** | **118** | **0** | **10** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
-beside them. The four refuted rows (`BUG-11`, `BUG-15`, `UX-08`, `ARCH-24`) sit in their own
+beside them. The six refuted rows (`BUG-11`, `BUG-15`, `UX-08`, `ARCH-24`, `PERF-07`, `PERF-08`) sit in their own
 `### Not a defect` section and in no severity bucket, which is why the family table
 counts 46 `BUG-xx` rows against the 48 `BUGS.md` holds — the two it leaves out are
 the refuted pair `BUG-11` and `BUG-15`, which sit in that section — 29 `UX-xx`
 rows against the 30 `COSMIC-UX.md` holds, where the one it leaves out is `UX-08`,
 and 25 `ARCH-xx` rows against the 26 `ARCHITECTURE.md` holds, where the one it
-leaves out is `ARCH-24`. This sentence read "three" and named three ids until
+leaves out is `ARCH-24`, and 6 `PERF-xx` rows against the 8 `PERFORMANCE.md`
+holds, where the two it leaves out are `PERF-07` and `PERF-08` — both filed as
+not-a-finding-pending-re-verification and both closed by the re-run. This
+sentence read "three" and named three ids until
 `ARCH-24` was refuted; the count is here because a reader should not have to union
 four documents to learn how many findings were withdrawn. `Remaining` counts `PARTIAL` as
 remaining, because a half-fixed finding is not closed; `Fixed` therefore excludes
-them and the six `PARTIAL` rows — `BUG-47`; `PKG-03`, `PKG-06`; `UX-06`, `UX-14`;
-`SEC-05` — appear in `Remaining` until they are finished, and
+them and the ten `PARTIAL` rows — `ARCH-11`, `ARCH-12`; `BUG-47`; `PKG-03`, `PKG-06`;
+`UX-06`, `UX-14`, `UX-24`, `UX-26`; `SEC-05` — appear in `Remaining` until they are finished, and
 `scripts/plan-counts.py` prints that list on every run so the sentence beside it
 has something to be checked against. That read "two"
 while the status cells said five — a count beside the rows rather than taken
@@ -295,7 +298,7 @@ across families, not within them.
 | `UX-18` | No text_input in the app is ever given .label() or .helper_text(), and the visible labels are unassociated sibling text widgets in a Row, so they identify a field to a sighted user and to nothing else | S2 | — | Give each `text_input` a label or helper text; verify the field's accessible name. **Half done, half refuted, and the refuted half is the one the row proposed.** The verification half holds and is what closes the finding: `crates/app/src/view/a11y.rs::input`/`input_with_id` publish a `Role::TextInput` node whose `label` is the field's caption and whose `value` is its contents, read off the real page by `form.rs`'s `every_wrapped_control_on_the_real_form_is_a_tab_stop_and_a_named_node`. The `.label(...)` half is **refused on measurement**: the toolkit paints its label *inside* the widget in a layout child above the box (`.../a401af8/src/widget/text_input/input.rs:2606-2614`, `:2716-2732`), and a caption is already drawn at all four sites — `field_row`'s `text::body(row.label)` beside the control (`view/form.rs:602-609`, the reference's own beside-the-field arrangement at `gamehandler/qml/GameFormPage.qml:83`, `:111`, `:117`), `LABEL_CATEGORY` for the category field, and the search boxes' placeholders — so `.label(...)` would draw each string twice and the category field's three times. `TextInput::label` is also not what carries accessibility here: libcosmic's `src/` holds five `accesskit` occurrences, all in `button/widget.rs` and `wayland/tooltip/widget.rs`, so no node exists for a labelled input in this stack either way. **The defect that was actually here was in the test asserting the row**: `a_text_input_publishes_its_label_and_value` took `"Name"` for both placeholder and caption, so a wrapper forwarding the placeholder passed it — the audit's own recurring shape, inside a test written to close this row. Repaired to `text_input("Half-Life", "Half-Life")` against the caption `"Game name"`; mutation-proved by replacing the wrapper's caption with `String::new()`, which fails `left: Some("")`, `right: Some("Game name")`. | FIXED |
 | `UX-19` | Card surfaces are hand-built three times as a local card_style closure, and two of the three hardcode the radius their own comment says is kept in sync | S2 | — | `5a03977` — same fix as `ARCH-17`; one surface, three pages. The class route the row suggested was measured and rejected as a restyle (radius 8.0/component vs 14.0/window).| FIXED |
 | `UX-20` | libcosmic's purpose-built settings widgets are used nowhere in the app | S2 | — | Adopt `settings::section`/`item`/`item_row`, or record why the hand-built rows are kept; verify by reading the settings view. **Status: FIXED.** The two byte-identical private rows (`view::settings`'s `row`, `view::form`'s `field_row`) are deleted and both pages call `view::settings_row`, which delegates to `settings::item_row`. **The row's premise about spacing was wrong and measuring it is what settled the split of the fix**: `item_row` uses `theme::spacing().space_xs`, whose default is 12 (`cosmic-theme src/model/spacing.rs:34`) — the same literal the deleted helpers wrote — so there was no drift to fix and `UX-23` is not advanced by this. The `settings::section` half of the recommendation was declined on measurement: its header is `text::heading` (14 px) where every heading here is `title4` (20 px), and it is a `ListColumn`, so adopting it would resize headings and restructure two pages. The headings were de-duplicated into `view::settings_section` instead; the heading *level* is left to `UX-22`. Mutation-checked: `the_shared_row_is_the_frameworks_row` fails when the row stops delegating to `item_row`, and `the_shared_heading_is_title4_and_not_the_toolkits_section` fails when the heading preset is swapped.| FIXED |
-### P3 — 49
+### P3 — 47
 
 | ID | Finding | Owner | Deps | Verification | Status |
 |---|---|---|---|---|---|
@@ -327,8 +330,6 @@ across families, not within them.
 | `BUG-43` | Two more "the doc says the two agree" pairs, both verified sound-but-for-the-claim | S1 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** (a) `sections_and_resource_root` now splits "view too short" (`clipped`) from "the file's own negative answer"; `bounded_attempt` answers `Decided`/`NeedFull`, decides iconless exes from the probe alone, and widens a clipped parse once to `sections_end` before paying the full read. Mutation-proved via the `Decided(None)` pin; the overlay-directory test pins that `NeedFull` still exists. (b) recorded as `netpaths` module-doc item 4; the two raise-inputs are pinned by `the_inputs_the_reference_raises_on_get_an_answer_here`, measured against CPython first. | FIXED |
 | `BUG-44` | An unreadable runners directory renders as a normal, empty, system-Wine-only list | S1 | — | `c7d4299` — `scan_installed` answers `Complete`/`Partial`/`Unreadable`; a real `chmod 000` directory, and the entry-level half is recorded as untestable rather than mocked.| FIXED |
 | `BUG-45` | python_repr's string branch is not repr() and duplicates — incorrectly — the python_str_repr twelve lines above it | S1 | — | `1143aed` — the string arm delegates to `python_str_repr`; a regression test compares the two functions and fails on the old body.| FIXED |
-| `PERF-07` | The 27 threads are all demand-spawned runtime workers; none polls, and two of them exit on their own | S3 | — | Recorded as not-a-finding unless a poller is found; verify by re-running the thread-naming probe over a 60 s idle run. **Status: CLOSED — re-measured.** Live re-probe under headless `sway` (`WLR_BACKENDS=headless`): `Threads` = 27 at all eight samples of a 70 s run, and the `wchan` census reproduces the row's shape exactly — 3 `gamehandler`, 3 `notify-rs inoti`, 1 `smithay-clipboa`, 1 `tokio-rt-worker` in `do_epoll_wait`, 19 `tokio-rt-worker` in `futex_do_wait`, all `S`. No poller. | CLOSED |
-| `PERF-08` | Minor RSS drift that is not attributable to a leak on the evidence gathered | S3 | — | Re-measure with the window held at one size; verify RSS is flat across forced redraws at a constant size. **Status: CLOSED — re-measured at constant size under headless `sway`.** Idle run: `VmRSS` flat at 64,608 kB across all eight samples of 70 s. Forced redraws: apparent +1,808 kB over 12 `wtype` calls resolved to the *stimulus*, not the app — each call creates a `zwp_virtual_keyboard_v1` whose keymap lands client-side; 24 Tabs in one keyboard cost +252 kB and repeat rounds cost ~150 kB ≈ one keyboard each, so a redraw at constant size costs ~0 kB. The original resize-keyed growth stands explained by the raster cache's `(id, w, h)` key. | CLOSED |
 | `PKG-06` | The metainfo has no screenshots and no keywords | S6 | — | Add a screenshot and keywords to the metainfo; verify with `appstreamcli validate --pedantic`. | PARTIAL |
 | `PKG-07` | The AppStream validator is not clean under --pedantic: it prints a warning while exiting 0, and the validator the project's own meson test names could not be run at all | S6 | — | Resolve the warning under `--pedantic` and run the meson test the project names; verify both exit clean. **Status: FIXED — accepted, on record.** The uppercase id decision was already made at `docs/migration/packaging.md` §1.1 ("**Do not rename**": pinned by `test_permanent_identity_is_consistent` and by `~/.var/app` data an id change would orphan). The Flathub-linter risk is measured: its docs list the checks raised to `error` and `cid-contains-uppercase-letter` is not one (`cid-domain-not-lowercase` is *decreased*); `org.inkscape.Inkscape` ships uppercase on Flathub. The meson test now runs: `meson test` → `validate-desktop` + `validate-metainfo` both OK (2/2, via `appstreamcli`, the first `find_program` choice). `--pedantic` re-run: same informational note, exit 0. | FIXED |
 | `PKG-08` | A comment in data/meson.build asserts a packaging regression that does not exist, and its cited evidence is falsified by the manifest | S6 | — | Correct or delete the comment; verify the cited evidence against the manifest. | FIXED |
@@ -350,9 +351,9 @@ across families, not within them.
 | `UX-30` | A page body's scrollable does not put the page's own primary action within reach, and the page reports this as a layout failure twice | S2 | — | A regression test that fails without the fix, plus `scripts/verify.sh` green. **Status: FIXED.** The action row is a fixed footer under the scrolled body — `Column[scrollable(Fill), bounded_body(actions)]` at `crates/app/src/view/form.rs:1035-1051` — so the row's bounds are a viewport property. Measured: `y = 3140` → inside a 420×400 window; the Advanced heading stays below the fold as the anti-vacuity half; the mutation (actions back inside `body`) fails the test. `testkit::traversal_at_size` added — the fold needed a bounded height. | FIXED |
 | `SEC-10` | Dependency hygiene: five live RustSec advisories against the locked graph, none reachable from the shipped binary, and no unused or duplicated direct dependency | S4 | — | Controls for the advisory matcher (it flags `time 0.1.0` and `openssl 0.10.0`; it clears `time 0.3.44` and `openssl 0.10.99`), plus `strings` over the shipped binary for the renderer reachability claim (44,912 `tiny_skia` matches, 0 `wgpu`) and a `grep` over `xkbcommon`'s source for the six affected `memmap2` functions | FIXED |
 
-### Not a defect — 4
+### Not a defect — 6
 
-Refuted by measurement rather than fixed. All four rows are kept because a reader
+Refuted by measurement rather than fixed. All six rows are kept because a reader
 who has heard the claim should see it was tested. They carry a severity cell of `—` in
 the specialist document for the same reason they sit outside the severity counts here: a refuted
 row that stays inside a severity bucket gets scored as a repaired one, which is
@@ -364,6 +365,8 @@ exactly what had happened to `BUG-15`.
 | ~~`BUG-11`~~ | Case-variant categories are lost by `dedup` after the sort, where Python's `set` keeps them | S1 | — | Refuted by measurement: both implementations return 39 entries on a 40-game fixture, with the same ten fold-groups. The regression the finding was reaching for is real and *is* guarded — changing the sort's primary term to `a.cmp(b)` reproduces the symptom exactly (28 groups instead of 10) and `case_variant_categories_fold_into_the_same_groups_as_python` fails on it | WITHDRAWN |
 | ~~`UX-08`~~ | Both dialogs are a fixed 570 px wide and are laid out inside the page column, so below roughly 570 px plus the nav bar they are clipped on both sides — including their buttons | S2 | — | Refuted by measurement, and the recommended fix is a measured no-op: iced resolves a `Fixed` length as `amount.min(limits.max.width)` (`iced/core/src/layout/limits.rs:168`), so the dialog is **clamped** to the window rather than clipped by it; libcosmic's dialog already applies `Length::Fixed(570.0)` as its default (`src/widget/dialog.rs:169`), which makes `container(popup).max_width(570.0)` inert; and no dialog string is drawn beyond the window at any width from 1200 px down to the 420 px floor. The `Remaining` count moves with this row, which is why it is withdrawn rather than deleted. What is genuinely open in this area is a floor, not a ceiling, and that is `UX-04`. | WITHDRAWN |
 | `ARCH-24` | Three launch settings are written, persisted and never read by anything | S5 | — | **Refuted by measurement.** `game.gamemode` is read at `crates/core/src/runners/launch_opts.rs:757`, `game.battleye` at `:724` and `game.eac` at `:731`; the first wraps the command with `gamemoderun`, the other two set `PROTON_BATTLEYE_RUNTIME` and `PROTON_EAC_RUNTIME`. Four named tests pin the effects (`gamemode_wraps_only_when_gamemoderun_is_installed`, `an_enabled_anticheat_runtime_uses_what_the_host_found`, `a_disabled_anticheat_runtime_is_an_empty_value_not_a_missing_key`, `the_anticheat_lookup_is_skipped_entirely_without_proton_features`) and all pass. The row's cited lines (`:738-742`, `:705-718`) hold `virtual_desktop` and `nvapi`/`fsr` at this revision. What is true, and is recorded here rather than as a finding: when the prerequisite is absent the toggle is a silent no-op — no `gamemoderun` on `PATH` and no anticheat runtime found are both ignored without a word, where `gamescope` with no binary raises `RunnerError::GamescopeMissing`. Python behaves the same way (`runners.py:1240-1243`, `:1219-1224`), so the silence is the reference's and a divergence here would be a behaviour change, not a fix. | WITHDRAWN — **not a defect.** the recorded behaviour does not occur |
+| `PERF-07` | The 27 threads are all demand-spawned runtime workers; none polls, and two of them exit on their own | S3 | — | Live re-probe under headless `sway` (`WLR_BACKENDS=headless`): `Threads` = 27 at all eight samples of a 70 s run; the `wchan` census reproduces the row's shape — 3 `gamehandler`, 3 `notify-rs inoti`, 1 `smithay-clipboa`, 1 `tokio-rt-worker` in `do_epoll_wait`, 19 `tokio-rt-worker` in `futex_do_wait`, all `S` | CLOSED — **not a defect.** The row was filed as not-a-finding-pending-re-verification; the re-run measured the same census with no poller |
+| `PERF-08` | Minor RSS drift that is not attributable to a leak on the evidence gathered | S3 | — | Re-measured at constant size under headless `sway`: `VmRSS` flat at 64,608 kB across all eight samples of a 70 s idle run. The apparent +1,808 kB drift under `wtype` keystrokes resolved to the stimulus — each call creates a `zwp_virtual_keyboard_v1` whose keymap lands client-side; 24 Tabs inside one keyboard cost ~10 kB/key and repeat rounds cost ~150 kB ≈ one keyboard each, so a redraw at constant size costs ~0 kB | CLOSED — **not a defect.** The original growth was resize-keyed raster-cache entries (`(id, w, h)`), confirmed by the flat constant-size run; no leak evidence on either measure |
 
 ## Cross-referenced pairs
 
