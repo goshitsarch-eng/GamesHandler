@@ -65,7 +65,7 @@ those rows contain `Status:`:
 | `BUGS.md` | 48 | 47 | 45 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
 | `ARCHITECTURE.md` | 26 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 30 | 24 `FIXED`, 4 `PARTIAL`, 2 `WITHDRAWN` |
-| `SECURITY.md` | 11 | 11 | 10 `FIXED`, 1 `PARTIAL` |
+| `SECURITY.md` | 11 | 11 | 11 `FIXED` |
 | `PACKAGING.md` | 11 | 11 | 9 `FIXED`, 2 `PARTIAL` |
 | `PERFORMANCE.md` | 8 | 8 | 6 `FIXED`, 2 `CLOSED` |
 
@@ -136,8 +136,8 @@ advocate reviews every row before it is called done and owns no row.
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
 | P2 | 52 | 46 | 0 | 6 |
-| P3 | 47 | 43 | 0 | 4 |
-| **Total** | **128** | **118** | **0** | **10** |
+| P3 | 47 | 44 | 0 | 3 |
+| **Total** | **128** | **119** | **0** | **9** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
@@ -145,9 +145,9 @@ advocate reviews every row before it is called done and owns no row.
 | `BUG-xx` | `BUGS.md` | 46 | 45 | 0 | 1 |
 | `PERF-xx` | `PERFORMANCE.md` | 6 | 6 | 0 | 0 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 9 | 0 | 2 |
-| `SEC-xx` | `SECURITY.md` | 11 | 10 | 0 | 1 |
+| `SEC-xx` | `SECURITY.md` | 11 | 11 | 0 | 0 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 25 | 0 | 4 |
-| **Total** | | **128** | **118** | **0** | **10** |
+| **Total** | | **128** | **119** | **0** | **9** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -164,8 +164,8 @@ sentence read "three" and named three ids until
 `ARCH-24` was refuted; the count is here because a reader should not have to union
 four documents to learn how many findings were withdrawn. `Remaining` counts `PARTIAL` as
 remaining, because a half-fixed finding is not closed; `Fixed` therefore excludes
-them and the ten `PARTIAL` rows — `ARCH-11`, `ARCH-12`; `BUG-47`; `PKG-03`, `PKG-06`;
-`UX-06`, `UX-14`, `UX-24`, `UX-26`; `SEC-05` — appear in `Remaining` until they are finished, and
+them and the nine `PARTIAL` rows — `ARCH-11`, `ARCH-12`; `BUG-47`; `PKG-03`, `PKG-06`;
+`UX-06`, `UX-14`, `UX-24`, `UX-26` — appear in `Remaining` until they are finished, and
 `scripts/plan-counts.py` prints that list on every run so the sentence beside it
 has something to be checked against. That read "two"
 while the status cells said five — a count beside the rows rather than taken
@@ -334,7 +334,7 @@ across families, not within them.
 | `PKG-07` | The AppStream validator is not clean under --pedantic: it prints a warning while exiting 0, and the validator the project's own meson test names could not be run at all | S6 | — | Resolve the warning under `--pedantic` and run the meson test the project names; verify both exit clean. **Status: FIXED — accepted, on record.** The uppercase id decision was already made at `docs/migration/packaging.md` §1.1 ("**Do not rename**": pinned by `test_permanent_identity_is_consistent` and by `~/.var/app` data an id change would orphan). The Flathub-linter risk is measured: its docs list the checks raised to `error` and `cid-contains-uppercase-letter` is not one (`cid-domain-not-lowercase` is *decreased*); `org.inkscape.Inkscape` ships uppercase on Flathub. The meson test now runs: `meson test` → `validate-desktop` + `validate-metainfo` both OK (2/2, via `appstreamcli`, the first `find_program` choice). `--pedantic` re-run: same informational note, exit 0. | FIXED |
 | `PKG-08` | A comment in data/meson.build asserts a packaging regression that does not exist, and its cited evidence is falsified by the manifest | S6 | — | Correct or delete the comment; verify the cited evidence against the manifest. | FIXED |
 | `PKG-09` | flatpak-contents and cargo-sources both shell out to a bare python3 for their comparison helpers, independently of the interpreter chosen to run the generator | S6 | — | Use the same interpreter the generator was run with; verify by running both stages under a PATH without a bare `python3`. **Status: FIXED.** The comparison in `stage_cargo_sources_fresh` runs under `$py` (the discovered interpreter) instead of a bare `python3`. The row's `:1534` citation is stale — that helper is in `stage_cargo_sources`, a different stage with no discovered interpreter — and its alternative (assert the two interpreters match) would fail on the venv the stage itself recommends. Verified with a probe interpreter in the venv position: the generator and the comparison are both invoked through it.| FIXED |
-| `SEC-05` | The Proton runner archive is downloaded from a URL taken verbatim out of the releases JSON, with no scheme and no origin check — unlike the installer download path, which applies both | S4 | — | Apply the same scheme and origin check the installer path applies; verify with a releases payload naming a `file:` and an off-origin URL. | PARTIAL `8106f1e` — `validate_runner_download_url` requires `https` through the same `url_parts` the installer allowlist uses, called from `install_with` before anything is staged, and the new `RunnerError::UntrustedOrigin { url }` carries what it refused. Four mutations fire on four distinct named tests, the fourth being the positive control that the request goes to the URL that was checked. The host-pin half of the suggested fix was **dropped after measurement, not skipped**: every asset of the live Proton-GE listing is on `github.com` and each redirects once to `release-assets.githubusercontent.com`, so no host allowlist is writable, and `RunnerFamily` has no `allowed_hosts` field to port. The redirect target is judged by nothing, and that residue is recorded on the specialist row. |
+| `SEC-05` | The Proton runner archive is downloaded from a URL taken verbatim out of the releases JSON, with no scheme and no origin check — unlike the installer download path, which applies both | S4 | — | Apply the same scheme and origin check the installer path applies; verify with a releases payload naming a `file:` and an off-origin URL. | FIXED `8106f1e` — `validate_runner_download_url` requires `https` through the same `url_parts` the installer allowlist uses, called from `install_with` before anything is staged, and the new `RunnerError::UntrustedOrigin { url }` carries what it refused. Four mutations fire on four distinct named tests, the fourth being the positive control that the request goes to the URL that was checked. The host-pin half of the suggested fix was **dropped after measurement, not skipped**: every asset of the live Proton-GE listing is on `github.com` and each redirects once to `release-assets.githubusercontent.com`, so no host allowlist is writable, and `RunnerFamily` has no `allowed_hosts` field to port. The recorded residue — the redirect target judged by nothing — is now closed at two layers: `on_head` runs the same scheme check on `head.final_url` before any body byte (an empty report is refused as unverifiable, matching `validate_download_origin`'s posture), and `UreqClient`'s agent sets `https_only(true)`, which ureq enforces on every redirect hop — covering the mid-chain `https → http → https` bounce the end-point checks cannot see. Three redirect tests and one live plaintext-refusal test pin both layers; removing the `final_url` check fails both refusal tests. |
 | `SEC-06` | RunnerManager::get joins a games.json-sourced runner_id onto the runners directory without validating it, where three other sites validate the same kind of string | S4 | — | Validate the `runner_id` the way the three other sites do; verify with a `games.json` carrying `../../etc`. | FIXED |
 | `SEC-07` | open_url performs no scheme validation, and its message payload is a plain String rather than a catalogue-constant type | S4 | — | Validate the scheme in `open_url` itself and give the payload a catalogue-constant type; verify with a non-`http(s)` producer. **Status: FIXED `c7d4299`.** The scheme is checked in `open_url` before the command is built, so no ordering reaches `spawn`; `open_url_command` has exactly one caller, the line after the gate. Two tests: one asserts a refused URL never spawned, the other drives both real catalogues as acceptances so a gate that refused everything fails. | FIXED `c7d4299` |
 | `SEC-08` | Three manifest permissions are justified only by the child process, with no direct launcher-code tie; the permissions that *do* tie to code are recorded here so the distinction is auditable | S4 | — | Record each permission's justification in the manifest beside it, or drop the ones with none; verify by reading the manifest against the code. **Status: FIXED.** `packaging.md` §3.1 is now a per-argument table with three kinds (launcher-code / child-process / *nothing in this tree*) and the falsification test for each. The row's six `file:line` anchors were **all wrong, at the commit that wrote them**, and were replaced with symbols that cannot drift. `--device=input` and `--device=usb` — which the row never named — have no anchor in `crates/` at all; measured with `--device=dri` alone, `gui-stays-up` still passes, so the launcher's window needs neither. `--device=dri` is recorded as **unsettled** because `--nodevice=all` re-adds it for any GL-extending app, and the green run therefore says nothing about it. | FIXED |

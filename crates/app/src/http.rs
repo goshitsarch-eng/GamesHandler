@@ -52,6 +52,17 @@ static AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| {
         // what Python's `raise_for_status` does. ureq's default is already
         // `true`; it is set here so this cannot be lost to a default change.
         .http_status_as_error(true)
+        // `SEC-05`: every caller's origin check runs on the URL it *asked*
+        // for, and `install` now checks the final URL it is *handed* — but a
+        // redirect chain is only observable at its ends, and an `https → http
+        // → https` bounce would pass both checks while leaking the request
+        // mid-chain. `https_only` closes that: ureq applies it to every hop
+        // inside its redirect loop, not just the first request, so a hop to a
+        // non-https URL fails the transfer no matter where in the chain it
+        // sits. Nothing this app fetches is legitimately plain http — the
+        // cover CDNs, the GitHub API and every recipe asset are all https —
+        // so the limit costs no real URL.
+        .https_only(true)
         .build();
     ureq::Agent::new_with_config(config)
 });
@@ -134,5 +145,43 @@ fn to_runner_error(error: ureq::Error) -> RunnerError {
 fn to_body_error(error: std::io::Error) -> RunnerError {
     RunnerError::Http {
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::time::Instant;
+
+    /// `https_only` fails the request *before* any connection is made, so the
+    /// test needs no TLS server and no network at all: a real, listening,
+    /// plaintext HTTP server on loopback is still refused, which proves the
+    /// check is on the scheme and not on what the server would have answered.
+    #[test]
+    fn the_agent_refuses_plain_http_without_connecting() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/x.tar.gz", listener.local_addr().unwrap());
+        let start = Instant::now();
+        let error = UreqClient
+            .get(
+                &url,
+                &[],
+                Duration::from_secs(30),
+                &mut |_| Ok(()),
+                &mut |_| Ok(()),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, RunnerError::Http { ref message } if message.contains("https")),
+            "expected an https-only refusal, got {error:?}"
+        );
+        // The server never saw a connection: nothing accepted it, and a real
+        // connect would have blocked in `accept` — instead assert by timing
+        // that the refusal was immediate rather than a connect timeout.
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "the refusal should be immediate, not a timeout"
+        );
     }
 }

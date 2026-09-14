@@ -77,7 +77,10 @@
 //! 6. **The download URL must be `https`.** The reference fetches whatever
 //!    `browser_download_url` says, with no scheme and no origin check, on a
 //!    path that ends in an extracted tree the app later *executes*; the
-//!    installer path in the same reference does check both. See
+//!    installer path in the same reference does check both — and checks the
+//!    URL *after redirects*, which is the half this port now does too: the
+//!    request URL is checked before the request, and the `final_url` the
+//!    response reports is checked in `on_head` before any body byte. See
 //!    [`validate_runner_download_url`], which is where the argument for what
 //!    this check can and cannot be lives. This is the only divergence of the
 //!    six that the port adds for its own security rather than for Rust's type
@@ -130,15 +133,15 @@ pub struct ResponseHead {
     pub content_length: Option<String>,
     /// The URL the response actually came from, **after every redirect**.
     ///
-    /// Required rather than optional, and empty is not a valid answer: the one
-    /// caller that reads it is an allowlist check
-    /// ([`crate::installers`]'s download origin validation), and a field that
-    /// could be `None` would need a rule for what `None` means. The only two
-    /// candidates are "trust the request URL instead" — which turns a redirect
-    /// to an attacker's host into an accepted download — and "reject", which is
-    /// the same as an empty string here. Making it a plain `String` removes the
-    /// question: a client that cannot report the final URL reports `""`, and
-    /// `""` is not in any installer's `allowed_hosts`, so it fails closed.
+    /// Required rather than optional, and empty is not a valid answer: both
+    /// callers that read it are origin checks — [`crate::installers`]'s
+    /// `allowed_hosts` validation and [`install_with`]'s scheme check — and a
+    /// field that could be `None` would need a rule for what `None` means. The
+    /// only two candidates are "trust the request URL instead" — which turns a
+    /// redirect to an attacker's host into an accepted download — and "reject",
+    /// which is the same as an empty string here. Making it a plain `String`
+    /// removes the question: a client that cannot report the final URL reports
+    /// `""`, which no origin check accepts, so it fails closed.
     ///
     /// [`Default`] gives `""`, which is the same fail-closed direction.
     pub final_url: String,
@@ -1261,6 +1264,18 @@ pub fn install_with(
             if cancelled() {
                 return Err(RunnerError::Cancelled);
             }
+            // The redirect target is judged by the same rule the request URL
+            // was (`SEC-05`). `final_url` is the URL the response is *about* —
+            // it differs from the request URL exactly when a redirect was
+            // followed — and until this check ran, a `github.com` release URL
+            // could be bounced anywhere at all: `file:///`, plain `http`, an
+            // attacker-controlled host — with nothing looking at it.
+            // `installers.rs`'s `_validate_download_origin` has always run
+            // the equivalent check on *its* `final_url`; this closes the same
+            // hole on the runner path. An empty string — a client that cannot
+            // report where it ended — is unverifiable and refused, the same
+            // posture `validate_download_origin` takes.
+            validate_runner_download_url(&head.final_url)?;
             let declared = parse_content_length(head.content_length.as_deref())?;
             if declared < 0 || declared as u64 > download_cap {
                 return Err(RunnerError::ArchiveTooLarge);
@@ -2708,8 +2723,18 @@ mod tests {
         /// `SEC-05`, and the origin check is the reason that is no longer
         /// enough: "the refusal precedes the request" and "the request goes to
         /// the URL the caller was given" are two different claims, and only the
-        /// second one can catch a URL rewritten between the check and the call.
+        /// the second one can catch a URL rewritten between the check and the call.
         url: std::cell::RefCell<String>,
+        /// What `on_head` reports as `final_url`. `None` reports the request
+        /// URL — what a response with no redirect behind it looks like — so
+        /// only a test *about* redirects has to set it. `Some` makes the
+        /// response claim it ended somewhere else, which is the `SEC-05`
+        /// shape: the request URL passed its check and the redirect target
+        /// was judged by nothing until `on_head` started validating it.
+        redirected_to: Option<String>,
+        /// How many times `sink` was entered — the "the refusal happened
+        /// before any body byte" half of a redirect-refusal test.
+        bodies: std::cell::Cell<usize>,
     }
 
     impl Serve {
@@ -2720,10 +2745,16 @@ mod tests {
                 chunks: 1,
                 calls: std::cell::Cell::new(0),
                 url: std::cell::RefCell::new(String::new()),
+                redirected_to: None,
+                bodies: std::cell::Cell::new(0),
             }
         }
         fn declaring(mut self, value: &str) -> Self {
             self.declared = Some(value.to_string());
+            self
+        }
+        fn redirecting_to(mut self, final_url: &str) -> Self {
+            self.redirected_to = Some(final_url.to_string());
             self
         }
         fn in_chunks(mut self, count: usize) -> Self {
@@ -2732,6 +2763,9 @@ mod tests {
         }
         fn calls(&self) -> usize {
             self.calls.get()
+        }
+        fn bodies(&self) -> usize {
+            self.bodies.get()
         }
         fn url(&self) -> String {
             self.url.borrow().clone()
@@ -2751,13 +2785,17 @@ mod tests {
             *self.url.borrow_mut() = url.to_string();
             on_head(&ResponseHead {
                 content_length: self.declared.clone(),
-                final_url: String::new(),
+                final_url: self
+                    .redirected_to
+                    .clone()
+                    .unwrap_or_else(|| url.to_string()),
             })?;
             if self.body.is_empty() {
                 return Ok(());
             }
             let size = self.body.len().div_ceil(self.chunks).max(1);
             for chunk in self.body.chunks(size) {
+                self.bodies.set(self.bodies.get() + 1);
                 sink(chunk)?;
             }
             Ok(())
@@ -2952,6 +2990,83 @@ mod tests {
             .unwrap();
             assert_eq!(client.calls(), 1);
             assert_eq!(client.url(), "https://example.invalid/x.tar.gz");
+        });
+    }
+
+    /// The redirect target is judged by the same rule the request URL was
+    /// (`SEC-05`). A `github.com` asset that bounces the request to `file://`
+    /// or plain `http` is refused in `on_head` — after the response headers,
+    /// **before any body byte** — with the refusal naming the *final* URL.
+    #[test]
+    fn a_redirect_to_a_non_https_url_is_refused_before_the_body() {
+        in_scratch("proton-redirect-refusal", |root| {
+            let runners = root.join("runners");
+            let client = Serve::new(runner_tar("GE-Proton9-5", b"#!/bin/sh\n"))
+                .redirecting_to("http://evil.example/x.tar.gz");
+            let error = install(
+                &client,
+                &runners,
+                &a_release("GE-Proton9-5"),
+                &|_| {},
+                Duration::from_secs(5),
+                &|| false,
+            )
+            .unwrap_err();
+
+            assert_eq!(
+                error_url(&error),
+                "http://evil.example/x.tar.gz",
+                "the refusal names the redirect target, not the request URL"
+            );
+            assert_eq!(client.calls(), 1, "the request was made — that is fine");
+            assert_eq!(client.bodies(), 0, "no body byte was delivered");
+        });
+    }
+
+    /// A client that cannot say where the response came from is refused too:
+    /// an empty `final_url` cannot be judged, and unverifiable is refused —
+    /// the same posture `validate_download_origin` takes on the installer
+    /// path.
+    #[test]
+    fn a_response_that_cannot_say_where_it_ended_is_refused() {
+        in_scratch("proton-redirect-empty", |root| {
+            let runners = root.join("runners");
+            let client = Serve::new(runner_tar("GE-Proton9-5", b"#!/bin/sh\n")).redirecting_to("");
+            let error = install(
+                &client,
+                &runners,
+                &a_release("GE-Proton9-5"),
+                &|_| {},
+                Duration::from_secs(5),
+                &|| false,
+            )
+            .unwrap_err();
+
+            assert_eq!(error.class_name(), "UntrustedOrigin");
+            assert_eq!(client.bodies(), 0);
+        });
+    }
+
+    /// The rule judges the *scheme*, not the host — the live Proton-GE
+    /// listing's own chain is `github.com → release-assets.githubusercontent
+    /// .com`, so a host pin has no writable allowlist. An https target on
+    /// another host downloads normally.
+    #[test]
+    fn a_redirect_to_another_https_url_is_downloaded() {
+        in_scratch("proton-redirect-https", |root| {
+            let runners = root.join("runners");
+            let client = Serve::new(runner_tar("GE-Proton9-5", b"#!/bin/sh\n"))
+                .redirecting_to("https://release-assets.githubusercontent.example/x");
+            install(
+                &client,
+                &runners,
+                &a_release("GE-Proton9-5"),
+                &|_| {},
+                Duration::from_secs(5),
+                &|| false,
+            )
+            .unwrap();
+            assert_eq!(client.bodies(), 1);
         });
     }
 
