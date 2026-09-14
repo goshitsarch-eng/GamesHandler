@@ -87,7 +87,7 @@ By severity:
 `Not a defect` is not a euphemism for "wontfix": all six rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`, `BUG-15`,
 `UX-08`, `ARCH-24`, `PERF-07`, `PERF-08` — the last two by a live re-run under a
-headless compositor). Nine of the rows counted as `Remaining` above are `PARTIAL`
+headless compositor). All eight of the rows counted as `Remaining` above are `PARTIAL`
 rather than untouched — `scripts/plan-counts.py` prints them by name on every
 run — and each names the half that is still missing: `ARCH-12`
 (the four dispatcher extractions landed in `3b6ee5a`, and the grouping half did
@@ -112,7 +112,7 @@ sit behind).
 **This paragraph read "two… `BUG-12` and `BUG-47`" and named `SEC-05` as "a
 third", which was wrong twice over** — and it has since been corrected twice
 more: `SEC-05` closed outright when its redirect-target residue was fixed, and
-the count has moved through five, ten and now nine. `BUG-12` had been fixed outright since it
+the count has moved through five, ten and now eight. `BUG-12` had been fixed outright since it
 was written. It was found by counting the
 `PARTIAL` status cells in `PLAN.md` against this sentence rather than by
 re-reading it — the same method failure this audit keeps recording, here in the
