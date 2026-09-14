@@ -11,7 +11,9 @@
 //! * **The download and wizard halves** — [`download_installer`] (and its
 //!   [`download_installer_with`] cancellation spelling),
 //!   [`verify_installer_authenticity`], [`wineserver_binary`],
-//!   [`wait_for_prefix_idle`], [`wait_for_installer`].
+//!   [`wait_for_prefix_idle`], [`wait_for_installer`]. The verifier is in
+//!   `signature.rs` and the spawn/bound machinery it and the poller share is
+//!   in `process.rs` — `download.rs` is the pipe alone (`ARCH-11`).
 //!
 //! # Callers
 //!
@@ -24,9 +26,9 @@
 //!
 //! | Function | Production call site |
 //! |---|---|
-//! | [`download_installer_with`] | `crates/app/src/easy_install.rs`, in `easy_install_worker` |
-//! | [`wait_for_installer`] | `crates/app/src/easy_install.rs`, in `easy_install_worker` |
-//! | [`wait_for_prefix_idle`] | `crates/app/src/easy_install.rs`, in `easy_install_worker` |
+//! | [`download_installer_with`] | `crates/app/src/easy_install/mod.rs`, in `easy_install_worker` |
+//! | [`wait_for_installer`] | `crates/app/src/easy_install/mod.rs`, in `easy_install_worker` |
+//! | [`wait_for_prefix_idle`] | `crates/app/src/easy_install/mod.rs`, in `easy_install_worker` |
 //! | [`verify_installer_authenticity`] | `crates/core/src/installers/download.rs`, in `download_into` |
 //! | [`wineserver_binary`] | `crates/core/src/installers/wizard.rs`, in `wait_for_prefix_idle` |
 //!
@@ -150,12 +152,15 @@ use crate::runners::shell::ShellError;
 
 pub mod command;
 pub mod download;
+pub(crate) mod process;
+pub mod signature;
 #[cfg(test)]
 pub(crate) mod tests_support;
 pub mod wizard;
 
 pub use command::*;
 pub use download::*;
+pub use signature::*;
 pub use wizard::*;
 
 pub const LAUNCHERS: &str = "Launchers";

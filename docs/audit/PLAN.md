@@ -63,7 +63,7 @@ those rows contain `Status:`:
 | Document | Rows | `Status:` tails | Kinds |
 |---|---|---|---|
 | `BUGS.md` | 48 | 47 | 45 `FIXED`, 1 `CLOSED`, 1 `PARTIAL` |
-| `ARCHITECTURE.md` | 26 | 26 | 23 `FIXED`, 2 `PARTIAL`, 1 `WITHDRAWN` |
+| `ARCHITECTURE.md` | 26 | 26 | 24 `FIXED`, 1 `PARTIAL`, 1 `WITHDRAWN` |
 | `COSMIC-UX.md` | 30 | 30 | 24 `FIXED`, 4 `PARTIAL`, 2 `WITHDRAWN` |
 | `SECURITY.md` | 11 | 11 | 11 `FIXED` |
 | `PACKAGING.md` | 11 | 11 | 9 `FIXED`, 2 `PARTIAL` |
@@ -135,19 +135,19 @@ advocate reviews every row before it is called done and owns no row.
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 52 | 46 | 0 | 6 |
+| P2 | 52 | 47 | 0 | 5 |
 | P3 | 47 | 44 | 0 | 3 |
-| **Total** | **128** | **119** | **0** | **9** |
+| **Total** | **128** | **120** | **0** | **8** |
 
 | Family | Document | Findings | Fixed | Withdrawn | Remaining |
 |---|---|---|---|---|---|
-| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 23 | 0 | 2 |
+| `ARCH-xx` | `ARCHITECTURE.md` | 25 | 24 | 0 | 1 |
 | `BUG-xx` | `BUGS.md` | 46 | 45 | 0 | 1 |
 | `PERF-xx` | `PERFORMANCE.md` | 6 | 6 | 0 | 0 |
 | `PKG-xx` | `PACKAGING.md` | 11 | 9 | 0 | 2 |
 | `SEC-xx` | `SECURITY.md` | 11 | 11 | 0 | 0 |
 | `UX-xx` | `COSMIC-UX.md` | 29 | 25 | 0 | 4 |
-| **Total** | | **128** | **119** | **0** | **9** |
+| **Total** | | **128** | **120** | **0** | **8** |
 
 These figures are computed from the rows below — by `### Pn` section for the
 severity table and by ID prefix for the family table — rather than maintained
@@ -164,7 +164,7 @@ sentence read "three" and named three ids until
 `ARCH-24` was refuted; the count is here because a reader should not have to union
 four documents to learn how many findings were withdrawn. `Remaining` counts `PARTIAL` as
 remaining, because a half-fixed finding is not closed; `Fixed` therefore excludes
-them and the nine `PARTIAL` rows — `ARCH-11`, `ARCH-12`; `BUG-47`; `PKG-03`, `PKG-06`;
+them and the eight `PARTIAL` rows — `ARCH-12`; `BUG-47`; `PKG-03`, `PKG-06`;
 `UX-06`, `UX-14`, `UX-24`, `UX-26` — appear in `Remaining` until they are finished, and
 `scripts/plan-counts.py` prints that list on every run so the sentence beside it
 has something to be checked against. That read "two"
@@ -250,7 +250,7 @@ across families, not within them.
 | `ARCH-08` | README.md documents a property the command it names does not deliver | S5 | — | Correct the README paragraph to what `cargo test` does, or make the command deliver the claim; verify by running the documented command with the variables set. **Measured, and the row was half right:** with `DISPLAY=:0` and `WAYLAND_DISPLAY=wayland-1` both set, `cargo test --workspace` is **green** (445 + 579 + the smaller targets, 0 failed) — so the property the README promises about the *outcome* holds, while its claim about the *mechanism* ("runs with … unset", implying `cargo test` does the unsetting) is false; `scripts/verify.sh:974` does it. Rewritten to state the property as a fact about the code: `crates/core` has no GUI dependency, so the tests cannot reach a display either way. | FIXED `d855015` |
 | `ARCH-09` | Errors lose their context at several boundaries, and one of them makes a local write failure indistinguishable from a legitimate "not found" | S5 | — | A regression test per boundary asserting the error names the operation and the path, and that a destination-side failure is not reported as "not found". Amend the citations that landed and re-test the third boundary. **Status: FIXED `937ef5b`** (the other two boundaries by `d602716`, `BUG-13`/`BUG-14`). `proton.rs`'s `get_text` now names the byte offset on a `from_utf8` failure and `fetch_available` carries the `serde_json` parse position instead of the bare sentence; both are mutation-proved with measured arms. The row's two citations did land — the file records that, because they are only the second of three checked that held. | FIXED |
 | `ARCH-10` | The error taxonomy is strong inside core and collapses at two boundaries | S5 | — | A test per boundary asserting the `core` error enum survives to the UI message rather than being flattened to `String`. **Status: FIXED `937ef5b`.** `json::PersistenceError` with a variant per failing step (create / write temporary / replace / serialize) plus `WouldDiscardUnreadable`, returned by `models` and `settings`, so `ARCH-01`'s two kinds of failure are distinguishable by type rather than by an `io::ErrorKind` no caller read. The app boundary is closed with it: `view::plugins::InstallRunError` replaces `Result<bool, String>` and `plugins::InstallError` survives as its own variant. Six regression tests, from `every_write_step_that_can_fail_maps_to_its_own_variant` to `a_core_install_error_reaches_the_message_as_its_own_variant`. | FIXED |
-| `ARCH-11` | Module organisation: the four large files are large because of their test modules, and the production halves have concrete seams that no one has cut | S5 | — | Structural: verify with `cargo test` green plus the seam actually used by both callers. No behavioural test can see a moved definition. **Status: PARTIAL.** The `cli.rs` seam landed: `crates/app/src/cli.rs` is the CLI and startup block out of `main.rs` (`struct Cli`, `run`, the two headless verbs, the display check, `start_gui`, `run_gui`) with **30** of its tests moved verbatim, and `crates/app/src/main.rs` went **11659 → 10277** lines against `0 → 1443` for the new file. `cargo test --workspace` is **1129 passed / 0 failed / 1 ignored** over the merged tree (`ARCH-25`'s work added one regression test after this seam was cut; the count matched 1128/0/1 at the time), and the three `dispatch_coverage.rs` invariants (`pub enum Message`, `Shell::update`, the page dispatch) still hold in `main.rs`. The row's `main.rs:83-566` is wrong at both ends (measured `:72-569`) and its "31 tests" is 30. The `installers/{prefix,download,wizard}.rs` and `easy_install.rs` seams remain **uncut**, and the `easy_install.rs` half of that prescription is stale — the file already exists. | PARTIAL |
+| `ARCH-11` | Module organisation: the four large files are large because of their test modules, and the production halves have concrete seams that no one has cut | S5 | — | Structural: verify with `cargo test` green plus the seam actually used by both callers. No behavioural test can see a moved definition. **Status: FIXED.** Two passes. First, `crates/app/src/cli.rs` took the CLI and startup block out of `main.rs` (`struct Cli`, `run`, the two headless verbs, the display check, `start_gui`, `run_gui`) with **30** of its tests moved verbatim; `main.rs` went 11659 → 10277 lines. Second, the installers side of the prescription: `installers.rs` had already been banner-split into `command.rs`/`download.rs`/`wizard.rs`/`tests_support.rs` (the row's `prefix.rs` is `command.rs`), so the remaining real seams were inside `download.rs` — `signature.rs` now holds the Authenticode half (~460 production lines, one public entry `verify_installer_authenticity`) and `process.rs` the `spawn_retrying`/`run_capturing`/`CommandOutput` machinery that signature, wizard and download all share. `easy_install.rs` yielded its one concrete seam too: the nine pure `Message`/`Task`/`FileFilter` constructors — no `State`, called from `main.rs`'s update arms — moved to `easy_install/messages.rs`, while the flow half stays one module for its recorded working-set reason. `wizard.rs` re-measured at 295 production lines needs no cut. The move surfaced and fixed a real defect: `SignatureScratch`'s per-call attempt counter let two concurrent verifications race onto one temp-dir name — the serial is now a process-wide atomic. The row's stale citations are recorded on the specialist row (`main.rs:83-566` → `:72-569`; "31 tests" → 30). Workspace tests green; `wiring_claims` passes with citations updated to `easy_install/mod.rs`. | FIXED |
 | `ARCH-12` | Two god-objects: a 968-line dispatcher and a 33-field state struct | S5 | — | Structural: verify with `cargo test` green plus a per-page count of `Shell::update` arms after the split. No behavioural test can see it. **Status: PARTIAL.** The dispatcher half landed in `3b6ee5a`: `save_game_form`, `cover_fetch_finished`, `cover_file_chosen` and `run_prefix_tool` are free functions over `&mut State`, and the arms are one line each. Re-measured: `Shell::update` is 965 lines / 59 arms (the row says 968 / 61). The `State` grouping half is **not done**, with its cost measured rather than assumed: `State` has 38 `pub` fields, not 33, and `main.rs` holds 367 `.state.<field>` sites — of which the row's own seven named fields are only 39. The three most-referenced (`toasts` 53, `settings` 49, `library` 42) are shell-wide and not groupable, so the real total is over 200 call sites for a purely mechanical rewrite ranked 8th of 9 in the brief's priority order. | PARTIAL |
 | `ARCH-13` | A hand-rolled Python lexer used as a test oracle is duplicated byte-for-byte between the two crates | S5 | — | `91cdfa6` — one lexer in `core::oracle_support` behind a `test-support` feature; four tests, and `cargo tree --no-dev-dependencies` is what keeps it out of a release binary.| FIXED |
 | `ARCH-14` | A comment says a shared helper becomes warranted when a third copy appears; the third copy already exists | S5 | — | Extract the third copy into the shared helper its own comment asks for; verify with a grep that no local copy remains. | FIXED |

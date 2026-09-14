@@ -12,7 +12,7 @@ use crate::installers::command::{
     INSTALL_SETTLE_TIMEOUT_SECONDS, INSTALL_WAIT_EVIDENCE_SECONDS, INSTALL_WIZARD_SECONDS,
     find_prefix_exe,
 };
-use crate::installers::download::spawn_retrying;
+use crate::installers::process::spawn_retrying;
 use crate::runners::{LaunchEnv, Runner, wine_prefix_root};
 
 /// The clock and the sleep the wizard poll runs on
@@ -296,9 +296,9 @@ pub fn wait_for_installer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::installers::download::{RunFailure, SPAWN_RETRIES, run_capturing};
+    use crate::installers::process::{RunFailure, SPAWN_RETRIES, run_capturing};
     use crate::installers::tests_support::*;
-    use crate::installers::{download::SPAWN_RETRIES_TAKEN, installer_by_id};
+    use crate::installers::{installer_by_id, process::SPAWN_RETRIES_TAKEN};
     use crate::runners::env::tests::FakeLaunchEnv;
 
     // The wizard poll — InstallerHandoffTests
