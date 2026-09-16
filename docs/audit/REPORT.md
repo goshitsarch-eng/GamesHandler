@@ -25,7 +25,7 @@ prose count beside them in this file and in `PLAN.md` was re-derived by counting
 the rows, and three were wrong when this paragraph was written (see the
 `PARTIAL` paragraph below and `PLAN.md`'s note on the `BUGS.md` row).
 
-The `Fixed` column counts `FIXED` only; the eight `PARTIAL` rows are counted in
+The `Fixed` column counts `FIXED` only; the five `PARTIAL` rows are counted in
 `Remaining`, because a half-fixed finding is not closed.
 
 **This report tracks a moving tree, and the count is recomputed on every move.**
@@ -51,7 +51,7 @@ target has moved is a present-tense count of a moving target, which is the shape
 of error `PLAN.md` records against its own `BUGS.md` row. What is true at every
 revision is what the paragraph now says.
 
-**This is not a final report.** 8 of 128 defects are still open, most of them
+**This is not a final report.** 5 of 128 defects are still open, most of them
 because the work has not been done yet rather than because anything blocks it,
 and the section *What remains, honestly* says which is which.
 
@@ -61,11 +61,11 @@ and the section *What remains, honestly* says which is which.
 |---|---|---|---|---|---|
 | `BUG-xx` | Bugs, reliability, feature completeness | 46 | 45 | 2 | 1 |
 | `ARCH-xx` | Architecture, code quality | 25 | 24 | 1 | 1 |
-| `UX-xx` | libcosmic / COSMIC UX | 29 | 25 | 1 | 4 |
+| `UX-xx` | libcosmic / COSMIC UX | 29 | 26 | 1 | 3 |
 | `PERF-xx` | Performance, resource | 6 | 6 | 2 | 0 |
 | `SEC-xx` | Security, robustness | 11 | 11 | 0 | 0 |
-| `PKG-xx` | Packaging, platform, QA | 11 | 9 | 0 | 2 |
-| **Total** | | **128** | **120** | **6** | **8** |
+| `PKG-xx` | Packaging, platform, QA | 11 | 11 | 0 | 0 |
+| **Total** | | **128** | **123** | **6** | **5** |
 
 The `Found` column is defects; the six refuted rows are counted in `Not a defect`
 and in no other column, which is why `BUGS.md` holds 48 id-bearing rows, two of
@@ -80,26 +80,26 @@ By severity:
 |---|---|---|---|---|
 | P0 | 5 | 5 | 0 | 0 |
 | P1 | 24 | 24 | 0 | 0 |
-| P2 | 52 | 47 | 0 | 5 |
-| P3 | 47 | 44 | 0 | 3 |
-| **Total** | **128** | **120** | **0** | **8** |
+| P2 | 52 | 49 | 0 | 3 |
+| P3 | 47 | 45 | 0 | 2 |
+| **Total** | **128** | **123** | **0** | **5** |
 
 `Not a defect` is not a euphemism for "wontfix": all six rows were **refuted by
 measurement** and are kept, marked, with what refuted them (`BUG-11`, `BUG-15`,
 `UX-08`, `ARCH-24`, `PERF-07`, `PERF-08` — the last two by a live re-run under a
-headless compositor). All eight of the rows counted as `Remaining` above are `PARTIAL`
+headless compositor). All five of the rows counted as `Remaining` above are `PARTIAL`
 rather than untouched — `scripts/plan-counts.py` prints them by name on every
 run — and each names the half that is still missing: `ARCH-12`
 (the four dispatcher extractions landed in `3b6ee5a`, and the grouping half did
-not: re-measured, `Shell::update` is 965 lines over 59 arms, `State` carries 38
-`pub` fields with 367 `.state.<field>` sites in `main.rs`, and the row's own
-seven named fields account for 39 of them, so a field-grouped rewrite is a
-200-site mechanical change for the eighth-ranked benefit of nine), `BUG-47` (the
-ellipsis is commented but cannot be asserted — iced offers no downcast and
-`Text::format` is private), `PKG-03` (the freshness check is split and always
-runs; the generator half is unvendored because the only copy to hand has no
-nameable upstream), `PKG-06` (keywords added, screenshots still absent),
-`UX-06` (the scrim blocks the pointer, not Tab), `UX-24` (both destructive
+not: re-measured again this revision, `Shell::update` is 965 lines over 59 arms,
+`State` carries 42 `pub` fields with 417 `.state.<field>` sites in `main.rs`,
+and the fields a page grouping would move are not the busy ones, so a
+field-grouped rewrite is a 200-plus-site mechanical change for the
+eighth-ranked benefit of nine), `BUG-47` (the ellipsis is wired, measured at
+width, and — new this revision — *seen*: a 68-character name renders
+`Baldur's Gate 3: The Absol…` under the nested-weston capture pipeline; what is missing is only
+the automated assertion, because iced offers no downcast and `Text::format` is
+private), `UX-24` (both destructive
 prompts now open with the keyboard on Cancel; the game-form and installer-search
 halves of the recommendation were measured and declined — nothing *opens* the
 filter, and the reference sets no focus on its form), `UX-26` (the same
@@ -107,7 +107,25 @@ defect as `BUG-47`, filed from the reference side — its unassertable half is
 the same private `Text::format`) and `UX-14` (the notice is published as an assertive alert and every
 toast lasts 15 s rather than 5, but nothing delivers the node at the pinned rev —
 `UserInterface::a11y_nodes` has no caller, the same upstream gap `UX-01`–`UX-03`
-sit behind).
+sit behind, and upstream `pop-os/iced` master still publishes only a
+`Role::Window` node).
+
+**Three of the eight left `Remaining` in this revision.** `UX-06` closed by the
+door its own tail named — the app adopted an explicit focus-ring gate
+(`view::a11y::focus_gate`, an `Operation` that filters `focusable` reports out
+of the page's subtree while a dialog is open, with two mutation-checked tests
+proving Tab wraps inside the dialog's ring). `PKG-03` closed by doing the
+vendoring the earlier pass declined for want of provenance:
+`build-aux/flatpak/flatpak-cargo-generator.py` is the upstream file pinned at
+`f03a673abe6ce189cea1c2857e2b44af2dd79d1f` with its sha256 recorded in
+`VENDORED.md`. `PKG-06` closed by taking the screenshots rather than waiting
+for them: the app was run under a nested `weston --backend=x11` inside `Xvfb`
+(the headless backend exposes no screencopy protocol and Xvfb's 24-bpp root
+visual is rejected by softbuffer — the nesting exists because each half alone
+was a dead end), captured with `xwd`, and two shots are committed under
+`docs/screenshots/` and referenced from the metainfo through the project's own
+raw.githubusercontent URLs, which a new test maps back into the tree so a
+dangling record fails rather than renders broken.
 
 **This paragraph read "two… `BUG-12` and `BUG-47`" and named `SEC-05` as "a
 third", which was wrong twice over** — and it has since been corrected twice
@@ -170,14 +188,14 @@ is **met for P0 and P1** and **not met for P2**, where the reason is that the
 work is unfinished rather than impossible. Stating that plainly is the point of
 this section.
 
-Where the 8 open rows are:
+Where the 5 open rows are:
 
 | Band | Count | What it is |
 |---|---|---|
 | P0 | 0 | **Closed.** All five fixed and each verified by restoring the pre-fix body and watching the new test fail. |
 | P1 | 0 | **Closed.** `SEC-11` — the approved-publisher gate reading signer-chosen text as a certificate subject — was the last row here and is fixed; the recipe this report first sketched for it was measured wrong and corrected in the fix. `UX-01`–`UX-03` were the four upstream-widget accessibility gaps plus `ARCH-02`, all fixed, and the three widget rows each record the residue that is upstream's rather than this port's. |
-| P2 | 5 | 2 `UX`, 1 `ARCH`, 1 `BUG`, 1 `PKG`. Actionable. |
-| P3 | 3 | 2 `UX`, 1 `PKG`. Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. |
+| P2 | 3 | 1 `ARCH`, 1 `BUG`, 1 `UX`. Actionable. |
+| P3 | 2 | 2 `UX`. Edge cases, cosmetic divergences, and comments or tests that describe something the code does not do. |
 Three findings are worth flagging as *not* ordinary work, so no reader mistakes
 them for a backlog item:
 
