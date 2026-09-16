@@ -35,6 +35,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # tests/test_plan_traceability.py asserts git log returns >=100
+          # subjects — the default fetch-depth:1 makes that check vacuous-
+          # proof by construction, so the gate needs the full history.
+          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
