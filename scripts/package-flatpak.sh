@@ -79,8 +79,14 @@ if [ "$ARCH" = "aarch64" ]; then
     # flathub only for x86_64; DXVK's bundled tarballs are x86 Windows
     # DLLs that cannot run under an aarch64 Wine. The variant drops all
     # four rather than shipping entries that cannot resolve.
-    MANIFEST="$ROOT/target/$APP_ID.$ARCH.json"
-    mkdir -p "$ROOT/target"
+    #
+    # The variant is written BESIDE the source manifest, not under target/:
+    # the manifest's `dir` source (`path: "../.."`) and its bare
+    # `cargo-sources.json` string source are both resolved relative to the
+    # manifest's own directory, so generating it anywhere else needs those
+    # paths rewritten — a copy of the source-layout detail that would drift.
+    # Same directory means no rewriting at all.
+    MANIFEST="$ROOT/build-aux/flatpak/$APP_ID.$ARCH.json"
     python3 - "$SRC_MANIFEST" "$MANIFEST" <<'PY'
 import json, sys
 src, dest = sys.argv[1], sys.argv[2]

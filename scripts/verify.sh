@@ -932,7 +932,15 @@ stage_test() {
         # the pipeline reports printf's 141 instead of grep's 0 — a FAIL on
         # output that contains the line. Measured: 59 failures in 60 runs of
         # the piped form against a 1.4 MB test log, 0 in 60 of this form.
-        if grep -qE "^ +Compiling ${crate} v" <<<"$out"; then
+        #
+        # The SGR strip is load-bearing on CI: under CARGO_TERM_COLOR=always
+        # cargo prefixes the line with `\x1b[1m\x1b[92m`, so `^ +Compiling`
+        # never sees its leading spaces and every legitimate run reports
+        # "cargo never compiled". Strip colours into a variable first — a
+        # `sed | grep -q` pipeline would reintroduce the SIGPIPE hazard above.
+        local plain
+        plain="$(sed 's/\x1b\[[0-9;]*m//g' <<<"$out")"
+        if grep -qE "^ +Compiling ${crate} v" <<<"$plain"; then
             echo "ok   cargo compiled ${crate} from source before running its tests"
         else
             echo "FAIL cargo never compiled ${crate} — the binary it ran is not this source (#50)"

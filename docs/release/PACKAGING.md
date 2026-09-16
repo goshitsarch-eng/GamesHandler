@@ -179,8 +179,8 @@ Flathub publishes `org.winehq.Wine` only as the app ref
 anywhere on flathub (the check is named in the script header,
 `package-flatpak.sh:9-14`). Freedesktop Platform, the SDK and the rust-stable
 extension all publish aarch64/25.08, so they carry over unchanged. For
-aarch64 the script generates `target/com.goshapps.GameHandler.aarch64.json`
-from the checked-in manifest (`:77-95`), dropping four things:
+aarch64 the script generates `build-aux/flatpak/com.goshapps.GameHandler.aarch64.json`
+from the checked-in manifest (`:77-99`), dropping four things:
 
 - `base` / `base-version` — the Wine base app that does not exist for aarch64.
 - `inherit-extensions` — GL32 and Compat.i386 are x86-only extensions.
@@ -194,8 +194,25 @@ and builds identically on both arches. The deliberate consequence is that
 the aarch64 Flatpak ships **without** a bundled Wine: the app manages its own
 Proton/Wine downloads from their maintainers' release pages rather than
 relying on the base app, so runner provisioning on aarch64 is the user's own
-concern, the same as on any non-Flatpak install. The generated manifest is a
-build product under `target/`; the checked-in manifest stays the x86_64 one.
+concern, the same as on any non-Flatpak install. The generated manifest sits
+beside the source manifest — not under `target/` — because the manifest's
+`dir` source (`path: "../.."`) and its bare `cargo-sources.json` string
+source are both resolved relative to the manifest's own directory; generating
+it anywhere else would need those paths rewritten. It is gitignored as a
+build product; the checked-in manifest stays the x86_64 one.
+
+One more manifest detail with CI history behind it: `"appstream-compose":
+false` (`manifest:4`). flatpak-builder runs `appstreamcli compose` at export
+time, and the compose build environment has no network — the metainfo's
+`<image>` screenshots are remote `raw.githubusercontent.com` URLs, so the
+fetch fails and appstream 1.0.x (Ubuntu 24.04's `appstream-compose` package)
+reports `file-read-error` + `filters-but-no-output` and fails the export.
+Newer appstream (1.1.x) treats the unfetchable remote image as skippable.
+Compose output is catalog data for software centres, not part of what this
+release ships — the metainfo file itself is installed either way, and
+`desktop-metainfo` already validates it with `appstreamcli validate
+--no-net`. The flag trades nothing the release needs for a build that works
+on the runner's appstream.
 
 ## Checksums
 
