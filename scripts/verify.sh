@@ -959,8 +959,10 @@ stage_test() {
         local label="$1" out="$2" floor="$3"
         local passed
         # Sum every `test result: ok. N passed` line across the run's binaries.
+        # awk, not bc — bc is not on the ubuntu-24.04 runner image and this
+        # script's awk dependency is already load-bearing elsewhere.
         passed="$(grep -oE '^test result: ok\. [0-9]+ passed' <<<"$out" \
-            | grep -oE '[0-9]+' | paste -sd+ - | bc)"
+            | grep -oE '[0-9]+' | awk '{s+=$1} END{if (NR>0) print s}')"
         if [ -z "$passed" ]; then
             echo "FAIL $label ran no tests at all — cargo exited 0 with no 'test result' line (#50)"
             rc=1
@@ -2623,15 +2625,13 @@ else
     run_stage smoke-test
 fi
 
-if [ "$SKIP_FLATPAK" -eq 1 ] && [ ! -d "$BUILD_DIR/files" ]; then
-    begin desktop-metainfo
-    # This one follows from --skip-flatpak, so it is a requested skip too: the
-    # caller asked not to build, and is told the consequence is an unvalidated
-    # installed copy rather than being failed for it.
-    finish_skip "no build tree — run without --skip-flatpak to validate the installed copies" 1
-else
-    run_stage desktop-metainfo
-fi
+# Runs even under --skip-flatpak: the stage's first half validates
+# data/*.desktop and data/*.metainfo.xml against the *source* files with
+# desktop-file-validate/appstreamcli, and only the installed-copy half needs
+# the build tree — the stage itself returns 98 (requested skip) for that half
+# when the tree is absent. Early-returning here used to skip the source
+# validation too, which is the one half a tree-less CI checkout can run.
+run_stage desktop-metainfo
 
 # Runs even under --skip-flatpak: its manifest half needs no build tree, and that
 # is precisely the half that catches a deleted install line. It reports SKIP on

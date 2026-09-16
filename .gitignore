@@ -27,3 +27,8 @@ dist/
 # dispatched agent; they are not part of the tree and their contents are
 # throwaway. Ignored so `git status` stays a real signal during the audit.
 .claude/worktrees/
+
+# The aiohttp+tomlkit venv verify.sh's cargo-sources-fresh stage prefers
+# (find_generator_python looks for venv/bin/python beside the vendored
+# generator). A created interpreter, not source.
+build-aux/flatpak/venv/

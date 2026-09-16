@@ -88,6 +88,14 @@ The manifest bundles osslsigncode (used to verify the Easy Installers'
 Authenticode signatures), the Microsoft Authenticode trust root, and the DXVK
 runtime used by Wine runners that ship without their own.
 
+### Releases
+
+Prebuilt artifacts for Linux x86_64 and aarch64 — a `.tar.gz` and a `.flatpak`
+per architecture plus `SHA256SUMS` — are built and published by GitHub Actions
+whenever a `vX.Y.Z` tag is pushed. See [docs/RELEASING.md](docs/RELEASING.md)
+for the maintainer release process and
+[docs/release/](docs/release/) for how the pipeline works.
+
 ### Permissions
 
 A game launcher has to execute games and tools from wherever your library

@@ -1,0 +1,143 @@
+# Release — pushing a v* tag builds both architectures and publishes the
+# GitHub Release. See docs/release/CI-ARCHITECTURE.md.
+#
+#   git tag v0.8.1 && git push origin v0.8.1
+#
+# Flow: validate (tag must agree with Cargo.toml, the metainfo <release> and
+# gamehandler/__init__.py) → build (native x86_64 and aarch64: release
+# binary, tar.gz, Flatpak, smoke run) → publish (verify the complete set,
+# checksum it, draft release, upload, read assets back, publish).
+#
+# workflow_dispatch with a tag input re-runs a release without pushing a new
+# tag — the publish step is idempotent (draft-or-update, --clobber upload).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to release (e.g. v0.8.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# A release build must never be cancelled mid-publish by a second trigger.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Tag must agree with every version source
+        id: check
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          scripts/release-check.sh "$TAG"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libwayland-dev wayland-protocols \
+            libxkbcommon-x11-dev libbz2-dev liblzma-dev zlib1g-dev \
+            libdrm-dev libfontconfig-dev libdbus-1-dev libudev-dev libssl-dev \
+            flatpak flatpak-builder ostree desktop-file-utils appstream \
+            elfutils binutils file
+
+      # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor;
+      # flatpak-builder's bwrap needs them.
+      - name: Allow unprivileged user namespaces (for flatpak-builder)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Add the flathub remote (user scope)
+        run: flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          key: release-${{ matrix.arch }}
+
+      - name: Build release binary (${{ matrix.arch }})
+        run: cargo build --release --locked
+
+      - name: Package tar.gz (verifies ELF arch)
+        run: scripts/package-release.sh --arch "${{ matrix.arch }}" --version "$VERSION"
+
+      - name: Package Flatpak (verifies ref arch)
+        run: scripts/package-flatpak.sh --arch "${{ matrix.arch }}" --version "$VERSION"
+
+      - name: Smoke — install the bundle and run --version
+        run: |
+          flatpak install --user --noninteractive \
+            "dist/gamehandler-v${VERSION}-linux-${{ matrix.arch }}.flatpak"
+          flatpak info --user com.goshapps.GameHandler | grep -E "Arch|Branch"
+          flatpak run com.goshapps.GameHandler --version
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.arch }}
+          path: |
+            dist/gamehandler-v*-linux-${{ matrix.arch }}.tar.gz
+            dist/gamehandler-v*-linux-${{ matrix.arch }}.flatpak
+          if-no-files-found: error
+          retention-days: 5
+
+  publish:
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Flatpak CLI (for bundle verification in verify-release.sh)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends flatpak ostree
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify, checksum and publish the release
+        run: scripts/publish-release.sh "$TAG" dist

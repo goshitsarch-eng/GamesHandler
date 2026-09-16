@@ -1,0 +1,92 @@
+# CI — the gate on every push to main and every pull request.
+#
+# `gate` runs scripts/ci.sh, which is scripts/verify.sh --skip-flatpak: fmt,
+# build, clippy -D warnings, doc, the full test suite, the Python parity
+# suite, cargo-lock/cargo-sources checks, advisory check and the packaging
+# checks that need no build tree. That chain is the gate, not a subset of it
+# (docs/release/CI-ARCHITECTURE.md).
+#
+# `build-aarch64` is a native ARM64 compile check — libcosmic is the kind of
+# dependency surface where aarch64-specific build failures hide. It builds
+# and reads the ELF machine back; it does not package (releases do that).
+#
+# Runner labels verified against the GitHub-hosted runners reference
+# (docs.github.com/en/actions/reference/runners/github-hosted-runners):
+# ubuntu-24.04 is x64, ubuntu-24.04-arm is arm64 — GA for public repos.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libwayland-dev wayland-protocols \
+            libxkbcommon-x11-dev libbz2-dev liblzma-dev zlib1g-dev \
+            libdrm-dev libfontconfig-dev libdbus-1-dev libudev-dev libssl-dev \
+            desktop-file-utils appstream python3-venv
+
+      # verify.sh's cargo-sources-fresh stage runs the vendored generator,
+      # which imports aiohttp + tomlkit. find_generator_python prefers a venv
+      # beside the script; the stock runner image has neither module and
+      # PEP 668 blocks a system pip install, so the venv is the supported path.
+      - name: Python venv for the cargo-sources generator
+        run: |
+          python3 -m venv build-aux/flatpak/venv
+          build-aux/flatpak/venv/bin/pip install --quiet aiohttp tomlkit PyYAML
+
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          key: x86_64-gate
+
+      # rust-toolchain.toml pins 1.98.1; the first cargo call resolves it.
+      - name: Show resolved toolchain
+        run: rustup show active-toolchain && rustc --version
+
+      - name: Gate
+        run: scripts/ci.sh
+
+  build-aarch64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libwayland-dev wayland-protocols \
+            libxkbcommon-x11-dev libbz2-dev liblzma-dev zlib1g-dev \
+            libdrm-dev libfontconfig-dev libdbus-1-dev libudev-dev libssl-dev \
+            binutils file
+
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          key: aarch64-build
+
+      - name: Build (aarch64)
+        run: cargo build --locked
+
+      - name: Verify the binary is aarch64
+        run: |
+          file target/debug/gamehandler
+          readelf -h target/debug/gamehandler | grep -q "Machine:.*AArch64"

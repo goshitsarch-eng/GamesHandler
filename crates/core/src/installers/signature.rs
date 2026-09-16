@@ -28,7 +28,9 @@ use crate::runners::LaunchEnv;
 /// `Path(__file__).with_name(...)` — the `.pem` sitting beside the Python
 /// module — and has no counterpart here because there is no Python module; the
 /// third is the repository's `data/` directory relative to the module, which
-/// translates to a path relative to this crate's source; the fourth is Flatpak's
+/// translates to a path relative to this crate's source; the fourth and fifth
+/// are the tarball install's XDG data location (`$XDG_DATA_HOME/gamehandler`,
+/// then `~/.local/share/gamehandler`); the sixth is Flatpak's
 /// `/app/share/gamehandler`.
 ///
 /// The first candidate is the environment override, and it is the one that
@@ -50,6 +52,32 @@ pub fn authenticode_root_path(env: &dyn Env) -> Result<PathBuf, InstallerError> 
             .join("../../data")
             .join(AUTHENTICODE_ROOT_NAME),
     );
+    // The tarball's install.sh copies the root to $PREFIX/share/gamehandler/
+    // (default ~/.local), which is XDG data space — resolve it through
+    // XDG_DATA_HOME with the ~/.local/share fallback rather than making a
+    // tarball install depend on the environment override.
+    if let Some(xdg) = env
+        .var("XDG_DATA_HOME")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        candidates.push(
+            Path::new(&xdg)
+                .join("gamehandler")
+                .join(AUTHENTICODE_ROOT_NAME),
+        );
+    }
+    if let Some(home) = env
+        .var("HOME")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        candidates.push(
+            Path::new(&home)
+                .join(".local/share/gamehandler")
+                .join(AUTHENTICODE_ROOT_NAME),
+        );
+    }
     candidates.push(Path::new("/app/share/gamehandler").join(AUTHENTICODE_ROOT_NAME));
     for candidate in candidates {
         if candidate.is_file() {
