@@ -7,9 +7,9 @@
 #
 # Order of operations — a release nobody can partially see:
 #
-#   1. verify-release.sh must pass on DIR first (complete set, right arches)
-#   2. SHA256SUMS is (re)generated here so it describes exactly the files
-#      being uploaded
+#   1. SHA256SUMS is (re)generated here so it describes exactly the files
+#      being uploaded — then verify-release.sh checks the complete set
+#      (arches, integrity, and the checksum file itself)
 #   3. a DRAFT release is created (or the existing one reused) — nothing is
 #      public while assets are still landing
 #   4. all five assets are uploaded with --clobber (rerun-safe)
@@ -29,19 +29,17 @@ VERSION="${TAG#v}"
 
 command -v gh >/dev/null 2>&1 || { echo "publish-release.sh: gh CLI is required" >&2; exit 1; }
 
-"$ROOT/scripts/verify-release.sh" --version "$VERSION" "$DIR" || {
-    echo "publish-release.sh: refusing to publish — the artifact set failed verification" >&2
-    exit 1
-}
-
-# Regenerate SHA256SUMS against exactly the four artifacts being shipped.
+# Regenerate SHA256SUMS against exactly the four artifacts being shipped —
+# verify-release.sh requires it as part of the complete set, so it must be
+# (re)built before verification, not after.
 ( cd "$DIR" && rm -f SHA256SUMS && \
   sha256sum "gamehandler-v$VERSION-linux-x86_64.tar.gz" \
             "gamehandler-v$VERSION-linux-aarch64.tar.gz" \
             "gamehandler-v$VERSION-linux-x86_64.flatpak" \
             "gamehandler-v$VERSION-linux-aarch64.flatpak" > SHA256SUMS )
-"$ROOT/scripts/verify-release.sh" --version "$VERSION" "$DIR" >/dev/null || {
-    echo "publish-release.sh: verification failed after SHA256SUMS regeneration" >&2
+
+"$ROOT/scripts/verify-release.sh" --version "$VERSION" "$DIR" || {
+    echo "publish-release.sh: refusing to publish — the artifact set failed verification" >&2
     exit 1
 }
 
@@ -97,7 +95,7 @@ done
 # not steal the pointer from a newer release.
 latest_flag="--latest=false"
 newest="$(git ls-remote --tags origin 'v*' 2>/dev/null \
-    | awk -F/ '{print $NF}' | sort -V | tail -1)"
+    | awk -F/ '{sub(/\^\{\}$/, "", $NF); print $NF}' | sort -uV | tail -1)"
 if [ "$newest" = "$TAG" ]; then
     latest_flag="--latest"
 fi
