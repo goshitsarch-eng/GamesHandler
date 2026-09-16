@@ -67,6 +67,13 @@ jobs:
       - name: Show resolved toolchain
         run: rustup show active-toolchain && rustc --version
 
+      # verify.sh's cargo-lock stage is `cargo metadata --offline --locked`:
+      # offline resolution needs the WHOLE lockfile graph in the registry —
+      # including other platforms' deps (android-activity et al.) that
+      # `cargo build` never fetches. `cargo fetch` covers all of them.
+      - name: Fetch the complete lockfile graph
+        run: cargo fetch --locked
+
       - name: Gate
         run: scripts/ci.sh
 

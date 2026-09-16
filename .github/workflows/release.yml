@@ -72,6 +72,12 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          # noble's stock flatpak (1.14.x) predates `--device=input`/`usb`
+          # (flatpak 1.15+) and rejects the manifest's finish-args at
+          # build-finish. ppa:flatpak/stable is the flatpak.org-documented
+          # channel and ships 1.18.x + flatpak-builder 1.4.8 for noble,
+          # on arm64 too.
+          sudo add-apt-repository -y ppa:flatpak/stable
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config libxkbcommon-dev libwayland-dev wayland-protocols \
