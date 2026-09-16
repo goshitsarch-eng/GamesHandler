@@ -1,226 +1,217 @@
 # GameHandler
 
-GameHandler is a modern game manager for Linux, focused on running **Windows games**
-via **Wine** and **Proton**.
+GameHandler is a game manager for Linux. It runs Windows games through Wine or
+Proton, runs Linux-native games directly, downloads compatibility runners,
+manages isolated prefixes, and installs the big store launchers for you.
 
-Current release: **0.8.0**. This release ports the interface from Python +
-Qt 6/Kirigami to Rust + libcosmic (the COSMIC desktop toolkit). The previous
-release, 0.7.2, fixed package-aware test discovery on hosts without PySide6:
-the test-only Kirigami stub now loads Qt types lazily, so the core tests run
-and the optional QML smoke test skips as intended.
+Current release: **0.8.0** — a Rust + libcosmic (COSMIC toolkit) application,
+shipped as a Flatpak. The earlier Python + Qt 6/Kirigami implementation remains
+in `gamehandler/` as the parity reference the Rust code is tested against; it
+is not what the Flatpak ships.
 
-> **This branch is porting the interface to Rust.** GameHandler is being
-> rewritten from Python 3 + PySide6/QML (Qt 6, styled with Kirigami) to **Rust**
-> with **libcosmic**, the COSMIC desktop toolkit. Both trees are present here
-> and both are documented below: the Python application is the parity reference
-> and still runs exactly as described, and the Rust workspace under `crates/` is
-> what 0.8.0 ships. See [The Rust application](#the-rust-application) for what
-> builds today and `docs/migration/PLAN.md` for the task list.
+## AI-assisted development
 
-It is a **front-end, not a compatibility layer**. Every Windows game it launches runs
-on [Wine](https://www.winehq.org), usually through a [Proton](https://github.com/ValveSoftware/Proton)
-build maintained by someone else, with Direct3D translated by [DXVK](https://github.com/doitsujin/dxvk)
-and [VKD3D-Proton](https://github.com/HansKristian-Work/vkd3d-proton). GameHandler
-downloads those builds from their maintainers' own release pages — the same upstream
-sources [ProtonPlus](https://github.com/Vysp3r/ProtonPlus) uses — sets up isolated
-prefixes, and stays out of their way. Its design owes a lot to
-[Lutris](https://lutris.net), [Faugus Launcher](https://github.com/Faugus/faugus-launcher),
-and [Bottles](https://usebottles.com). Full acknowledgements are
-[below](#thanks-to-the-projects-gamehandler-stands-on) and on the app's own About & Credits page.
+I use AI tools to speed up development, but I work architecture-first. I define
+the architecture, build and review the implementation, refactor it, and repeat
+the process as the project evolves.
+
+I treat AI as a junior developer: useful for implementation and exploration,
+but not the final authority. I remain responsible for the architecture,
+technical decisions, and quality of the code.
+
+I'm including this notice so you can make an informed choice about whether
+AI-assisted software is something you're comfortable using.
+
+## What it is
+
+GameHandler is a **front-end, not a compatibility layer**. Every Windows game
+it launches runs on [Wine](https://www.winehq.org), usually through a
+[Proton](https://github.com/ValveSoftware/Proton) build maintained by someone
+else, with Direct3D translated by [DXVK](https://github.com/doitsujin/dxvk) and
+[VKD3D-Proton](https://github.com/HansKristian-Work/vkd3d-proton). GameHandler
+downloads those builds from their maintainers' own release pages, sets up
+isolated prefixes, and stays out of their way. Its design owes a lot to
+[Lutris](https://lutris.net),
+[Faugus Launcher](https://github.com/Faugus/faugus-launcher), and
+[Bottles](https://usebottles.com). Full acknowledgements are
+[below](#thanks-to-the-projects-gamehandler-stands-on) and on the app's own
+About & Credits page.
 
 ## Features
 
-- Dark mode by default, plus system and light themes — both first-class
-- Grid and list library views, search, categories, sorting, and per-game edit
-- Generated cover art for titles without artwork, so the grid never looks empty
-- Custom cover art, automatic Steam lookup by game name, and — for anything
-  Steam has never sold, such as a store launcher — the icon the Windows
-  executable already carries
-- Add Windows `.exe` titles or Linux-native games
-- Choose a Proton or Wine runner when adding a game, and change it later
-- Download and remove compatibility tools from inside the app:
-  - Proton-GE, Proton-GE RTSP, Proton-CachyOS, Proton-EM
-  - Kron4ek Wine-Vanilla, Wine-Staging, Wine-Staging-Tkg, Wine-Proton
-- Guide describing when to use each Proton or Wine family
-- Isolated Wine prefixes, Winecfg, Winetricks, and prefix folder access
-- Launch helpers: MangoHud, Feral GameMode, Prefer SDL, Wine Wayland, HDR, Esync, Fsync, DXVK, VKD3D, NVAPI/DLSS, FSR, BattlEye, EAC, Gamescope, virtual desktop, and custom environment variables
-- Easy installers for Battle.net, Epic, EA App, Ubisoft Connect, GOG Galaxy, Amazon Games, Rockstar, Steam, and Discord —
-  each waits for the vendor's own wizard to finish, then adds the result with a Play button
-- Plugins page that detects MangoHud, GameMode, Winetricks, UMU, and Gamescope
-- About & Credits page naming every upstream project, with links and licenses
-- Desktop shortcuts that launch a library entry with `gamehandler --launch`
-- Games and covers on network shares work: `smb://`-style locations are
-  resolved through their mounted GVFS path so Wine can actually run them
+- Library with grid and list views, search, category filters, sorting
+  (name, recently played, recently added), and per-game edit
+- Cover art: Steam lookup by name, custom images, the icon inside the
+  executable, and generated art when nothing else is found
+- Windows `.exe` and Linux-native games; pick a runner per game and change
+  it later
+- Download and remove runners from inside the app: Proton-GE, Proton-GE RTSP,
+  Proton-CachyOS, Proton-EM, and the Kron4ek Wine-Vanilla, Wine-Staging,
+  Wine-Staging-Tkg and Wine-Proton builds — each with a short guide to when
+  you'd want it
+- Isolated Wine prefixes per game, with Winecfg, Winetricks, and an
+  "open prefix folder" action on each entry
+- Launch options per game and as defaults: MangoHud, GameMode, Prefer SDL,
+  Wine Wayland, HDR, Esync, Fsync, DXVK, VKD3D, NVAPI/DLSS, FSR, BattlEye,
+  Easy Anti-Cheat, Gamescope, a Wine virtual desktop, and custom environment
+  variables
+- One-click installers for Battle.net, Epic Games, EA App, Ubisoft Connect,
+  GOG Galaxy, Amazon Games, Rockstar, Steam, and Discord. Each downloads the
+  vendor's own installer, verifies its Authenticode signature, waits for the
+  wizard, then adds the result to your library
+- Plugins page that detects MangoHud, GameMode, Winetricks, UMU, and
+  Gamescope, and offers install commands where the platform allows it
+- Desktop shortcuts that launch a game straight from your app menu
+- Games and covers on network shares work: `smb://`-style locations resolve
+  through their mounted GVFS path so Wine can run them
 
-Flatpak users who enable Gamescope also need the matching Freedesktop 25.08 extension:
+## Install
+
+The shipped package is a Flatpak bundle you build locally:
+
+```bash
+./build-aux/flatpak/build.sh
+flatpak --user install dist/gamehandler-0.8.0.flatpak
+flatpak run com.goshapps.GameHandler
+```
+
+The build needs `flatpak`, `flatpak-builder`, and `flatpak-repo`, and downloads
+the Freedesktop 25.08 runtime/SDK, the `rust-stable` SDK extension, and the
+Wine `stable-25.08` BaseApp from Flathub on first run. Once those are
+installed, crate fetching is offline — every crate is vendored in
+`build-aux/flatpak/cargo-sources.json`, generated from `Cargo.lock`. Set
+`GAMEHANDLER_BUILD_OFFLINE=1` to skip the remaining Flathub dependency
+resolution too.
+
+The bundle name follows the workspace version, so it changes on each release.
+The manifest bundles osslsigncode (used to verify the Easy Installers'
+Authenticode signatures), the Microsoft Authenticode trust root, and the DXVK
+runtime used by Wine runners that ship without their own.
+
+### Permissions
+
+A game launcher has to execute games and tools from wherever your library
+lives and pass controllers through, so the sandbox is wider than a document
+app's — but it is deliberately narrower than it used to be:
+
+- `--filesystem=home:ro` — read-only access to your home directory, because
+  games execute from it
+- `--filesystem=~/.local/share/applications:create` — the one writable
+  carve-out, so "create desktop shortcut" can write launcher files
+- `--device=dri`, `--device=input`, `--device=usb` — GPU, controllers, and
+  game hardware; deliberately **not** `--device=all`, which also exposed
+  `/dev/mem`, `/dev/kvm`, and raw disk nodes no game needs
+- `--filesystem=xdg-run/gvfs` — so games on GVFS-mounted network shares launch
+  from inside the sandbox
+- `--allow=multiarch` — required for 32-bit Windows games and downloaded
+  Wine/Proton builds
+
+The Plugins page never runs `apt`, `dnf`, `pacman`, `zypper`, `sudo`, or
+`pkexec` inside the Flatpak — host package installs are refused outright, and
+helpers installed outside the sandbox are not visible to it. MangoHud and
+Gamescope have Flatpak extension installs instead. To use Gamescope inside
+the Flatpak, install the matching runtime extension:
 
 ```bash
 flatpak install flathub org.freedesktop.Platform.VulkanLayer.gamescope//25.08
 ```
 
-## Tech stack
+## Use
 
-| Area | Rust application (0.8.0, `crates/`) | Python application (0.7.2, parity reference) |
-| --- | --- | --- |
-| Language | Rust (edition 2024, floor 1.93) | Python 3 |
-| UI toolkit | libcosmic (COSMIC desktop toolkit), software renderer | Qt 6 + Kirigami (`PySide6` + QML) |
-| Build system | Cargo workspace | Meson |
-| Packaging | Flatpak (Freedesktop 25.08 + rust-stable) | not packaged on this branch — run from source |
-| Runners | System Wine plus downloaded Proton/Wine builds | same |
+The window has six pages: **Library**, **Installers**, **Runners**,
+**Plugins**, **About & Credits**, and **Settings**.
 
-## Requirements
+Add a game from the Library page (or `Ctrl+N`): point it at a Windows `.exe`
+or a Linux executable, pick a runner, and set any launch options. The game
+menu on each entry handles cover art, Winecfg, Winetricks, the prefix folder,
+desktop shortcuts, and removal. Settings holds the theme, the library layout,
+and the default values new games inherit.
 
-To build and run the Rust application:
+Games and settings live in the usual XDG locations:
 
-```
-rustup / cargo        # 1.93 or newer; the Flatpak uses the rust-stable SDK extension
-flatpak flatpak-builder  # only to build the Flatpak
-flatpak install flathub org.freedesktop.Sdk.Extension.rust-stable  # only for the Flatpak
-wine                  # to actually launch Windows games
-osslsigncode          # version 2.14+ verifies Easy Installer Authenticode signatures
-```
+- `~/.config/gamehandler/` — `games.json`, `settings.json`
+- `~/.local/share/gamehandler/` — downloaded runners, prefixes, covers,
+  downloads
 
-To run the Python application (Debian/Ubuntu names):
+`GAMEHANDLER_CONFIG_HOME` and `GAMEHANDLER_DATA_HOME` override those two
+roots (and take precedence over `XDG_CONFIG_HOME` / `XDG_DATA_HOME`).
 
-```
-python3-pyside6.qtcore python3-pyside6.qtgui python3-pyside6.qtwidgets python3-pyside6.qtqml python3-pyside6.qtquick
-qml6-module-org-kde-kirigami qml6-module-qtquick-dialogs qml6-module-qtquick-layouts qqc2-desktop-style
-meson ninja-build gettext desktop-file-utils appstream
-wine        # to actually launch Windows games
-osslsigncode # version 2.14+ verifies Easy Installer Authenticode signatures
-```
-
-On Arch: `pyside6 kirigami qqc2-desktop-style`. On Fedora:
-`python3-pyside6 kf6-kirigami qqc2-desktop-style`. PySide6 from pip also works
-(`pip install PySide6`), as long as the distribution provides the Kirigami QML
-modules and `qqc2-desktop-style`.
-
-Optional helpers (both applications): `winetricks`, `mangohud`, `gamemode`,
-`umu-run`.
-
-## The Rust application
-
-The Rust workspace is `crates/core` (the ported logic, with no GUI dependency at
-all, so it is testable headless) and `crates/app` (the libcosmic interface plus
-the `--list` / `--launch` / `--version` command line).
-
-**What runs today:** the workspace builds, `cargo test` passes, and the CLI
-entry point parses and dispatches before anything GUI-shaped is touched, so
-`--launch` never needs a display. The library pages, the pages in
-`docs/migration/PLAN.md` §4 and the ported logic land task by task — check
-`docs/migration/PLAN.md` §6 before relying on a feature here.
+### Command line
 
 ```bash
-cargo build                  # build the workspace
-cargo run -- --version       # print the app name and the Cargo.toml version
-cargo run -- --list          # print the library's ids and names
-cargo run                    # the interface
+gamehandler --list              # print library ids and names
+gamehandler --launch <GAME_ID>  # launch an entry without opening the GUI
+gamehandler --version
+gamehandler --help
 ```
 
-Run the test suite — headless, no display and no GPU required:
+`--launch` is what generated desktop shortcuts call, so it works without a
+display. With no display at all, the GUI exits with a diagnostic naming the
+missing `WAYLAND_DISPLAY`/`DISPLAY` variables rather than crashing.
+
+### Keyboard shortcuts
+
+| Keys | Action |
+|---|---|
+| `Ctrl+N` | Add a game |
+| `Ctrl+F` | Search the library |
+| `Ctrl+,` | Settings |
+| `Ctrl+Q` | Quit |
+
+## Known limitations
+
+- **Linux on x86_64 only.** The Wine base app and every downloadable runner
+  are x86 builds.
+- **Proton runners need `umu-run` on PATH.** Without it a Proton build
+  launches as plain Wine, and the Proton-only options (NVAPI/DLSS, FSR, Wine
+  Wayland, HDR) do nothing. `umu-run` is not bundled in the Flatpak and has
+  no Flatpak extension, so this fallback is what Flatpak users get today.
+  From a source install, `umu-launcher` from your distribution enables the
+  full Proton path.
+- **Flatpak helpers:** helpers installed on the host are not visible inside
+  the sandbox. MangoHud and Gamescope are available as Flatpak extensions;
+  GameMode, Winetricks, and UMU currently are not.
+- **The library file is JSON, not a database.** It is meant to be read and
+  backed up by hand; there is no import from other launchers.
+- Anti-cheat runtimes are configured, not guaranteed — games whose anti-cheat
+  refuses Wine still will not run, as with any launcher.
+
+## Development
 
 ```bash
-cargo test
+cargo build                   # build the workspace
+cargo run                     # run the GUI
+cargo test                    # the test suite — headless, no display or GPU needed
 cargo clippy --all-targets -- -D warnings
 ```
 
-`scripts/verify.sh` is the single verification entry point for the Rust side. It
-runs the build, clippy, the tests, the compatibility-oracle freshness check, the
-Python suite, the vendored `cargo-sources.json` check, the Flatpak build, a
-headless smoke test and the desktop/metainfo validation, and reports one line
-per stage:
+The workspace is `crates/core` (all game logic, no GUI dependency — it stays
+headless and testable) and `crates/app` (the libcosmic interface and CLI).
+Rust 1.93 or newer is required; `rust-toolchain.toml` pins 1.98.1 for
+development, the same version the Flatpak's rust-stable SDK extension
+provides.
+
+`scripts/verify.sh` is the full verification pipeline — build, fmt, clippy,
+docs, tests, CLI checks, the Python parity suite, the packaging checks, a
+Flatpak build and smoke test, and more:
 
 ```bash
-bash scripts/verify.sh --keep-going   # add --skip-flatpak for a fast local run
+bash scripts/verify.sh --help            # lists every stage and flag
+bash scripts/verify.sh --skip-flatpak    # fast local run
 ```
 
-## Running the Python application from source
-
-No install step is required for development — the package runs directly:
+The Python reference tree in `gamehandler/` also runs from source and has its
+own suite:
 
 ```bash
-python3 -m gamehandler
+python3 -m gamehandler                            # run the reference app
+python3 -m unittest discover -s tests -t .        # its tests
 ```
 
-List library entries and their ids:
-
-```bash
-python3 -m gamehandler --list
-```
-
-Launch a saved game from a shortcut:
-
-```bash
-python3 -m gamehandler --launch GAME_ID
-```
-
-Print the version:
-
-```bash
-python3 -m gamehandler --version
-```
-
-## Building / installing the Python application with Meson
-
-```bash
-meson setup build --prefix=/usr
-meson compile -C build
-meson test -C build          # validates the desktop entry and AppStream metainfo
-sudo meson install -C build  # installs the `gamehandler` launcher, desktop file and icon
-```
-
-## Building the Flatpak
-
-The Flatpak on this branch builds the **Rust** application. The Python
-application is not packaged here any more; run it from source as above.
-
-```bash
-./build-aux/flatpak/build.sh
-flatpak --user install --reinstall dist/gamehandler-0.8.0.flatpak
-flatpak run com.goshapps.GameHandler
-```
-
-The bundle name follows the version in the Cargo workspace, so it changes with
-the version bump. The manifest uses the Freedesktop 25.08 runtime and SDK with
-the `rust-stable` extension on the Wine `stable-25.08` BaseApp, and inherits the
-Freedesktop `Compat.i386` and `GL32` extensions. The build is offline: every
-crate it needs is vendored in `build-aux/flatpak/cargo-sources.json`, generated
-from `Cargo.lock`. `--allow=multiarch` is required for 32-bit Windows games and
-downloaded Wine/Proton builds, and `--filesystem=xdg-run/gvfs` lets games on
-mounted network shares launch from inside the sandbox.
-
-The package bundles a checksum-pinned osslsigncode build for authenticated
-Easy Installer downloads. The Microsoft Identity Verification Root CA used for
-Ubisoft's Azure Trusted Signing chain comes from Microsoft's official PKI
-repository at
-`https://www.microsoft.com/pkiops/certs/microsoft%20identity%20verification%20root%20certificate%20authority%202020.crt`;
-its DER SHA-256 is
-`5367f20c7ade0e2bca790915056d086b720c33c1fa2a2661acf787e3292e1270`.
-
-### Reviewed game-launcher permissions
-
-Unlike a document-oriented app, a game launcher must execute user-selected
-games and compatibility tools from arbitrary library locations and pass through
-controllers and other game hardware. The Flatpak therefore deliberately keeps
-`--filesystem=home`, and grants exactly the three device classes a launched
-game needs — `--device=dri`, `--device=input`, `--device=usb`. These are
-reviewed functionality exceptions, not permissions for package management or
-unrelated host changes.
-
-The device grant is deliberately **not** `--device=all`. That was the previous
-value, and measuring what it actually put in the sandbox showed it exposed the
-raw disk nodes, `/dev/mem`, `/dev/kvm`, the virtualisation and vhost nodes,
-the watchdog, NVRAM and the raw serial ports to every game the launcher starts
-— none of which any code here opens, and none of which a game needs. The three
-narrow classes cover the GPU and the controller path; see
-`docs/migration/packaging.md` section 3 for the before-and-after listing.
-
-The Plugins page does **not** run `apt`, `dnf`, `pacman`, `zypper`, `sudo`, or
-`pkexec` inside Flatpak. Host packages are not visible merely because they were
-installed outside the sandbox, so missing optional helpers are shown as
-unavailable. Bundling or runtime-extension integration for MangoHud, GameMode,
-Winetricks, and UMU remains future packaging work. Source installs retain their
-existing package-manager helper.
+Contributing: see [CONTRIBUTING.md](CONTRIBUTING.md). The port's working
+record — plans, decisions, parity inventory, audit findings — lives under
+`docs/migration/` and `docs/audit/`; those are historical engineering
+documents, not user documentation.
 
 ## Thanks to the projects GameHandler stands on
 
@@ -290,12 +281,16 @@ Optional tools GameHandler detects and wraps launches with. They are installed f
 
 What GameHandler itself is built and shipped with.
 
+- **[Rust](https://www.rust-lang.org)** — The Rust Project developers _(Apache-2.0 OR MIT)_  
+  The language the shipped application is written in.
+- **[libcosmic](https://github.com/pop-os/libcosmic)** — System76 and the COSMIC contributors _(MPL-2.0)_  
+  The COSMIC toolkit the shipped interface is built with.
 - **[Qt](https://www.qt.io)** — The Qt Company and the Qt Project _(LGPL-3.0-only)_  
-  The Qt 6 application framework the whole interface runs on.
+  The Qt 6 framework the Python parity implementation runs on.
 - **[Kirigami](https://develop.kde.org/frameworks/kirigami/)** — The KDE community _(LGPL-2.0-or-later)_  
-  KDE's QML framework behind the adaptive pages, drawer navigation, and the light and dark themes.
+  KDE's QML framework behind the parity implementation's adaptive pages, drawer navigation, and light and dark themes.
 - **[PySide6](https://doc.qt.io/qtforpython-6/)** — The Qt Company _(LGPL-3.0-only)_  
-  The official Python bindings that let GameHandler drive Qt.
+  The Python bindings the parity implementation uses to drive Qt.
 - **[Meson and Flatpak](https://flatpak.org)** — The Meson and Flatpak projects  
   How GameHandler is built and packaged.
 - **[Steam store web API](https://store.steampowered.com)** — Valve Software  
@@ -323,88 +318,6 @@ Esync, Fsync, DXVK, VKD3D, and the anti-cheat runtimes are on by default because
 
 Every runner family names its maintainer in the app, every compatibility toggle names the project that implements it, and this list ships inside the application rather than only in a file on a repository page.
 
-## Running the tests
+## License
 
-### Python suite — the behavioural reference
-
-The Python suite is the contract the Rust port is written against: it pins how
-the library, the runner command lines, the download handling and the security
-checks behave, and it stays green while both trees are on this branch. The core
-logic (library persistence, runner command building, multi-family Proton/Wine
-release parsing) is covered by headless unit tests:
-
-```bash
-python3 -m unittest discover -s tests -t .
-```
-
-No PySide6 installation is needed for the core tests. The offscreen QML smoke
-test runs when PySide6 is installed and is reported as skipped otherwise.
-Discovery itself never imports the stub’s Qt types.
-
-### Rust suite
-
-```bash
-cargo test
-```
-
-It needs no display server and no GPU, and that is a property of the code rather
-than of the ambient environment: `crates/core` has no GUI dependency at all, so
-the logic tests cannot reach a display even when `DISPLAY` and `WAYLAND_DISPLAY`
-are set. (An earlier version of this paragraph said the suite "runs with" those
-variables unset and implied plain `cargo test` was what unset them — it is not.
-`bash scripts/verify.sh` is what unsets them, at `scripts/verify.sh:851`, and it
-does so in the pipeline rather than in `cargo test`. The suite passes either way;
-measured with both variables set, the whole workspace is green. `ARCH-08`.)
-
-The Rust equivalents assert *behaviour* against the same cases the Python suite
-covers (archive-extraction confinement, desktop-file escaping, runner
-environment construction, JSON round-trips) rather than matching pixels.
-
-`bash scripts/verify.sh` runs both suites together with the rest of the pipeline,
-including a check that fails when `build-aux/flatpak/cargo-sources.json` is stale
-against `Cargo.lock`, and a check that fails when the frozen Python-compatibility
-fixtures in `docs/migration/oracle/` no longer match the Python implementation.
-
-## Project layout
-
-```
-crates/                 # Rust workspace — the shipped application (0.8.0)
-  core/                 # gamehandler-core: models, settings, paths, runners,
-                        # installers, covers. No GUI dependency at all (enforced)
-  app/                  # gamehandler: the libcosmic interface and the CLI
-gamehandler/            # Python package — the parity reference (0.7.2)
-  main.py               # CLI entry point + Qt application bootstrap
-  bridge.py             # the QML-facing backend (library, runners, installers…)
-  theme.py              # light/dark/system color schemes
-  qml/                  # the Kirigami interface
-    Main.qml            # application window, navigation, notifications
-    LibraryPage.qml     # grid/list library with search, sort, categories
-    GameFormPage.qml    # add / edit game form
-    InstallersPage.qml  # one-click store-launcher installs
-    RunnersPage.qml     # Proton/Wine downloads and guide
-    PluginsPage.qml     # optional helper detection
-    CreditsPage.qml     # About, maker identity, and upstream acknowledgements
-    SettingsPage.qml    # appearance, defaults, behavior
-    CoverArt.qml        # cover tiles and generated placeholder art
-  installers.py         # easy-installer catalog and prefix helpers
-  settings.py           # persisted preferences
-  models.py             # Game model + JSON-backed Library
-  credits.py            # upstream acknowledgements (source of truth)
-  runners.py            # runner families, downloads, launch helpers
-  netpaths.py           # network-share (GVFS) path resolution
-  config.py             # XDG paths
-bin/gamehandler.in      # installed launcher template (Python, Meson)
-data/                   # desktop entry, AppStream metainfo, icon, trust root
-build-aux/flatpak/      # Flatpak manifest + vendored cargo sources
-scripts/verify.sh       # the single verification entry point
-docs/migration/         # the migration plan, decisions and parity inventory
-tests/                  # Python headless unit tests (incl. an offscreen QML smoke test)
-```
-
-`data/` is shared by both applications: the Flatpak manifest installs the
-desktop entry, the AppStream metainfo and the icon from there
-(`data/meson.build` installs the same three files, plus the project LICENSE,
-for a Meson/source install). The Microsoft Authenticode trust root also lives
-in `data/`, and the Python tree's Meson build installs that one from
-`gamehandler/meson.build` — it is what `installers.py` verifies Easy Installer
-signatures against.
+GPL-3.0-or-later. See [LICENSE](LICENSE).

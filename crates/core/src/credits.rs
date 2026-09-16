@@ -279,24 +279,38 @@ pub const CREDIT_SECTIONS: &[CreditSection] = &[
         summary: "What GameHandler itself is built and shipped with.",
         entries: &[
             Credit {
+                name: "Rust",
+                url: "https://www.rust-lang.org",
+                role: "The language the shipped application is written in.",
+                license: "Apache-2.0 OR MIT",
+                authors: "The Rust Project developers",
+            },
+            Credit {
+                name: "libcosmic",
+                url: "https://github.com/pop-os/libcosmic",
+                role: "The COSMIC toolkit the shipped interface is built with.",
+                license: "MPL-2.0",
+                authors: "System76 and the COSMIC contributors",
+            },
+            Credit {
                 name: "Qt",
                 url: "https://www.qt.io",
-                role: "The Qt 6 application framework the whole interface runs on.",
+                role: "The Qt 6 framework the Python parity implementation runs on.",
                 license: "LGPL-3.0-only",
                 authors: "The Qt Company and the Qt Project",
             },
             Credit {
                 name: "Kirigami",
                 url: "https://develop.kde.org/frameworks/kirigami/",
-                role: "KDE's QML framework behind the adaptive pages, drawer \
-                       navigation, and the light and dark themes.",
+                role: "KDE's QML framework behind the parity implementation's \
+                       adaptive pages, drawer navigation, and light and dark themes.",
                 license: "LGPL-2.0-or-later",
                 authors: "The KDE community",
             },
             Credit {
                 name: "PySide6",
                 url: "https://doc.qt.io/qtforpython-6/",
-                role: "The official Python bindings that let GameHandler drive Qt.",
+                role: "The Python bindings the parity implementation uses to drive Qt.",
                 license: "LGPL-3.0-only",
                 authors: "The Qt Company",
             },

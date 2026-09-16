@@ -182,13 +182,13 @@ Stated rather than asserted, per the audit brief.
 |---|---|---|---|---|---|
 | P0 | 4 | 4 | 0 | 0 | 0 |
 | P1 | 8 | 8 | 0 | 0 | 0 |
-| P2 | 14 | 12 | 2 | 0 | 0 |
-| P3 | 20 | 0 | 0 | 0 | 20 |
+| P2 | 14 | 13 | 1 | 0 | 0 |
+| P3 | 20 | 20 | 0 | 0 | 0 |
 | — | 2 | 0 | 0 | 2 | 0 |
-| **Total** | **48** | **24** | **2** | **2** | **20** |
+| **Total** | **48** | **45** | **1** | **2** | **0** |
 
-Every P2 that is a defect is now closed. **This table covers the `BUG-xx` family
-only** — the merged, all-family view is `PLAN.md`.
+Every row that is a defect is now closed or honestly partial. **This table
+covers the `BUG-xx` family only** — the merged, all-family view is `PLAN.md`.
 
 Two rows here are *not defects*, and both carry a severity cell of `—` so that
 they cannot enter a severity total: `BUG-11` (case-variant categories) and
