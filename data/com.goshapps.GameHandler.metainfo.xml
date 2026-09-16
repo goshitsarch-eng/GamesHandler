@@ -54,6 +54,21 @@
     <keyword>game launcher</keyword>
     <keyword>game manager</keyword>
   </keywords>
+  <!-- PKG-06. Real captures of the running application, kept in the
+       repository at docs/screenshots/ and referenced through the project's
+       raw.githubusercontent.com URL, the hosting AppStream expects. A
+       software centre that blocks hotlinking still gets a valid listing;
+       these are only presentation. -->
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/goshitsarch-eng/GamesHandler/main/docs/screenshots/library.png</image>
+      <caption>The library grid, with covers and per-game actions</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/goshitsarch-eng/GamesHandler/main/docs/screenshots/runners.png</image>
+      <caption>Runner downloads, listing the Proton-GE builds it can fetch</caption>
+    </screenshot>
+  </screenshots>
   <launchable type="desktop-id">com.goshapps.GameHandler.desktop</launchable>
   <provides>
     <binary>gamehandler</binary>

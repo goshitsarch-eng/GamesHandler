@@ -1457,10 +1457,14 @@ stage_plan_counts() {
 # ---------------------------------------------------------------------------
 # Locating the cargo-sources generator (used by the cargo-sources-fresh stage).
 #
-# The generator is not part of this repository (it is flatpak/flatpak-builder-
-# tools' cargo/flatpak-cargo-generator.py). Look for it where it is normally
-# kept; if it is nowhere, that stage SKIPs loudly — it is the one stage that
-# needs something a clean checkout does not contain.
+# The generator is vendored at build-aux/flatpak/flatpak-cargo-generator.py —
+# flatpak/flatpak-builder-tools' cargo/flatpak-cargo-generator.py pinned to
+# commit f03a673abe6ce189cea1c2857e2b44af2dd79d1f, provenance in
+# build-aux/flatpak/VENDORED.md — and this lookup still honours
+# $FLATPAK_CARGO_GENERATOR and the usual host paths first and last, so a
+# deliberate system copy wins over the vendored one. If the generator is
+# nowhere, the stage SKIPs loudly: it is the one stage whose work — hashing
+# every git tarball — needs the network regardless.
 #
 # This block is deliberately NOT headed `# Stage:` — `banner_check` collects
 # every line matching that prefix and requires the sequence to equal `STAGES`,

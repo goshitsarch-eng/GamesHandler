@@ -104,6 +104,50 @@ class PackagingTests(unittest.TestCase):
             "metainfo, or the two files disagree about how the app is described",
         )
 
+    def test_metainfo_screenshot_urls_resolve_to_files_in_the_repo(self):
+        """PKG-06: an AppStream <image> is a remote URL; the ones this project
+        publishes are served from its own GitHub raw space, and each must map
+        to a file the repository actually ships.
+
+        A URL that points at a path the repo does not carry is a record of a
+        screenshot that does not exist -- it validates fine and renders
+        broken. The mapping asserted here is the URL path's suffix under
+        `main/` checked against the working tree, so the metainfo cannot
+        silently drift ahead of docs/screenshots/.
+        """
+        metainfo = (ROOT / "data" / f"{APP_ID_EXPECTED}.metainfo.xml").read_text()
+
+        block = re.search(r"<screenshots>(.*?)</screenshots>", metainfo, re.S)
+        self.assertIsNotNone(
+            block,
+            "the metainfo must carry a <screenshots> block: a software centre "
+            "listing renders without imagery without one",
+        )
+        shots = re.findall(
+            r'<screenshot( type="default")?>\s*<image>(.*?)</image>',
+            block.group(1),
+        )
+        self.assertTrue(
+            any(kind for kind, _ in shots),
+            "exactly one screenshot must be type=default, or no software "
+            "centre knows which to lead with",
+        )
+
+        prefix = "https://raw.githubusercontent.com/goshitsarch-eng/GamesHandler/main/"
+        for _, url in shots:
+            self.assertTrue(
+                url.startswith(prefix),
+                f"<image> {url!r} is not hosted under the project's own raw "
+                "space, so nothing here can guarantee it stays reachable",
+            )
+            in_tree = ROOT / url[len(prefix) :]
+            self.assertTrue(
+                in_tree.is_file(),
+                f"<image> {url!r} maps to {in_tree.relative_to(ROOT)}, which "
+                "the repository does not contain -- a screenshot record for "
+                "an image that does not exist",
+            )
+
     def test_flatpak_has_reviewed_launcher_permissions_and_multilib(self):
         manifest_path = ROOT / "build-aux" / "flatpak" / f"{APP_ID_EXPECTED}.json"
         manifest = json.loads(manifest_path.read_text())

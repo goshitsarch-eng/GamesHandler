@@ -941,7 +941,11 @@ fn dialog_over<'a>(
     Stack::new()
         .width(Length::Fill)
         .height(Length::Fill)
-        .push(body)
+        // **UX-06**, keyboard half: the scrim is the pointer wall; the gate is
+        // the keyboard one. While a dialog is open the page reports no
+        // focusables to `focus_next`/`focus_previous` and hears no key events,
+        // so the Tab ring is the dialog's own controls and nothing behind it.
+        .push(view::a11y::focus_gate(true, body))
         .push(dialog_scrim())
         .push(popup)
         .into()
@@ -8519,6 +8523,157 @@ mod tests {
             "the press at {cancel:?} — the centre of the dialog's own Cancel \
              button — published {messages:?} rather than `CloseDialog`, so the \
              scrim is in front of the dialog as well as behind it"
+        );
+    }
+
+    /// **The page under an open dialog reports no focusables at all (UX-06,
+    /// keyboard half).**
+    ///
+    /// The scrim is the pointer wall and the test above measures it; the
+    /// keyboard's wall is the [`view::a11y::focus_gate`] `dialog_over` wraps
+    /// the page in. Tab is not an event the page's controls answer — it is
+    /// `operation::focusable::focus_next()` walking the tree and reading each
+    /// widget's `focusable` report (`src/app/cosmic.rs:842-849`) — so the gate
+    /// answers at that level: while a dialog is open the page reports nothing,
+    /// and the ring is the dialog's own controls alone.
+    ///
+    /// The first assertion is the control that keeps the second from being
+    /// vacuous, for the click test's own reason: a ring that never contained
+    /// the search box would pass "the box is absent" in every composition,
+    /// including one where the gate hides the dialog too.
+    #[test]
+    fn the_page_under_an_open_dialog_reports_no_focusables() {
+        use crate::view::a11y::harness;
+        use cosmic::widget::Id;
+
+        let search = Id::from(view::library::SEARCH_INPUT_ID.to_string());
+        let cancel = Id::from(view::REMOVE_RUNNER_CANCEL_ID.to_string());
+
+        // The control: nothing open, the library's search box is on the ring.
+        // Scoped so the element's borrow of `shell` ends before `update`.
+        let mut shell = Shell::new();
+        let closed_ring = {
+            let mut closed = shell.view_with_overlays();
+            harness::focusables(&mut closed)
+        };
+        assert!(
+            closed_ring.iter().flatten().any(|id| *id == search),
+            "a fresh shell opens on the Library page, whose search box must be \
+             on the Tab ring — reported: {closed_ring:?}"
+        );
+
+        // The finding: the same ring read under the runner-removal prompt.
+        let _ = shell.update(Message::ConfirmRemoveRunner {
+            runner_id: "GE-Proton9-5".to_string(),
+            name: "GE-Proton9-5".to_string(),
+        });
+        let mut open = shell.view_with_overlays();
+        let open_ring = harness::focusables(&mut open);
+        assert!(
+            open_ring.iter().flatten().any(|id| *id == cancel),
+            "the prompt's own Cancel must stay on the ring — a gate that hid \
+             everything would pass the assertions below while breaking the \
+             dialog: {open_ring:?}"
+        );
+        for id in closed_ring.iter().flatten() {
+            assert!(
+                !open_ring.iter().flatten().any(|open_id| open_id == id),
+                "a control on the page's ring ({id:?}) still reports itself \
+                 focusable under an open prompt — the gate is not filtering \
+                 `focusable`, and Tab can still reach it: {open_ring:?}"
+            );
+        }
+    }
+
+    /// **Tab from the prompt's Cancel wraps back to Cancel — the ring under an
+    /// open dialog is the dialog's two controls (UX-06, keyboard half).**
+    ///
+    /// The assertion above measures what the tree *reports*; this one measures
+    /// where focus actually *lands*, through the same `focus_next` chain the
+    /// runtime runs on Tab ([`harness::tab_to`]). The focus starts on Cancel —
+    /// the arm that opens the prompt puts it there (UX-24) — and two Tabs must
+    /// come back to it: without the gate, the second Tab wraps to the *page's*
+    /// first focusable (the search box), which is the residual the row
+    /// recorded.
+    #[test]
+    fn tab_from_an_open_dialogs_cancel_wraps_back_to_cancel() {
+        use crate::view::a11y::harness;
+        use cosmic::iced::advanced::widget::operation;
+        use cosmic::iced::advanced::{Layout, widget::Tree};
+        use cosmic::widget::Id;
+
+        let cancel = Id::from(view::REMOVE_RUNNER_CANCEL_ID.to_string());
+        let search = Id::from(view::library::SEARCH_INPUT_ID.to_string());
+
+        let mut shell = Shell::new();
+        let _ = shell.update(Message::ConfirmRemoveRunner {
+            runner_id: "GE-Proton9-5".to_string(),
+            name: "GE-Proton9-5".to_string(),
+        });
+        let mut open = shell.view_with_overlays();
+        let (mut tree, node) = harness::built(&mut open);
+
+        // The focused id, read through a real `operate` traversal rather than a
+        // flag set by hand. (`find_focused` is `Operation<Id>` and
+        // `Widget::operate` takes `Operation<()>`, so the reading is a local
+        // `Operation` of the harness's own shape — `focusable` reports carry
+        // `is_focused`.)
+        fn focused<M: Clone + 'static>(
+            el: &mut cosmic::Element<'_, M>,
+            tree: &mut Tree,
+            node: &cosmic::iced::advanced::layout::Node,
+        ) -> Option<Id> {
+            use cosmic::iced::Rectangle;
+            use cosmic::iced::advanced::widget::operation::{Focusable, Operation};
+
+            #[derive(Default)]
+            struct Found(Option<Option<Id>>);
+            impl Operation for Found {
+                fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                    operate(self);
+                }
+                fn focusable(
+                    &mut self,
+                    id: Option<&Id>,
+                    _bounds: Rectangle,
+                    state: &mut dyn Focusable,
+                ) {
+                    if state.is_focused() {
+                        self.0 = Some(id.cloned());
+                    }
+                }
+            }
+
+            let mut found = Found::default();
+            el.as_widget_mut()
+                .operate(tree, Layout::new(node), &harness::renderer(), &mut found);
+            found.0.flatten()
+        }
+
+        // Focus Cancel the way the opening arm does, then walk.
+        let mut put = operation::focusable::focus(cancel.clone());
+        open.as_widget_mut().operate(
+            &mut tree,
+            Layout::new(&node),
+            &harness::renderer(),
+            &mut put,
+        );
+        harness::tab_to(&mut open, &mut tree, &node);
+        let first = focused(&mut open, &mut tree, &node);
+        assert!(
+            first.is_some() && first.as_ref() != Some(&cancel) && first.as_ref() != Some(&search),
+            "one Tab from Cancel must land on the dialog's other control \
+             (Remove, whose id is the toolkit's `Id::unique()`); it landed on \
+             {first:?}"
+        );
+        harness::tab_to(&mut open, &mut tree, &node);
+        let second = focused(&mut open, &mut tree, &node);
+        assert_eq!(
+            second,
+            Some(cancel),
+            "two Tabs from Cancel must wrap back to Cancel — the ring is the \
+             dialog's alone. Without the gate this lands on the page's first \
+             focusable, the search box; it landed on {second:?}"
         );
     }
 

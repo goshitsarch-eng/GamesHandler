@@ -184,7 +184,7 @@
 //! all, because its return type is unnameable.
 
 use cosmic::Element;
-use cosmic::iced::advanced::widget::operation::Focusable;
+use cosmic::iced::advanced::widget::operation::{self, Focusable};
 use cosmic::iced::advanced::widget::{Id, Operation, Tree, tree};
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, layout, mouse, overlay, renderer};
 use cosmic::iced::core::id::IdEq;
@@ -1280,6 +1280,323 @@ impl<'a, Message: Clone + 'a>
 
 impl<'a, Message: Clone + 'a> From<LiveNotice<'a, Message>> for Element<'a, Message> {
     fn from(widget: LiveNotice<'a, Message>) -> Self {
+        Element::new(widget)
+    }
+}
+
+/// The page behind an open dialog, taken off the Tab ring — **UX-06**'s
+/// keyboard half.
+///
+/// `dialog_over`'s scrim is the pointer wall: `MouseArea::update` captures a
+/// press whether or not it carries a message
+/// (`iced/widget/src/mouse_area.rs:466-493`), so the page is dead to the
+/// pointer while a dialog is open. A scrim says nothing to the keyboard,
+/// though, because Tab is not an event the page's controls answer but an
+/// *operation*: libcosmic's keyboard-nav subscription turns `Named::Tab` into
+/// `operation::focusable::focus_next()` (`src/app/cosmic.rs:842-849`), which
+/// walks the whole tree and has each widget report itself through
+/// [`Operation::focusable`]. Every widget that reports is in the ring, the
+/// page's controls all reported, and Enter — iced's button's only keyboard
+/// arm (`iced/widget/src/button.rs:426-440`) — activated the one it landed
+/// on. That is the residue the finding measured: the mis-click was blocked
+/// and the same mistake by key was not.
+///
+/// This wrapper answers at the level the traversal asks. While `gated`, the
+/// child is operated on through [`Unfocusable`], an [`Operation`] that
+/// forwards everything except `focusable` — so `count`, `focus_next`,
+/// `focus_previous`, `focus(id)` and `unfocus` all see a page with no
+/// focusable widgets at all, and the ring under an open dialog is the
+/// dialog's own controls alone. `focus_next` wraps at the ring's end
+/// (`focused == total - 1 && current == 0`,
+/// `iced/core/src/widget/operation/focusable.rs:191-197`), so a keyboard user
+/// who reaches the dialog's last control wraps to its first rather than
+/// falling through to the page.
+///
+/// The second half is `update`: a widget that *already* holds focus when the
+/// gate rises is never asked to give it up — `unfocus` is one of the filtered
+/// operations — so the gate also declines to forward `Event::Keyboard` into
+/// the subtree while it is gated. A keypress aimed at a control the dialog is
+/// covering then reaches nothing, which is the same answer the scrim gives
+/// the pointer. Ungated, the wrapper is transparent — every `Widget` method
+/// forwards unchanged — which is what keeps both states measurable in the
+/// same test.
+pub struct FocusGate<'a, Message> {
+    gated: bool,
+    content: Element<'a, Message>,
+}
+
+/// Wrap `content` so that while `gated` nothing inside it is reported
+/// focusable and no keyboard event reaches it. See [`FocusGate`].
+pub fn focus_gate<'a, Message: Clone + 'a>(
+    gated: bool,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    FocusGate {
+        gated,
+        content: content.into(),
+    }
+    .into()
+}
+
+/// The [`Operation`] a gated subtree is traversed by: every method forwarded
+/// but `focusable`, which is the report the ring is built from.
+///
+/// `traverse` re-wraps each operation handed down — `operation::black_box`'s
+/// own move (`iced/core/src/widget/operation.rs:181-190`) — so a container
+/// inside the gated content still sees the filter rather than the unfiltered
+/// original.
+struct Unfocusable<'a> {
+    inner: &'a mut dyn Operation,
+}
+
+impl Operation for Unfocusable<'_> {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        self.inner
+            .traverse(&mut |operation| operate(&mut Unfocusable { inner: operation }));
+    }
+
+    fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
+        self.inner.container(id, bounds);
+    }
+
+    /// The one report that is not forwarded.
+    fn focusable(&mut self, _id: Option<&Id>, _bounds: Rectangle, _state: &mut dyn Focusable) {}
+
+    fn scrollable(
+        &mut self,
+        id: Option<&Id>,
+        bounds: Rectangle,
+        content_bounds: Rectangle,
+        translation: Vector,
+        state: &mut dyn operation::Scrollable,
+    ) {
+        self.inner
+            .scrollable(id, bounds, content_bounds, translation, state);
+    }
+
+    fn text_input(
+        &mut self,
+        id: Option<&Id>,
+        bounds: Rectangle,
+        state: &mut dyn operation::TextInput,
+    ) {
+        self.inner.text_input(id, bounds, state);
+    }
+
+    fn text(&mut self, id: Option<&Id>, bounds: Rectangle, text: &str) {
+        self.inner.text(id, bounds, text);
+    }
+
+    fn custom(&mut self, id: Option<&Id>, bounds: Rectangle, state: &mut dyn std::any::Any) {
+        self.inner.custom(id, bounds, state);
+    }
+
+    fn finish(&self) -> operation::Outcome<()> {
+        self.inner.finish()
+    }
+}
+
+impl<'a, Message: Clone + 'a>
+    cosmic::iced::advanced::Widget<Message, cosmic::Theme, cosmic::Renderer>
+    for FocusGate<'a, Message>
+{
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&mut self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_mut(&mut self.content));
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &cosmic::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        // The same one level of indirection `LiveNotice::layout` uses, so
+        // every forwarded call reaches the content through
+        // `layout.children().next()` and the two agree about which rectangle
+        // is whose.
+        let node = self
+            .content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits);
+        let size = node.size();
+        layout::Node::with_children(size, vec![node])
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        if self.gated {
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                child_layout.with_virtual_offset(layout.virtual_offset()),
+                renderer,
+                &mut Unfocusable { inner: operation },
+            );
+        } else {
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                child_layout.with_virtual_offset(layout.virtual_offset()),
+                renderer,
+                operation,
+            );
+        }
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &cosmic::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        // A gated page is not live by key either: the focus filter removes
+        // the subtree from the ring, and this arm is what a *stale* focus —
+        // a widget that was focused before the dialog opened and so was
+        // never unfocused — would otherwise still hear.
+        if self.gated && matches!(event, Event::Keyboard(_)) {
+            return;
+        }
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &cosmic::Renderer,
+    ) -> mouse::Interaction {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            cursor,
+            viewport,
+        );
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &cosmic::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, cosmic::Theme, cosmic::Renderer>> {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+
+    fn drag_destinations(
+        &self,
+        state: &Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+        dnd_rectangles: &mut cosmic::iced::advanced::clipboard::DndDestinationRectangles,
+    ) {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget().drag_destinations(
+            &state.children[0],
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            renderer,
+            dnd_rectangles,
+        );
+    }
+
+    /// Forwarded unchanged: the gated page keeps its nodes, because the gate
+    /// answers the input half of UX-06 and the a11y tree is not input. (At
+    /// the pinned rev nothing delivers the tree at all — see [`LiveNotice`]'s
+    /// doc — so a suppression here would measure nothing either way.)
+    fn a11y_nodes(&self, layout: Layout<'_>, state: &Tree, cursor: mouse::Cursor) -> A11yTree {
+        let child_layout = layout
+            .children()
+            .next()
+            .expect("`layout` puts the content in exactly one child node");
+        self.content.as_widget().a11y_nodes(
+            child_layout.with_virtual_offset(layout.virtual_offset()),
+            &state.children[0],
+            cursor,
+        )
+    }
+}
+
+impl<'a, Message: Clone + 'a> From<FocusGate<'a, Message>> for Element<'a, Message> {
+    fn from(widget: FocusGate<'a, Message>) -> Self {
         Element::new(widget)
     }
 }
