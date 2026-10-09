@@ -1,0 +1,105 @@
+{
+  "app-id": "com.goshapps.GameHandler",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "49",
+  "sdk": "org.gnome.Sdk",
+  "command": "gamehandler",
+  "finish-args": [
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--share=ipc",
+    "--socket=pulseaudio",
+    "--device=dri",
+    "--device=input",
+    "--share=network",
+    "--filesystem=home:ro",
+    "--filesystem=~/.local/share/applications:create",
+    "--filesystem=xdg-run/gvfs",
+    "--env=GTK_USE_PORTAL=1",
+    "--allow=multiarch",
+    "--device=usb",
+    "--filesystem=~/.var/app/com.valvesoftware.Steam/data/Steam:ro"
+  ],
+  "modules": [
+    {
+      "name": "osslsigncode",
+      "buildsystem": "cmake-ninja",
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBASH_COMPLETION_USER_DIR=/app/share"
+      ],
+      "post-install": [
+        "install -Dm644 LICENSE.txt /app/share/licenses/com.goshapps.GameHandler/osslsigncode-LICENSE.txt"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/mtrojnar/osslsigncode/archive/refs/tags/2.14.tar.gz",
+          "sha256": "0f033fd6069387d2e489fbd2187e62f624764eb8c2758ee94e3e793e5150b5c5"
+        }
+      ]
+    },
+    {
+      "name": "dxvk-runtime",
+      "buildsystem": "simple",
+      "build-commands": [
+        "mkdir -p /app/share/gamehandler/dxvk /app/share/licenses/com.goshapps.GameHandler",
+        "cp -a x32 x64 /app/share/gamehandler/dxvk/",
+        "install -Dm644 DXVK-LICENSE /app/share/licenses/com.goshapps.GameHandler/DXVK.txt"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/doitsujin/dxvk/releases/download/v3.0.2/dxvk-3.0.2.tar.gz",
+          "sha256": "9c538924110a7cdef871ca36dee218c0774124374ffdeb38af4b76be55bdf7c2"
+        },
+        {
+          "type": "file",
+          "url": "https://raw.githubusercontent.com/doitsujin/dxvk/v3.0.2/LICENSE",
+          "sha256": "a5cb1a6ded7d2d7e92d550ba28edd21be2d1d4044662b399887351023e30ce64",
+          "dest-filename": "DXVK-LICENSE"
+        }
+      ]
+    },
+    {
+      "name": "gamehandler-flutter",
+      "buildsystem": "simple",
+      "build-commands": [
+        "mkdir -p /app/gamehandler /app/bin",
+        "cp -a bundle/. /app/gamehandler/",
+        "ln -s /app/gamehandler/gamehandler /app/bin/gamehandler",
+        "ln -s /app/gamehandler/gamehandler-cli /app/bin/gamehandler-cli",
+        "install -Dm644 com.goshapps.GameHandler.desktop /app/share/applications/com.goshapps.GameHandler.desktop",
+        "install -Dm644 com.goshapps.GameHandler.metainfo.xml /app/share/metainfo/com.goshapps.GameHandler.metainfo.xml",
+        "install -Dm644 com.goshapps.GameHandler.svg /app/share/icons/hicolor/scalable/apps/com.goshapps.GameHandler.svg",
+        "mkdir -p /app/share/gamehandler",
+        "cp -a /app/gamehandler/share/gamehandler/. /app/share/gamehandler/"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../../build/linux/x64/release/bundle",
+          "dest": "bundle"
+        },
+        {
+          "type": "file",
+          "path": "../../data/com.goshapps.GameHandler.desktop"
+        },
+        {
+          "type": "file",
+          "path": "com.goshapps.GameHandler.metainfo.xml"
+        },
+        {
+          "type": "file",
+          "path": "../../data/icons/hicolor/scalable/apps/com.goshapps.GameHandler.svg"
+        }
+      ]
+    }
+  ],
+  "base": "org.winehq.Wine",
+  "base-version": "stable-25.08",
+  "inherit-extensions": [
+    "org.freedesktop.Platform.GL32",
+    "org.freedesktop.Platform.Compat.i386"
+  ]
+}

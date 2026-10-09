@@ -1,0 +1,26 @@
+name: gamehandler
+description: Cross-platform desktop game library with a Rust domain core.
+publish_to: none
+version: 0.9.0-alpha.1+1
+environment:
+  sdk: ^3.13.0
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.4
+  path: ^1.9.1
+  path_provider: ^2.1.5
+  file_selector: ^1.0.3
+  url_launcher: ^6.3.2
+  window_manager: ^0.5.1
+  desktop_drop: ^0.7.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+flutter:
+  uses-material-design: true
+  assets:
+    - data/icons/hicolor/128x128/apps/com.goshapps.GameHandler.png

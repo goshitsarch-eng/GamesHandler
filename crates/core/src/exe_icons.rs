@@ -30,7 +30,7 @@
 //!   through the furthest section's raw end when the first view clipped, and
 //!   the whole file only for the two shapes no bound can name — headers past
 //!   the probe, or a directory target outside every section (see
-//!   [`bounded_attempt`]). An executable the headers already rule out — not
+//!   `bounded_attempt`). An executable the headers already rule out — not
 //!   a PE, or no resource directory — is decided from the probe and never
 //!   buffered at all, which is the case a library scan hits constantly
 //!   (`BUG-43`). Same observable contract (`None` for anything unreadable);
@@ -118,7 +118,7 @@ struct DirectoryEntry {
 /// "this view was not asked the whole question": it is set whenever a read
 /// was refused for running past the end of *these* bytes, which is the one
 /// way a longer view can disagree. [`parse_view`]'s only caller that keeps it
-/// is [`bounded_attempt`], where a clipped parse must fall back rather than
+/// is `bounded_attempt`, where a clipped parse must fall back rather than
 /// answer (`BUG-40`).
 struct Parsed {
     icon: Option<Vec<u8>>,
@@ -252,11 +252,11 @@ fn parse_view(data: &[u8]) -> Parsed {
 /// directory, anything under 64 bytes or over [`MAX_EXECUTABLE_BYTES`], and
 /// anything the parser rejects all yield `None` rather than an error.
 ///
-/// Files up to [`PROBE_BYTES`] are read whole — one syscall, one parse. Larger
+/// Files up to `PROBE_BYTES` are read whole — one syscall, one parse. Larger
 /// files take the staged path: parse the headers from a probe, read through
 /// the resource section's raw bytes, widen once to the furthest section's raw
 /// end if that view clipped, and fall back to a full read only for what no
-/// bound can name ([`bounded_attempt`]). The fallback matters: headers past
+/// bound can name (`bounded_attempt`). The fallback matters: headers past
 /// the probe, or a resource tree pointing outside every section, are legal,
 /// and a bounded-only read would miss icons the reference finds — or, worse,
 /// answer with a different one.
@@ -1177,7 +1177,7 @@ mod tests {
     fn a_truncated_file_read_off_disk_keeps_the_same_image() {
         // The same property through [`extract_icon`], which is the path the
         // cover lookup actually takes (`covers.rs`'s `save_exe_icon`): the
-        // file is under [`PROBE_BYTES`], so it is read whole and the clamp
+        // file is under `PROBE_BYTES`, so it is read whole and the clamp
         // has to happen inside the parse rather than at the read.
         let small = dib_icon(16, 0x11);
         let large = dib_icon(32, 0x22);
@@ -1356,7 +1356,7 @@ mod tests {
         //
         // Measured against `gamehandler/exe_icons.py` on these exact bytes:
         // `extract_icon` returns group 1's image (the 0xAA fill, which is
-        // what Windows shows), while `icon_bytes` over the first [`PROBE_BYTES`]
+        // what Windows shows), while `icon_bytes` over the first `PROBE_BYTES`
         // returns group 2's (0xBB) — the wrong answer the bounded parse would
         // have given had it been allowed to settle the question. Both are
         // asserted below, so neither a parse that refuses everything nor one

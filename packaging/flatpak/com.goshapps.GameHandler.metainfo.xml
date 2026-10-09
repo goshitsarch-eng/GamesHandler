@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.goshapps.GameHandler</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>GameHandler</name>
+  <summary>Manage and launch your game library</summary>
+  <description>
+    <p>
+      GameHandler is a Flutter desktop game manager with a Rust backend. On Linux
+      it runs native games and Windows games through Wine and Proton, with
+      an interface for organising your library,
+      downloading Proton and Wine builds, and launching games in isolated
+      prefixes.
+    </p>
+    <p>
+      GameHandler is a front-end, not a compatibility layer. Windows games run on
+      Wine, usually through a Proton build maintained by someone else, with
+      Direct3D translated by DXVK and VKD3D-Proton. GameHandler downloads those
+      builds from their maintainers own release pages, sets up isolated
+      prefixes, and stays out of their way. A Credits page inside the
+      application names every upstream project it depends on.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Light and dark modes, plus following the system theme</li>
+      <li>Categorize games and filter the library</li>
+      <li>Custom covers, Steam artwork lookup, or the executable's own icon</li>
+      <li>Add Windows or Linux games and pick a runner per title</li>
+      <li>Download Proton-GE, Proton-CachyOS, Proton-EM, and Kron4ek Wine builds</li>
+      <li>Guide for which Proton or Wine family to use</li>
+      <li>Detect optional MangoHud, GameMode, Winetricks, and UMU helpers</li>
+      <li>Lutris-style Esync and Fsync toggles per game</li>
+      <li>Easy installers for store launchers and common Windows apps</li>
+      <li>Credits page listing every upstream project, with links and licenses</li>
+    </ul>
+  </description>
+  <icon type="stock">com.goshapps.GameHandler</icon>
+  <categories>
+    <category>Game</category>
+  </categories>
+  <!-- PKG-06. The desktop file has carried `Keywords=` since it was written
+       (`data/com.goshapps.GameHandler.desktop:10`) and the metainfo carried
+       none, so the two disagreed about how the app is described. These are that
+       list, lowered because AppStream requires lowercase keywords, plus the two
+       words a software-centre search would plausibly use for this app and that
+       the desktop list does not have. -->
+  <keywords>
+    <keyword>wine</keyword>
+    <keyword>proton</keyword>
+    <keyword>windows</keyword>
+    <keyword>games</keyword>
+    <keyword>emulation</keyword>
+    <keyword>game launcher</keyword>
+    <keyword>game manager</keyword>
+  </keywords>
+  <!-- PKG-06. Real captures of the running application, kept in the
+       repository at docs/screenshots/ and referenced through the project's
+       raw.githubusercontent.com URL, the hosting AppStream expects. A
+       software centre that blocks hotlinking still gets a valid listing;
+       these are only presentation. -->
+  <launchable type="desktop-id">com.goshapps.GameHandler.desktop</launchable>
+  <provides>
+    <binary>gamehandler</binary>
+  </provides>
+  <url type="homepage">https://github.com/goshitsarch-eng/GamesHandler</url>
+  <url type="bugtracker">https://github.com/goshitsarch-eng/GamesHandler/issues</url>
+  <developer id="com.goshapps">
+    <name>Gosh</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.9.0-alpha.1" date="2026-10-09" type="development">
+      <description><p>Flutter desktop migration prerelease with compatible library data, Rust background jobs and native-library packaging. Target-host and release verification remains in progress.</p></description>
+    </release>
+    <release version="0.8.0" date="2026-09-11">
+      <description>
+        <p>
+          The interface has been rewritten on libcosmic, the COSMIC desktop
+          toolkit, in Rust. Nothing of the Python and Qt 6/Kirigami stack
+          remains in the shipped application: the library, the runner
+          downloads, the launch environment and the cover handling are a Rust
+          workspace now, and the Flatpak is built from a Cargo lockfile on the
+          Freedesktop runtime instead of a Meson build on the KDE runtime.
+        </p>
+        <p>
+          Nothing about your data changes. The library and settings files are
+          read and written in the same format as before — byte for byte,
+          including numeric timestamps — so an existing installation keeps its
+          games, covers, prefixes and preferences, and either version can open
+          the same data directory.
+        </p>
+        <p>
+          Light and dark themes remain first-class alongside following the
+          system theme, and the interface renders on the CPU, so it opens a
+          window on a machine with no working GPU.
+        </p>
+      </description>
+    </release>
+    <release version="0.7.2" date="2026-09-05">
+      <description>
+        <p>Fix headless unittest discovery without PySide6 by loading the
+        test-only Kirigami stub lazily, with regression coverage for the
+        optional QML smoke test skip.</p>
+      </description>
+    </release>
+    <release version="0.7.1" date="2026-08-29">
+      <description>
+        <p>
+          Align the Flatpak with KDE and PySide 6.10, add a Gosh-identified
+          About and Credits page, synchronize release metadata, and correct
+          the documented test command.
+        </p>
+      </description>
+    </release>
+    <release version="0.7.0" date="2026-08-28">
+      <description>
+        <p>
+          The interface has been rewritten from scratch on Qt 6 and KDE's
+          Kirigami framework; nothing of the old GTK and libadwaita stack
+          remains. Light and dark modes are both first-class, alongside
+          following the system theme.
+        </p>
+        <p>
+          Games and covers picked from network shares now work: locations such
+          as smb:// are resolved through their mounted GVFS path instead of
+          asking another application to open them, and a share that is not
+          mounted says so with an instruction rather than failing silently.
+        </p>
+        <p>
+          Winetricks and winecfg now run with the same Wine build the game
+          uses, so prefixes created by a downloaded Proton or Wine build are
+          no longer refused or silently migrated by the system Wine.
+        </p>
+      </description>
+    </release>
+    <release version="0.6.1" date="2026-08-26">
+      <description>
+        <p>
+          A bug-fix release for adding and starting titles. Easy installers now
+          wait for the vendor's own wizard to finish instead of scanning the
+          prefix while it is still open, and they find what Proton installed:
+          a Proton prefix keeps its files one directory deeper, which used to
+          make every Proton install look like a missing executable. A finished
+          install offers to start the launcher straight away.
+        </p>
+        <p>
+          Artwork lookup no longer attaches the wrong cover. A store launcher
+          is not a Steam product, so searching Steam for one returned an
+          unrelated game; those matches are now rejected, and Windows titles
+          Steam has never sold fall back to the icon their executable already
+          carries. Lookups that find nothing say so instead of failing in
+          silence.
+        </p>
+        <p>
+          A game that exits the moment it starts now reports why, rather than
+          leaving a "Launching..." message behind and no window.
+        </p>
+      </description>
+    </release>
+    <release version="0.6.0" date="2026-08-24">
+      <description>
+        <p>
+          A polish and hardening release. The library grid now tiles correctly
+          instead of showing one card per row, games without artwork get a
+          generated cover, and the library gained sorting plus a remove
+          confirmation. Downloaded runner archives are extracted with path
+          traversal protection, and desktop shortcuts escape their values.
+        </p>
+        <p>
+          Adds a Credits page acknowledging Wine, Proton, DXVK, VKD3D-Proton,
+          the Proton and Wine build maintainers, and the launchers GameHandler
+          learned from, together with the reasoning behind shipping one app
+          instead of asking people to assemble the stack themselves.
+        </p>
+      </description>
+    </release>
+    <release version="0.5.0" date="2026-08-23">
+      <description>
+        <p>
+          Lutris-style compatibility toggles: DXVK, VKD3D, NVAPI/DLSS, FSR,
+          BattlEye, Easy Anti-Cheat, Gamescope, a Wine virtual desktop, and
+          free-form environment variables.
+        </p>
+        <p>
+          Easy Installer downloads now require an approved HTTPS origin and a
+          valid Authenticode signature from the expected software publisher.
+        </p>
+      </description>
+    </release>
+    <release version="0.4.0" date="2026-08-23">
+      <description>
+        <p>
+          Per-game Esync and Fsync toggles, plus a catalog of easy installers
+          for Battle.net, Epic, EA App, Ubisoft Connect, GOG Galaxy, Amazon
+          Games, Rockstar, Steam, and Discord.
+        </p>
+      </description>
+    </release>
+    <release version="0.3.0" date="2026-08-19">
+      <description>
+        <p>
+          Categories, custom and Steam-fetched covers, a runner chooser guide,
+          and install offers for MangoHud and other launch plugins.
+        </p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-08-19">
+      <description>
+        <p>
+          Dark mode, a redesigned library, and built-in downloads for ProtonPlus-style
+          Proton and Wine families. Games can pick a runner at install time and change it later.
+        </p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-08-19">
+      <description>
+        <p>Initial release with library management and Wine/Proton launching.</p>
+      </description>
+    </release>
+  </releases>
+</component>

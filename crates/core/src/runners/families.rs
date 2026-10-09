@@ -318,7 +318,26 @@ pub fn asset_matches_tokens(asset_name: &str, require: &[&str], exclude: &[&str]
 /// caller has the raw release JSON and nothing else needs the extra fields —
 /// the same shape as the Python, which takes `dict`s and reads only `name`.
 pub fn pick_asset(assets: &[Value], family: &RunnerFamily) -> Option<Value> {
-    pick_asset_tokens(assets, family.require, family.exclude, family.prefer)
+    pick_asset_for_arch(assets, family, std::env::consts::ARCH)
+}
+
+/// Filter the release before choosing a build, so asset order cannot select a
+/// different CPU architecture. Unmarked historic releases are x86_64 builds.
+pub fn pick_asset_for_arch(assets: &[Value], family: &RunnerFamily, arch: &str) -> Option<Value> {
+    let compatible: Vec<Value> = assets
+        .iter()
+        .filter(|asset| {
+            let name = asset_name(asset).to_lowercase();
+            let arm = name.contains("aarch64") || name.contains("arm64");
+            match arch {
+                "x86_64" => !arm,
+                "aarch64" => arm,
+                _ => false,
+            }
+        })
+        .cloned()
+        .collect();
+    pick_asset_tokens(&compatible, family.require, family.exclude, family.prefer)
 }
 
 /// [`pick_asset`] over the token lists themselves. See [`asset_matches_tokens`]

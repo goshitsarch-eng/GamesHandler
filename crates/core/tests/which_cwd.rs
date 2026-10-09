@@ -19,6 +19,8 @@
 //! with an executable `sh` in the working directory, `shutil.which("sh",
 //! path=":")` returns `'sh'`.
 
+#![cfg(target_os = "linux")]
+
 use std::fs;
 use std::path::PathBuf;
 

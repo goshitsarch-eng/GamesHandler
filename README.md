@@ -1,5 +1,39 @@
 # GameHandler
 
+The active rewrite is **0.9.0-alpha.1**, a Flutter/Dart desktop frontend with a
+Rust backend for Windows, macOS and Linux, including a new Flatpak manifest.
+It is an **unreleased migration prerelease**. Linux builds and backend/UI tests
+have run here; Windows/macOS runtime, installed Flatpak and hosted CI/release
+verification remain pending. See [platform evidence](PLATFORM_SUPPORT.md).
+
+Build and launch the new application with:
+
+```sh
+flutter pub get
+python3 scripts/desktop.py build
+python3 scripts/desktop.py run
+```
+
+The build driver bundles the Rust library and headless launcher automatically.
+For prerequisites, installation, packaging and tests see [BUILDING.md](BUILDING.md).
+For responsibilities and ABI ownership see [ARCHITECTURE.md](ARCHITECTURE.md).
+The feature inventory and remaining gates are in [MIGRATION_AUDIT.md](MIGRATION_AUDIT.md).
+The previous implementation and its acknowledgements are retained below as the
+functional reference; its installation instructions build version 0.8.0.
+
+![Flutter desktop library](docs/screenshots/desktop-library-light.png)
+
+Linux release UI with an isolated QA library. Steam artwork lookup is real;
+the launch fixture is `/bin/true`, not the Portal 2 executable.
+
+The rewrite provides library CRUD, search/category/sort, grid/list views, artwork,
+preferences/themes, keyboard/context menus, native dialogs/links and job feedback.
+Linux retains Wine/Proton runners, prefixes and verified installer workflows.
+Windows/macOS implementation and packaging require their native-host gates before
+release support can be declared verified.
+
+## Previous release and functional reference
+
 GameHandler is a game manager for Linux. It runs Windows games through Wine or
 Proton, runs Linux-native games directly, downloads compatibility runners,
 manages isolated prefixes, and installs the big store launchers for you.
