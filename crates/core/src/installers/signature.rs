@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::installers::process::{CommandOutput, RunFailure, run_capturing};
+use crate::installers::process::{CommandOutput, RunFailure, run_capturing, run_capturing_network};
 use crate::installers::{Installer, InstallerError};
 use crate::paths::Env;
 use crate::runners::LaunchEnv;
@@ -213,7 +213,7 @@ pub fn verify_installer_authenticity(
         );
     }
 
-    let output = run_signature_tool(&command, installer.name)?;
+    let output = run_signature_tool(&command, installer.name, Some(launch_env))?;
 
     let text = output.text;
     if output.status != Some(0) || !text.contains("Signature verification: ok") {
@@ -299,7 +299,7 @@ fn signed_subject_values(
             &signature_arg,
         ],
     );
-    let output = run_signature_tool(&command, name)?;
+    let output = run_signature_tool(&command, name, None)?;
     if output.status != Some(0) || !signature.is_file() {
         // The `is_file` half is not redundant: the check is that there is a
         // blob to read, and a tool that reports success without writing one
@@ -323,7 +323,7 @@ fn signed_subject_values(
             "-print_certs",
         ],
     );
-    let output = run_signature_tool(&command, name)?;
+    let output = run_signature_tool(&command, name, None)?;
     let blocks = pem_certificates(&output.text);
     if output.status != Some(0) || blocks.is_empty() {
         return Err(InstallerError::CertificateReadFailed {
@@ -353,7 +353,7 @@ fn signed_subject_values(
                 "RFC2253",
             ],
         );
-        let output = run_signature_tool(&command, name)?;
+        let output = run_signature_tool(&command, name, None)?;
         if output.status != Some(0) {
             return Err(InstallerError::CertificateReadFailed {
                 name: name.to_string(),
@@ -393,8 +393,16 @@ fn tool_argv(program: &Path, arguments: &[&str]) -> Vec<String> {
 /// given a constant of its own: this is the same work on the same file, and a
 /// second number would be a second thing to justify. A spawn that fails is
 /// [`InstallerError::Io`], as it is for the verifier itself.
-fn run_signature_tool(argv: &[String], name: &str) -> Result<CommandOutput, InstallerError> {
-    match run_capturing(argv, SIGNATURE_TIMEOUT) {
+fn run_signature_tool(
+    argv: &[String],
+    name: &str,
+    network: Option<&dyn LaunchEnv>,
+) -> Result<CommandOutput, InstallerError> {
+    let result = match network {
+        Some(env) => run_capturing_network(argv, SIGNATURE_TIMEOUT, env),
+        None => run_capturing(argv, SIGNATURE_TIMEOUT),
+    };
+    match result {
         Ok(output) => Ok(output),
         Err(RunFailure::TimedOut) => Err(InstallerError::SignatureTimedOut {
             name: name.to_string(),

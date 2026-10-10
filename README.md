@@ -3,8 +3,8 @@
 The active rewrite is **0.9.0-alpha.1**, a Flutter/Dart desktop frontend with a
 Rust backend for Windows, macOS and Linux, including a new Flatpak manifest.
 It is an **unreleased migration prerelease**. Linux builds and backend/UI tests
-have run here; Windows/macOS runtime, installed Flatpak and hosted CI/release
-verification remain pending. See [platform evidence](PLATFORM_SUPPORT.md).
+have run here, including installed Flatpak portal and launch checks.
+Windows/macOS runtime and hosted CI/release verification remain blocked. See [platform evidence](PLATFORM_SUPPORT.md).
 
 Build and launch the new application with:
 
@@ -31,6 +31,11 @@ preferences/themes, keyboard/context menus, native dialogs/links and job feedbac
 Linux retains Wine/Proton runners, prefixes and verified installer workflows.
 Windows/macOS implementation and packaging require their native-host gates before
 release support can be declared verified.
+
+![Installed Flatpak library](docs/screenshots/flatpak-library-dark.png)
+
+Installed Flatpak with isolated native-script and Windows CLI QA records.
+These launch fixtures verify integration; they do not establish game compatibility.
 
 ## Previous release and functional reference
 

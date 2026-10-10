@@ -163,7 +163,7 @@ See ARCHITECTURE.md for ownership, concurrency and packaging details.
   portable cover jobs, native shortcuts and a display-independent CLI.
 - Runner architecture selection was an actual defect: a first ARM asset could
   be chosen on x86_64. Selection now filters architecture and has a regression.
-- New backend: six integration regressions pass. Flutter: five tests pass against
+- New backend: nine integration regressions and four unit tests pass. Flutter: seven tests pass against
   the real library; analysis and Rust Clippy pass without warning suppression.
   Linux desktop integration passes (Unicode CRUD and theme through the real ABI).
 - Portable core and tests compile for Windows x64 and macOS ARM64. These are
@@ -171,6 +171,14 @@ See ARCHITECTURE.md for ownership, concurrency and packaging details.
 - The new visible Linux library was inspected. Startup ordering was fixed after
   actual runtime testing exposed a wait-for-frame deadlock. A later concurrent
   debug/release build produced a mismatched engine; builds must run sequentially.
+- Installed Flatpak startup caught a bzip2 SONAME mismatch; static linking
+  against the existing vendored bzip2 fixed it without a loader alias.
+- Verifier isolation removed proxy routing needed for signed CRL retrieval.
+  Only proxy routing variables are now forwarded; trust-store overrides,
+  OpenSSL configuration, PATH and loader hooks remain excluded. An actual child
+  process test proves that boundary. Signatures, revocation and publisher checks
+  remain mandatory. Current core tests: 638 passed, one ignored; full workspace:
+  1179 passed, one ignored.
 - The reusable cloud install script was executed successfully and its full
   contents/start instructions saved as an environment draft. Saving does not
   publish/apply that configuration.
@@ -190,12 +198,23 @@ inspection are available. Flatpak namespaces work with the managed sandbox
 escalation; verified SDK/BaseApp installation, a complete build and user
 installation succeeded. The installed CLI exposed a bzip2 SONAME mismatch,
 corrected by statically linking the existing trusted vendored dependency.
-The rebuilt installed runtime and portal/Wine QA still require verification.
-Wine/vendor wizard QA, large-library accessibility/manual testing and production
-signing remain open. The new Flatpak manifest currently targets x86_64. Legacy
+The rebuilt installed CLI and GUI run. Real portal selection returned a host
+document path different from the sandbox mount; the UI now asks the document
+portal for its mount point and maps only documents inside that mount to the
+sandbox runtime, checking accessibility before use. Save and native launch
+succeeded through that path, including after a cold restart. A Windows PE CLI
+ran through bundled Wine in a managed prefix; the installed DXVK DLL hash
+matched the verified bundled DLL.
+The official Battle.net bootstrapper passed signature, publisher and revocation
+checks but failed at Wine32 loading with exit 1; its prefix was retained and
+the UI surfaced the failure. Inherited GL32/Compat.i386 dependencies were
+installed. Vendor wizard completion, large-library accessibility/manual testing
+and production signing remain open. The new Flatpak manifest currently targets x86_64. Legacy
 clients do not share the new cross-process lock, so concurrent edits with them
 are unsupported. Delayed launch failures are observed by Rust and request window restoration;
-the observer is integration-tested, while visible restoration needs manual QA. These are completion gates, not passing
+the observer is integration-tested. Actual window mapping was observed hidden
+for 1.2 seconds and visible again after the delayed fixture failed; stderr was
+displayed in the restored window. These are completion gates, not passing
 features or grounds to declare the requested rewrite complete.
 
 ## Required completion evidence
@@ -204,4 +223,8 @@ Complete the per-target checklist in docs/desktop-qa.md, execute and inspect
 .github/workflows/desktop.yml and desktop-release.yml, verify installed Flatpak
 portals and native loading, and inspect the published artifact set before a
 production-complete claim. PLATFORM_SUPPORT.md records target-specific evidence.
-No hosted workflow run or GitHub release has been verified in this session.
+Hosted workflow [38002735281](https://github.com/goshitsarch-eng/GamesHandler/actions/runs/38002735281)
+was pushed, triggered and inspected through the Actions API. All six jobs were
+prevented from starting: "The job was not started because your account is locked
+due to a billing issue." See docs/ci-verification.json. No target-host job passed
+and no GitHub release has been published.

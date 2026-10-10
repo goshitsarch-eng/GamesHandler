@@ -1,0 +1,55 @@
+{
+  "run_url": "https://github.com/goshitsarch-eng/GamesHandler/actions/runs/38002735281",
+  "head_sha": "bac042b5acb1f0d971fbf7c936daa3491d20622f",
+  "jobs": [
+    {
+      "target": "flatpak",
+      "status": "completed",
+      "conclusion": "failure",
+      "annotations": [
+        "The job was not started because your account is locked due to a billing issue."
+      ]
+    },
+    {
+      "target": "desktop (ubuntu-24.04)",
+      "status": "completed",
+      "conclusion": "failure",
+      "annotations": [
+        "The job was not started because your account is locked due to a billing issue."
+      ]
+    },
+    {
+      "target": "desktop (windows-2022)",
+      "status": "completed",
+      "conclusion": "failure",
+      "annotations": [
+        "The job was not started because your account is locked due to a billing issue."
+      ]
+    },
+    {
+      "target": "desktop (macos-15-intel)",
+      "status": "completed",
+      "conclusion": "failure",
+      "annotations": [
+        "The job was not started because your account is locked due to a billing issue."
+      ]
+    },
+    {
+      "target": "desktop (macos-15)",
+      "status": "completed",
+      "conclusion": "failure",
+      "annotations": [
+        "The job was not started because your account is locked due to a billing issue.",
+        "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      ]
+    },
+    {
+      "target": "desktop (ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "failure",
+      "annotations": [
+        "The job was not started because your account is locked due to a billing issue."
+      ]
+    }
+  ]
+}

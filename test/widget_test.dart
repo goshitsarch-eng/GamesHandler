@@ -50,6 +50,22 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       }
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      state.error = 'A recoverable backend failure';
+      await tester.pumpWidget(
+        GameHandlerApp(
+          key: const ValueKey('scaled-library'),
+          state: state,
+          nativeMenus: false,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('A recoverable backend failure'), findsOneWidget);
+      tester.platformDispatcher.clearTextScaleFactorTestValue();
       await tester.pumpWidget(const SizedBox());
       state.dispose();
       await tester.runAsync(() => root.delete(recursive: true));

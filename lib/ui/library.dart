@@ -97,30 +97,67 @@ class LibraryPage extends StatelessWidget {
             ),
           ),
         ),
-        DropdownButton<String>(
-          value: ['All', ...state.categories].contains(state.category)
-              ? state.category
-              : 'All',
-          items: [
-            'All',
-            ...state.categories.where((c) => c != 'All'),
-          ].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-          onChanged: (c) {
-            state.category = c ?? 'All';
-            state.refresh();
-          },
+        SizedBox(
+          width: 160,
+          child: DropdownButton<String>(
+            isExpanded: true,
+            value: ['All', ...state.categories].contains(state.category)
+                ? state.category
+                : 'All',
+            items: ['All', ...state.categories.where((c) => c != 'All')]
+                .map(
+                  (c) => DropdownMenuItem(
+                    value: c,
+                    child: Text(
+                      c,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (c) {
+              state.category = c ?? 'All';
+              state.refresh();
+            },
+          ),
         ),
-        DropdownButton<String>(
-          value: state.sort,
-          items: const [
-            DropdownMenuItem(value: 'name', child: Text('Name')),
-            DropdownMenuItem(value: 'recent', child: Text('Recently played')),
-            DropdownMenuItem(value: 'added', child: Text('Recently added')),
-          ],
-          onChanged: (v) {
-            state.sort = v ?? 'name';
-            state.refresh();
-          },
+        SizedBox(
+          width: 200,
+          child: DropdownButton<String>(
+            isExpanded: true,
+            value: state.sort,
+            items: const [
+              DropdownMenuItem(
+                value: 'name',
+                child: Text(
+                  'Name',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              DropdownMenuItem(
+                value: 'recent',
+                child: Text(
+                  'Recently played',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              DropdownMenuItem(
+                value: 'added',
+                child: Text(
+                  'Recently added',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+            onChanged: (v) {
+              state.sort = v ?? 'name';
+              state.refresh();
+            },
+          ),
         ),
         IconButton(
           tooltip: state.settings['view_mode'] == 'list'

@@ -23,6 +23,7 @@ pub(crate) struct CommandOutput {
 }
 
 /// Why a child could not be run to completion.
+#[derive(Debug)]
 pub(crate) enum RunFailure {
     /// It outlived its bound and was killed.
     TimedOut,
@@ -133,10 +134,12 @@ thread_local! {
 /// launcher's whole environment, and this port copied that here while every
 /// other spawn in the tree replaces it ([`wait_for_prefix_idle`] below,
 /// `start_prefix_tool`, `run_installer`). The child is `osslsigncode`, and it
-/// needs **nothing** from this process: the binary is resolved by the caller's
+/// needs no trust or loader configuration from this process. The binary is
+/// resolved by the caller's
 /// `which` into an absolute path (`:1516`), the trust root and the file under
 /// test are absolute paths in the argv, and the program reads no configuration.
-/// So an empty environment is a complete one, and it means a hostile
+/// Only proxy routing is allowed for the verifier's signed CRL retrieval.
+/// All other tools keep an empty environment. A hostile
 /// `LD_PRELOAD`, `OPENSSL_CONF` or `SSL_CERT_FILE` in the launcher's environment
 /// cannot redirect the verifier's answer — which matters more here than
 /// elsewhere, because this process's *output* is a security decision the
@@ -154,6 +157,34 @@ pub(crate) fn run_capturing(
     argv: &[String],
     timeout: Duration,
 ) -> Result<CommandOutput, RunFailure> {
+    run_capturing_with_environment(argv, timeout, &[])
+}
+
+/// Allow only network routing for the verifier's signed CRL downloads.
+/// Trust stores, OpenSSL configuration and loader hooks remain excluded.
+pub(crate) fn run_capturing_network(
+    argv: &[String],
+    timeout: Duration,
+    env: &dyn crate::paths::Env,
+) -> Result<CommandOutput, RunFailure> {
+    let mut routing = Vec::new();
+    for lower in ["http_proxy", "https_proxy", "all_proxy", "no_proxy"] {
+        let value = env.var(lower).filter(|v| !v.trim().is_empty()).or_else(|| {
+            env.var(&lower.to_ascii_uppercase())
+                .filter(|v| !v.trim().is_empty())
+        });
+        if let Some(value) = value {
+            routing.push((lower.to_string(), value));
+        }
+    }
+    run_capturing_with_environment(argv, timeout, &routing)
+}
+
+fn run_capturing_with_environment(
+    argv: &[String],
+    timeout: Duration,
+    routing: &[(String, String)],
+) -> Result<CommandOutput, RunFailure> {
     use std::process::Stdio;
 
     const POLL: Duration = Duration::from_millis(20);
@@ -168,6 +199,7 @@ pub(crate) fn run_capturing(
         ProcessCommand::new(program)
             .args(arguments)
             .env_clear()
+            .envs(routing.iter().cloned())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -202,4 +234,34 @@ pub(crate) fn run_capturing(
         status: output.status.code(),
         text,
     })
+}
+
+#[cfg(test)]
+mod network_environment_tests {
+    use super::*;
+    use crate::runners::env::tests::FakeLaunchEnv;
+
+    #[test]
+    fn actual_child_receives_proxy_routing_without_trust_or_loader_overrides() {
+        let env = FakeLaunchEnv::new().with_vars(&[
+            ("HTTP_PROXY", "http://routing.example:8080"),
+            ("https_proxy", "http://secure-routing.example:8080"),
+            ("SSL_CERT_FILE", "/untrusted/ca.pem"),
+            ("OPENSSL_CONF", "/untrusted/openssl.cnf"),
+            ("LD_PRELOAD", "/untrusted/hook.so"),
+            ("PATH", "/untrusted/bin"),
+        ]);
+        let output =
+            run_capturing_network(&["/usr/bin/env".into()], Duration::from_secs(5), &env).unwrap();
+        assert_eq!(output.status, Some(0));
+        let mut lines: Vec<_> = output.text.lines().collect();
+        lines.sort_unstable();
+        assert_eq!(
+            lines,
+            [
+                "http_proxy=http://routing.example:8080",
+                "https_proxy=http://secure-routing.example:8080",
+            ]
+        );
+    }
 }

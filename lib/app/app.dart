@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../models/game.dart';
+import 'selected_path.dart';
 import '../state/library_state.dart';
 import '../ui/game_editor.dart';
 import '../ui/library.dart';
@@ -75,11 +76,14 @@ class _GameHandlerAppState extends State<GameHandlerApp> {
       final value =
           game?.fields ??
           Map<String, dynamic>.from(await state.backend.call('new_game'));
+      final selected = path == null ? null : await selectedPath(path);
       if (!mounted) return;
       await showDialog<void>(
         context: navigator.currentContext!,
-        builder: (context) =>
-            GameEditor(state: state, initial: {...value, 'exe_path': ?path}),
+        builder: (context) => GameEditor(
+          state: state,
+          initial: {...value, 'exe_path': ?selected},
+        ),
       );
     });
   }
@@ -137,7 +141,7 @@ class _GameHandlerAppState extends State<GameHandlerApp> {
         if (f != null) {
           await state.backend.call('import_cover', {
             'id': game.id,
-            'path': f.path,
+            'path': await selectedPath(f.path),
           });
           state.invalidateArtwork();
           await state.refresh();
@@ -493,7 +497,7 @@ class _GameHandlerAppState extends State<GameHandlerApp> {
                 if (f != null) {
                   await state.backend.call('complete_install', {
                     'job': job['id'],
-                    'path': f.path,
+                    'path': await selectedPath(f.path),
                   });
                   await state.pollJobs();
                 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../models/game.dart';
+import '../app/selected_path.dart';
 import '../state/library_state.dart';
 
 class GameEditor extends StatefulWidget {
@@ -40,10 +41,12 @@ class _GameEditorState extends State<GameEditor> {
     final path = directory
         ? await getDirectoryPath()
         : (await openFile())?.path;
-    if (path != null && mounted) {
+    if (path != null) {
+      final resolved = await selectedPath(path);
+      if (!mounted) return;
       setState(() {
-        value[key] = path;
-        controller(key).text = path;
+        value[key] = resolved;
+        controller(key).text = resolved;
       });
     }
   }

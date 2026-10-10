@@ -42,7 +42,8 @@ Linux bundles are tar.gz files, Windows portable bundles and macOS .app bundles
 are ZIP files; checksums are adjacent in `dist/`. On Windows, NSIS produces a
 per-user installer: `makensis /NOCD packaging/windows/gamehandler.nsi` from the
 repository root after a release build. It removes application binaries on
-uninstall and retains library/preferences. The macOS build is ad hoc signed
+uninstall and retains library/preferences. It accepts an empty installation
+folder or an existing installation carrying its own marker. The macOS build is ad hoc signed
 for local use; it is not notarized. Production signing needs the maintainer's
 certificates, not credentials checked into this repository.
 
@@ -53,7 +54,9 @@ builds a local repository/bundle, installs it and checks the headless CLI.
 It requires working user namespaces and Flathub access. The legacy
 `build-aux/flatpak/build.sh` still builds the original application.
 The new manifest currently targets Linux x86_64; native ARM bundles are
-separate. Flatpak install and portal QA remain unverified in this cloud sandbox.
+separate. An installed x86_64 Flatpak passed CLI/cold-start, real portal selection, native
+launch and Wine launch checks in this cloud workspace. See docs/desktop-qa.md
+for the private D-Bus/tool-path configuration and remaining release gates.
 
 For this managed cloud workspace, source
 `/workspace/.gamehandler-tools/activate.sh` before commands. The saved setup
