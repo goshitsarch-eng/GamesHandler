@@ -25,6 +25,7 @@ workspace = true
 # and keeping it that small is what makes `cargo test -p gamehandler-core`
 # instant and headless.
 serde = { version = "1", features = ["derive"] }
+getrandom = "0.3"
 
 # `float_roundtrip` is REQUIRED, not an optimisation. serde_json's default f64
 # parser is fast but not correctly rounded: measured against 20,000 realistic
@@ -57,7 +58,9 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 # `flate2` is pinned to the `zlib` backend for the same reason: its default
 # `miniz_oxide` is pure Rust but younger. The three C libraries are proven
 # present in the 25.08 runtime at T-17; `bzip2` is the one to watch, because
-# the SDK ships libbz2 and its headers but **no `bzip2.pc`**. That is not a
+# Debian and the Flatpak runtime use different libbz2 SONAMEs. Explicitly
+# compile the crate's vendored bzip2 1.0.8 to avoid a host SONAME dependency.
+# The SDK ships libbz2 and its headers but **no `bzip2.pc`**. That is not a
 # failure, and it is worth stating because it reads like one: `bzip2-sys`'s
 # `build.rs` consumes `pkg_config::probe("bzip2").is_ok()`, so a missing `.pc`
 # falls through to `cc::Build` over the vendored `bzip2-1.0.8/*.c` — the
@@ -65,9 +68,10 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 # `.is_ok()` shape for `liblzma`, so xz2 is safe for the same reason. There is
 # no environment variable to set; an earlier draft of D-24 named one
 # (`BZIP2_SYS_USE_PKG_CONFIG`) that does not exist.
+[target.'cfg(target_os = "linux")'.dependencies]
 tar = "0.4"
 xz2 = "0.1"
-bzip2 = "0.5"
+bzip2 = { version = "0.5", features = ["static"] }
 flate2 = { version = "1", default-features = false, features = ["zlib"] }
 
 # `renameat2(.., RENAME_NOREPLACE)` for the runner install (DECISIONS D-25).

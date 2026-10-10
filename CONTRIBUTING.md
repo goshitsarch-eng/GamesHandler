@@ -1,5 +1,16 @@
 # Contributing
 
+For the Flutter rewrite, follow [BUILDING.md](BUILDING.md) and run
+`python3 scripts/desktop.py test` plus the desktop integration test on your OS.
+Keep domain/persistence policy in Rust and presentation/lifecycle in Dart, as
+specified in [ARCHITECTURE.md](ARCHITECTURE.md). Preserve the JSON schema and
+corrupt-file protection; test behavior through the real boundary. Add manual
+QA results to [docs/desktop-qa.md](docs/desktop-qa.md) without converting an
+unrun platform into a passing claim. The workflow matrix must pass before a
+`desktop-vVERSION` prerelease is published. Production signing is a maintainer
+step. The legacy verification instructions below still apply to shared core
+changes and compatibility regressions.
+
 ## Setup
 
 You need Rust 1.93 or newer. With rustup, `rust-toolchain.toml` pins the same

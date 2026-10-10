@@ -14,7 +14,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v0.8.*']
   workflow_dispatch:
     inputs:
       tag:

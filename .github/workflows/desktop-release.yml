@@ -1,0 +1,55 @@
+name: Flutter desktop release
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Require matching prerelease tag
+        run: |
+          version=$(sed -n 's/^version: \([^+]*\).*/\1/p' pubspec.yaml)
+          test "$GITHUB_REF_NAME" = "desktop-v$version"
+  desktop:
+    needs: validate
+    uses: ./.github/workflows/desktop.yml
+  publish:
+    needs: desktop
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Require every target and create checksums
+        run: |
+          test -n "$(find dist -name '*linux*x86_64.tar.gz')"
+          test -n "$(find dist -name '*linux*aarch64.tar.gz')"
+          test -n "$(find dist -name '*windows*setup.exe')"
+          test -n "$(find dist -name '*macos*arm64.zip')"
+          test -n "$(find dist -name '*macos*x86_64.zip')"
+          test -n "$(find dist -name '*.flatpak')"
+          cd dist
+          sha256sum *.tar.gz *.zip *.exe *.flatpak > SHA256SUMS
+      - name: Publish explicitly unsigned prerelease and verify assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > /tmp/release-notes.md <<'NOTES'
+          Flutter desktop prerelease. Windows installers are unsigned. macOS applications use an ad hoc signature and are not notarized. Review PLATFORM_SUPPORT.md and the manual QA record before use with an existing library.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --title "GameHandler ${GITHUB_REF_NAME#desktop-v}" --notes-file /tmp/release-notes.md
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets > /tmp/release-assets.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          uploaded = {item['name'] for item in json.loads(Path('/tmp/release-assets.json').read_text())['assets']}
+          expected = {item.name for item in Path('dist').iterdir() if item.is_file()}
+          assert expected <= uploaded, expected - uploaded
+          PY

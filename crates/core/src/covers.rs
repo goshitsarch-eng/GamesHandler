@@ -28,7 +28,7 @@
 //! which is `core`.
 //!
 //! The alternative the view originally reached for — widening
-//! [`crate::hash::sha256_hex`] to `pub` — was rejected for the reason the view
+//! `crate::hash::sha256_hex` to `pub` — was rejected for the reason the view
 //! itself gave: it exports the *primitive* while the thing that must not drift
 //! is the *rule*. A caller holding `sha256_hex` can bucket the digest its own
 //! way, and the drift would be invisible until someone compared two screenshots.
@@ -343,7 +343,7 @@ const GENRE_MAP: &[(&str, &str)] = &[
 /// Map Steam genre names onto a GameHandler category.
 ///
 /// Port of `map_steam_genre` (`covers.py:148-154`): the first genre whose
-/// stripped, lowercased form hits [`GENRE_MAP`] wins, and anything else —
+/// stripped, lowercased form hits `GENRE_MAP` wins, and anything else —
 /// including no genres at all — is `"Uncategorized"`.
 pub fn map_steam_genre(genres: &[impl AsRef<str>]) -> &'static str {
     for genre in genres {
@@ -550,7 +550,7 @@ pub enum SaveIconError {
     /// into `None` before this error is built.
     NoIcon { exe: String },
     /// The game id could not be turned into a filename without the possibility
-    /// of leaving the covers directory. See [`cover_stem`].
+    /// of leaving the covers directory. See `cover_stem`.
     ///
     /// **Deliberate divergence from `covers.py:307-317`** (`SECURITY.md`
     /// `SEC-04`). The reference interpolates `game_id` into a destination path
@@ -612,7 +612,7 @@ impl std::error::Error for SaveIconError {
 ///
 /// `\` is rejected alongside `/` even though it is an ordinary character in a
 /// Unix filename, so that the rule matches
-/// [`safe_install_id`](crate::runners::archive::safe_install_id) and so that a
+/// `safe_install_id` in the Linux archive module and so that a
 /// library carried between machines cannot change meaning.
 ///
 /// Both `covers_dir()` and the directory argument the tests pass are subject to
@@ -737,7 +737,7 @@ pub enum CoverError {
     /// failed, or a custom-cover source was missing.
     Io(std::io::Error),
     /// The game id could not be turned into a filename without the possibility
-    /// of leaving the covers directory. See [`cover_stem`] for the rule and for
+    /// of leaving the covers directory. See `cover_stem` for the rule and for
     /// why it is a refusal rather than a rewrite.
     ///
     /// **Deliberate divergence from the reference** (`SECURITY.md` `SEC-04`):
@@ -1078,7 +1078,7 @@ const MAX_PRESERVED_COVERS: u32 = 1000;
 ///
 /// Nothing is deleted and nothing is asked. The kept file keeps the image bytes,
 /// it cannot be mistaken for a cover of this game — `.preserved-N` is not one of
-/// [`CUSTOM_COVER_SUFFIXES`], so no reader of the covers directory resolves to
+/// `CUSTOM_COVER_SUFFIXES`, so no reader of the covers directory resolves to
 /// it, and nothing in either implementation enumerates that directory
 /// (`bridge.py:606-609` resolves a stored path and falls back to `<id>.jpg`) —
 /// and the destination name is unchanged, so the record the picker writes still
@@ -1141,7 +1141,7 @@ pub fn copy_custom_cover(
 /// follows replaces nothing.
 ///
 /// The names scanned are exactly the ones [`copy_custom_cover`] can produce for
-/// this game — `<stem>.<suffix>` for each of [`CUSTOM_COVER_SUFFIXES`] — and the
+/// this game — `<stem>.<suffix>` for each of `CUSTOM_COVER_SUFFIXES` — and the
 /// name each is moved to is `<stem>.preserved-<n>.<suffix>` for the first `n`
 /// that is free, so a second preservation of the same name cannot clobber the
 /// first and the extension the file is recognised by is preserved.

@@ -44,14 +44,22 @@ pub mod covers;
 pub mod credits;
 pub mod exe_icons;
 mod hash;
+#[cfg(target_os = "linux")]
 pub mod installers;
 pub mod json;
 pub mod models;
+#[cfg(target_os = "linux")]
 pub mod netpaths;
 pub mod paths;
+#[cfg(target_os = "linux")]
 pub mod plugins;
+#[cfg(target_os = "linux")]
+pub mod runners;
+#[cfg(not(target_os = "linux"))]
+#[path = "runners_portable.rs"]
 pub mod runners;
 pub mod settings;
+pub mod transport;
 
 /// Oracles shared with the application's tests (ARCH-13).
 ///
@@ -64,7 +72,7 @@ pub mod settings;
 #[cfg(feature = "test-support")]
 pub mod oracle_support;
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod oracle_tests;
 
 #[cfg(test)]

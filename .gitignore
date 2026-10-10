@@ -37,3 +37,11 @@ build-aux/flatpak/venv/
 # with the x86_64-only Wine base/i386-compat/DXVK entries removed. Lives beside
 # the source manifest so its relative sources resolve.
 build-aux/flatpak/com.goshapps.GameHandler.aarch64.json
+
+# Flutter desktop migration outputs
+.dart_tool/
+.flutter-plugins-dependencies
+/rust/target/
+/macos/Flutter/ephemeral/
+/linux/flutter/ephemeral/
+/windows/flutter/ephemeral/

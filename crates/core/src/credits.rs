@@ -490,7 +490,7 @@ pub fn markdown() -> String {
     format!("{}\n", lines.join("\n").trim_end())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use crate::runners::families::RUNNER_FAMILIES;

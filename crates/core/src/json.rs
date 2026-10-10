@@ -17,7 +17,7 @@
 //!   its behaviour, both D-21. A leading UTF-8 BOM is stripped rather than
 //!   read as a corrupt file (Python loses the library and overwrites it on the
 //!   next save), and nesting is bounded by clamping rather than by a recursion
-//!   limit ([`MAX_VALUE_DEPTH`]).
+//!   limit (`MAX_VALUE_DEPTH`).
 //!
 //! * **Writing** — `json.dumps` defaults to `ensure_ascii=True`, so
 //!   `"Pokémon"` is written `"Pok\u00e9mon"`. `serde_json` writes raw UTF-8.
@@ -61,7 +61,7 @@ use serde_json::ser::{CharEscape, Formatter, PrettyFormatter, Serializer};
 /// `cosmic-theme` does, and Cargo feature-unifies into a workspace build) was
 /// enough to push the same 1,000-deep fixture over.
 ///
-/// So the document is not parsed deeper than this. [`clamp_depth`] replaces any
+/// So the document is not parsed deeper than this. `clamp_depth` replaces any
 /// value nested past `MAX_VALUE_DEPTH` with `null` before the parser sees it,
 /// which costs nothing: every field the app reads is a scalar at depth 3 or
 /// less, and anything deeper is either inside an unknown key (discarded by
@@ -80,7 +80,7 @@ const MAX_VALUE_DEPTH: usize = 64;
 /// Accepts everything strict JSON does, plus `NaN` / `Infinity` /
 /// `-Infinity`, arbitrary-length integers, out-of-`f64`-range literals
 /// (saturated to `±inf`), a UTF-8 byte-order mark, and documents of any
-/// nesting depth (values past [`MAX_VALUE_DEPTH`] are read as `null`).
+/// nesting depth (values past `MAX_VALUE_DEPTH` are read as `null`).
 ///
 /// # The BOM (DECISIONS D-21)
 ///
@@ -93,8 +93,8 @@ const MAX_VALUE_DEPTH: usize = 64;
 ///
 /// # Depth (DECISIONS D-21)
 ///
-/// Depth is handled by [`clamp_depth`], not by a recursion limit. See
-/// [`MAX_VALUE_DEPTH`] for why, and note the consequence: a document deeper
+/// Depth is handled by `clamp_depth`, not by a recursion limit. See
+/// `MAX_VALUE_DEPTH` for why, and note the consequence: a document deeper
 /// than 64 levels parses *successfully*, with the over-deep values read as
 /// `null`. That is not a compromise — those values are dropped downstream
 /// regardless — but it does mean this function does not round-trip an
@@ -114,7 +114,7 @@ pub fn parse_lenient(text: &str) -> Result<Value, serde_json::Error> {
     serde_json::from_str(&clamped)
 }
 
-/// Replace every value nested deeper than [`MAX_VALUE_DEPTH`] with `null`.
+/// Replace every value nested deeper than `MAX_VALUE_DEPTH` with `null`.
 ///
 /// Non-recursive by construction, which is the entire point: it walks the text
 /// with a bracket counter instead of descending into values, so it costs no
@@ -231,7 +231,7 @@ fn container_end(bytes: &[u8], start: usize) -> usize {
 /// P0 rather than two P2s.
 ///
 /// The substitution is a string-body concern, which is why it lives here rather
-/// than beside the number rewrites: strings are skipped by [`string_end`] for
+/// than beside the number rewrites: strings are skipped by `string_end` for
 /// the literal rewrites because a `NaN` inside a game's name is not a number,
 /// and this is the one thing that has to look *inside* them. An unpaired
 /// surrogate becomes U+FFFD, which is what Python does when the same string
@@ -328,7 +328,7 @@ fn string_end(bytes: &[u8], start: usize) -> usize {
 /// Replace every unpaired `\uXXXX` surrogate escape in a JSON string body with
 /// U+FFFD, or `None` if the body holds none.
 ///
-/// `body` is the string **including** its quotes, as [`string_end`] returns it.
+/// `body` is the string **including** its quotes, as `string_end` returns it.
 /// Escape sequences that are not surrogates are left exactly as they are — the
 /// point is to change only what `serde_json` would refuse, so a well-formed
 /// document is returned untouched and [`sanitize`] can borrow.
@@ -498,7 +498,7 @@ pub fn to_python_string<T: Serialize + ?Sized>(value: &T) -> Result<String, serd
 /// (`ARCH-10`).
 ///
 /// `core`'s other boundaries each hand back an enum with a `Display` —
-/// [`InstallerError`](crate::installers::InstallerError),
+/// `InstallerError` in the Linux installer module,
 /// [`RunnerError`](crate::runners::RunnerError),
 /// [`CoverError`](crate::covers::CoverError) — and persistence was the one that
 /// did not. It returned a bare [`io::Error`], which is also the failure a user
@@ -784,7 +784,7 @@ fn escape_python_string(value: &str) -> String {
     out
 }
 
-/// [`escape_python_string`] without the surrounding quotes.
+/// `escape_python_string` without the surrounding quotes.
 ///
 /// Used for the runs between the escapes `serde_json` applies itself, where the
 /// short escapes and the quote can no longer occur — but they are handled

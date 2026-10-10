@@ -88,7 +88,7 @@ fn folds(reset: bool) -> usize {
 ///
 /// Python's `str.lower()`, which is what `models.py:156-203` sorts and matches
 /// on. This is the one place in the module that folds, and routing every fold
-/// through it is what makes the work countable — see [`FOLDS`].
+/// through it is what makes the work countable — see `FOLDS`.
 fn folded(text: &str) -> String {
     #[cfg(test)]
     FOLDS.with(|folds| folds.set(folds.get() + 1));
@@ -525,8 +525,7 @@ pub fn new_id() -> String {
 
 /// Fills `bytes` from the kernel CSPRNG.
 fn fill_random(bytes: &mut [u8]) -> std::io::Result<()> {
-    use std::io::Read;
-    std::fs::File::open("/dev/urandom")?.read_exact(bytes)
+    getrandom::fill(bytes).map_err(|error| std::io::Error::other(error.to_string()))
 }
 
 /// A short, human-readable "last played" label. `models.py:93-117`.
@@ -668,11 +667,11 @@ impl RowMemo {
 /// The category list the last [`Library::categories`] computed, and whether it
 /// still describes `games`.
 ///
-/// Separate from [`RowMemo`] because the key is not the same shape: the
+/// Separate from `RowMemo` because the key is not the same shape: the
 /// category list depends on the library and on nothing else, so tying it to the
 /// query would recompute it every time the sort changed and — worse — let a
 /// caller that asks for categories first cache them under the wrong key. See
-/// [`RowMemo`] for the argument, which is the same one.
+/// `RowMemo` for the argument, which is the same one.
 #[derive(Debug, Clone, Default)]
 struct CategoryMemo {
     /// Whether [`Self::list`] still describes the library.
@@ -691,9 +690,9 @@ pub struct Library {
     /// What the last read of [`Self::path`] did; [`Self::save`] refuses to
     /// write when it was not a clean read.
     load_status: LoadStatus,
-    /// The last query this library answered. See [`RowMemo`].
+    /// The last query this library answered. See `RowMemo`.
     rows: RefCell<RowMemo>,
-    /// The last category list this library computed. See [`CategoryMemo`].
+    /// The last category list this library computed. See `CategoryMemo`.
     category_list: RefCell<CategoryMemo>,
 }
 
@@ -725,8 +724,8 @@ impl Library {
 
     /// Forget the resolved rows and the category list.
     ///
-    /// **This is the whole invalidation story** for [`RowMemo`] and
-    /// [`CategoryMemo`], and it is one function so that a method added later
+    /// **This is the whole invalidation story** for `RowMemo` and
+    /// `CategoryMemo`, and it is one function so that a method added later
     /// has a single thing to call rather than two fields to remember. Every
     /// `&mut self` method that changes [`Self::games`] calls it —
     /// [`Self::load_at`], [`Self::upsert`], [`Self::remove`] and
@@ -883,7 +882,7 @@ impl Library {
     /// [`Self::all`] as positions in [`Self::games`].
     ///
     /// Split out for [`Self::search`], whose memo holds positions rather than
-    /// references — see [`RowMemo`]. The two are one implementation rather than
+    /// references — see `RowMemo`. The two are one implementation rather than
     /// two: a second sort written for the memo would be a second statement of
     /// the tie-break rules.
     fn all_indices(&self, sort: &str) -> Vec<usize> {
@@ -976,7 +975,7 @@ impl Library {
     ///
     /// # The answer is memoised against the three arguments
     ///
-    /// See [`RowMemo`]. On a hit this is `k` pointer writes and one `Vec` of
+    /// See `RowMemo`. On a hit this is `k` pointer writes and one `Vec` of
     /// them — no sort, no comparison and no `String`. The rows are identical
     /// either way by construction, and
     /// `a_repeated_query_is_the_same_rows_without_the_work` is what holds the
@@ -1023,7 +1022,7 @@ impl Library {
     ///
     /// # The answer is memoised whole
     ///
-    /// See [`CategoryMemo`]. The filter selector is built from this on every
+    /// See `CategoryMemo`. The filter selector is built from this on every
     /// frame (`crates/app/src/view/library.rs:643`) and nothing in it depends on
     /// the query or the sort, so it is recomputed only when the games change.
     /// The list is returned by value — the caller owns it — so a hit still

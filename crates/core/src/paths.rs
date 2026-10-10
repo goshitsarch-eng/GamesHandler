@@ -45,6 +45,11 @@ impl Env for SystemEnv {
 /// `GAMEHANDLER_*` overrides exist for every other case, so the fallback is
 /// only reachable in a bare container.
 fn home(env: &dyn Env) -> PathBuf {
+    if cfg!(target_os = "windows")
+        && let Some(value) = non_empty(env, "USERPROFILE")
+    {
+        return PathBuf::from(value);
+    }
     match non_empty(env, "HOME") {
         Some(value) => PathBuf::from(value),
         None => PathBuf::from("/"),
@@ -138,6 +143,9 @@ pub fn ensure_dirs() -> std::io::Result<()> {
 
 /// [`data_home`] against an injected environment.
 pub fn data_home_in(env: &dyn Env) -> PathBuf {
+    if !cfg!(target_os = "linux") {
+        return platform_home(env, "GAMEHANDLER_DATA_HOME");
+    }
     base_dir(
         env,
         "GAMEHANDLER_DATA_HOME",
@@ -148,12 +156,32 @@ pub fn data_home_in(env: &dyn Env) -> PathBuf {
 
 /// [`config_home`] against an injected environment.
 pub fn config_home_in(env: &dyn Env) -> PathBuf {
+    if !cfg!(target_os = "linux") {
+        return platform_home(env, "GAMEHANDLER_CONFIG_HOME");
+    }
     base_dir(
         env,
         "GAMEHANDLER_CONFIG_HOME",
         "XDG_CONFIG_HOME",
         home(env).join(".config"),
     )
+}
+
+fn platform_home(env: &dyn Env, override_key: &str) -> PathBuf {
+    if let Some(path) = non_empty(env, override_key) {
+        return PathBuf::from(path);
+    }
+    if cfg!(target_os = "windows") {
+        return non_empty(env, "APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home(env).join("AppData").join("Roaming"))
+            .join("com.goshapps")
+            .join("GameHandler");
+    }
+    home(env)
+        .join("Library")
+        .join("Application Support")
+        .join("com.goshapps.GameHandler")
 }
 
 /// [`games_file`] against an injected environment.
@@ -242,6 +270,7 @@ pub(crate) mod tests {
 
     const HOME: &str = "/home/tester";
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn defaults_follow_the_xdg_specification() {
         let env = FakeEnv::new(&[("HOME", HOME)]);
@@ -263,6 +292,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn xdg_variables_take_precedence_over_the_defaults() {
         let env = FakeEnv::new(&[
@@ -287,6 +317,7 @@ pub(crate) mod tests {
         assert_eq!(config_home_in(&env), path("/redirected/config"));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn an_empty_variable_counts_as_unset() {
         // Python tests `if value:`, so "" falls through to the next source.
@@ -315,6 +346,7 @@ pub(crate) mod tests {
         assert_eq!(downloads_dir_in(&env), path("/d/downloads"));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_overrides_are_independent() {
         // Redirecting data must not move the config file, and vice versa.
@@ -354,6 +386,25 @@ pub(crate) mod tests {
         ensure_dirs_in(&env).expect("ensure_dirs should be idempotent");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn platform_directories_ignore_linux_xdg_settings() {
+        let env = FakeEnv::new(&[
+            ("HOME", "/users/tester"),
+            ("USERPROFILE", "/users/tester"),
+            ("APPDATA", "/users/tester/AppData/Roaming"),
+            ("XDG_CONFIG_HOME", "/wrong"),
+            ("XDG_DATA_HOME", "/wrong"),
+        ]);
+        let expected = if cfg!(target_os = "windows") {
+            path("/users/tester/AppData/Roaming/com.goshapps/GameHandler")
+        } else {
+            path("/users/tester/Library/Application Support/com.goshapps.GameHandler")
+        };
+        assert_eq!(config_home_in(&env), expected);
+        assert_eq!(data_home_in(&env), expected);
     }
 
     fn path(value: &str) -> PathBuf {
