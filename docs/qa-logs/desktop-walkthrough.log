@@ -1,0 +1,251 @@
+dbus-daemon[118813]: [session uid=1000 pid=118813 pidfd=5] Activating service name='org.a11y.Bus' requested by ':1.0' (uid=1000 pid=118815 comm="xfwm4 --compositor=off" label="kernel")
+dbus-daemon[118813]: [session uid=1000 pid=118813 pidfd=5] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[118841]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=118815 comm="xfwm4 --compositor=off" label="kernel")
+dbus-daemon[118813]: [session uid=1000 pid=118813 pidfd=5] Activating service name='org.xfce.Xfconf' requested by ':1.2' (uid=1000 pid=118815 comm="xfwm4 --compositor=off" label="kernel")
+dbus-daemon[118841]: Successfully activated service 'org.a11y.atspi.Registry'
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry
+dbus-daemon[118813]: [session uid=1000 pid=118813 pidfd=5] Successfully activated service 'org.xfce.Xfconf'
+00:00 +0: loading /workspace/GamesHandler/integration_test/audit_test.dart
+Building Linux application...
+✓ Built build/linux/x64/debug/bundle/gamehandler
+00:00 +0: real desktop exhaustive local controls and persistence
+AUDIT PASS: empty and whitespace validation, missing executable, Unicode fields, native type, save, missing cover validation
+AUDIT PASS: editor toggle MangoHud on/off
+AUDIT PASS: editor toggle GameMode on/off
+AUDIT PASS: editor toggle Prefer SDL on/off
+AUDIT PASS: editor toggle Wine Wayland on/off
+AUDIT PASS: editor toggle HDR on/off
+AUDIT PASS: editor toggle Esync on/off
+AUDIT PASS: editor toggle Fsync on/off
+AUDIT PASS: editor toggle DXVK on/off
+AUDIT PASS: editor toggle VKD3D on/off
+AUDIT PASS: editor toggle NVAPI / DLSS on/off
+AUDIT PASS: editor toggle AMD FSR on/off
+AUDIT PASS: editor toggle BattlEye runtime on/off
+AUDIT PASS: editor toggle Easy Anti-Cheat runtime on/off
+AUDIT PASS: editor toggle Gamescope on/off
+AUDIT PASS: editor toggle Virtual desktop on/off
+AUDIT PASS: all game types and all 15 launch toggles; virtual desktop input; cancel keeps original
+AUDIT PASS: search, navigation retains visible query, clear filters restores records
+AUDIT PASS: grid/list, three sorts, category selection and native Play
+AUDIT PASS: persisted settings toggle mangohud on/off
+AUDIT PASS: persisted settings toggle gamemode on/off
+AUDIT PASS: persisted settings toggle prefer_sdl on/off
+AUDIT PASS: persisted settings toggle esync on/off
+AUDIT PASS: persisted settings toggle fsync on/off
+AUDIT PASS: persisted settings toggle dxvk on/off
+AUDIT PASS: persisted settings toggle vkd3d on/off
+AUDIT PASS: persisted settings toggle nvapi on/off
+AUDIT PASS: persisted settings toggle fsr on/off
+AUDIT PASS: persisted settings toggle battleye on/off
+AUDIT PASS: persisted settings toggle eac on/off
+AUDIT PASS: persisted settings toggle gamescope on/off
+AUDIT PASS: persisted settings toggle virtual_desktop on/off
+AUDIT PASS: theme/layout/sort choices, hide-on-launch and every available default toggle
+AUDIT PASS: Library at 720.0x480.0
+AUDIT PASS: Installers at 720.0x480.0
+AUDIT PASS: Plugins at 720.0x480.0
+AUDIT PASS: About at 720.0x480.0
+AUDIT PASS: Settings at 720.0x480.0
+AUDIT PASS: Library at 1200.0x480.0
+AUDIT PASS: Installers at 1200.0x480.0
+AUDIT PASS: Plugins at 1200.0x480.0
+AUDIT PASS: About at 1200.0x480.0
+AUDIT PASS: Settings at 1200.0x480.0
+AUDIT PASS: Library at 720.0x850.0
+AUDIT PASS: Installers at 720.0x850.0
+AUDIT PASS: Plugins at 720.0x850.0
+AUDIT PASS: About at 720.0x850.0
+AUDIT PASS: Settings at 720.0x850.0
+AUDIT PASS: Library at 1100.0x760.0
+AUDIT PASS: Installers at 1100.0x760.0
+AUDIT PASS: Plugins at 1100.0x760.0
+AUDIT PASS: About at 1100.0x760.0
+AUDIT PASS: Settings at 1100.0x760.0
+AUDIT PASS: plugin mangohud instructions, real clipboard, close
+AUDIT PASS: plugin gamemode instructions, real clipboard, close
+AUDIT PASS: plugin winetricks instructions, real clipboard, close
+AUDIT PASS: plugin umu instructions, real clipboard, close
+AUDIT PASS: plugin gamescope instructions, real clipboard, close
+AUDIT PASS: installer category All
+AUDIT PASS: installer category Launchers
+AUDIT PASS: installer category Apps
+AUDIT PASS: installer battlenet actual unavailable-runner error and dismiss
+AUDIT PASS: installer epic actual unavailable-runner error and dismiss
+AUDIT PASS: installer ea-app actual unavailable-runner error and dismiss
+AUDIT PASS: installer ubisoft actual unavailable-runner error and dismiss
+AUDIT PASS: installer gog actual unavailable-runner error and dismiss
+AUDIT PASS: installer amazon actual unavailable-runner error and dismiss
+AUDIT PASS: installer rockstar actual unavailable-runner error and dismiss
+AUDIT PASS: installer steam actual unavailable-runner error and dismiss
+AUDIT PASS: installer discord actual unavailable-runner error and dismiss
+AUDIT PASS: license package Copyright 2013 The Flutter Authors detail and back
+AUDIT PASS: license package abseil-cpp detail and back
+AUDIT PASS: license package accessibility detail and back
+AUDIT PASS: license package aFileChooser detail and back
+AUDIT PASS: license package ai detail and back
+AUDIT PASS: license package angle detail and back
+AUDIT PASS: license package args detail and back
+AUDIT PASS: license package async detail and back
+AUDIT PASS: license package benchmark detail and back
+AUDIT PASS: license package boolean_selector detail and back
+AUDIT PASS: license package boringssl detail and back
+AUDIT PASS: license package brotli detail and back
+AUDIT PASS: license package ceval detail and back
+AUDIT PASS: license package characters detail and back
+AUDIT PASS: license package clock detail and back
+AUDIT PASS: license package code_assets detail and back
+AUDIT PASS: license package collection detail and back
+AUDIT PASS: license package cpu_features detail and back
+AUDIT PASS: license package cross_file detail and back
+AUDIT PASS: license package crypto detail and back
+AUDIT PASS: license package dart detail and back
+AUDIT PASS: license package dawn detail and back
+AUDIT PASS: license package dbus detail and back
+AUDIT PASS: license package desktop_drop detail and back
+AUDIT PASS: license package devtools detail and back
+AUDIT PASS: license package double-conversion detail and back
+AUDIT PASS: license package equatable detail and back
+AUDIT PASS: license package etc1 detail and back
+AUDIT PASS: license package etc_decoder detail and back
+AUDIT PASS: license package expat detail and back
+AUDIT PASS: license package fake_async detail and back
+AUDIT PASS: license package ffi detail and back
+AUDIT PASS: license package ffx_spd detail and back
+AUDIT PASS: license package fiat detail and back
+AUDIT PASS: license package file detail and back
+AUDIT PASS: license package file_selector detail and back
+AUDIT PASS: license package file_selector_ios detail and back
+AUDIT PASS: license package file_selector_linux detail and back
+AUDIT PASS: license package file_selector_macos detail and back
+AUDIT PASS: license package file_selector_platform_interface detail and back
+AUDIT PASS: license package file_selector_web detail and back
+AUDIT PASS: license package file_selector_windows detail and back
+AUDIT PASS: license package flatbuffers detail and back
+AUDIT PASS: license package flutter detail and back
+AUDIT PASS: license package flutter_lints detail and back
+AUDIT PASS: license package freetype2 detail and back
+AUDIT PASS: license package fuchsia_sdk detail and back
+AUDIT PASS: license package gamehandler detail and back
+AUDIT PASS: license package glfw detail and back
+AUDIT PASS: license package glslang detail and back
+AUDIT PASS: license package gtest-parallel detail and back
+AUDIT PASS: license package harfbuzz detail and back
+AUDIT PASS: license package hooks detail and back
+AUDIT PASS: license package http detail and back
+AUDIT PASS: license package http_parser detail and back
+AUDIT PASS: license package icu detail and back
+AUDIT PASS: license package include detail and back
+AUDIT PASS: license package inja detail and back
+AUDIT PASS: license package io detail and back
+AUDIT PASS: license package jni detail and back
+AUDIT PASS: license package jni_flutter detail and back
+AUDIT PASS: license package jni_util detail and back
+AUDIT PASS: license package json detail and back
+AUDIT PASS: license package json_annotation detail and back
+AUDIT PASS: license package khronos detail and back
+AUDIT PASS: license package leak_tracker detail and back
+AUDIT PASS: license package leak_tracker_flutter_testing detail and back
+AUDIT PASS: license package leak_tracker_testing detail and back
+AUDIT PASS: license package libcxx detail and back
+AUDIT PASS: license package libcxxabi detail and back
+AUDIT PASS: license package libjpeg-turbo detail and back
+AUDIT PASS: license package libjxl detail and back
+AUDIT PASS: license package libpng detail and back
+AUDIT PASS: license package libtess2 detail and back
+AUDIT PASS: license package libwebp detail and back
+AUDIT PASS: license package libXNVCtrl detail and back
+AUDIT PASS: license package lints detail and back
+AUDIT PASS: license package llvm_libc detail and back
+AUDIT PASS: license package logging detail and back
+AUDIT PASS: license package lunarg-vulkantools detail and back
+AUDIT PASS: license package matcher detail and back
+AUDIT PASS: license package material_color_utilities detail and back
+AUDIT PASS: license package meta detail and back
+AUDIT PASS: license package node_preamble detail and back
+AUDIT PASS: license package objective_c detail and back
+AUDIT PASS: license package package_config detail and back
+AUDIT PASS: license package path detail and back
+AUDIT PASS: license package path_provider detail and back
+AUDIT PASS: license package path_provider_android detail and back
+AUDIT PASS: license package path_provider_foundation detail and back
+AUDIT PASS: license package path_provider_linux detail and back
+AUDIT PASS: license package path_provider_platform_interface detail and back
+AUDIT PASS: license package path_provider_windows detail and back
+AUDIT PASS: license package perfetto detail and back
+AUDIT PASS: license package petitparser detail and back
+AUDIT PASS: license package platform detail and back
+AUDIT PASS: license package plugin_platform_interface detail and back
+AUDIT PASS: license package process detail and back
+AUDIT PASS: license package process_runner detail and back
+AUDIT PASS: license package pub_semver detail and back
+AUDIT PASS: license package rapidjson detail and back
+AUDIT PASS: license package re2 detail and back
+AUDIT PASS: license package record_use detail and back
+AUDIT PASS: license package screen_retriever detail and back
+AUDIT PASS: license package screen_retriever_linux detail and back
+AUDIT PASS: license package screen_retriever_macos detail and back
+AUDIT PASS: license package screen_retriever_platform_interface detail and back
+AUDIT PASS: license package screen_retriever_windows detail and back
+AUDIT PASS: license package shaderc detail and back
+AUDIT PASS: license package skia detail and back
+AUDIT PASS: license package source_span detail and back
+AUDIT PASS: license package spirv-cross detail and back
+AUDIT PASS: license package spirv-tools detail and back
+AUDIT PASS: license package spring_animation detail and back
+AUDIT PASS: license package sqlite detail and back
+AUDIT PASS: license package stack_trace detail and back
+AUDIT PASS: license package stream_channel detail and back
+AUDIT PASS: license package string_scanner detail and back
+AUDIT PASS: license package swiftshader detail and back
+AUDIT PASS: license package sync_http detail and back
+AUDIT PASS: license package term_glyph detail and back
+AUDIT PASS: license package test_api detail and back
+AUDIT PASS: license package test_shaders detail and back
+AUDIT PASS: license package tonic detail and back
+AUDIT PASS: license package typed_data detail and back
+AUDIT PASS: license package universal_platform detail and back
+AUDIT PASS: license package url_launcher detail and back
+AUDIT PASS: license package url_launcher_android detail and back
+AUDIT PASS: license package url_launcher_ios detail and back
+AUDIT PASS: license package url_launcher_linux detail and back
+AUDIT PASS: license package url_launcher_macos detail and back
+AUDIT PASS: license package url_launcher_platform_interface detail and back
+AUDIT PASS: license package url_launcher_web detail and back
+AUDIT PASS: license package url_launcher_windows detail and back
+AUDIT PASS: license package vector_math detail and back
+AUDIT PASS: license package vm_service detail and back
+AUDIT PASS: license package volk detail and back
+AUDIT PASS: license package vulkan detail and back
+AUDIT PASS: license package vulkan-deps detail and back
+AUDIT PASS: license package vulkan-headers detail and back
+AUDIT PASS: license package vulkan-tools detail and back
+AUDIT PASS: license package vulkan-utility-libraries detail and back
+AUDIT PASS: license package vulkan-validation-layers detail and back
+AUDIT PASS: license package vulkan_memory_allocator detail and back
+AUDIT PASS: license package web detail and back
+AUDIT PASS: license package web_locale_keymap detail and back
+AUDIT PASS: license package web_test_fonts detail and back
+AUDIT PASS: license package webdriver detail and back
+AUDIT PASS: license package window_manager detail and back
+AUDIT PASS: license package wuffs detail and back
+AUDIT PASS: license package wycheproof_testvectors detail and back
+AUDIT PASS: license package xdg_directories detail and back
+AUDIT PASS: license package xml detail and back
+AUDIT PASS: license package xxhash detail and back
+AUDIT PASS: license package yaml detail and back
+AUDIT PASS: license package yapf detail and back
+AUDIT PASS: license package yapf_diff detail and back
+AUDIT PASS: license package zlib detail and back
+AUDIT PASS: licenses page and back
+AUDIT PASS: Library at 720x480, text scale 200%
+AUDIT PASS: Installers at 720x480, text scale 200%
+AUDIT PASS: Plugins at 720x480, text scale 200%
+AUDIT PASS: About at 720x480, text scale 200%
+AUDIT PASS: Settings at 720x480, text scale 200%
+AUDIT PASS: removed last category resets the active filter
+AUDIT PASS: remove cancellation and confirmation
+AUDIT PASS: corrupt library shows error, preserves bytes, Retry recovers after repair
+AUDIT PASS: reopened real Rust store preserves settings and deletion
+07:29 +1: (tearDownAll)
+07:29 +1: All tests passed!

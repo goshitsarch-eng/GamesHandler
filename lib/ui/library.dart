@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/game.dart';
 import '../state/library_state.dart';
 
-class LibraryPage extends StatelessWidget {
+class LibraryPage extends StatefulWidget {
   const LibraryPage({
     super.key,
     required this.state,
@@ -17,6 +17,30 @@ class LibraryPage extends StatelessWidget {
   final FocusNode searchFocus;
   final VoidCallback onAdd;
   final void Function(GameDto, String) onAction;
+  @override
+  State<LibraryPage> createState() => _LibraryPageState();
+}
+
+class _LibraryPageState extends State<LibraryPage> {
+  late final searchController = TextEditingController(text: state.query);
+  LibraryState get state => widget.state;
+  FocusNode get searchFocus => widget.searchFocus;
+  VoidCallback get onAdd => widget.onAdd;
+  void Function(GameDto, String) get onAction => widget.onAction;
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  void clearFilters() {
+    searchController.clear();
+    state.category = 'All';
+    state.search('');
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) => CustomScrollView(
     slivers: [
@@ -38,19 +62,30 @@ class LibraryPage extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    state.query.isEmpty
+                    state.query.isEmpty && state.category == 'All'
                         ? 'No games yet'
                         : 'No games match your filters',
                     style: Theme.of(context).textTheme.headlineSmall,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Add an executable or drop it onto this window.',
+                  Text(
+                    state.query.isNotEmpty || state.category != 'All'
+                        ? 'Try another search or clear your filters.'
+                        : 'Add an executable or drop it onto this window.',
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
-                  FilledButton(onPressed: onAdd, child: const Text('Add game')),
+                  if (state.query.isNotEmpty || state.category != 'All')
+                    TextButton(
+                      onPressed: clearFilters,
+                      child: const Text('Clear filters'),
+                    )
+                  else
+                    FilledButton(
+                      onPressed: onAdd,
+                      child: const Text('Add game'),
+                    ),
                 ],
               ),
             ),
@@ -89,11 +124,26 @@ class LibraryPage extends StatelessWidget {
           width: 300,
           child: TextField(
             focusNode: searchFocus,
-            onChanged: state.search,
-            decoration: const InputDecoration(
+            controller: searchController,
+            onChanged: (value) {
+              state.search(value);
+              setState(() {});
+            },
+            decoration: InputDecoration(
               labelText: 'Search games',
-              prefixIcon: Icon(Icons.search),
-              border: OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.search),
+              border: const OutlineInputBorder(),
+              suffixIcon: searchController.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        searchController.clear();
+                        state.search('');
+                        setState(() {});
+                      },
+                      icon: const Icon(Icons.clear),
+                    ),
             ),
           ),
         ),

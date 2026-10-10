@@ -1,0 +1,58 @@
+00:00 +0: loading /workspace/GamesHandler/integration_test/network_audit_test.dart
+Building Linux application...
+✓ Built build/linux/x64/debug/bundle/gamehandler
+dbus-daemon[123052]: [session uid=1000 pid=123052 pidfd=5] Activating service name='org.a11y.Bus' requested by ':1.1' (uid=1000 pid=123442 comm="/workspace/GamesHandler/build/linux/x64/debug/bund" label="kernel")
+dbus-daemon[123052]: [session uid=1000 pid=123052 pidfd=5] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[123453]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=123442 comm="/workspace/GamesHandler/build/linux/x64/debug/bund" label="kernel")
+dbus-daemon[123453]: Successfully activated service 'org.a11y.atspi.Registry'
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry
+00:00 +0: live catalogue controls and every project link
+AUDIT LINK ACTIVATED: Flutter
+AUDIT LINK ACTIVATED: Dart
+AUDIT LINK ACTIVATED: Rust
+AUDIT LINK ACTIVATED: https://www.winehq.org
+AUDIT LINK ACTIVATED: https://github.com/ValveSoftware/Proton
+AUDIT LINK ACTIVATED: https://github.com/doitsujin/dxvk
+AUDIT LINK ACTIVATED: https://github.com/HansKristian-Work/vkd3d-proton
+AUDIT LINK ACTIVATED: https://github.com/jp7677/dxvk-nvapi
+AUDIT LINK ACTIVATED: https://github.com/GloriousEggroll/proton-ge-custom
+AUDIT LINK ACTIVATED: https://github.com/SpookySkeletons/proton-rtsp
+AUDIT LINK ACTIVATED: https://github.com/CachyOS/proton-cachyos
+AUDIT LINK ACTIVATED: https://github.com/Etaash-mathamsetty/Proton
+AUDIT LINK ACTIVATED: https://github.com/Kron4ek/Wine-Builds
+AUDIT LINK ACTIVATED: https://lutris.net
+AUDIT LINK ACTIVATED: https://github.com/Faugus/faugus-launcher
+AUDIT LINK ACTIVATED: https://usebottles.com
+AUDIT LINK ACTIVATED: https://github.com/Vysp3r/ProtonPlus
+AUDIT LINK ACTIVATED: https://heroicgameslauncher.com
+AUDIT LINK ACTIVATED: https://github.com/Open-Wine-Components/umu-launcher
+AUDIT LINK ACTIVATED: https://github.com/flightlessmango/MangoHud
+AUDIT LINK ACTIVATED: https://github.com/FeralInteractive/gamemode
+AUDIT LINK ACTIVATED: https://github.com/ValveSoftware/gamescope
+AUDIT LINK ACTIVATED: https://github.com/Winetricks/winetricks
+AUDIT LINK ACTIVATED: https://www.rust-lang.org
+AUDIT LINK ACTIVATED: https://github.com/pop-os/libcosmic
+AUDIT LINK ACTIVATED: https://www.qt.io
+AUDIT LINK ACTIVATED: https://develop.kde.org/frameworks/kirigami/
+AUDIT LINK ACTIVATED: https://doc.qt.io/qtforpython-6/
+AUDIT LINK ACTIVATED: https://flatpak.org
+AUDIT LINK ACTIVATED: https://store.steampowered.com
+AUDIT LINK ACTIVATED: https://github.com/GloriousEggroll/proton-ge-custom
+AUDIT RUNNER: proton-ge job 3b2ea1c6be7045dda0ea7ac2066ccc45 cancelled
+AUDIT LINK ACTIVATED: https://github.com/SpookySkeletons/proton-rtsp
+AUDIT RUNNER: proton-ge-rtsp job ad9bfb3c14544b3398fd8edc27f238a0 cancelled
+AUDIT LINK ACTIVATED: https://github.com/CachyOS/proton-cachyos
+AUDIT RUNNER: proton-cachyos job a4c0c9f0aa274a5084e250b9d890a47e cancelled
+AUDIT LINK ACTIVATED: https://github.com/Etaash-mathamsetty/Proton
+AUDIT RUNNER: proton-em job ee85ab39063b48ce874f0ed6380fe3d9 cancelled
+AUDIT LINK ACTIVATED: https://github.com/Kron4ek/Wine-Builds
+AUDIT RUNNER: wine-vanilla job 5718b6a19f2647a18cec0220022842c1 cancelled
+AUDIT LINK ACTIVATED: https://github.com/Kron4ek/Wine-Builds
+AUDIT RUNNER: wine-staging job b4ae6da303254b33924e455d6ad5a18e cancelled
+AUDIT LINK ACTIVATED: https://github.com/Kron4ek/Wine-Builds
+AUDIT RUNNER: wine-staging-tkg job d91f65ba563741d4af77cbc1363f9224 cancelled
+AUDIT LINK ACTIVATED: https://github.com/Kron4ek/Wine-Builds
+AUDIT RUNNER: wine-proton job 32095808f79d4487adf6a3eb85751342 cancelled
+AUDIT PASS: live runner page at minimum/wide/tall/normal and 200% text
+03:04 +1: (tearDownAll)
+03:04 +1: All tests passed!

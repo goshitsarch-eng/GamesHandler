@@ -113,7 +113,9 @@ class _GameHandlerAppState extends State<GameHandlerApp> {
 
   Future<void> play(GameDto game) async {
     await state.launch(game.id);
-    if (state.settings['close_on_launch'] == true) await windowManager.hide();
+    if (state.settings['close_on_launch'] == true) {
+      await windowManager.minimize();
+    }
     messenger.currentState?.showSnackBar(
       SnackBar(content: Text('Launched ${game.name}')),
     );
@@ -349,8 +351,16 @@ class _GameHandlerAppState extends State<GameHandlerApp> {
                             Expanded(
                               child: DropTarget(
                                 onDragDone: (details) {
-                                  if (details.files.isNotEmpty) {
-                                    edit(null, details.files.first.path);
+                                  if (details.files.length > 1) {
+                                    messenger.currentState?.showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Drop one executable at a time.',
+                                        ),
+                                      ),
+                                    );
+                                  } else if (details.files.isNotEmpty) {
+                                    edit(null, details.files.single.path);
                                   }
                                 },
                                 child: switch (page) {

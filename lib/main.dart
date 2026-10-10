@@ -54,7 +54,12 @@ Future<void> main(List<String> arguments) async {
   state.addListener(() {
     if (state.launchFailureVersion != seenLaunchFailure) {
       seenLaunchFailure = state.launchFailureVersion;
-      unawaited(windowManager.show().then((_) => windowManager.focus()));
+      unawaited(
+        windowManager
+            .restore()
+            .then((_) => windowManager.show())
+            .then((_) => windowManager.focus()),
+      );
     }
   });
   runApp(GameHandlerApp(state: state));

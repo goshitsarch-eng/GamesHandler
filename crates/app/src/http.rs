@@ -28,7 +28,7 @@
 
 use std::io::Read;
 use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gamehandler_core::runners::RunnerError;
 use gamehandler_core::runners::proton::{HttpClient, ResponseHead};
@@ -79,15 +79,32 @@ impl HttpClient for UreqClient {
         on_head: &mut dyn FnMut(&ResponseHead) -> Result<(), RunnerError>,
         sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
     ) -> Result<(), RunnerError> {
-        let mut request = AGENT
-            .get(url)
-            .config()
-            .timeout_global(Some(timeout))
-            .build();
-        for (name, value) in headers {
-            request = request.header(*name, *value);
-        }
-        let response = request.call().map_err(to_runner_error)?;
+        let started = Instant::now();
+        // A VM profiler or another signal can interrupt a blocking socket read.
+        // These requests are GETs and no bytes have reached the caller yet, so
+        // retrying EINTR is safe. Keep the original deadline across attempts.
+        let response = loop {
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(RunnerError::Http {
+                    message: "Request timed out".into(),
+                });
+            }
+            let mut request = AGENT
+                .get(url)
+                .config()
+                .timeout_global(Some(remaining))
+                .build();
+            for (name, value) in headers {
+                request = request.header(*name, *value);
+            }
+            match request.call() {
+                Err(ureq::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    continue;
+                }
+                result => break result.map_err(to_runner_error)?,
+            }
+        };
 
         // Before any body byte, which is what the trait requires: `install`
         // uses the declared length for the progress denominator and for the
@@ -108,15 +125,36 @@ impl HttpClient for UreqClient {
             final_url: response.get_uri().to_string(),
         })?;
 
-        let mut reader = response.into_body().into_reader();
-        let mut buffer = vec![0u8; CHUNK];
-        loop {
-            let read = reader.read(&mut buffer).map_err(to_body_error)?;
-            if read == 0 {
-                return Ok(());
-            }
-            sink(&buffer[..read])?;
+        read_body(
+            &mut response.into_body().into_reader(),
+            started,
+            timeout,
+            sink,
+        )
+    }
+}
+
+fn read_body(
+    reader: &mut dyn Read,
+    started: Instant,
+    timeout: Duration,
+    sink: &mut dyn FnMut(&[u8]) -> Result<(), RunnerError>,
+) -> Result<(), RunnerError> {
+    let mut buffer = vec![0u8; CHUNK];
+    loop {
+        if started.elapsed() >= timeout {
+            return Err(RunnerError::Http {
+                message: "Request timed out".into(),
+            });
         }
+        let read = match reader.read(&mut buffer) {
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result.map_err(to_body_error)?,
+        };
+        if read == 0 {
+            return Ok(());
+        }
+        sink(&buffer[..read])?;
     }
 }
 
@@ -152,7 +190,47 @@ fn to_body_error(error: std::io::Error) -> RunnerError {
 mod tests {
     use super::*;
     use std::net::TcpListener;
-    use std::time::Instant;
+
+    #[test]
+    fn interrupted_body_reads_preserve_bytes_and_still_obey_the_deadline() {
+        struct InterruptedRead {
+            calls: usize,
+        }
+        impl Read for InterruptedRead {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.calls += 1;
+                match self.calls {
+                    1 | 3 => Err(std::io::ErrorKind::Interrupted.into()),
+                    2 | 4 => {
+                        buf[0] = if self.calls == 2 { b'a' } else { b'b' };
+                        Ok(1)
+                    }
+                    _ => Ok(0),
+                }
+            }
+        }
+        let mut bytes = Vec::new();
+        read_body(
+            &mut InterruptedRead { calls: 0 },
+            Instant::now(),
+            Duration::from_secs(1),
+            &mut |chunk| {
+                bytes.extend_from_slice(chunk);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(bytes, b"ab");
+        assert!(
+            read_body(
+                &mut InterruptedRead { calls: 0 },
+                Instant::now(),
+                Duration::ZERO,
+                &mut |_| Ok(())
+            )
+            .is_err()
+        );
+    }
 
     /// `https_only` fails the request *before* any connection is made, so the
     /// test needs no TLS server and no network at all: a real, listening,

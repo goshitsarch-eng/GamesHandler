@@ -1,7 +1,7 @@
 use serde_json::json;
 
 fn main() {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.is_empty()
         && let Ok(executable) = std::env::current_exe()
     {
@@ -16,9 +16,27 @@ fn main() {
             return;
         }
     }
+    let mut config = gamehandler_core::paths::config_home();
+    let mut data = gamehandler_core::paths::data_home();
+    while args
+        .first()
+        .is_some_and(|a| a == "--config-dir" || a == "--data-dir")
+    {
+        if args.len() < 2 || !std::path::Path::new(&args[1]).is_absolute() {
+            eprintln!("Directory options require an absolute path; run --help");
+            std::process::exit(2);
+        }
+        let value = std::path::PathBuf::from(&args[1]);
+        if args[0] == "--config-dir" {
+            config = value;
+        } else {
+            data = value;
+        }
+        args.drain(..2);
+    }
     if args.is_empty() || args[0] == "--help" {
         println!(
-            "GameHandler {}\nUsage: gamehandler-cli --list | --launch GAME_ID | --version",
+            "GameHandler {}\nUsage: gamehandler-cli [--config-dir PATH] [--data-dir PATH] --list | --launch GAME_ID | --version",
             env!("CARGO_PKG_VERSION")
         );
         return;
@@ -27,7 +45,7 @@ fn main() {
         println!("GameHandler {}", env!("CARGO_PKG_VERSION"));
         return;
     }
-    let context = json!({"config":gamehandler_core::paths::config_home(),"data":gamehandler_core::paths::data_home()});
+    let context = json!({"config":config,"data":data});
     let request = match args[0].as_str() {
         "--list" => {
             json!({"context":context,"operation":"snapshot","arguments":{"query":"","category":"All","sort":"name"}})

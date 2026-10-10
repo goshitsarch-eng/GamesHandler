@@ -177,7 +177,51 @@ fn custom_cover_is_imported_into_managed_storage_without_removing_source() {
     let managed = std::path::PathBuf::from(saved["data"]["cover_path"].as_str().unwrap());
     assert!(managed.starts_with(root.path().join("data/covers")));
     assert_eq!(std::fs::read(managed).unwrap(), image);
-    assert_eq!(std::fs::read(source).unwrap(), image);
+    assert_eq!(std::fs::read(&source).unwrap(), image);
+    let managed = std::path::PathBuf::from(saved["data"]["cover_path"].as_str().unwrap());
+    for invalid in [b"not an image".as_slice(), &image[..24]] {
+        std::fs::write(&source, invalid).unwrap();
+        let rejected = call(
+            &root,
+            "import_cover",
+            Some(json!({"id":saved["data"]["id"],"path":source})),
+        );
+        assert_eq!(rejected["ok"], false, "{rejected}");
+        let mut edited = saved["data"].clone();
+        edited["cover_path"] = json!(source);
+        let rejected = call(&root, "save_game", Some(json!({"game":edited})));
+        assert_eq!(rejected["ok"], false, "{rejected}");
+        let snapshot = call(
+            &root,
+            "snapshot",
+            Some(json!({"query":"", "category":"All", "sort":"name"})),
+        );
+        assert_eq!(snapshot["ok"], true, "{snapshot}");
+        assert_eq!(
+            snapshot["data"]["games"][0]["cover_path"],
+            saved["data"]["cover_path"]
+        );
+        assert_eq!(std::fs::read(&managed).unwrap(), image);
+        assert_eq!(std::fs::read(&source).unwrap(), invalid);
+    }
+    let oversized = std::fs::File::create(&source).unwrap();
+    oversized.set_len(32 * 1024 * 1024 + 1).unwrap();
+    let rejected = call(
+        &root,
+        "import_cover",
+        Some(json!({"id":saved["data"]["id"],"path":source})),
+    );
+    assert_eq!(rejected["ok"], false, "{rejected}");
+    assert_eq!(std::fs::read(&managed).unwrap(), image);
+    assert!(
+        std::fs::read_dir(root.path().join("data/covers"))
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".cover-import-"))
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -243,4 +287,67 @@ fn legacy_id_cannot_escape_the_default_prefix_directory() {
     assert_eq!(result["error"]["kind"], "validation");
     assert!(!root.path().join("outside").exists());
     assert!(root.path().join("config/games.json").is_file());
+}
+
+#[test]
+fn cli_directory_options_reopen_the_selected_library_without_inherited_overrides() {
+    let root = tempfile::Builder::new()
+        .prefix("GameHandler café space ")
+        .tempdir()
+        .unwrap();
+    let exe = root.path().join("fixture");
+    std::fs::write(&exe, b"fixture").unwrap();
+    let mut game = call(&root, "new_game", None)["data"].clone();
+    game["name"] = json!("Shortcut context 遊戯");
+    game["exe_path"] = json!(exe);
+    assert_eq!(
+        call(&root, "save_game", Some(json!({"game":game})))["ok"],
+        true
+    );
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_gamehandler-cli"))
+        .env_remove("GAMEHANDLER_CONFIG_HOME")
+        .env_remove("GAMEHANDLER_DATA_HOME")
+        .arg("--config-dir")
+        .arg(root.path().join("config"))
+        .arg("--data-dir")
+        .arg(root.path().join("data"))
+        .arg("--list")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Shortcut context 遊戯"));
+    let invalid = std::process::Command::new(env!("CARGO_BIN_EXE_gamehandler-cli"))
+        .args(["--config-dir", "relative-path", "--list"])
+        .output()
+        .unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("absolute path"));
+}
+
+#[test]
+fn ordinary_directories_cannot_be_saved_as_executables() {
+    let root = TempDir::new().unwrap();
+    let folder = root.path().join("Not an executable");
+    std::fs::create_dir(&folder).unwrap();
+    let mut game = call(&root, "new_game", None)["data"].clone();
+    game["name"] = json!("Directory input");
+    game["exe_path"] = json!(folder);
+    for kind in ["windows", "linux", "native", "macos"] {
+        game["kind"] = json!(kind);
+        let response = call(&root, "save_game", Some(json!({"game":game})));
+        assert_eq!(response["ok"], false, "{response}");
+    }
+    assert!(!root.path().join("config/games.json").exists());
+    let bundle = root.path().join("Example.app");
+    std::fs::create_dir(&bundle).unwrap();
+    game["exe_path"] = json!(bundle);
+    game["kind"] = json!("macos");
+    assert_eq!(
+        call(&root, "save_game", Some(json!({"game":game})))["ok"],
+        true
+    );
 }

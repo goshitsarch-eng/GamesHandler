@@ -177,10 +177,48 @@ pub fn prefix_tool(ctx: &Context, g: &Game, tool: &str) -> Result<Value> {
         Err(Failure::unsupported())
     }
 }
+/// Validate a bounded snapshot before any existing cover is moved aside.
+/// Copy that snapshot, not the source again: a file edited during import cannot
+/// replace the validated bytes with an unreadable image.
+pub fn copy_cover(ctx: &Context, id: &str, path: &Path) -> Result<std::path::PathBuf> {
+    use std::io::{Read, Write};
+    const MAX_BYTES: u64 = 32 * 1024 * 1024;
+    let file = std::fs::File::open(path).map_err(error)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(error)?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(Failure::validation(
+            "Cover images must be smaller than 32 MiB",
+        ));
+    }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(error)?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(16384);
+    limits.max_image_height = Some(16384);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    reader.decode().map_err(|_| Failure::validation(
+        "Choose a readable PNG, JPEG, GIF, WebP or ICO cover image (maximum 16384 pixels per side)"
+    ))?;
+    let directory = ctx.data.join("covers");
+    std::fs::create_dir_all(&directory).map_err(error)?;
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("jpg");
+    let mut snapshot = tempfile::Builder::new()
+        .prefix(".cover-import-")
+        .suffix(&format!(".{extension}"))
+        .tempfile_in(&directory)
+        .map_err(error)?;
+    snapshot.write_all(&bytes).map_err(error)?;
+    gamehandler_core::covers::copy_custom_cover(snapshot.path(), id, &directory).map_err(error)
+}
+
 pub fn import_cover(ctx: &Context, id: &str, path: &Path) -> Result<Value> {
     let _ = crate::api::game(ctx, id)?;
-    let target = gamehandler_core::covers::copy_custom_cover(path, id, &ctx.data.join("covers"))
-        .map_err(error)?;
+    let target = copy_cover(ctx, id, path)?;
     let game = crate::api::update_game(ctx, id, |game| {
         game.cover_path = target.to_string_lossy().into_owned()
     })?;
@@ -202,32 +240,57 @@ pub fn shortcut(ctx: &Context, g: &Game, executable: &str) -> Result<Value> {
     }
     #[cfg(target_os = "linux")]
     {
-        let _ = ctx;
-        let command = if std::env::var_os("FLATPAK_ID").is_some() {
-            format!(
-                "flatpak run --command=gamehandler-cli com.goshapps.GameHandler --launch {}",
-                g.id
-            )
+        let flatpak = std::env::var_os("FLATPAK_ID").is_some();
+        let launcher = if flatpak {
+            "flatpak run --command=gamehandler-cli com.goshapps.GameHandler".to_string()
         } else {
-            let quoted = executable
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('`', "\\`")
-                .replace('$', "\\$");
-            format!("\"{quoted}\" --launch {}", g.id)
+            // GLib validates argv[0] before expanding desktop field codes. A
+            // literal '%' in the bundle path would be checked as '%%' and the
+            // entry rejected. Keep argv[0] stable; env forwards the decoded path
+            // as an argument without introducing a shell.
+            format!("/usr/bin/env -- {}", desktop_argument(executable))
+        };
+        let command = format!(
+            "{launcher} --config-dir {} --data-dir {} --launch {}",
+            desktop_argument(&ctx.config.to_string_lossy()),
+            desktop_argument(&ctx.data.to_string_lossy()),
+            g.id
+        );
+        // Flatpak's XDG_DATA_HOME is sandbox-private; its existing manifest grants
+        // the host application directory explicitly. Native sessions use XDG.
+        let destination = if flatpak {
+            None
+        } else {
+            std::env::var_os("XDG_DATA_HOME")
+                .map(std::path::PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .map(|p| p.join("applications"))
         };
         Ok(json!(
-            gamehandler_core::runners::desktop::create_desktop_shortcut(g, &command, None)?
+            gamehandler_core::runners::desktop::create_desktop_shortcut(
+                g,
+                &command,
+                destination.as_deref()
+            )?
         ))
     }
+
     #[cfg(target_os = "windows")]
     {
-        let _ = ctx;
         // User values are process environment data, never PowerShell source.
-        let script = r#"$ErrorActionPreference='Stop'; $desktop=[Environment]::GetFolderPath('Desktop'); $path=Join-Path $desktop ('GameHandler-'+$env:GH_SHORTCUT_ID+'.lnk'); $link=(New-Object -ComObject WScript.Shell).CreateShortcut($path); $link.TargetPath=$env:GH_SHORTCUT_EXE; $link.Arguments='--launch '+$env:GH_SHORTCUT_ID; $link.Description=$env:GH_SHORTCUT_NAME; $link.Save(); Write-Output $path"#;
+        let script = r#"$ErrorActionPreference='Stop'; $desktop=[Environment]::GetFolderPath('Desktop'); $path=Join-Path $desktop ('GameHandler-'+$env:GH_SHORTCUT_ID+'.lnk'); $link=(New-Object -ComObject WScript.Shell).CreateShortcut($path); $link.TargetPath=$env:GH_SHORTCUT_EXE; $link.Arguments=$env:GH_SHORTCUT_ARGUMENTS; $link.Description=$env:GH_SHORTCUT_NAME; $link.Save(); Write-Output $path"#;
         let result = std::process::Command::new("powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
             .env("GH_SHORTCUT_ID", &g.id)
+            .env(
+                "GH_SHORTCUT_ARGUMENTS",
+                format!(
+                    "--config-dir {} --data-dir {} --launch {}",
+                    windows_arguments::quote(&ctx.config.to_string_lossy()),
+                    windows_arguments::quote(&ctx.data.to_string_lossy()),
+                    g.id
+                ),
+            )
             .env("GH_SHORTCUT_EXE", executable)
             .env("GH_SHORTCUT_NAME", &g.name)
             .output()?;
@@ -283,4 +346,16 @@ pub fn complete_install(ctx: &Context, data: &Value, path: &Path) -> Result<Valu
         let _ = (ctx, data, path);
         Err(Failure::unsupported())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn desktop_argument(value: &str) -> String {
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('`', "\\`")
+            .replace('$', "\\$")
+    )
 }
