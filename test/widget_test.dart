@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamehandler/app/app.dart';
 import 'package:gamehandler/bridge/backend.dart';
@@ -50,6 +51,26 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       }
+      await tester.tap(find.byTooltip('Actions for Visible game'));
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.comma);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(find.text('Appearance'), findsOneWidget);
+      await tester.runAsync(
+        () => state.saveSettings('default_runner', 'wine-removed'),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('wine-removed (not installed)'),
+        200,
+        scrollable: find.byType(Scrollable).last,
+      );
+      expect(find.text('wine-removed (not installed)'), findsOneWidget);
+      expect(state.settings['default_runner'], 'wine-removed');
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);

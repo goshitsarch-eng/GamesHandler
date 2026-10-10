@@ -64,3 +64,50 @@ script extracts signed Debian packages into a workspace sysroot because system
 directories are read-only. It installs pinned Flutter/Rust and uses workspace
 cache/config locations. No HOME override or signature-verification bypass is
 required. That sysroot is development tooling, not a distribution artifact.
+
+## Interactive audit and isolated launches
+
+`integration_test/audit_test.dart` exercises rendered desktop controls against the
+real Rust store. On headless Linux use a session bus and Xvfb:
+
+```sh
+export GAMEHANDLER_NATIVE_LIBRARY="$PWD/rust/target/debug/libgamehandler_desktop.so"
+xvfb-run -a dbus-run-session -- flutter test integration_test/audit_test.dart -d linux
+GAMEHANDLER_NETWORK_AUDIT=1 xvfb-run -a dbus-run-session -- flutter test integration_test/network_audit_test.dart -d linux
+```
+
+The network audit opens project URLs and starts/cancels real downloads; it requires
+network access and an associated browser. `GAMEHANDLER_AUDIT_RUNNERS_ONLY=1`
+limits it to runner controls. Integration builds replace Flutter's debug bundle;
+run the desktop build driver again before testing a distributed bundle's CLI and
+resources. Do not run desktop integration and a Flutter release build concurrently: they share Linux ephemeral engine files. Finish the build, copy its complete bundle to a separate QA directory, then run integration tests while inspecting that preserved bundle.
+
+The bundled CLI accepts explicit absolute library roots:
+
+```sh
+gamehandler-cli --config-dir /path/to/config --data-dir /path/to/data --list
+gamehandler-cli --config-dir /path/to/config --data-dir /path/to/data --launch GAME_ID
+```
+
+Generated shortcuts retain these roots. Native Linux shortcuts use
+`$XDG_DATA_HOME/applications` when XDG_DATA_HOME is absolute. Flatpak uses its
+explicitly granted host application directory. Search remains visible after page
+navigation; Clear filters resets search and category. A removed default runner
+is shown as not installed until a replacement is chosen. Launch minimization keeps
+the application reachable from the taskbar and restores it after a launch failure.
+
+Vendor signature verification needs the bundled osslsigncode 2.14 or a compatible
+host installation. In this audit, host 2.9 could not decode the signed CRL while
+2.14 verified the same official installer. Do not disable signature, revocation,
+or TLS checks to work around that failure. Wine32 vendor execution remains an
+independent runtime gate. See [the hands-on audit](docs/HANDS_ON_AUDIT.md) for
+executed checks, screenshots, defects and exact external blockers.
+
+For hands-on Linux QA in a headless environment, use Xvfb with a window manager
+(e.g. XFWM4) and a session D-Bus. Native picker/drag tests also need GTK settings
+and a file manager such as Thunar. The optional X11 screenshot/input helpers used
+for this audit depend on xdotool, Python Xlib and Pillow; they are QA tools, not
+application dependencies. The network test can use
+`GAMEHANDLER_AUDIT_BROWSER_DISPLAY=:105` to close each opened Chromium tab on a
+separate QA desktop. Start and retain a base browser tab on that display first;
+do not drive another window on the same display during that test.

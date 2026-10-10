@@ -368,3 +368,6 @@ Every runner family names its maintainer in the app, every compatibility toggle 
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
+
+The Flutter prerelease has a [hands-on QA report](docs/HANDS_ON_AUDIT.md) with
+actual desktop interactions, regression checks, screenshots and remaining runtime gates.

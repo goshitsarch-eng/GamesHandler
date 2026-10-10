@@ -1,0 +1,17 @@
+dbus-daemon[110530]: [session uid=1000 pid=110530 pidfd=5] Activating service name='org.a11y.Bus' requested by ':1.0' (uid=1000 pid=110532 comm="xfwm4 --compositor=off" label="kernel")
+dbus-daemon[110530]: [session uid=1000 pid=110530 pidfd=5] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[110562]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=110532 comm="xfwm4 --compositor=off" label="kernel")
+dbus-daemon[110530]: [session uid=1000 pid=110530 pidfd=5] Activating service name='org.xfce.Xfconf' requested by ':1.2' (uid=1000 pid=110532 comm="xfwm4 --compositor=off" label="kernel")
+dbus-daemon[110562]: Successfully activated service 'org.a11y.atspi.Registry'
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry
+dbus-daemon[110530]: [session uid=1000 pid=110530 pidfd=5] Successfully activated service 'org.xfce.Xfconf'
+00:00 +0: loading /workspace/GamesHandler/integration_test/audit_edge_test.dart
+Building Linux application...
+✓ Built build/linux/x64/debug/bundle/gamehandler
+00:00 +0: real desktop unavailable runner, scaled editor and restoration
+AUDIT PASS: missing default and editor runner, replacement saved, 200% editor at minimum, validation/cancel, actual minimize/restore, shortcut after menu
+AUDIT PASS: actual long launch failure and Retry at minimum with 200% text
+00:33 +1: (tearDownAll)
+00:33 +1: All tests passed!
+
+(xfconfd:110574): xfconfd-WARNING **: 02:09:20.778: Name org.xfce.Xfconf lost on the message dbus, exiting.

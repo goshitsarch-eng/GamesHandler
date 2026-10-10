@@ -267,9 +267,16 @@ fn dispatch(request: Request) -> Result<Value> {
             if g.name.trim().is_empty() {
                 return Err(Failure::validation("Enter a game name"));
             }
-            if !std::path::Path::new(&g.exe_path).exists() {
+            let executable = std::path::Path::new(&g.exe_path);
+            let app_bundle = (g.kind == "macos"
+                || (g.kind == "native" && cfg!(target_os = "macos")))
+                && executable.is_dir()
+                && executable
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("app"));
+            if !executable.is_file() && !app_bundle {
                 return Err(Failure::validation(
-                    "Choose an existing executable or application bundle",
+                    "Choose an executable file or a macOS .app bundle",
                 ));
             }
             if !matches!(g.kind.as_str(), "windows" | "linux" | "native" | "macos") {
@@ -282,14 +289,10 @@ fn dispatch(request: Request) -> Result<Value> {
                 && !PathBuf::from(&g.cover_path).starts_with(ctx.data.join("covers"))
             {
                 let _ = library(&ctx)?;
-                g.cover_path = gamehandler_core::covers::copy_custom_cover(
-                    std::path::Path::new(&g.cover_path),
-                    &g.id,
-                    &ctx.data.join("covers"),
-                )
-                .map_err(error)?
-                .to_string_lossy()
-                .into_owned();
+                g.cover_path =
+                    crate::native::copy_cover(&ctx, &g.id, std::path::Path::new(&g.cover_path))?
+                        .to_string_lossy()
+                        .into_owned();
             }
             store_game(&ctx, g.clone())?;
             Ok(json!(g))

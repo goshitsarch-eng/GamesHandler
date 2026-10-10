@@ -83,3 +83,41 @@ mod tests {
         assert!(split(" \t ").unwrap().is_empty());
     }
 }
+
+/// Quote one argument using Windows CRT rules, including trailing backslashes.
+pub fn quote(value: &str) -> String {
+    let mut result = String::from("\"");
+    let mut slashes = 0;
+    for c in value.chars() {
+        if c == '\\' {
+            slashes += 1;
+            continue;
+        }
+        result.extend(std::iter::repeat_n(
+            '\\',
+            if c == '"' { slashes * 2 + 1 } else { slashes },
+        ));
+        result.push(c);
+        slashes = 0;
+    }
+    result.extend(std::iter::repeat_n('\\', slashes * 2));
+    result.push('"');
+    result
+}
+
+#[cfg(test)]
+mod quote_tests {
+    #[test]
+    fn shortcut_paths_round_trip_without_becoming_extra_arguments() {
+        for value in [
+            r"C:\",
+            r"C:\Game library\",
+            "C:\\café 遊戯\\data",
+            "a\"b",
+            "",
+            "a b --launch injected",
+        ] {
+            assert_eq!(super::split(&super::quote(value)).unwrap(), [value]);
+        }
+    }
+}

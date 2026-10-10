@@ -149,22 +149,25 @@ class _GameEditorState extends State<GameEditor> {
               field('cover_path', 'Cover image', browse: true),
               if (widget.state.compatibility && value['kind'] == 'windows') ...[
                 DropdownButtonFormField<String>(
-                  initialValue:
-                      (widget.state.catalogue['runners'] as List? ?? []).any(
-                        (r) => r['id'] == value['runner'],
-                      )
-                      ? value['runner']
-                      : null,
-                  items: (widget.state.catalogue['runners'] as List? ?? [])
-                      .map(
-                        (r) => DropdownMenuItem<String>(
-                          value: r['id'],
-                          child: Text(
-                            '${r['name']}${r['available'] == true ? '' : ' (not installed)'}',
-                          ),
+                  initialValue: value['runner'],
+                  items: [
+                    for (final r
+                        in widget.state.catalogue['runners'] as List? ?? [])
+                      DropdownMenuItem<String>(
+                        value: r['id'],
+                        child: Text(
+                          '${r['name']}${r['available'] == true ? '' : ' (not installed)'}',
                         ),
-                      )
-                      .toList(),
+                      ),
+                    if (value['runner'] is String &&
+                        !(widget.state.catalogue['runners'] as List? ?? []).any(
+                          (r) => r['id'] == value['runner'],
+                        ))
+                      DropdownMenuItem<String>(
+                        value: value['runner'],
+                        child: Text('${value['runner']} (not installed)'),
+                      ),
+                  ],
                   onChanged: (v) => value['runner'] = v,
                   decoration: const InputDecoration(
                     labelText: 'Compatibility runner',

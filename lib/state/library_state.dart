@@ -61,6 +61,11 @@ class LibraryState extends ChangeNotifier {
           .map((g) => GameDto(Map<String, dynamic>.from(g)))
           .toList();
       categories = List<String>.from(value['categories']);
+      if (category != 'All' && !categories.contains(category)) {
+        category = 'All';
+        await refresh();
+        return;
+      }
       settings = Map<String, dynamic>.from(value['settings']);
       platform = value['platform'];
       version = value['version'];

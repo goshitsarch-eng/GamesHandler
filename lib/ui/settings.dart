@@ -43,8 +43,10 @@ class SettingsPage extends StatelessWidget {
       }),
       const SizedBox(height: 24),
       SwitchListTile(
-        title: const Text('Hide window after launching a game'),
-        subtitle: const Text('The game keeps running independently.'),
+        title: const Text('Minimize window after launching a game'),
+        subtitle: const Text(
+          'Restore GameHandler from your taskbar while the game keeps running.',
+        ),
         value: state.settings['close_on_launch'] == true,
         onChanged: (v) =>
             onAction(() => state.saveSettings('close_on_launch', v)),
@@ -54,6 +56,13 @@ class SettingsPage extends StatelessWidget {
         Text('New games', style: Theme.of(context).textTheme.headlineSmall),
         select('default_runner', 'Default runner', {
           for (final r in rows(state, 'runners')) r['id']: r['name'],
+          if (state.settings['default_runner'] is String &&
+              !rows(
+                state,
+                'runners',
+              ).any((r) => r['id'] == state.settings['default_runner']))
+            state.settings['default_runner']:
+                '${state.settings['default_runner']} (not installed)',
         }),
         ...launchToggles.entries
             .where((e) => state.settings.containsKey('default_${e.key}'))

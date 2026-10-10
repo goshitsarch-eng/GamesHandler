@@ -1,0 +1,12 @@
+MESA-EGL: warning: DRI3 error: Could not get DRI3 device
+MESA-EGL: warning: Ensure your X server supports DRI3 to get accelerated rendering
+[IMPORTANT:flutter/shell/platform/embedder/embedder_surface_gl_impeller.cc(126)] Using the Impeller rendering backend (OpenGLESSDF).
+FLATPAK_NATIVE_LAUNCH_QA
+GameHandler 0.9.0-alpha.1
+embedder.cc (2615): 'FlutterEngineRemoveView' returned 'kInvalidArguments'. Remove view info was invalid. The implicit view cannot be removed.
+
+** (com.goshapps.GameHandler:2): WARNING **: 02:49:34.029: Attempted to set message handler on an FlBinaryMessenger without an engine
+
+** (com.goshapps.GameHandler:2): WARNING **: 02:49:34.030: Attempted to set message handler on an FlBinaryMessenger without an engine
+
+** (com.goshapps.GameHandler:2): WARNING **: 02:49:34.030: Attempted to set message handler on an FlBinaryMessenger without an engine

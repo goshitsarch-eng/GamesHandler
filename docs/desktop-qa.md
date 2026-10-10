@@ -107,3 +107,6 @@ Wine launch checks passed. QA exposes the existing trusted host CA bundle for
 HTTPS through the cloud proxy; it never disables certificate verification.
 No GitHub release has been verified. Production certificates are not configured.
 The rewrite remains a prerelease until these gates are completed.
+
+The subsequent exhaustive control audit, nine fixes, final package hashes and
+current validation evidence are in [HANDS_ON_AUDIT.md](HANDS_ON_AUDIT.md).
